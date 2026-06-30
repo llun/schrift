@@ -1,0 +1,21 @@
+DocsIOS/DesignSystem/Tokens/HexColor.swift
+  s_44afd2562a4f35::t_39d8418b7c02f0 1-21
+DocsIOSTests/DesignSystem/Tokens/HexColorComponentsTests.swift
+  s_44afd2562a4f35::t_922412ff05b51f 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "ac2c3811057955f5a465f6d3b21e291dc39b67ab",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
