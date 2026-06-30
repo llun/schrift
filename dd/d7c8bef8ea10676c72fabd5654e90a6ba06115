@@ -1,0 +1,19 @@
+DocsIOS/App/RootView.swift
+  s_44afd2562a4f35::t_0329603874c0cd 5-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "ddd7c8bef8ea10676c72fabd5654e90a6ba06115",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
