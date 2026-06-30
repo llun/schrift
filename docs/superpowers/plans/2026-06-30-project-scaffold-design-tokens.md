@@ -41,8 +41,7 @@ docs-ios/
 │           ├── DocsTypography.swift                 — TypographySpec + DocsTypographySpec + DocsFont (Task 4)
 │           ├── DocsSpacing.swift                     — spacing scale + iOS layout constants (Task 5)
 │           └── DocsRadius.swift                      — radius scale (Task 5)
-└── DocsIOSTests/
-    ├── ScaffoldTests.swift                          — Task 1
+└── DocsIOSTests/                                    — empty until Task 2 (Task 1 verifies the scaffold via build + an empty test run)
     └── DesignSystem/
         └── Tokens/
             ├── HexColorComponentsTests.swift         — Task 2
@@ -65,7 +64,7 @@ docs-ios/
 - Create: `DocsIOS/Assets.xcassets/Contents.json`
 - Create: `DocsIOS/Assets.xcassets/AppIcon.appiconset/Contents.json`
 - Create: `DocsIOS/Assets.xcassets/AccentColor.colorset/Contents.json`
-- Create: `DocsIOSTests/ScaffoldTests.swift`
+- Create: `DocsIOSTests/.gitkeep` (git can't track empty directories; XcodeGen's `DocsIOSTests` target needs the directory to exist on disk even before Task 2 adds real tests to it)
 
 **Interfaces:**
 - Produces: `RootView` (a `View`, no parameters) — consumed by `DocsIOSApp` here and replaced with token-driven content in Task 6; later screens (outside this plan) will eventually replace `RootView` itself with real navigation, but that's out of scope here.
@@ -251,20 +250,11 @@ struct RootView: View {
 }
 ```
 
-- [ ] **Step 7: Write the scaffold smoke test**
+- [ ] **Step 7: Create the (still-empty) test directory**
 
-`DocsIOSTests/ScaffoldTests.swift`:
-```swift
-import XCTest
+`DocsIOSTests/.gitkeep`: an empty file (git can't track empty directories, and XcodeGen needs the directory to exist on disk).
 
-/// Confirms the DocsIOSTests target is wired up and runs as part of the DocsIOS scheme.
-/// Real product-logic tests start with HexColorComponentsTests in the next task.
-final class ScaffoldTests: XCTestCase {
-    func testTestTargetRunsAsPartOfTheScheme() {
-        XCTAssertTrue(true)
-    }
-}
-```
+There is no test *file* yet — that's expected. An empty test target still builds and runs cleanly (verified: `xcodebuild test` reports `Executed 0 tests, with 0 failures` rather than erroring), so this task verifies the scaffold via build + an empty test run rather than padding it with a placeholder test that asserts nothing. Real tests start in Task 2.
 
 - [ ] **Step 8: Install XcodeGen if needed and generate the project**
 
@@ -277,10 +267,10 @@ Expected: `Created project at .../DocsIOS.xcodeproj`
 Run: `xcodebuild build -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17'`
 Expected: `** BUILD SUCCEEDED **`
 
-- [ ] **Step 10: Run the test target**
+- [ ] **Step 10: Run the (currently empty) test target**
 
 Run: `xcodebuild test -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17'`
-Expected: `** TEST SUCCEEDED **` with `Executed 1 test, with 0 failures`
+Expected: `** TEST SUCCEEDED **` with `Executed 0 tests, with 0 failures`
 
 - [ ] **Step 11: Commit**
 
@@ -828,7 +818,7 @@ Expected: `** BUILD SUCCEEDED **`
 - [ ] **Step 3: Run the full test suite**
 
 Run: `xcodebuild test -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17'`
-Expected: `** TEST SUCCEEDED **` with `Executed 22 tests, with 0 failures` (1 scaffold + 4 hex color + 5 color hex + 9 typography + 2 spacing + 1 radius = 22)
+Expected: `** TEST SUCCEEDED **` with `Executed 21 tests, with 0 failures` (4 hex color + 5 color hex + 9 typography + 2 spacing + 1 radius = 21)
 
 - [ ] **Step 4: Commit**
 
@@ -840,6 +830,6 @@ git commit -m "Wire design tokens into the root view"
 ## Self-Review Notes
 
 - **Spec coverage:** Every token table in `docs/superpowers/specs/2026-06-30-docs-ios-design.md`'s "Design tokens" section (colors, typography, spacing, radius) has a corresponding task and test. The Material Symbols vs SF Symbols and Inter-vs-system-font deferrals from the spec are carried forward explicitly in Task 4's note rather than silently resolved.
-- **Placeholder scan:** No TBD/TODO; the one intentionally trivial test (`ScaffoldTests`) is documented inline as a deliberate wiring check, not an unfinished placeholder.
+- **Placeholder scan:** No TBD/TODO. Task 1 deliberately has no placeholder test — it verifies the scaffold via `xcodebuild build`/`xcodebuild test` against an empty test target (`Executed 0 tests, with 0 failures`) rather than padding it with a test that asserts nothing, since that pattern is itself a defect the review rubric flags.
 - **Type consistency:** `TypographySpec`, `DocsColorHex`, `DocsColor`, `DocsSpacing`, `DocsRadius`, and `RootView` are each defined exactly once and referenced with identical names/signatures everywhere they're used across tasks.
 - **Out of scope for this plan** (next plans): DesignSystem components (Button, IconButton, NavBar, etc.), networking layer, auth, and all screens — per the spec's build sequence, items 2 onward.

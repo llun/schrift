@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Xcode / XcodeGen
+DocsIOS.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+.build/
