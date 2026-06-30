@@ -1,0 +1,25 @@
+DocsIOS/DesignSystem/Tokens/DocsSpacing.swift
+  s_44afd2562a4f35::t_d587bb27c157f7 1-29
+DocsIOSTests/DesignSystem/Tokens/DocsSpacingTests.swift
+  s_44afd2562a4f35::t_f6387bdd9eb56c 1-32
+DocsIOSTests/DesignSystem/Tokens/DocsRadiusTests.swift
+  s_44afd2562a4f35::t_6887156ee0af1f 1-14
+DocsIOS/DesignSystem/Tokens/DocsRadius.swift
+  s_44afd2562a4f35::t_0caec461c814e8 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "9e01b8469d1c462277d727ebeb1ecc8fc2be5a1b",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
