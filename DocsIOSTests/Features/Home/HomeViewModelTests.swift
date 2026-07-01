@@ -222,4 +222,55 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Offline Recent"])
         XCTAssertNotNil(viewModel.errorMessage)
     }
+
+    func testLoadFailureSetsIsOffline() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.isOffline)
+    }
+
+    func testLoadSuccessKeepsIsOfflineFalse() async {
+        let viewModel = makeViewModel()
+        let pinnedBody = Self.paginatedFixture(id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", title: "Pinned Doc", isFavorite: true)
+        let recentBody = Self.paginatedFixture(id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", title: "Recent Doc", isFavorite: false)
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            if path.contains("favorite_list") {
+                return .init(statusCode: 200, headers: [:], body: pinnedBody, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: recentBody, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+    }
+
+    func testLoadSuccessAfterFailureClearsIsOffline() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.isOffline)
+
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: empty, error: nil) }
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+    }
+
+    func testToggleFavoriteFailureDoesNotSetIsOffline() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let documentBody = Self.paginatedFixture(id: "ffffffff-ffff-4fff-8fff-ffffffffffff", title: "Doc", isFavorite: false)
+        let document = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: documentBody).results[0]
+
+        await viewModel.toggleFavorite(document)
+
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.isOffline)
+    }
 }
