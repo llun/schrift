@@ -21,10 +21,12 @@ struct HomeSplitView: View {
                     serverHost: serverHost,
                     linkRole: selectedDocument.linkRole,
                     initialIsFavorite: selectedDocument.isFavorite,
+                    isOffline: viewModel.isOffline,
                     onDeleted: {
                         self.selectedDocument = nil
                         Task { await viewModel.load() }
-                    }
+                    },
+                    onOpenDocument: { self.selectedDocument = $0 }
                 )
                 .id(selectedDocument.id)
             } else {

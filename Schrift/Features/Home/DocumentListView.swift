@@ -4,20 +4,31 @@ struct DocumentListView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
     var onSelect: (Document) -> Void
+    /// When set, the search field becomes a read-only shortcut into the Search tab
+    /// (phone). Left nil on iPad, where the field performs inline search.
+    var onSearchTap: (() -> Void)? = nil
 
     @State private var documentPendingFavoriteChoice: Document?
 
     var body: some View {
         VStack(spacing: 0) {
             NavBar(
-                title: "Docs",
+                title: "Schrift",
                 subtitle: serverHost,
                 largeTitle: true,
                 titleBadge: viewModel.isOffline ? Badge(text: "Offline", tone: .warning, icon: "wifi.slash") : nil
             )
 
             VStack(spacing: DocsSpacing.spaceSM) {
-                SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
+                if let onSearchTap {
+                    Button(action: onSearchTap) {
+                        SearchField(text: .constant(""), placeholder: "Search \(serverHost)")
+                            .allowsHitTesting(false)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
+                }
 
                 SegmentedControl(
                     segments: HomeFilter.allCases.map(\.title),
