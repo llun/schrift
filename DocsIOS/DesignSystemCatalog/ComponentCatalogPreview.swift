@@ -5,6 +5,7 @@ struct ComponentCatalogPreview: View {
     @State private var searchText = ""
     @State private var selectedSegment = 0
     @State private var textFieldValue = ""
+    @State private var catalogTab = "docs"
 
     var body: some View {
         ScrollView {
@@ -71,6 +72,33 @@ struct ComponentCatalogPreview: View {
 
                 catalogSection("Text Field") {
                     DocsTextField(label: "Docs server", text: $textFieldValue, placeholder: "docs.example.org", icon: "cloud", helper: "The app signs in with your existing session.")
+                }
+
+                catalogSection("Nav Bar") {
+                    VStack(spacing: DocsSpacing.spaceXS) {
+                        NavBar(title: "Docs", subtitle: "docs.example.org", largeTitle: true, trailingActions: [
+                            NavBarAction(systemImage: "magnifyingglass", label: "Search", action: {}),
+                        ])
+                        NavBar(title: "Docs", backTitle: "Docs", onBack: {}, trailingActions: [
+                            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
+                        ])
+                    }
+                }
+
+                catalogSection("Tab Bar") {
+                    TabBar(items: [
+                        TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
+                        TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
+                        TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
+                    ], selection: $catalogTab, showsSafeArea: false)
+                }
+
+                catalogSection("List Row / List Section") {
+                    ListSection(header: "Document", footer: "These actions apply to the current document.") {
+                        ListRow(systemImage: "pin", title: "Pin", value: "Pinned", action: {})
+                        ListRow(systemImage: "link", title: "Copy link", showsChevron: true, action: {})
+                        ListRow(title: "Delete document", isDestructive: true, action: {})
+                    }
                 }
             }
             .padding(DocsSpacing.spaceBase)
