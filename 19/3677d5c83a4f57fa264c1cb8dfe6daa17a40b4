@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-01-offline-badge.md
+  s_44afd2562a4f35::t_fc5e8552da2ac6 1-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "193677d5c83a4f57fa264c1cb8dfe6daa17a40b4",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
