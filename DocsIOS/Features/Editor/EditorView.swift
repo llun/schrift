@@ -3,10 +3,15 @@ import SwiftUI
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
+    let serverHost: String
     var linkRole: LinkRole? = nil
+    var initialIsFavorite: Bool = false
     var onBack: (() -> Void)? = nil
+    var onDeleted: (() -> Void)? = nil
 
     @State private var isPresentingShareSheet = false
+    @State private var isPresentingOptionsSheet = false
+    @State private var optionsViewModel: OptionsViewModel?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,6 +74,16 @@ struct EditorView: View {
                 )
             )
         }
+        .sheet(isPresented: $isPresentingOptionsSheet) {
+            if let optionsViewModel {
+                OptionsSheetView(
+                    viewModel: optionsViewModel,
+                    shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+                    markdown: viewModel.rawMarkdown,
+                    onDeleted: onDeleted
+                )
+            }
+        }
     }
 
     private var trailingActions: [NavBarAction] {
@@ -81,7 +96,12 @@ struct EditorView: View {
         return [
             NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: { isPresentingShareSheet = true }),
             NavBarAction(systemImage: "pencil", label: "Edit", action: { viewModel.startEditing() }),
-            NavBarAction(systemImage: "ellipsis", label: "Options", action: {}),
+            NavBarAction(systemImage: "ellipsis", label: "Options", action: {
+                if optionsViewModel == nil {
+                    optionsViewModel = OptionsViewModel(client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite)
+                }
+                isPresentingOptionsSheet = true
+            }),
         ]
     }
 }
@@ -93,6 +113,7 @@ struct EditorView: View {
             documentID: UUID(),
             title: "Q3 Planning"
         ),
-        reach: .restricted
+        reach: .restricted,
+        serverHost: "docs.llun.dev"
     )
 }
