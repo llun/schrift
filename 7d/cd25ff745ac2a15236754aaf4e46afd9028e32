@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-01-connect-screen.md
+  s_44afd2562a4f35::t_d289a87aaa3d2a 1-656
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "7dcd25ff745ac2a15236754aaf4e46afd9028e32",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
