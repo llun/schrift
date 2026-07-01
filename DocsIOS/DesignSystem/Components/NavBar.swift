@@ -14,6 +14,7 @@ struct NavBar: View {
     let title: String
     var subtitle: String? = nil
     var largeTitle: Bool = false
+    var titleBadge: Badge? = nil
     var backTitle: String? = nil
     var onBack: (() -> Void)? = nil
     var trailingActions: [NavBarAction] = []
@@ -62,9 +63,14 @@ struct NavBar: View {
 
             if largeTitle {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title)
-                        .font(DocsFont.largeTitle)
-                        .foregroundStyle(DocsColor.textPrimary)
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        Text(title)
+                            .font(DocsFont.largeTitle)
+                            .foregroundStyle(DocsColor.textPrimary)
+                        if let titleBadge {
+                            titleBadge
+                        }
+                    }
                     if let subtitle {
                         Text(subtitle)
                             .font(DocsFont.footnote)
