@@ -50,13 +50,27 @@ struct EditorView: View {
                     .disabled(viewModel.isSaving)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                        ForEach(Array(viewModel.blocks.enumerated()), id: \.offset) { _, block in
-                            MarkdownBlockView(block: block)
+                    if viewModel.blocks.isEmpty {
+                        if viewModel.errorMessage == nil {
+                            ContentUnavailableView(
+                                "Empty Document",
+                                systemImage: "doc.text",
+                                description: Text("This document doesn't have any content yet.")
+                            )
+                            .padding(.top, DocsSpacing.spaceLG)
                         }
+                    } else {
+                        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+                            ForEach(Array(viewModel.blocks.enumerated()), id: \.offset) { _, block in
+                                MarkdownBlockView(block: block)
+                            }
+                        }
+                        .padding(DocsSpacing.gutter)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(DocsSpacing.gutter)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .refreshable {
+                    await viewModel.load()
                 }
             }
         }
