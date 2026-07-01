@@ -1,0 +1,20 @@
+DocsIOS/DesignSystemCatalog/ComponentCatalogPreview.swift
+  s_44afd2562a4f35::t_cfc1fcf583fe3f 5-7
+  s_44afd2562a4f35::t_13193d27dfd595 63-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "5235c58ff67e8294b996e52096298a84e2f5e52f",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
