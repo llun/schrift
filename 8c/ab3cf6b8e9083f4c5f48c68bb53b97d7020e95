@@ -1,0 +1,21 @@
+DocsIOS/Core/Auth/WebLogin.swift
+  s_44afd2562a4f35::t_34ab40bc95abc7 1-21
+DocsIOSTests/Core/Auth/WebLoginTests.swift
+  s_44afd2562a4f35::t_c52c84e0c2ecd2 1-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "8cab3cf6b8e9083f4c5f48c68bb53b97d7020e95",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
