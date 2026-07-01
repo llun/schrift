@@ -92,7 +92,7 @@ struct SearchScreen: View {
 
     private var emptyState: some View {
         VStack(spacing: DocsSpacing.spaceSM) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: "exclamationmark.magnifyingglass")
                 .font(.system(size: 44))
                 .foregroundStyle(DocsColor.textTertiary)
             Text("No documents found")

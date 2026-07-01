@@ -116,7 +116,7 @@ struct DocTreePanel: View {
                         isSelected: currentID == rootID,
                         isExpanded: model.isExpanded(rootID),
                         onToggle: { model.toggle(rootID) },
-                        onSelect: { model.toggle(rootID) }
+                        onSelect: { onClose() }
                     )
 
                     if model.isExpanded(rootID) {

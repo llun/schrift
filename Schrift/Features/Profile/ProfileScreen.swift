@@ -112,17 +112,27 @@ struct ProfileScreen: View {
 
     // MARK: - 3) Server
 
+    private var isOfflineOrForced: Bool { isOffline || workOffline }
+
     private var serverSection: some View {
         ListSection(
             header: "Server",
             footer: "The app connects to any Schrift server using your existing web session."
         ) {
-            ProfileTrailingRow(systemImage: "server.rack", title: serverHost) {
-                Badge(
-                    text: isOffline ? "Offline" : "Connected",
-                    tone: isOffline ? .neutral : .success
-                )
+            Button(action: onSignOut) {
+                ProfileTrailingRow(systemImage: "server.rack", title: serverHost) {
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        Badge(
+                            text: isOfflineOrForced ? "Offline" : "Connected",
+                            tone: isOfflineOrForced ? .neutral : .success
+                        )
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DocsColor.textTertiary)
+                    }
+                }
             }
+            .buttonStyle(.plain)
         }
     }
 

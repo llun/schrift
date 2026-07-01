@@ -99,7 +99,14 @@ struct HomeView: View {
                 viewModel: viewModel,
                 serverHost: serverHost,
                 onSelect: { path.append($0) },
-                onSearchTap: { selectedTab = "search" }
+                onSearchTap: { selectedTab = "search" },
+                onNewDocument: {
+                    Task {
+                        if let document = await viewModel.createDocument() {
+                            path.append(document)
+                        }
+                    }
+                }
             )
         }
     }

@@ -20,6 +20,15 @@ struct SharedScreen: View {
         )
     }
 
+    private func subtitle(for document: Document) -> String {
+        switch viewModel.scope {
+        case .withMe:
+            return "Shared · \(documentRowDate(document))"
+        case .byMe:
+            return "\(reachLabel(document.linkReach)) · Shared \(documentRowDate(document))"
+        }
+    }
+
     private var footerText: String {
         switch viewModel.scope {
         case .withMe:
@@ -49,7 +58,7 @@ struct SharedScreen: View {
                             }
                             SharedRow(
                                 title: document.title ?? "Untitled document",
-                                subtitle: "\(reachLabel(document.linkReach)) · \(documentRowDate(document))",
+                                subtitle: subtitle(for: document),
                                 onTap: { onOpenDocument(document) }
                             )
                         }

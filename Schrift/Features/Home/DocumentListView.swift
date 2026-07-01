@@ -7,7 +7,10 @@ struct DocumentListView: View {
     /// When set, the search field becomes a read-only shortcut into the Search tab
     /// (phone). Left nil on iPad, where the field performs inline search.
     var onSearchTap: (() -> Void)? = nil
+    /// When set, shows a "New doc" nav-bar action that creates and opens a document.
+    var onNewDocument: (() -> Void)? = nil
 
+    @AppStorage("schrift.workOffline") private var workOffline = false
     @State private var documentPendingFavoriteChoice: Document?
 
     var body: some View {
@@ -16,7 +19,8 @@ struct DocumentListView: View {
                 title: "Schrift",
                 subtitle: serverHost,
                 largeTitle: true,
-                titleBadge: viewModel.isOffline ? Badge(text: "Offline", tone: .warning, icon: "wifi.slash") : nil
+                titleBadge: (viewModel.isOffline || workOffline) ? Badge(text: "Offline", tone: .warning, icon: "wifi.slash") : nil,
+                trailingActions: onNewDocument.map { [NavBarAction(systemImage: "square.and.pencil", label: "New doc", action: $0)] } ?? []
             )
 
             VStack(spacing: DocsSpacing.spaceSM) {
@@ -75,7 +79,10 @@ struct DocumentListView: View {
                     if viewModel.showsPinnedSection {
                         documentSection(title: "Pinned", documents: viewModel.pinnedDocuments)
                     }
-                    documentSection(title: "Recent", documents: viewModel.recentDocuments)
+                    documentSection(
+                        title: viewModel.selectedFilter == .shared ? "Shared with me" : "Recent",
+                        documents: viewModel.recentDocuments
+                    )
                 }
             }
             .refreshable {

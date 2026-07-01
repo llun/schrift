@@ -29,6 +29,16 @@ final class HomeViewModel {
     func load() async {
         isLoading = true
         errorMessage = nil
+
+        // "Work offline" preference (Profile > Preferences): serve cached
+        // documents and never hit the network.
+        if UserDefaults.standard.bool(forKey: "schrift.workOffline") {
+            pinnedDocuments = cache.loadPinnedDocuments()
+            recentDocuments = cache.loadRecentDocuments()
+            isOffline = true
+            isLoading = false
+            return
+        }
         isOffline = false
 
         let params = homeFilterQueryParameters(selectedFilter)
@@ -69,6 +79,17 @@ final class HomeViewModel {
             searchResults = page.results
         } catch {
             errorMessage = "Search failed. Please try again."
+        }
+    }
+
+    func createDocument() async -> Document? {
+        do {
+            let document = try await client.createDocumentFromMarkdown(title: "Untitled document", markdown: "")
+            await load()
+            return document
+        } catch {
+            errorMessage = "Couldn't create a document. Please try again."
+            return nil
         }
     }
 
