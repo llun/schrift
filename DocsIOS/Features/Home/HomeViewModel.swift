@@ -10,6 +10,7 @@ final class HomeViewModel {
     var searchResults: [Document] = []
     var isLoading = false
     var errorMessage: String?
+    var isOffline = false
 
     let client: DocsAPIClient
     private let cache: DocumentCacheStore
@@ -28,6 +29,7 @@ final class HomeViewModel {
     func load() async {
         isLoading = true
         errorMessage = nil
+        isOffline = false
 
         let params = homeFilterQueryParameters(selectedFilter)
         do {
@@ -45,6 +47,7 @@ final class HomeViewModel {
             }
         } catch {
             errorMessage = "Couldn't load documents. Pull to refresh to try again."
+            isOffline = true
         }
 
         isLoading = false
