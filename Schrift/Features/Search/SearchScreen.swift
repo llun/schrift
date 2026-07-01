@@ -34,8 +34,8 @@ struct SearchScreen: View {
         .task {
             await viewModel.loadQuickAccess()
         }
-        .onChange(of: viewModel.query) {
-            Task { await viewModel.search() }
+        .task(id: viewModel.query) {
+            await viewModel.search()
         }
     }
 

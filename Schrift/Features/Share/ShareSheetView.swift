@@ -91,10 +91,9 @@ struct ShareSheetView: View {
     }
 
     private var copyLinkButton: some View {
-        DocsButton(title: "Copy link", variant: .secondary, color: .brand, icon: "link", fullWidth: true, pill: true) {
-            if let shareURL {
-                UIPasteboard.general.string = shareURL.absoluteString
-            }
+        DocsButton(title: "Copy link", variant: .secondary, color: .brand, icon: "link", fullWidth: true, pill: true, isDisabled: shareURL == nil) {
+            guard let shareURL else { return }
+            UIPasteboard.general.string = shareURL.absoluteString
             dismiss()
         }
         .padding(.horizontal, DocsSpacing.gutter)
