@@ -1,0 +1,21 @@
+DocsIOSTests/Features/Editor/MarkdownBlockTests.swift
+  s_44afd2562a4f35::t_55da6687bc1de3 1-68
+DocsIOS/Features/Editor/MarkdownBlock.swift
+  s_44afd2562a4f35::t_7fc9dd8705f219 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "640b3e63ebecab650de85d9f3944aea5341038bd",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
