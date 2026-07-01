@@ -7,6 +7,7 @@ func shareRoleDisplayTitle(_ role: DocumentRole, isPending: Bool) -> String {
 
 struct ShareSheetView: View {
     @Bindable var viewModel: ShareViewModel
+    var shareURL: URL? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var memberPendingRoleChange: ShareMember?
@@ -32,6 +33,7 @@ struct ShareSheetView: View {
                     } else {
                         linkSection
                         membersSection
+                        copyLinkButton
                     }
                 }
             }
@@ -88,8 +90,20 @@ struct ShareSheetView: View {
         }
     }
 
+    private var copyLinkButton: some View {
+        DocsButton(title: "Copy link", variant: .secondary, color: .brand, icon: "link", fullWidth: true, pill: true) {
+            if let shareURL {
+                UIPasteboard.general.string = shareURL.absoluteString
+            }
+            dismiss()
+        }
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.top, DocsSpacing.spaceSM)
+        .padding(.bottom, DocsSpacing.spaceBase)
+    }
+
     private var linkSection: some View {
-        ListSection(header: "Link Access") {
+        ListSection(header: "Link parameters") {
             HStack {
                 LinkReachPill(reach: viewModel.linkReach, showsHint: true)
                 Spacer()
@@ -102,7 +116,7 @@ struct ShareSheetView: View {
     }
 
     private var membersSection: some View {
-        ListSection(header: "Members") {
+        ListSection(header: "Shared with \(viewModel.members.count) \(viewModel.members.count == 1 ? "person" : "people")") {
             VStack(spacing: 0) {
                 ForEach(viewModel.members) { member in
                     ShareMemberRow(

@@ -14,6 +14,7 @@ struct EditorView: View {
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
     @State private var isPresentingTreePanel = false
+    @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
 
     init(
@@ -132,14 +133,21 @@ struct EditorView: View {
                     documentID: viewModel.documentID,
                     linkReach: reach,
                     linkRole: linkRole
-                )
+                ),
+                shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID)
             )
         }
-        .sheet(isPresented: $isPresentingOptionsSheet) {
+        .sheet(isPresented: $isPresentingOptionsSheet, onDismiss: {
+            if pendingShareAfterOptions {
+                pendingShareAfterOptions = false
+                isPresentingShareSheet = true
+            }
+        }) {
             OptionsSheetView(
                 viewModel: optionsViewModel,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
                 markdown: viewModel.rawMarkdown,
+                onShare: { pendingShareAfterOptions = true },
                 onDeleted: onDeleted
             )
         }

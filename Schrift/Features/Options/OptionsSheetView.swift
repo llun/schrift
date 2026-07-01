@@ -4,6 +4,7 @@ struct OptionsSheetView: View {
     @Bindable var viewModel: OptionsViewModel
     let shareURL: URL?
     let markdown: String
+    var onShare: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
@@ -28,6 +29,12 @@ struct OptionsSheetView: View {
                             action: { Task { await viewModel.toggleFavorite() } }
                         )
                         ListRow(systemImage: "link", title: "Copy link", action: { copyLink() })
+                        if onShare != nil {
+                            ListRow(systemImage: "person.2", title: "Share", showsChevron: true, action: {
+                                onShare?()
+                                dismiss()
+                            })
+                        }
                         ListRow(systemImage: "doc.on.doc", title: "Copy as Markdown", action: { copyMarkdown() })
                         ListRow(systemImage: "plus.square.on.square", title: "Duplicate", action: {
                             Task {
