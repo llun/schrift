@@ -22,8 +22,12 @@ struct ConnectView: View {
                     .foregroundStyle(DocsColor.danger)
             }
 
-            DocsButton(title: signInTitle, fullWidth: true) {
+            DocsButton(title: signInTitle, fullWidth: true, isDisabled: viewModel.isSigningIn) {
                 viewModel.startSignIn()
+            }
+
+            if viewModel.isSigningIn {
+                ProgressView()
             }
 
             if !viewModel.recentServers.servers.isEmpty {
@@ -34,6 +38,7 @@ struct ConnectView: View {
                         })
                     }
                 }
+                .disabled(viewModel.isSigningIn)
             }
 
             Spacer()

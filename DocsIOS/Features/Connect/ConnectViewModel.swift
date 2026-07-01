@@ -5,6 +5,7 @@ import Foundation
 final class ConnectViewModel {
     var serverURLInput: String = ""
     var isPresentingWebLogin = false
+    var isSigningIn = false
     var errorMessage: String?
     private(set) var pendingServerURL: URL?
 
@@ -43,6 +44,10 @@ final class ConnectViewModel {
     func handleLoginComplete() async {
         isPresentingWebLogin = false
         guard let serverURL = pendingServerURL else { return }
+
+        isSigningIn = true
+        errorMessage = nil
+        defer { isSigningIn = false }
 
         struct Me: Decodable {}
         let client = apiClientFactory(serverURL)
