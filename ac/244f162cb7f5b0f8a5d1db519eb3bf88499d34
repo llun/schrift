@@ -1,0 +1,21 @@
+DocsIOS/Core/Networking/DocumentDuplicate.swift
+  s_44afd2562a4f35::t_dc862f40e39d70 1-23
+DocsIOSTests/Core/Networking/DocumentDuplicateTests.swift
+  s_44afd2562a4f35::t_2d1a43defbbfda 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "ac244f162cb7f5b0f8a5d1db519eb3bf88499d34",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
