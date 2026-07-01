@@ -37,6 +37,7 @@ struct SegmentedControl: View {
                             .frame(maxWidth: .infinity)
                             .contentShape(Rectangle())
                             .onTapGesture { selectedIndex = index }
+                            .accessibilityAddTraits(index == selectedIndex ? [.isButton, .isSelected] : .isButton)
                     }
                 }
             }

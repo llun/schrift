@@ -28,6 +28,8 @@ struct TabBar: View {
                     .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.textTertiary)
                     .frame(maxWidth: .infinity)
                 }
+                .accessibilityLabel(item.label)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(.top, DocsSpacing.space3xs)
