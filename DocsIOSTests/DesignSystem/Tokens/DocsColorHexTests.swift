@@ -37,4 +37,11 @@ final class DocsColorHexTests: XCTestCase {
         XCTAssertEqual(DocsColorHex.warning, 0xBC4200)
         XCTAssertEqual(DocsColorHex.danger, 0xD7010E)
     }
+
+    func testFeedbackSoftTokensMatchDesignSpec() {
+        XCTAssertEqual(DocsColorHex.infoSoft, 0xD5E4F3)
+        XCTAssertEqual(DocsColorHex.successSoft, 0xCFE4D4)
+        XCTAssertEqual(DocsColorHex.warningSoft, 0xF1E0D3)
+        XCTAssertEqual(DocsColorHex.dangerSoft, 0xF4DFD9)
+    }
 }

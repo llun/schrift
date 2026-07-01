@@ -31,6 +31,12 @@ enum DocsColorHex {
     static let success: UInt32 = 0x027B3E
     static let warning: UInt32 = 0xBC4200
     static let danger: UInt32 = 0xD7010E
+
+    // Feedback (soft backgrounds)
+    static let infoSoft: UInt32 = 0xD5E4F3
+    static let successSoft: UInt32 = 0xCFE4D4
+    static let warningSoft: UInt32 = 0xF1E0D3
+    static let dangerSoft: UInt32 = 0xF4DFD9
 }
 
 enum DocsColor {
@@ -59,4 +65,9 @@ enum DocsColor {
     static let success = Color(hex: DocsColorHex.success)
     static let warning = Color(hex: DocsColorHex.warning)
     static let danger = Color(hex: DocsColorHex.danger)
+
+    static let infoSoft = Color(hex: DocsColorHex.infoSoft)
+    static let successSoft = Color(hex: DocsColorHex.successSoft)
+    static let warningSoft = Color(hex: DocsColorHex.warningSoft)
+    static let dangerSoft = Color(hex: DocsColorHex.dangerSoft)
 }
