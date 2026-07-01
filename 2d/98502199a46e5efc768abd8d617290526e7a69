@@ -1,0 +1,61 @@
+Schrift/Features/Editor/EditorView.swift
+  s_e0af0b8f101c24::t_59571c427b5eb8 9-261,268
+  s_e0af0b8f101c24::t_193a44dc333549 6-8
+  s_e0af0b8f101c24::t_940486194e874a 262-267
+  s_e0af0b8f101c24::t_cb3dacf94215cd 269-271
+  s_95f9db851d7d24::t_877abe4ed4b492 1-5,272-281
+Schrift/Features/Editor/DocTreePanel.swift
+  s_e0af0b8f101c24::t_29aef8d8bf2ba4 3-35,46,48-65,112-133,139-140,143,145-153,155-180,183-187,189-199,201,203,207,230
+  s_e0af0b8f101c24::t_3382cc478172e4 1-2,36-45,47,66-111,134-138,141-142,144,154,181-182,188,200,202,204-206,208-229,231-244
+Schrift/Features/Editor/SubpageRow.swift
+  s_e0af0b8f101c24::t_ea8f1e156a596a 1-82
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_e0af0b8f101c24::t_61c4b89c1ae4ba 1-46
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_e0af0b8f101c24::t_8bc6b8c1bccef6 1-88
+Schrift/Core/Networking/DocumentChildren.swift
+  s_e0af0b8f101c24::t_ad422173dd923f 1-16
+Schrift/Features/Editor/EditorViewModel.swift
+  s_e0af0b8f101c24::t_ea56fc511dc0c8 24,37-51,56,62,76
+  s_e0af0b8f101c24::t_7bb75cd4db7f68 9-10
+  s_e0af0b8f101c24::t_dfb1eb4734d599 6-8
+  s_e0af0b8f101c24::t_243f6942590fcf 11-13,21-23
+  s_e0af0b8f101c24::t_a2933d0bfbccc7 25-27,34-36
+  s_e0af0b8f101c24::t_610b744cabc7cc 52-55
+  s_e0af0b8f101c24::t_a9beab5f912d6b 57-61
+  s_e0af0b8f101c24::t_fe7e1e6c44d783 63-65,73-75
+  s_e0af0b8f101c24::t_f175593f6896d9 77
+  s_7dc04ec6e15c53::t_a412081369fd87 1-5,14-20,28-33,66-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "2d98502199a46e5efc768abd8d617290526e7a69",
+  "prompts": {},
+  "sessions": {
+    "s_7dc04ec6e15c53": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a23e3229cc1ff1aed",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_95f9db851d7d24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9c4d39fb1df64c63",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_e0af0b8f101c24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a26ce376-16f2-4a64-9faa-9ee671516b63",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
