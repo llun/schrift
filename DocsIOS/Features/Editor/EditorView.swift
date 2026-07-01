@@ -11,7 +11,26 @@ struct EditorView: View {
 
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
-    @State private var optionsViewModel: OptionsViewModel?
+    @State private var optionsViewModel: OptionsViewModel
+
+    init(
+        viewModel: EditorViewModel,
+        reach: LinkReach,
+        serverHost: String,
+        linkRole: LinkRole? = nil,
+        initialIsFavorite: Bool = false,
+        onBack: (() -> Void)? = nil,
+        onDeleted: (() -> Void)? = nil
+    ) {
+        self.viewModel = viewModel
+        self.reach = reach
+        self.serverHost = serverHost
+        self.linkRole = linkRole
+        self.initialIsFavorite = initialIsFavorite
+        self.onBack = onBack
+        self.onDeleted = onDeleted
+        _optionsViewModel = State(initialValue: OptionsViewModel(client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -89,14 +108,12 @@ struct EditorView: View {
             )
         }
         .sheet(isPresented: $isPresentingOptionsSheet) {
-            if let optionsViewModel {
-                OptionsSheetView(
-                    viewModel: optionsViewModel,
-                    shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
-                    markdown: viewModel.rawMarkdown,
-                    onDeleted: onDeleted
-                )
-            }
+            OptionsSheetView(
+                viewModel: optionsViewModel,
+                shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+                markdown: viewModel.rawMarkdown,
+                onDeleted: onDeleted
+            )
         }
     }
 
@@ -111,9 +128,6 @@ struct EditorView: View {
             NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: { isPresentingShareSheet = true }),
             NavBarAction(systemImage: "pencil", label: "Edit", action: { viewModel.startEditing() }),
             NavBarAction(systemImage: "ellipsis", label: "Options", action: {
-                if optionsViewModel == nil {
-                    optionsViewModel = OptionsViewModel(client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite)
-                }
                 isPresentingOptionsSheet = true
             }),
         ]
