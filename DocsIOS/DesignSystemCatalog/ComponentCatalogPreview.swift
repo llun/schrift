@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ComponentCatalogPreview: View {
     @State private var isSwitchOn = true
+    @State private var searchText = ""
+    @State private var selectedSegment = 0
+    @State private var textFieldValue = ""
 
     var body: some View {
         ScrollView {
@@ -56,6 +59,18 @@ struct ComponentCatalogPreview: View {
                         DocIcon(emoji: nil, tinted: true)
                         DocIcon(emoji: "📌", pinned: true)
                     }
+                }
+
+                catalogSection("Search Field") {
+                    SearchField(text: $searchText)
+                }
+
+                catalogSection("Segmented Control") {
+                    SegmentedControl(segments: ["All", "Shared", "Pinned"], selectedIndex: $selectedSegment)
+                }
+
+                catalogSection("Text Field") {
+                    DocsTextField(label: "Docs server", text: $textFieldValue, placeholder: "docs.example.org", icon: "cloud", helper: "The app signs in with your existing session.")
                 }
             }
             .padding(DocsSpacing.spaceBase)
