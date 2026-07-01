@@ -11,8 +11,8 @@ final class EditorViewModel {
     var isSaving = false
     var errorMessage: String?
 
-    private let client: DocsAPIClient
-    private let documentID: UUID
+    let client: DocsAPIClient
+    let documentID: UUID
     private var savedMarkdown: String = ""
 
     init(client: DocsAPIClient, documentID: UUID, title: String) {

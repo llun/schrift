@@ -92,6 +92,7 @@ struct HomeView: View {
                         title: document.title ?? "Untitled document"
                     ),
                     reach: document.linkReach,
+                    linkRole: document.linkRole,
                     onBack: { path.removeLast() }
                 )
                 .toolbar(.hidden, for: .navigationBar)
