@@ -1,0 +1,22 @@
+DocsIOS/DesignSystem/Tokens/DocsColor.swift
+  s_44afd2562a4f35::t_8c525f247d4ae6 34-39
+  s_44afd2562a4f35::t_57f5993d4f8a30 68-72
+DocsIOSTests/DesignSystem/Tokens/DocsColorHexTests.swift
+  s_44afd2562a4f35::t_86eb52d2aebc88 40-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "760f01d91dad708b3d9c6cb8e45719827c1cc10e",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
