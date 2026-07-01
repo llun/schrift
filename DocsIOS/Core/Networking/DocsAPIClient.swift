@@ -20,7 +20,23 @@ actor DocsAPIClient {
     }
 
     func send<T: Decodable>(path: String, method: String, body: Data?) async throws -> T {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        let data = try await performRequest(path: path, method: method, body: body)
+        do {
+            return try JSONDecoder.docsAPI.decode(T.self, from: data)
+        } catch {
+            throw DocsAPIError.decoding("\(error)")
+        }
+    }
+
+    func sendVoid(path: String, method: String, body: Data?) async throws {
+        _ = try await performRequest(path: path, method: method, body: body)
+    }
+
+    private func performRequest(path: String, method: String, body: Data?) async throws -> Data {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
+            throw DocsAPIError.network("Invalid path: \(path)")
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
 
         if let body {
@@ -56,10 +72,6 @@ actor DocsAPIClient {
             throw DocsAPIErrorMapper.map(statusCode: httpResponse.statusCode, headers: headers)
         }
 
-        do {
-            return try JSONDecoder.docsAPI.decode(T.self, from: data)
-        } catch {
-            throw DocsAPIError.decoding("\(error)")
-        }
+        return data
     }
 }
