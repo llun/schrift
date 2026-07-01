@@ -92,8 +92,14 @@ struct HomeView: View {
                         title: document.title ?? "Untitled document"
                     ),
                     reach: document.linkReach,
+                    serverHost: serverHost,
                     linkRole: document.linkRole,
-                    onBack: { path.removeLast() }
+                    initialIsFavorite: document.isFavorite,
+                    onBack: { path.removeLast() },
+                    onDeleted: {
+                        path.removeLast()
+                        Task { await viewModel.load() }
+                    }
                 )
                 .toolbar(.hidden, for: .navigationBar)
             }
