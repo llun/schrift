@@ -1,0 +1,27 @@
+Schrift/Features/Search/SearchScreen.swift
+  s_e0af0b8f101c24::t_ca6cd23568a970 37-38
+Schrift/Features/Shared/SharedViewModel.swift
+  s_e0af0b8f101c24::t_934b4fc9dd132e 31-34,36,38-45
+Schrift/Features/Share/ShareSheetView.swift
+  s_e0af0b8f101c24::t_2badc57263f649 94-96
+Schrift/Features/Search/SearchViewModel.swift
+  s_e0af0b8f101c24::t_50dfd40fa2260d 38-43,48,51
+Schrift/Features/Home/HomeViewModel.swift
+  s_e0af0b8f101c24::t_0afd03e2b7c7a1 88-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "ec83650f127d47eb21a14eafb9ddd961acd02248",
+  "prompts": {},
+  "sessions": {
+    "s_e0af0b8f101c24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a26ce376-16f2-4a64-9faa-9ee671516b63",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
