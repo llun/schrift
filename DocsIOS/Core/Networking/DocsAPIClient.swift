@@ -19,8 +19,12 @@ actor DocsAPIClient {
         try await send(path: path, method: "GET", body: nil)
     }
 
-    func send<T: Decodable>(path: String, method: String, body: Data?) async throws -> T {
-        let data = try await performRequest(path: path, method: method, body: body)
+    func getRawData(_ path: String) async throws -> Data {
+        try await performRequest(path: path, method: "GET", body: nil, contentType: nil)
+    }
+
+    func send<T: Decodable>(path: String, method: String, body: Data?, contentType: String? = "application/json") async throws -> T {
+        let data = try await performRequest(path: path, method: method, body: body, contentType: contentType)
         do {
             return try JSONDecoder.docsAPI.decode(T.self, from: data)
         } catch {
@@ -28,11 +32,11 @@ actor DocsAPIClient {
         }
     }
 
-    func sendVoid(path: String, method: String, body: Data?) async throws {
-        _ = try await performRequest(path: path, method: method, body: body)
+    func sendVoid(path: String, method: String, body: Data?, contentType: String? = "application/json") async throws {
+        _ = try await performRequest(path: path, method: method, body: body, contentType: contentType)
     }
 
-    private func performRequest(path: String, method: String, body: Data?) async throws -> Data {
+    private func performRequest(path: String, method: String, body: Data?, contentType: String?) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw DocsAPIError.network("Invalid path: \(path)")
         }
@@ -41,7 +45,9 @@ actor DocsAPIClient {
 
         if let body {
             request.httpBody = body
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let contentType {
+                request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            }
         }
 
         if method != "GET" {
