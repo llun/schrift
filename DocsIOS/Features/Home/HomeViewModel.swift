@@ -1,0 +1,72 @@
+import Foundation
+
+@MainActor
+@Observable
+final class HomeViewModel {
+    var selectedFilter: HomeFilter = .all
+    var searchQuery: String = ""
+    var pinnedDocuments: [Document] = []
+    var recentDocuments: [Document] = []
+    var searchResults: [Document] = []
+    var isLoading = false
+    var errorMessage: String?
+
+    private let client: DocsAPIClient
+
+    init(client: DocsAPIClient) {
+        self.client = client
+    }
+
+    var showsPinnedSection: Bool {
+        shouldShowPinnedSection(filter: selectedFilter, pinnedCount: pinnedDocuments.count)
+    }
+
+    func load() async {
+        isLoading = true
+        errorMessage = nil
+
+        let params = homeFilterQueryParameters(selectedFilter)
+        do {
+            async let pinnedPage = client.favoriteDocuments()
+            async let recentPage = client.listDocuments(
+                isFavorite: params.isFavorite,
+                isCreatorMe: params.isCreatorMe,
+                ordering: "-updated_at"
+            )
+            pinnedDocuments = try await pinnedPage.results
+            recentDocuments = try await recentPage.results
+        } catch {
+            errorMessage = "Couldn't load documents. Pull to refresh to try again."
+        }
+
+        isLoading = false
+    }
+
+    func selectFilter(_ filter: HomeFilter) async {
+        selectedFilter = filter
+        await load()
+    }
+
+    func search() async {
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            searchResults = []
+            return
+        }
+        do {
+            let page = try await client.searchDocuments(query: trimmed)
+            searchResults = page.results
+        } catch {
+            errorMessage = "Search failed. Please try again."
+        }
+    }
+
+    func toggleFavorite(_ document: Document) async {
+        do {
+            try await client.setFavorite(documentID: document.id, isFavorite: !document.isFavorite)
+            await load()
+        } catch {
+            errorMessage = "Couldn't update favorite. Please try again."
+        }
+    }
+}

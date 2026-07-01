@@ -51,6 +51,9 @@ struct LinkReachPill: View {
         .foregroundStyle(Color(hex: style.foregroundHex))
         .background(Color(hex: style.backgroundHex))
         .clipShape(Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(style.label)
+        .accessibilityHint(showsHint ? style.hint : "")
     }
 }
 

@@ -8,6 +8,25 @@ func docRowReachIndicatorSystemImage(reach: LinkReach) -> String? {
     }
 }
 
+func docRowAccessibilityLabel(title: String, reach: LinkReach, date: String, pinned: Bool) -> String {
+    var parts = [title]
+    if pinned {
+        parts.append("Pinned")
+    }
+    switch reach {
+    case .restricted:
+        break
+    case .authenticated:
+        parts.append("Shared with organization")
+    case .public:
+        parts.append("Public")
+    }
+    if !date.isEmpty {
+        parts.append(date)
+    }
+    return parts.joined(separator: ", ")
+}
+
 struct DocRow: View {
     var emoji: String? = nil
     var title: String = "Untitled document"
@@ -46,6 +65,8 @@ struct DocRow: View {
         .frame(minHeight: DocsSpacing.rowMinHeight)
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
+        .accessibilityLabel(docRowAccessibilityLabel(title: title, reach: reach, date: date, pinned: pinned))
+        .accessibilityAddTraits(.isButton)
     }
 }
 
