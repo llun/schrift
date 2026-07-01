@@ -100,6 +100,30 @@ struct ComponentCatalogPreview: View {
                         ListRow(title: "Delete document", isDestructive: true, action: {})
                     }
                 }
+
+                catalogSection("Link Reach Pill") {
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        LinkReachPill(reach: .restricted, showsHint: true)
+                        LinkReachPill(reach: .authenticated)
+                        LinkReachPill(reach: .public)
+                    }
+                }
+
+                catalogSection("Share Member Row") {
+                    VStack(spacing: 0) {
+                        ShareMemberRow(name: "Camille Moreau", email: "camille.moreau@beta.gouv.fr", role: "Admin", isCurrentUser: true)
+                        ShareMemberRow(name: "Alfredo Levin", email: "alfredo.levin@test.gouv.fr", role: "Editor")
+                        ShareMemberRow(name: "Desirae Dokidis", email: "desirae.dokidis@gmail.com", role: "Reader")
+                    }
+                }
+
+                catalogSection("Doc Row") {
+                    VStack(spacing: 0) {
+                        DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
+                        DocRow(emoji: "📊", title: "Roadmap", reach: .authenticated, date: "Yesterday")
+                        DocRow(title: "Public notes", reach: .public, date: "Last week")
+                    }
+                }
             }
             .padding(DocsSpacing.spaceBase)
         }
