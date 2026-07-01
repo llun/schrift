@@ -1,0 +1,22 @@
+DocsIOS/Features/Home/HomeSplitView.swift
+  s_44afd2562a4f35::t_30c3bb8e07633d 1-40
+DocsIOS/App/RootView.swift
+  s_44afd2562a4f35::t_3bfa43a19c2ca9 29
+  s_44afd2562a4f35::t_ba7e628f235af7 3-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "f3f767a4a210f005808153c97be778d5bf6390ba",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
