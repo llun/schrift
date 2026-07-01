@@ -1,0 +1,131 @@
+SchriftTests/DesignSystem/Components/AvatarTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-32
+SchriftTests/Core/Auth/FakeKeychainStore.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-18
+SchriftTests/Core/Networking/CSRFTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-17
+SchriftTests/Core/Networking/FormattedDocumentContentTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-63
+SchriftTests/DesignSystem/Components/NavBarTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-12
+SchriftTests/Core/Auth/KeychainStoreTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-42
+SchriftTests/DesignSystem/Tokens/DocsSpacingTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-32
+SchriftTests/Core/Networking/DocumentDecodingTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-113
+SchriftTests/Core/Networking/ShareModelsTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-128
+SchriftTests/DesignSystem/Tokens/HexColorComponentsTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-32
+SchriftTests/Features/Editor/MarkdownBlockTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-68
+SchriftTests/DesignSystem/Components/DocIconTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-16
+SchriftTests/Features/Home/HomeFilterTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-32
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-93
+README.md
+  s_e0af0b8f101c24::t_4110b3f3b4ed4b 1,3
+  s_e0af0b8f101c24::t_4bf1450cb6227c 20
+  s_e0af0b8f101c24::t_9d5c006b49be8e 13
+Schrift/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_e0af0b8f101c24::t_34828e3cb0cf84 4
+Schrift/Core/Auth/SessionStore.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-32
+Schrift/Features/Connect/RecentServersStore.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-32
+SchriftTests/DesignSystem/Components/ButtonStyleResolverTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-37
+.gitignore
+  s_e0af0b8f101c24::t_572067fe279dc6 5
+SchriftTests/DesignSystem/Components/BadgeStyleResolverTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-28
+Schrift/Features/Connect/ConnectView.swift
+  s_e0af0b8f101c24::t_db97ee4f1ece5d 51
+  s_e0af0b8f101c24::t_17abd928448e05 40
+  s_e0af0b8f101c24::t_64114c9298e783 9-32
+SchriftTests/Features/Home/DocumentCacheStoreTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-73
+SchriftTests/Features/Connect/RecentServersStoreTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-62
+SchriftTests/Core/Networking/DocsAPIErrorTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-31
+SchriftTests/DesignSystem/Components/TabBarTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-16
+SchriftTests/Core/Networking/DocumentDuplicateTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-26
+SchriftTests/Core/Networking/DocumentRoleTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-18
+SchriftTests/DesignSystem/Components/ShareMemberRowTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-12
+project.yml
+  s_e0af0b8f101c24::t_30af784d4c35a5 1,13,17,20,22,29,31,35,37,40
+Schrift/App/SchriftApp.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-10
+SchriftTests/Features/Connect/ServerURLInputTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-44
+SchriftTests/DesignSystem/Tokens/DocsTypographySpecTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-41
+SchriftTests/DesignSystem/Components/ListRowTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-12
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-276
+Schrift/Features/Home/DocumentCacheStore.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-49
+SchriftTests/DesignSystem/Components/LinkReachPillTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-25
+SchriftTests/DesignSystem/Components/TextFieldStyleResolverTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-24
+SchriftTests/Core/Networking/DocsAPIClientTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-120
+SchriftTests/DesignSystem/Components/DocRowTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-51
+SchriftTests/Core/Networking/ShareEndpointsClientTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-108
+SchriftTests/Core/Auth/WebLoginTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-64
+Schrift/Assets.xcassets/SchriftLogo.imageset/Contents.json
+  s_e0af0b8f101c24::t_a15e180cbacb62 1-21
+docs/superpowers/plans/2026-07-01-schrift-design-alignment.md
+  s_e0af0b8f101c24::t_e4bad8313ef951 1-58
+SchriftTests/DesignSystem/Tokens/DocsColorHexTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-47
+SchriftTests/Core/Networking/DocumentEndpointsTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-121
+SchriftTests/Features/Share/ShareViewModelTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-135
+SchriftTests/DesignSystem/Components/AvatarGroupTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-25
+SchriftTests/DesignSystem/Components/IconButtonStyleResolverTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-28
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-52
+SchriftTests/Features/Connect/ConnectViewModelTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-95
+SchriftTests/Core/Networking/DocumentSaveTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-205
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-150
+SchriftTests/DesignSystem/Components/SegmentedControlTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-36
+SchriftTests/DesignSystem/Tokens/DocsRadiusTests.swift
+  s_e0af0b8f101c24::t_5a50d5bd5e1c88 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "bb8d5a4c953c142987e0817d9be3123c42d1aa78",
+  "prompts": {},
+  "sessions": {
+    "s_e0af0b8f101c24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a26ce376-16f2-4a64-9faa-9ee671516b63",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
