@@ -12,9 +12,13 @@ final class HomeViewModel {
     var errorMessage: String?
 
     let client: DocsAPIClient
+    private let cache: DocumentCacheStore
 
-    init(client: DocsAPIClient) {
+    init(client: DocsAPIClient, cache: DocumentCacheStore = DocumentCacheStore()) {
         self.client = client
+        self.cache = cache
+        pinnedDocuments = cache.loadPinnedDocuments()
+        recentDocuments = cache.loadRecentDocuments()
     }
 
     var showsPinnedSection: Bool {
@@ -35,6 +39,10 @@ final class HomeViewModel {
             )
             pinnedDocuments = try await pinnedPage.results
             recentDocuments = try await recentPage.results
+            cache.savePinnedDocuments(pinnedDocuments)
+            if selectedFilter == .all {
+                cache.saveRecentDocuments(recentDocuments)
+            }
         } catch {
             errorMessage = "Couldn't load documents. Pull to refresh to try again."
         }
