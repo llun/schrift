@@ -3,7 +3,10 @@ import SwiftUI
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
+    var linkRole: LinkRole? = nil
     var onBack: (() -> Void)? = nil
+
+    @State private var isPresentingShareSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +59,16 @@ struct EditorView: View {
         .task {
             await viewModel.load()
         }
+        .sheet(isPresented: $isPresentingShareSheet) {
+            ShareSheetView(
+                viewModel: ShareViewModel(
+                    client: viewModel.client,
+                    documentID: viewModel.documentID,
+                    linkReach: reach,
+                    linkRole: linkRole
+                )
+            )
+        }
     }
 
     private var trailingActions: [NavBarAction] {
@@ -66,7 +79,7 @@ struct EditorView: View {
             ]
         }
         return [
-            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
+            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: { isPresentingShareSheet = true }),
             NavBarAction(systemImage: "pencil", label: "Edit", action: { viewModel.startEditing() }),
             NavBarAction(systemImage: "ellipsis", label: "Options", action: {}),
         ]
