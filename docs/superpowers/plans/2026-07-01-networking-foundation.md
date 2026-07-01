@@ -36,9 +36,9 @@ DocsIOS/
     └── Networking/
         ├── DocsAPIError.swift                              — DocsAPIError, DocsAPIErrorMapper (Task 1)
         ├── DocumentRole.swift                               — DocumentRole, LinkRole (Task 2)
-        ├── Document.swift                                    — LinkReach Codable extension, DocumentAbilities, Document (Task 2)
+        ├── Document.swift                                    — JSONDecoder.docsAPI, LinkReach Codable extension, DocumentAbilities, Document (Task 2)
         ├── CSRF.swift                                        — csrfToken(from:) (Task 3)
-        └── DocsAPIClient.swift                               — JSONDecoder.docsAPI, DocsAPIClient (Task 3)
+        └── DocsAPIClient.swift                               — DocsAPIClient (Task 3)
 
 DocsIOSTests/
 └── Core/
@@ -164,7 +164,7 @@ git commit -m "Add DocsAPIError type"
 
 **Interfaces:**
 - Consumes: `LinkReach` (from `DesignSystem/Components/LinkReachPill.swift`, an earlier plan).
-- Produces: `enum DocumentRole: String, Codable`, `enum LinkRole: String, Codable`, `extension LinkReach: Codable`, `struct DocumentAbilities: Codable, Equatable`, `struct Document: Codable, Equatable, Identifiable` — all consumed by Task 3's `DocsAPIClient` and by later plans' endpoint methods.
+- Produces: `enum DocumentRole: String, Codable`, `enum LinkRole: String, Codable`, `extension LinkReach: Codable`, `struct DocumentAbilities: Codable, Equatable`, `struct Document: Codable, Equatable, Identifiable`, `extension JSONDecoder { static let docsAPI: JSONDecoder }` — all consumed by Task 3's `DocsAPIClient` and by later plans' endpoint methods. `JSONDecoder.docsAPI` is defined here (not in Task 3) specifically so this task's own `DocumentDecodingTests` can use it without a forward reference to a file Task 3 hasn't created yet — every task in this plan must leave the full test target compiling and green, including this one.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -310,7 +310,7 @@ final class DocumentDecodingTests: XCTestCase {
 - [ ] **Step 2: Regenerate and run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild test -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:DocsIOSTests/DocumentRoleTests -only-testing:DocsIOSTests/DocumentDecodingTests`
-Expected: FAIL — `cannot find 'DocumentRole' in scope` (`DocumentDecodingTests` also fails to build since `JSONDecoder.docsAPI` doesn't exist yet — Task 3 provides it; use step 4 of Task 3 as the true green checkpoint for `DocumentDecodingTests`, this step just confirms `DocumentRoleTests` fails for the expected reason)
+Expected: FAIL — `cannot find 'DocumentRole' in scope` / `cannot find 'docsAPI' in scope`
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -336,6 +336,34 @@ enum LinkRole: String, Codable {
 `DocsIOS/Core/Networking/Document.swift`:
 ```swift
 import Foundation
+
+extension JSONDecoder {
+    static let docsAPI: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let withFractionalSeconds = ISO8601DateFormatter()
+        withFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let withoutFractionalSeconds = ISO8601DateFormatter()
+        withoutFractionalSeconds.formatOptions = [.withInternetDateTime]
+
+        decoder.dateDecodingStrategy = .custom { dateDecoder in
+            let container = try dateDecoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = withFractionalSeconds.date(from: string) {
+                return date
+            }
+            if let date = withoutFractionalSeconds.date(from: string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected ISO8601 date, got \(string)"
+            )
+        }
+        return decoder
+    }()
+}
 
 extension LinkReach: Codable {}
 
@@ -390,8 +418,8 @@ struct Document: Codable, Equatable, Identifiable {
 
 - [ ] **Step 4: Regenerate and run the tests to verify they pass**
 
-Run: `xcodegen generate && xcodebuild test -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:DocsIOSTests/DocumentRoleTests`
-Expected: PASS — `Executed 2 tests, with 0 failures` (`DocumentDecodingTests` needs `JSONDecoder.docsAPI` from Task 3 — its 4 tests turn green once Task 3 lands; do not treat its continued failure at this point as a Task 2 regression)
+Run: `xcodegen generate && xcodebuild test -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:DocsIOSTests/DocumentRoleTests -only-testing:DocsIOSTests/DocumentDecodingTests`
+Expected: PASS — `Executed 6 tests, with 0 failures` (2 DocumentRoleTests + 4 DocumentDecodingTests). Also run the full suite before committing: `xcodebuild test -project DocsIOS.xcodeproj -scheme DocsIOS -destination 'platform=iOS Simulator,name=iPhone 17'` — expect `Executed 89 tests, with 0 failures` (77 from the prior six plans + 6 DocsAPIError + 2 DocumentRoleTests + 4 DocumentDecodingTests).
 
 - [ ] **Step 5: Commit**
 
@@ -412,8 +440,8 @@ git commit -m "Add DocumentRole, LinkRole, and Document Codable models"
 - Test: `DocsIOSTests/Core/Networking/DocsAPIClientTests.swift`
 
 **Interfaces:**
-- Consumes: `DocsAPIError`, `DocsAPIErrorMapper` (Task 1), `Document` and friends (Task 2, transitively via `JSONDecoder.docsAPI` in tests).
-- Produces: `func csrfToken(from cookies: [HTTPCookie]) -> String?`, `extension JSONDecoder { static let docsAPI: JSONDecoder }`, `actor DocsAPIClient` (`init(baseURL:session:cookieProvider:)`, `func get<T: Decodable>(_:) async throws -> T`, `func send<T: Decodable>(path:method:body:) async throws -> T`) — `get`/`send` and `JSONDecoder.docsAPI` are consumed by later plans' endpoint methods (document list/detail, content read/write, sharing).
+- Consumes: `DocsAPIError`, `DocsAPIErrorMapper` (Task 1), `JSONDecoder.docsAPI` (Task 2, used directly by `send`'s decode step).
+- Produces: `func csrfToken(from cookies: [HTTPCookie]) -> String?`, `actor DocsAPIClient` (`init(baseURL:session:cookieProvider:)`, `func get<T: Decodable>(_:) async throws -> T`, `func send<T: Decodable>(path:method:body:) async throws -> T`) — `get`/`send` are consumed by later plans' endpoint methods (document list/detail, content read/write, sharing).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -633,34 +661,6 @@ func csrfToken(from cookies: [HTTPCookie]) -> String? {
 `DocsIOS/Core/Networking/DocsAPIClient.swift`:
 ```swift
 import Foundation
-
-extension JSONDecoder {
-    static let docsAPI: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-
-        let withFractionalSeconds = ISO8601DateFormatter()
-        withFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let withoutFractionalSeconds = ISO8601DateFormatter()
-        withoutFractionalSeconds.formatOptions = [.withInternetDateTime]
-
-        decoder.dateDecodingStrategy = .custom { dateDecoder in
-            let container = try dateDecoder.singleValueContainer()
-            let string = try container.decode(String.self)
-            if let date = withFractionalSeconds.date(from: string) {
-                return date
-            }
-            if let date = withoutFractionalSeconds.date(from: string) {
-                return date
-            }
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Expected ISO8601 date, got \(string)"
-            )
-        }
-        return decoder
-    }()
-}
 
 actor DocsAPIClient {
     private let baseURL: URL
