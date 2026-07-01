@@ -9,7 +9,12 @@ struct DocumentListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Docs", subtitle: serverHost, largeTitle: true)
+            NavBar(
+                title: "Docs",
+                subtitle: serverHost,
+                largeTitle: true,
+                titleBadge: viewModel.isOffline ? Badge(text: "Offline", tone: .warning, icon: "wifi.slash") : nil
+            )
 
             VStack(spacing: DocsSpacing.spaceSM) {
                 SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
