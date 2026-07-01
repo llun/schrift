@@ -15,6 +15,7 @@ struct SearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(DocsColor.textTertiary)
                 }
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)

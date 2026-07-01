@@ -20,10 +20,10 @@ struct SegmentedControl: View {
         GeometryReader { geometry in
             let layout = segmentedControlLayout(segmentCount: segments.count, selectedIndex: selectedIndex)
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: DocsRadius.sm)
+                Capsule()
                     .fill(DocsColor.surfaceMuted)
 
-                RoundedRectangle(cornerRadius: DocsRadius.sm)
+                Capsule()
                     .fill(DocsColor.surfacePage)
                     .frame(width: geometry.size.width * layout.segmentFraction)
                     .offset(x: geometry.size.width * layout.thumbOffsetFraction)
