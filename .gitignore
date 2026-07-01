@@ -2,7 +2,7 @@
 .DS_Store
 
 # Xcode / XcodeGen
-DocsIOS.xcodeproj/
+*.xcodeproj/
 *.xcworkspace/
 xcuserdata/
 DerivedData/
