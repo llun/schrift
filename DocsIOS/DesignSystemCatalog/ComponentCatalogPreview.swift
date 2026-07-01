@@ -37,6 +37,26 @@ struct ComponentCatalogPreview: View {
                 catalogSection("Switch") {
                     Switch(isOn: $isSwitchOn)
                 }
+
+                catalogSection("Avatars") {
+                    HStack(spacing: DocsSpacing.spaceSM) {
+                        Avatar(name: "Camille Moreau")
+                        Avatar(name: "Alfredo Levin", size: 48)
+                        Avatar(name: "")
+                    }
+                }
+
+                catalogSection("Avatar Group") {
+                    AvatarGroup(names: ["Camille Moreau", "Alfredo Levin", "Desirae Dokidis", "Amandine Salambo", "Charlie Saris"], max: 3)
+                }
+
+                catalogSection("Doc Icons") {
+                    HStack(spacing: DocsSpacing.spaceSM) {
+                        DocIcon(emoji: "📄")
+                        DocIcon(emoji: nil, tinted: true)
+                        DocIcon(emoji: "📌", pinned: true)
+                    }
+                }
             }
             .padding(DocsSpacing.spaceBase)
         }
