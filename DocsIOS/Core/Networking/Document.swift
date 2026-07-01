@@ -30,7 +30,7 @@ extension JSONDecoder {
 
 extension LinkReach: Codable {}
 
-struct DocumentAbilities: Codable, Equatable {
+struct DocumentAbilities: Codable, Equatable, Hashable {
     var update: Bool = false
     var partialUpdate: Bool = false
     var destroy: Bool = false
@@ -59,7 +59,7 @@ struct DocumentAbilities: Codable, Equatable {
     }
 }
 
-struct Document: Codable, Equatable, Identifiable {
+struct Document: Codable, Equatable, Hashable, Identifiable {
     let id: UUID
     var title: String?
     var excerpt: String?

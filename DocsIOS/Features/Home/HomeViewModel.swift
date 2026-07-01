@@ -11,7 +11,7 @@ final class HomeViewModel {
     var isLoading = false
     var errorMessage: String?
 
-    private let client: DocsAPIClient
+    let client: DocsAPIClient
 
     init(client: DocsAPIClient) {
         self.client = client
