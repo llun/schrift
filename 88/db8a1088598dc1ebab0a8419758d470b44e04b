@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-01-options-sheet.md
+  s_44afd2562a4f35::t_0a27c62136e103 1-548
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "88db8a1088598dc1ebab0a8419758d470b44e04b",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
