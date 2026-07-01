@@ -11,10 +11,7 @@ struct EditorView: View {
                 title: viewModel.title,
                 backTitle: "Docs",
                 onBack: onBack,
-                trailingActions: [
-                    NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
-                    NavBarAction(systemImage: "ellipsis", label: "Options", action: {}),
-                ]
+                trailingActions: trailingActions
             )
 
             HStack(spacing: DocsSpacing.spaceXS) {
@@ -34,11 +31,17 @@ struct EditorView: View {
                     .padding(.horizontal, DocsSpacing.gutter)
             }
 
-            ScrollView {
-                if viewModel.isLoading {
-                    ProgressView()
-                        .padding(DocsSpacing.spaceBase)
-                } else {
+            if viewModel.isLoading {
+                ProgressView()
+                    .padding(DocsSpacing.spaceBase)
+                Spacer()
+            } else if viewModel.isEditing {
+                TextEditor(text: $viewModel.rawMarkdown)
+                    .font(DocsFont.body)
+                    .padding(.horizontal, DocsSpacing.spaceXS)
+                    .disabled(viewModel.isSaving)
+            } else {
+                ScrollView {
                     VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
                         ForEach(Array(viewModel.blocks.enumerated()), id: \.offset) { _, block in
                             MarkdownBlockView(block: block)
@@ -53,6 +56,20 @@ struct EditorView: View {
         .task {
             await viewModel.load()
         }
+    }
+
+    private var trailingActions: [NavBarAction] {
+        if viewModel.isEditing {
+            return [
+                NavBarAction(systemImage: "xmark", label: "Cancel", action: { viewModel.cancelEditing() }),
+                NavBarAction(systemImage: "checkmark", label: "Save", action: { Task { await viewModel.save() } }),
+            ]
+        }
+        return [
+            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
+            NavBarAction(systemImage: "pencil", label: "Edit", action: { viewModel.startEditing() }),
+            NavBarAction(systemImage: "ellipsis", label: "Options", action: {}),
+        ]
     }
 }
 
