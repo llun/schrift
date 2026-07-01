@@ -40,13 +40,30 @@ struct DocumentListView: View {
                     ProgressView()
                         .padding(DocsSpacing.spaceBase)
                 } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    documentSection(title: "Search Results", documents: viewModel.searchResults)
+                    if viewModel.searchResults.isEmpty {
+                        if viewModel.errorMessage == nil {
+                            ContentUnavailableView.search(text: viewModel.searchQuery)
+                        }
+                    } else {
+                        documentSection(title: "Search Results", documents: viewModel.searchResults)
+                    }
+                } else if viewModel.pinnedDocuments.isEmpty && viewModel.recentDocuments.isEmpty {
+                    if viewModel.errorMessage == nil {
+                        ContentUnavailableView(
+                            "No Documents",
+                            systemImage: "doc.text",
+                            description: Text("Documents you create or that are shared with you will appear here.")
+                        )
+                    }
                 } else {
                     if viewModel.showsPinnedSection {
                         documentSection(title: "Pinned", documents: viewModel.pinnedDocuments)
                     }
                     documentSection(title: "Recent", documents: viewModel.recentDocuments)
                 }
+            }
+            .refreshable {
+                await viewModel.load()
             }
         }
         .background(DocsColor.surfacePage)
