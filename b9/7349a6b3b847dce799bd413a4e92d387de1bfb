@@ -1,0 +1,25 @@
+DocsIOSTests/Core/Networking/DocumentDecodingTests.swift
+  s_44afd2562a4f35::t_cd863887525d1a 1-113
+DocsIOS/Core/Networking/DocumentRole.swift
+  s_44afd2562a4f35::t_427a534e4e78fb 1-15
+DocsIOS/Core/Networking/Document.swift
+  s_44afd2562a4f35::t_fc82d8f814ef4d 1-79
+DocsIOSTests/Core/Networking/DocumentRoleTests.swift
+  s_44afd2562a4f35::t_f00f6bd802093f 1-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "b97349a6b3b847dce799bd413a4e92d387de1bfb",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
