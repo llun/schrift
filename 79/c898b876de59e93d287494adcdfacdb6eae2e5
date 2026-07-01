@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-01-editor-screen-readonly.md
+  s_44afd2562a4f35::t_c9d8a6974df155 1-858
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "79c898b876de59e93d287494adcdfacdb6eae2e5",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
