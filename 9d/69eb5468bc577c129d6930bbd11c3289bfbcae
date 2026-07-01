@@ -1,0 +1,26 @@
+DocsIOS/Features/Options/OptionsSheetView.swift
+  s_44afd2562a4f35::t_b965032a16b16e 1-89
+DocsIOS/Features/Editor/EditorView.swift
+  s_44afd2562a4f35::t_e9ee11417da88c 116-117
+  s_44afd2562a4f35::t_b114a8835d26b0 99-104
+  s_44afd2562a4f35::t_7e7e7f33016954 77-86
+  s_44afd2562a4f35::t_513913b6da68fa 6,8,10,13-14
+DocsIOS/Features/Home/HomeView.swift
+  s_44afd2562a4f35::t_c85a9c7942d23b 95,97-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "9d69eb5468bc577c129d6930bbd11c3289bfbcae",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
