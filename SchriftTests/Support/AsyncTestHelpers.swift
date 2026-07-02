@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 
 /// Thread-safe request recorder for MockURLProtocol stub handlers.
-final class RequestLog: @unchecked Sendable {
+final class RequestRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [(method: String, url: String)] = []
 

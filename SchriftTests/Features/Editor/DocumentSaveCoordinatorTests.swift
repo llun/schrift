@@ -49,7 +49,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         return (coordinator, draftStore)
     }
 
-    private func stubSavePipeline(log: RequestLog, postDelay: TimeInterval = 0, patchStatus: Int = 204) {
+    private func stubSavePipeline(log: RequestRecorder, postDelay: TimeInterval = 0, patchStatus: Int = 204) {
+        let tempDocBody = Self.tempDocBody
+        let formattedBody = Self.formattedBody
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             switch request.httpMethod {
@@ -57,9 +59,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
                 if postDelay > 0 {
                     Thread.sleep(forTimeInterval: postDelay)
                 }
-                return .init(statusCode: 201, headers: [:], body: Self.tempDocBody, error: nil)
+                return .init(statusCode: 201, headers: [:], body: tempDocBody, error: nil)
             case "GET" where request.url?.absoluteString.contains("formatted-content") == true:
-                return .init(statusCode: 200, headers: [:], body: Self.formattedBody, error: nil)
+                return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
             case "GET":
                 return .init(statusCode: 200, headers: [:], body: Data([0xAA]), error: nil)
             case "PATCH":
@@ -81,7 +83,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testEnqueueRunsPipelineClearsDraftAndBalancesBackgroundTask() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log)
         let recorder = BackgroundTaskRecorder()
         let (coordinator, draftStore) = makeCoordinator(backgroundTasks: recorder.provider)
@@ -101,7 +103,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testEnqueueWhileInFlightCoalescesToLatestContent() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log, postDelay: 0.2)
         let (coordinator, draftStore) = makeCoordinator()
 
@@ -122,7 +124,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testReenqueueingIdenticalContentWhileInFlightSkipsFollowUp() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log, postDelay: 0.2)
         let (coordinator, _) = makeCoordinator()
 
@@ -137,7 +139,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testFailedSaveKeepsDraftAndReportsFailure() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log, patchStatus: 500)
         let (coordinator, draftStore) = makeCoordinator()
 
@@ -150,7 +152,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testDocumentsSaveIndependently() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log)
         let (coordinator, _) = makeCoordinator()
 
@@ -167,7 +169,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testRecoverDraftsReplaysDraftNewerThanServer() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log)
         let (coordinator, draftStore) = makeCoordinator()
         // Server updated_at is 2026-01-15; a draft written "now" is newer.
@@ -182,7 +184,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testRecoverDraftsDiscardsDraftOlderThanServer() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log)
         let (coordinator, draftStore) = makeCoordinator()
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Stale", updatedAt: Date(timeIntervalSince1970: 0)))
@@ -194,7 +196,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testRecoverDraftsDropsDraftForInaccessibleDocument() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
@@ -209,7 +211,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     }
 
     func testRecoverDraftsRunsOnlyOnce() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         stubSavePipeline(log: log)
         let (coordinator, draftStore) = makeCoordinator()
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))

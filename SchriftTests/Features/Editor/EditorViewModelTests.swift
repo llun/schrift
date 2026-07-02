@@ -41,7 +41,7 @@ final class EditorViewModelTests: XCTestCase {
         """.utf8)
     }
 
-    private func stubLoad(content: String?, log: RequestLog? = nil) {
+    private func stubLoad(content: String?, log: RequestRecorder? = nil) {
         let body = formattedBody(content: content)
         MockURLProtocol.stubHandler = { request in
             log?.record(request)
@@ -49,13 +49,14 @@ final class EditorViewModelTests: XCTestCase {
         }
     }
 
-    private func stubLoadAndSavePipeline(content: String?, log: RequestLog, patchStatus: Int = 204) {
+    private func stubLoadAndSavePipeline(content: String?, log: RequestRecorder, patchStatus: Int = 204) {
         let body = formattedBody(content: content)
+        let tempDocBody = Self.tempDocBody
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             switch request.httpMethod {
             case "POST":
-                return .init(statusCode: 201, headers: [:], body: Self.tempDocBody, error: nil)
+                return .init(statusCode: 201, headers: [:], body: tempDocBody, error: nil)
             case "GET" where request.url?.absoluteString.contains("formatted-content") == true:
                 return .init(statusCode: 200, headers: [:], body: body, error: nil)
             case "GET":
@@ -206,7 +207,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testAutosaveFlushesAfterInterval() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         let (viewModel, _, _) = makeEnvironment(autosaveInterval: .milliseconds(80))
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
@@ -222,7 +223,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testTypingRestartsTheDebounce() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         let (viewModel, _, _) = makeEnvironment(autosaveInterval: .milliseconds(400))
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
@@ -240,7 +241,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testFlushSkipsWhenContentUnchanged() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         let (viewModel, _, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
@@ -257,7 +258,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testDoneFlushesPendingChangesAndExits() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         let (viewModel, _, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
@@ -274,7 +275,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testFailedSaveSurfacesFailedStateAndKeepsDraft() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         let (viewModel, _, draftStore) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log, patchStatus: 500)
         await viewModel.load()
@@ -295,7 +296,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testSaveNowRetriesAfterFailure() async {
-        let log = RequestLog()
+        let log = RequestRecorder()
         let (viewModel, _, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log, patchStatus: 500)
         await viewModel.load()
