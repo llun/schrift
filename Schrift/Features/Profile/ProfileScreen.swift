@@ -58,12 +58,17 @@ struct ProfileScreen: View {
                     Text(viewModel.user?.displayName ?? "Account")
                         .font(DocsFont.headline)
                         .foregroundStyle(DocsColor.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if let email = viewModel.user?.email {
                         Text(email)
                             .font(DocsFont.footnote)
                             .foregroundStyle(DocsColor.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer()
 
