@@ -304,7 +304,9 @@ struct EditorView: View {
             }
             .padding(.top, DocsSpacing.spaceBase)
         }
-        .padding(.top, DocsSpacing.spaceXL)
+        // The reading surface already puts spaceMD between blocks, so this only
+        // needs to add the remainder to reach the reference's 40pt gap.
+        .padding(.top, DocsSpacing.spaceXL - DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
