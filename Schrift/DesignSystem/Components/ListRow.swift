@@ -43,7 +43,7 @@ struct ListRow: View {
 
                 if showsChevron {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 18))
                         .foregroundStyle(DocsColor.gray300)
                 }
             }
