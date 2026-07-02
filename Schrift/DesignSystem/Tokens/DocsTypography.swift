@@ -15,6 +15,7 @@ enum DocsTypographySpec {
     static let subhead = TypographySpec(size: 15, weight: .regular)
     static let footnote = TypographySpec(size: 13, weight: .regular)
     static let caption = TypographySpec(size: 12, weight: .regular)
+    static let code = TypographySpec(size: 15, weight: .regular)
 }
 
 enum DocsFont {
@@ -27,4 +28,5 @@ enum DocsFont {
     static let subhead = Font.system(size: DocsTypographySpec.subhead.size, weight: DocsTypographySpec.subhead.weight)
     static let footnote = Font.system(size: DocsTypographySpec.footnote.size, weight: DocsTypographySpec.footnote.weight)
     static let caption = Font.system(size: DocsTypographySpec.caption.size, weight: DocsTypographySpec.caption.weight)
+    static let code = Font.system(size: DocsTypographySpec.code.size, weight: DocsTypographySpec.code.weight, design: .monospaced)
 }

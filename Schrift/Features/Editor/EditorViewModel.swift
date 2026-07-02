@@ -4,7 +4,7 @@ import Foundation
 @Observable
 final class EditorViewModel {
     var title: String
-    var blocks: [MarkdownBlock] = []
+    var blocks: [EditorBlock] = []
     var rawMarkdown: String = ""
     var subpages: [Document] = []
     var updatedAt: Date? = nil
@@ -33,7 +33,7 @@ final class EditorViewModel {
             }
             savedMarkdown = formatted.content ?? ""
             rawMarkdown = savedMarkdown
-            blocks = parseMarkdownBlocks(savedMarkdown)
+            blocks = parseEditorBlocks(savedMarkdown)
             updatedAt = formatted.updatedAt
             await loadChildren()
         } catch {
@@ -67,7 +67,7 @@ final class EditorViewModel {
         do {
             try await client.saveDocumentContent(documentID: documentID, title: title, markdown: rawMarkdown)
             savedMarkdown = rawMarkdown
-            blocks = parseMarkdownBlocks(rawMarkdown)
+            blocks = parseEditorBlocks(rawMarkdown)
             isEditing = false
         } catch {
             errorMessage = "Couldn't save changes. Please try again."

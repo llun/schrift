@@ -26,7 +26,10 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.blocks, [.heading(level: 1, text: "Heading"), .paragraph(text: "A paragraph.")])
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, [
+            EditorBlock(kind: .heading(level: 1), text: "Heading"),
+            EditorBlock(kind: .paragraph, text: "A paragraph."),
+        ]))
         XCTAssertEqual(viewModel.title, "Q3 Planning")
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertNil(viewModel.errorMessage)
@@ -120,7 +123,7 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.save()
 
-        XCTAssertEqual(viewModel.blocks, [.heading(level: 1, text: "New Heading")])
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, [EditorBlock(kind: .heading(level: 1), text: "New Heading")]))
         XCTAssertFalse(viewModel.isEditing)
         XCTAssertFalse(viewModel.isSaving)
         XCTAssertNil(viewModel.errorMessage)

@@ -38,4 +38,8 @@ final class DocsTypographySpecTests: XCTestCase {
     func testCaptionMatchesDesignSpec() {
         XCTAssertEqual(DocsTypographySpec.caption, TypographySpec(size: 12, weight: .regular))
     }
+
+    func testCodeMatchesDesignSpec() {
+        XCTAssertEqual(DocsTypographySpec.code, TypographySpec(size: 15, weight: .regular))
+    }
 }

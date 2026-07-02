@@ -94,8 +94,8 @@ struct EditorView: View {
                             }
                         } else {
                             VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                                ForEach(Array(viewModel.blocks.enumerated()), id: \.offset) { _, block in
-                                    MarkdownBlockView(block: block)
+                                ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                                    MarkdownBlockView(block: block, numberedIndex: numberedIndex(of: index, in: viewModel.blocks))
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
