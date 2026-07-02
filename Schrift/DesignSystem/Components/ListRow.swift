@@ -18,6 +18,7 @@ struct ListRow: View {
             HStack(spacing: DocsSpacing.spaceSM) {
                 if let systemImage {
                     Image(systemName: systemImage)
+                        .font(.system(size: 24))
                         .foregroundStyle(isDestructive ? DocsColor.danger : DocsColor.textSecondary)
                         .frame(width: 24)
                 }
@@ -48,6 +49,7 @@ struct ListRow: View {
                 }
             }
             .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.vertical, DocsSpacing.spaceSM - DocsSpacing.space4xs)
             .frame(minHeight: DocsSpacing.rowMinHeight)
         }
         .buttonStyle(.plain)
