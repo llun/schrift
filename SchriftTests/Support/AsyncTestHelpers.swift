@@ -29,7 +29,7 @@ final class RequestLog: @unchecked Sendable {
 @MainActor
 func waitUntil(
     timeout: TimeInterval = 3,
-    _ condition: () -> Bool
+    _ condition: @MainActor () -> Bool
 ) async {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition(), Date() < deadline {
