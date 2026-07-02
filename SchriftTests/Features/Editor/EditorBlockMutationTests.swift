@@ -220,6 +220,125 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.title, "Renamed")
     }
 
+    // MARK: - Shortcuts and slash menu wiring
+
+    func testTypingMarkdownPrefixConvertsParagraph() {
+        let block = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.updateText(blockID: block.id, text: "# ")
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .heading(level: 1))
+        XCTAssertEqual(viewModel.blocks[0].text, "")
+    }
+
+    func testShortcutDoesNotFireInsideNonParagraphBlocks() {
+        let block = EditorBlock(kind: .quote, text: "")
+        let viewModel = makeViewModel(blocks: [block])
+
+        viewModel.updateText(blockID: block.id, text: "- ")
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .quote)
+        XCTAssertEqual(viewModel.blocks[0].text, "- ")
+    }
+
+    func testEnterOnFenceTextConvertsToCodeBlock() {
+        let block = EditorBlock(kind: .paragraph, text: "```swift")
+        let viewModel = makeViewModel(blocks: [block])
+
+        viewModel.splitBlock(blockID: block.id, at: 8)
+
+        XCTAssertEqual(viewModel.blocks.count, 1)
+        XCTAssertEqual(viewModel.blocks[0].kind, .codeBlock(language: "swift"))
+        XCTAssertEqual(viewModel.blocks[0].text, "")
+    }
+
+    func testEnterOnDividerTextConvertsAndAddsParagraph() {
+        let block = EditorBlock(kind: .paragraph, text: "---")
+        let viewModel = makeViewModel(blocks: [block])
+
+        viewModel.splitBlock(blockID: block.id, at: 3)
+
+        XCTAssertEqual(viewModel.blocks.map(\.kind), [.divider, .paragraph])
+        XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[1].id)
+    }
+
+    func testSlashTypingOpensQueryAndSelectionAppliesKind() {
+        let block = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.updateText(blockID: block.id, text: "/head")
+        XCTAssertEqual(viewModel.slashQueryText, "head")
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "heading2" }!)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .heading(level: 2))
+        XCTAssertEqual(viewModel.blocks[0].text, "")
+        XCTAssertNil(viewModel.slashQueryText)
+    }
+
+    func testSlashQueryClearsWhenSlashRemoved() {
+        let block = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.updateText(blockID: block.id, text: "/")
+        XCTAssertEqual(viewModel.slashQueryText, "")
+
+        viewModel.updateText(blockID: block.id, text: "")
+        XCTAssertNil(viewModel.slashQueryText)
+    }
+
+    // MARK: - Formatting actions
+
+    func testApplyInlineMarkerWrapsSelectionInFocusedBlock() {
+        let block = EditorBlock(kind: .paragraph, text: "Hello world")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+        viewModel.selection = NSRange(location: 0, length: 5)
+
+        viewModel.applyInlineMarker("**")
+
+        XCTAssertEqual(viewModel.blocks[0].text, "**Hello** world")
+        XCTAssertEqual(viewModel.cursorRequest?.offset, 2)
+        XCTAssertEqual(viewModel.cursorRequest?.length, 5)
+    }
+
+    func testApplyInlineMarkerIgnoresCodeBlocks() {
+        let block = EditorBlock(kind: .codeBlock(language: ""), text: "let x = 1")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.applyInlineMarker("**")
+
+        XCTAssertEqual(viewModel.blocks[0].text, "let x = 1")
+    }
+
+    func testInsertAtCursorInMarkdownMode() {
+        let viewModel = makeViewModel(blocks: [])
+        viewModel.mode = .markdown
+        viewModel.rawMarkdown = "Hello"
+        viewModel.selection = NSRange(location: 5, length: 0)
+
+        viewModel.insertAtCursor("\n- ")
+
+        XCTAssertEqual(viewModel.rawMarkdown, "Hello\n- ")
+        XCTAssertEqual(viewModel.selection, NSRange(location: 8, length: 0))
+    }
+
+    func testInsertDividerBelowFocusedAddsTrailingParagraph() {
+        let block = EditorBlock(kind: .paragraph, text: "Body")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.insertDividerBelowFocused()
+
+        XCTAssertEqual(viewModel.blocks.map(\.kind), [.paragraph, .divider, .paragraph])
+        XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[2].id)
+    }
+
     func testStartEditingOnEmptyDocumentSeedsAParagraph() {
         let viewModel = makeViewModel(blocks: [])
         viewModel.mode = .reading

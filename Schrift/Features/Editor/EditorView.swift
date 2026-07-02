@@ -136,10 +136,22 @@ struct EditorView: View {
                 onSaveTap: { viewModel.saveNow() }
             )
 
-            if viewModel.mode == .markdown {
-                MarkdownSourceView(viewModel: viewModel)
-            } else {
-                BlockEditorView(viewModel: viewModel)
+            Group {
+                if viewModel.mode == .markdown {
+                    MarkdownSourceView(viewModel: viewModel)
+                } else {
+                    BlockEditorView(viewModel: viewModel)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: DocsSpacing.spaceXS) {
+                    if viewModel.mode == .blocks, let query = viewModel.slashQueryText {
+                        SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
+                    }
+                    EditorFormattingBar(viewModel: viewModel)
+                }
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.bottom, DocsSpacing.spaceXS)
             }
         }
     }

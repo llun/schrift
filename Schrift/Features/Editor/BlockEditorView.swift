@@ -152,6 +152,7 @@ private struct BlockEditorRow: View {
         case .beganEditing:
             if viewModel.focusedBlockID != block.id {
                 viewModel.focusedBlockID = block.id
+                viewModel.slashQueryText = nil
             }
         case .endedEditing:
             if viewModel.focusedBlockID == block.id {

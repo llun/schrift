@@ -17,16 +17,18 @@ final class EditorViewModel {
         case failed(String)
     }
 
-    /// A consume-once request to place the caret; the token makes repeated
-    /// requests for the same position distinct.
+    /// A consume-once request to place the caret or selection; the token makes
+    /// repeated requests for the same position distinct.
     struct CursorRequest: Equatable {
         let blockID: UUID
         let offset: Int
+        let length: Int
         let token: UUID
 
-        init(blockID: UUID, offset: Int) {
+        init(blockID: UUID, offset: Int, length: Int = 0) {
             self.blockID = blockID
             self.offset = offset
+            self.length = length
             self.token = UUID()
         }
     }
@@ -194,13 +196,41 @@ final class EditorViewModel {
     func updateText(blockID: UUID, text: String) {
         guard let index = blockIndex(blockID) else { return }
         guard blocks[index].text != text else { return }
+
+        // Markdown typing shortcuts convert a paragraph as soon as its prefix lands.
+        if blocks[index].kind == .paragraph, let match = detectMarkdownShortcut(text: text) {
+            blocks[index].kind = match.kind
+            blocks[index].text = match.remainderText
+            slashQueryText = nil
+            focusBlock(blockID, cursorAt: (match.remainderText as NSString).length)
+            markDirty()
+            return
+        }
+
         blocks[index].text = text
+        slashQueryText = focusedBlockID == blockID ? slashQuery(text: text, kind: blocks[index].kind) : nil
         markDirty()
     }
 
     func splitBlock(blockID: UUID, at offset: Int) {
         guard let index = blockIndex(blockID) else { return }
         let block = blocks[index]
+        slashQueryText = nil
+
+        // "```swift" or "---" followed by Return converts instead of splitting.
+        if block.kind == .paragraph, let match = detectEnterShortcut(text: block.text) {
+            blocks[index].kind = match.kind
+            blocks[index].text = match.remainderText
+            if match.kind == .divider {
+                let newBlock = EditorBlock(kind: .paragraph)
+                blocks.insert(newBlock, at: index + 1)
+                focusBlock(newBlock.id, cursorAt: 0)
+            } else {
+                focusBlock(block.id, cursorAt: 0)
+            }
+            markDirty()
+            return
+        }
 
         // Enter on an empty list item escapes back to a paragraph.
         if block.text.isEmpty, isListKind(block.kind) {
@@ -289,6 +319,88 @@ final class EditorViewModel {
         blocks.insert(newBlock, at: insertionIndex)
         if kind != .divider {
             focusBlock(newBlock.id, cursorAt: 0)
+        }
+        markDirty()
+    }
+
+    // MARK: - Formatting bar actions
+
+    /// Wraps (or unwraps) the current selection in an inline markdown marker.
+    /// With no selection, inserts a marker pair and places the caret between.
+    func applyInlineMarker(_ marker: String) {
+        if mode == .markdown {
+            let range = selection ?? NSRange(location: (rawMarkdown as NSString).length, length: 0)
+            let result = wrapInlineMarker(text: rawMarkdown, range: range, marker: marker)
+            rawMarkdown = result.text
+            selection = result.selection
+            markDirty()
+            return
+        }
+        guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
+        switch blocks[index].kind {
+        case .codeBlock, .unknown, .divider:
+            return
+        default:
+            break
+        }
+        let range = selection ?? NSRange(location: (blocks[index].text as NSString).length, length: 0)
+        let result = wrapInlineMarker(text: blocks[index].text, range: range, marker: marker)
+        blocks[index].text = result.text
+        cursorRequest = CursorRequest(blockID: focusedBlockID, offset: result.selection.location, length: result.selection.length)
+        markDirty()
+    }
+
+    /// Converts the focused block's type (blocks mode).
+    func convertFocusedBlock(to kind: BlockKind) {
+        guard let focusedBlockID else { return }
+        convertBlock(blockID: focusedBlockID, to: kind)
+    }
+
+    /// Inserts a divider below the focused block (or at the end), keeping an
+    /// editable paragraph after it.
+    func insertDividerBelowFocused() {
+        let anchorID = focusedBlockID ?? blocks.last?.id
+        let insertionIndex: Int
+        if let anchorID, let index = blockIndex(anchorID) {
+            insertionIndex = index + 1
+        } else {
+            insertionIndex = blocks.count
+        }
+        let divider = EditorBlock(kind: .divider)
+        blocks.insert(divider, at: insertionIndex)
+        if insertionIndex == blocks.count - 1 {
+            let paragraph = EditorBlock(kind: .paragraph)
+            blocks.insert(paragraph, at: insertionIndex + 1)
+            focusBlock(paragraph.id, cursorAt: 0)
+        }
+        markDirty()
+    }
+
+    /// Inserts raw text at the caret in markdown-source mode.
+    func insertAtCursor(_ token: String) {
+        let source = rawMarkdown as NSString
+        var range = selection ?? NSRange(location: source.length, length: 0)
+        range.location = min(max(0, range.location), source.length)
+        range.length = min(max(0, range.length), source.length - range.location)
+        rawMarkdown = source.replacingCharacters(in: range, with: token)
+        selection = NSRange(location: range.location + (token as NSString).length, length: 0)
+        markDirty()
+    }
+
+    /// Applies a block type chosen from the slash menu to the focused block,
+    /// consuming the "/query" text.
+    func applySlashSelection(_ item: SlashMenuItem) {
+        guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
+        blocks[index].text = ""
+        slashQueryText = nil
+        if item.kind == .divider {
+            blocks[index].kind = .divider
+            let newBlock = EditorBlock(kind: .paragraph)
+            blocks.insert(newBlock, at: index + 1)
+            focusBlock(newBlock.id, cursorAt: 0)
+        } else {
+            blocks[index].kind = item.kind
+            focusBlock(focusedBlockID, cursorAt: 0)
         }
         markDirty()
     }

@@ -169,10 +169,11 @@ struct BlockTextView: UIViewRepresentable {
     private func consumeCursorRequest(on uiView: EditorUITextView, coordinator: Coordinator) {
         guard let request = cursorRequest, coordinator.consumedCursorToken != request.token else { return }
         coordinator.consumedCursorToken = request.token
-        let length = ((uiView.text ?? "") as NSString).length
-        let offset = min(max(0, request.offset), length)
+        let textLength = ((uiView.text ?? "") as NSString).length
+        let offset = min(max(0, request.offset), textLength)
+        let length = min(max(0, request.length), textLength - offset)
         Task { @MainActor in
-            uiView.selectedRange = NSRange(location: offset, length: 0)
+            uiView.selectedRange = NSRange(location: offset, length: length)
             onCursorRequestHandled(request.token)
         }
     }
