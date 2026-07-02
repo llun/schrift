@@ -18,7 +18,8 @@ struct SubpageRow: View {
     var body: some View {
         Button(action: { onOpen?() }) {
             HStack(spacing: DocsSpacing.spaceSM) {
-                DocIcon(size: 24, tinted: true)
+                DocIcon(size: 22)
+                    .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(displayTitle)
@@ -45,11 +46,11 @@ struct SubpageRow: View {
                 }
 
                 Image(systemName: "chevron.right")
-                    .font(DocsFont.caption)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .font(.system(size: 16))
+                    .foregroundStyle(DocsColor.gray300)
             }
-            .padding(.horizontal, DocsSpacing.spaceBase)
-            .frame(minHeight: DocsSpacing.rowMinHeight)
+            .padding(.horizontal, DocsSpacing.spaceXS)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
