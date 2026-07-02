@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_a9c5d21d88404f::t_db7398553fad38 49-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "d955007db5221fdb6eb670e7a14bdf8d8c35d629",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
