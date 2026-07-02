@@ -14,45 +14,54 @@ struct ListRow: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        Button(action: { action?() }) {
-            HStack(spacing: DocsSpacing.spaceSM) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 24))
-                        .foregroundStyle(isDestructive ? DocsColor.danger : DocsColor.textSecondary)
-                        .frame(width: 24)
-                }
+        // Only interactive rows are buttons; static informational rows (no
+        // action) render as plain views so VoiceOver doesn't announce an inert
+        // button (mirrors the reference's `interactive` gating).
+        if let action {
+            Button(action: action) { rowContent }
+                .buttonStyle(.plain)
+        } else {
+            rowContent
+        }
+    }
 
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title)
-                        .font(DocsFont.body)
-                        .foregroundStyle(Color(hex: listRowTitleColorHex(isDestructive: isDestructive)))
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
-                    }
-                }
+    private var rowContent: some View {
+        HStack(spacing: DocsSpacing.spaceSM) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 24))
+                    .foregroundStyle(isDestructive ? DocsColor.danger : DocsColor.textSecondary)
+                    .frame(width: 24)
+            }
 
-                Spacer()
-
-                if let value {
-                    Text(value)
-                        .font(DocsFont.body)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(DocsFont.body)
+                    .foregroundStyle(Color(hex: listRowTitleColorHex(isDestructive: isDestructive)))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.textTertiary)
                 }
-
-                if showsChevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 18))
-                        .foregroundStyle(DocsColor.gray300)
-                }
             }
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.vertical, DocsSpacing.spaceSM - DocsSpacing.space4xs)
-            .frame(minHeight: DocsSpacing.rowMinHeight)
+
+            Spacer()
+
+            if let value {
+                Text(value)
+                    .font(DocsFont.body)
+                    .foregroundStyle(DocsColor.textTertiary)
+            }
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 18))
+                    .foregroundStyle(DocsColor.gray300)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.vertical, DocsSpacing.spaceSM - DocsSpacing.space4xs)
+        .frame(minHeight: DocsSpacing.rowMinHeight)
     }
 }
 
