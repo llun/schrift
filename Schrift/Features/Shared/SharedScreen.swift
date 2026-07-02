@@ -53,10 +53,7 @@ struct SharedScreen: View {
                     ListSection(header: "\(viewModel.documents.count) documents") {
                         ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
                             if index > 0 {
-                                Rectangle()
-                                    .fill(DocsColor.borderDefault)
-                                    .frame(height: 1)
-                                    .padding(.leading, 52)
+                                ProfileRowDivider()
                             }
                             SharedRow(
                                 title: document.title ?? "Untitled document",
