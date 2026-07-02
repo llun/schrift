@@ -149,20 +149,18 @@ struct BlockTextView: UIViewRepresentable {
         }
     }
 
+    /// Applies focus synchronously: deferring into a task can drop updates or
+    /// steal focus back after the user has already moved on. Delegate echoes
+    /// of programmatic changes are suppressed via `isApplyingModelChange`.
     private func syncFocus(on uiView: EditorUITextView, coordinator: Coordinator) {
-        guard !coordinator.isSyncingFocus else { return }
         if isFocused, !uiView.isFirstResponder, uiView.window != nil {
-            coordinator.isSyncingFocus = true
-            Task { @MainActor in
-                uiView.becomeFirstResponder()
-                coordinator.isSyncingFocus = false
-            }
+            coordinator.isApplyingModelChange = true
+            uiView.becomeFirstResponder()
+            coordinator.isApplyingModelChange = false
         } else if !isFocused, uiView.isFirstResponder {
-            coordinator.isSyncingFocus = true
-            Task { @MainActor in
-                uiView.resignFirstResponder()
-                coordinator.isSyncingFocus = false
-            }
+            coordinator.isApplyingModelChange = true
+            uiView.resignFirstResponder()
+            coordinator.isApplyingModelChange = false
         }
     }
 
@@ -172,8 +170,12 @@ struct BlockTextView: UIViewRepresentable {
         let textLength = ((uiView.text ?? "") as NSString).length
         let offset = min(max(0, request.offset), textLength)
         let length = min(max(0, request.length), textLength - offset)
+        coordinator.isApplyingModelChange = true
+        uiView.selectedRange = NSRange(location: offset, length: length)
+        coordinator.isApplyingModelChange = false
+        // Clearing the consumed request mutates observed state, so it must
+        // happen outside the current view update.
         Task { @MainActor in
-            uiView.selectedRange = NSRange(location: offset, length: length)
             onCursorRequestHandled(request.token)
         }
     }
@@ -184,7 +186,6 @@ struct BlockTextView: UIViewRepresentable {
         var appliedStyling: BlockTextStyling?
         var consumedCursorToken: UUID?
         var isApplyingModelChange = false
-        var isSyncingFocus = false
 
         init(_ parent: BlockTextView) {
             self.parent = parent
@@ -234,10 +235,12 @@ struct BlockTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
+            guard !isApplyingModelChange else { return }
             parent.onEvent(.beganEditing)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
+            guard !isApplyingModelChange else { return }
             parent.onEvent(.endedEditing)
         }
     }

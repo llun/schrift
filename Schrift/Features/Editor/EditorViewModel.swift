@@ -347,6 +347,7 @@ final class EditorViewModel {
         let result = wrapInlineMarker(text: blocks[index].text, range: range, marker: marker)
         blocks[index].text = result.text
         cursorRequest = CursorRequest(blockID: focusedBlockID, offset: result.selection.location, length: result.selection.length)
+        selection = result.selection
         markDirty()
     }
 
@@ -477,6 +478,9 @@ final class EditorViewModel {
     private func focusBlock(_ blockID: UUID, cursorAt offset: Int) {
         focusedBlockID = blockID
         cursorRequest = CursorRequest(blockID: blockID, offset: offset)
+        // Programmatic caret moves don't echo back through the text view's
+        // delegate, so keep the tracked selection in sync here.
+        selection = NSRange(location: offset, length: 0)
     }
 
     private func isListKind(_ kind: BlockKind) -> Bool {

@@ -184,6 +184,16 @@ final class MarkdownParserTests: XCTestCase {
         ])
     }
 
+    func testCRLFLineEndingsParseLikeLF() {
+        assertParses("# Title\r\n\r\nBody text.", [
+            EditorBlock(kind: .heading(level: 1), text: "Title"),
+            EditorBlock(kind: .paragraph, text: "Body text."),
+        ])
+        // CRLF must not split a multi-line run apart with phantom blank lines.
+        assertParses("line one\r\nline two", [EditorBlock(kind: .unknown, text: "line one\nline two")])
+        XCTAssertTrue(markdownSurvivesRoundTrip("- item one\r\n- item two\r\n"))
+    }
+
     // MARK: - Round-trip survival gate
 
     func testRealisticDocumentSurvivesRoundTrip() {

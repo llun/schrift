@@ -15,7 +15,7 @@ import Foundation
 func parseEditorBlocks(_ markdown: String) -> [EditorBlock] {
     var blocks: [EditorBlock] = []
     var pendingLines: [String] = []
-    let lines = markdown.components(separatedBy: .newlines)
+    let lines = markdownLines(markdown)
     var index = 0
 
     func flushPending() {
@@ -85,9 +85,19 @@ func markdownSurvivesRoundTrip(_ markdown: String) -> Bool {
     return canonicalLineCounts(markdown) == canonicalLineCounts(once)
 }
 
+/// Splits into lines with line endings normalized: splitting on the
+/// `.newlines` character set would turn every CRLF into a spurious blank line
+/// and break multi-line runs apart.
+private func markdownLines(_ markdown: String) -> [String] {
+    markdown
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\r", with: "\n")
+        .components(separatedBy: "\n")
+}
+
 private func canonicalLineCounts(_ markdown: String) -> [String: Int] {
     var counts: [String: Int] = [:]
-    for line in markdown.components(separatedBy: .newlines) {
+    for line in markdownLines(markdown) {
         let canonical = canonicalizeLine(line)
         guard !canonical.isEmpty else { continue }
         counts[canonical, default: 0] += 1
