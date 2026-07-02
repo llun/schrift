@@ -11,28 +11,31 @@ struct DocIcon: View {
     var tinted: Bool = false
     var pinned: Bool = false
 
+    private var box: CGFloat { tinted ? size + 14 : size }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Group {
                 if let displayEmoji = docIconDisplayText(emoji: emoji) {
                     Text(displayEmoji)
-                        .font(.system(size: size * 0.7))
+                        .font(.system(size: size * 0.9))
                 } else {
                     Image(systemName: "doc.text")
-                        .font(.system(size: size * 0.55))
+                        .font(.system(size: size))
                         .foregroundStyle(DocsColor.brandFill)
                 }
             }
-            .frame(width: size, height: size)
-            .background(tinted ? DocsColor.brandFillSoft : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
+            .frame(width: box, height: box)
+            .background(tinted ? DocsColor.brandFillSubtle : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: tinted ? DocsRadius.md : 0))
 
             if pinned {
                 Image(systemName: "pin.fill")
-                    .font(.system(size: size * 0.3))
+                    .font(.system(size: 14))
                     .foregroundStyle(DocsColor.brandFill)
-                    .background(Circle().fill(DocsColor.surfacePage).frame(width: size * 0.4, height: size * 0.4))
-                    .offset(x: size * 0.15, y: size * 0.15)
+                    .padding(1)
+                    .background(Circle().fill(DocsColor.surfacePage))
+                    .offset(x: 4, y: 4)
             }
         }
     }
