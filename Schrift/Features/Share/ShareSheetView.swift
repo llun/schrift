@@ -16,7 +16,7 @@ struct ShareSheetView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                SearchField(text: $viewModel.searchQuery, placeholder: "Invite by name or email", icon: "person.badge.plus")
+                DocsTextField(text: $viewModel.searchQuery, placeholder: "Invite by name or email", icon: "person.badge.plus")
                     .padding(.horizontal, DocsSpacing.gutter)
                     .padding(.vertical, DocsSpacing.spaceSM)
 

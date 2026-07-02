@@ -32,7 +32,7 @@ enum TextFieldStyleResolver {
 }
 
 struct DocsTextField: View {
-    let label: String
+    var label: String? = nil
     @Binding var text: String
     var placeholder: String = ""
     var icon: String? = nil
@@ -52,9 +52,11 @@ struct DocsTextField: View {
     var body: some View {
         let style = TextFieldStyleResolver.style(state: state)
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-            Text(label)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color(hex: style.labelHex))
+            if let label, !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color(hex: style.labelHex))
+            }
 
             HStack(spacing: DocsSpacing.spaceXS) {
                 if let icon {
