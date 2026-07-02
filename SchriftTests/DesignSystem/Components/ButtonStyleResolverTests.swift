@@ -25,9 +25,12 @@ final class ButtonStyleResolverTests: XCTestCase {
         XCTAssertEqual(style.borderHex, DocsColorHex.borderDefault)
     }
 
-    func testDisabledIgnoresVariantAndColor() {
-        let style = ButtonStyleResolver.style(variant: .primary, color: .danger, isDisabled: true)
-        XCTAssertEqual(style, ButtonStyleHex(backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textDisabled, borderHex: nil))
+    func testDisabledKeepsVariantColors() {
+        // Disabled is rendered by lowering opacity at the view level, so the
+        // resolved colors stay identical to the enabled state.
+        let enabled = ButtonStyleResolver.style(variant: .primary, color: .danger, isDisabled: false)
+        let disabled = ButtonStyleResolver.style(variant: .primary, color: .danger, isDisabled: true)
+        XCTAssertEqual(disabled, enabled)
     }
 
     func testNeutralPrimaryUsesTextPrimaryAsFill() {

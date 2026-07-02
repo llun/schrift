@@ -21,8 +21,11 @@ final class IconButtonStyleResolverTests: XCTestCase {
         XCTAssertEqual(style.borderHex, DocsColorHex.borderDefault)
     }
 
-    func testDisabledIgnoresVariantAndColor() {
-        let style = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: true)
-        XCTAssertEqual(style, IconButtonStyleHex(backgroundHex: nil, foregroundHex: DocsColorHex.textDisabled, borderHex: nil))
+    func testDisabledKeepsVariantColors() {
+        // Disabled is rendered by lowering opacity at the view level, so the
+        // resolved colors stay identical to the enabled state.
+        let enabled = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: false)
+        let disabled = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: true)
+        XCTAssertEqual(disabled, enabled)
     }
 }

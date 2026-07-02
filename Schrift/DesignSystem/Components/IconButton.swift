@@ -19,11 +19,9 @@ struct IconButtonStyleHex: Equatable {
 }
 
 enum IconButtonStyleResolver {
-    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool) -> IconButtonStyleHex {
-        if isDisabled {
-            return IconButtonStyleHex(backgroundHex: nil, foregroundHex: DocsColorHex.textDisabled, borderHex: nil)
-        }
-
+    // Disabled is driven by view-level opacity (matching the reference), so the
+    // resolver keeps each variant's own colors.
+    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false) -> IconButtonStyleHex {
         let foregroundHex: UInt32
         let softHex: UInt32
 
@@ -105,6 +103,7 @@ struct IconButton: View {
         // fall below the 44pt iOS minimum (the reference documents this too).
         .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
         .contentShape(Rectangle())
+        .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
         .accessibilityLabel(label)
     }

@@ -20,11 +20,9 @@ struct ButtonStyleHex: Equatable {
 }
 
 enum ButtonStyleResolver {
-    static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool) -> ButtonStyleHex {
-        if isDisabled {
-            return ButtonStyleHex(backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textDisabled, borderHex: nil)
-        }
-
+    // The disabled look is driven purely by lowering opacity at the view level
+    // (matching the reference), so the resolver keeps each variant's own colors.
+    static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool = false) -> ButtonStyleHex {
         let fillHex: UInt32
         let softHex: UInt32
         let onFillHex: UInt32
@@ -136,6 +134,7 @@ struct DocsButton: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm))
         }
+        .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
     }
 }
