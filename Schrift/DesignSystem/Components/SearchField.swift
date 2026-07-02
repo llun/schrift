@@ -23,6 +23,9 @@ struct SearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
                         .foregroundStyle(DocsColor.textTertiary)
+                        // Keep the 20pt glyph but guarantee the 44pt iOS hit target.
+                        .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Clear search")
             }
