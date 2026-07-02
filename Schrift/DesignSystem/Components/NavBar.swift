@@ -54,7 +54,7 @@ struct NavBar: View {
 
                 Spacer()
 
-                HStack(spacing: DocsSpacing.spaceXS) {
+                HStack(spacing: DocsSpacing.space4xs) {
                     ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
                         IconButton(
                             systemImage: action.systemImage,
