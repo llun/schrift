@@ -179,6 +179,7 @@ struct DocumentListView: View {
                         pinned: document.isFavorite,
                         reach: document.linkReach,
                         date: documentRowDate(document),
+                        offlineAvailable: isOffline,
                         onOpen: { onSelect(document) },
                         onMore: { documentPendingFavoriteChoice = document }
                     )

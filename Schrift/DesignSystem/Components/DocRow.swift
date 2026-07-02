@@ -33,6 +33,7 @@ struct DocRow: View {
     var pinned: Bool = false
     var reach: LinkReach = .restricted
     var date: String = ""
+    var offlineAvailable: Bool = false
     var onOpen: (() -> Void)? = nil
     var onMore: (() -> Void)? = nil
 
@@ -56,6 +57,13 @@ struct DocRow: View {
             }
 
             Spacer(minLength: DocsSpacing.spaceXS)
+
+            if offlineAvailable {
+                Image(systemName: "checkmark.icloud.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(DocsColor.gray300)
+                    .accessibilityLabel("Available offline")
+            }
 
             if !date.isEmpty {
                 Text(date)
