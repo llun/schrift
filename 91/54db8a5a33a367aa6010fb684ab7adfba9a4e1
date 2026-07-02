@@ -1,0 +1,19 @@
+Schrift/Features/Options/OptionsSheetView.swift
+  s_a9c5d21d88404f::t_6dbe0bcc8b7af6 24-32,34-42,44-59,61-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "9154db8a5a33a367aa6010fb684ab7adfba9a4e1",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
