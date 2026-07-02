@@ -99,6 +99,14 @@ enum ButtonSize {
         case .large: return 22
         }
     }
+
+    /// Icon-to-label gap (reference `gap` per size).
+    var iconGap: CGFloat {
+        switch self {
+        case .small: return DocsSpacing.space2xs
+        case .medium, .large: return DocsSpacing.spaceXS
+        }
+    }
 }
 
 struct DocsButton: View {
@@ -115,7 +123,7 @@ struct DocsButton: View {
     var body: some View {
         let style = ButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
         Button(action: action) {
-            HStack(spacing: DocsSpacing.spaceXS) {
+            HStack(spacing: size.iconGap) {
                 if let icon {
                     Image(systemName: icon)
                         .font(.system(size: size.iconSize, weight: .medium))
