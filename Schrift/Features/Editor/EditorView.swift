@@ -136,6 +136,15 @@ struct EditorView: View {
                 onSaveTap: { viewModel.saveNow() }
             )
 
+            if viewModel.openInMarkdownMode, viewModel.mode == .markdown {
+                Text("Some content in this document can't be edited as blocks yet, so it opens as Markdown.")
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.top, DocsSpacing.space3xs)
+            }
+
             Group {
                 if viewModel.mode == .markdown {
                     MarkdownSourceView(viewModel: viewModel)
