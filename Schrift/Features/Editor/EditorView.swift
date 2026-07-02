@@ -11,6 +11,7 @@ struct EditorView: View {
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
     @State private var isPresentingTreePanel = false
@@ -67,48 +68,9 @@ struct EditorView: View {
                     .padding(DocsSpacing.spaceBase)
                 Spacer()
             } else if viewModel.isEditing {
-                ZStack(alignment: .bottom) {
-                    TextEditor(text: $viewModel.rawMarkdown)
-                        .font(DocsFont.body)
-                        .padding(.horizontal, DocsSpacing.spaceXS)
-                        .disabled(viewModel.isSaving)
-
-                    EditorFormattingBar(onInsert: { token in
-                        viewModel.rawMarkdown += token
-                    })
-                    .padding(.bottom, DocsSpacing.spaceBase)
-                }
+                editingSurface
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
-                        headerBlock
-
-                        if viewModel.blocks.isEmpty {
-                            if viewModel.errorMessage == nil {
-                                ContentUnavailableView(
-                                    "Empty document",
-                                    systemImage: "doc.text",
-                                    description: Text("This document doesn't have any content yet.")
-                                )
-                                .padding(.top, DocsSpacing.spaceLG)
-                            }
-                        } else {
-                            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                                ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
-                                    MarkdownBlockView(block: block, numberedIndex: numberedIndex(of: index, in: viewModel.blocks))
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        subpagesSection
-                    }
-                    .padding(DocsSpacing.gutter)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .refreshable {
-                    await viewModel.load()
-                }
+                readingSurface
             }
         }
         .background(DocsColor.surfacePage)
@@ -125,6 +87,14 @@ struct EditorView: View {
         }
         .task {
             await viewModel.load()
+        }
+        .onDisappear {
+            viewModel.flushPendingChanges()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background || phase == .inactive {
+                viewModel.flushPendingChanges()
+            }
         }
         .sheet(isPresented: $isPresentingShareSheet) {
             ShareSheetView(
@@ -146,11 +116,84 @@ struct EditorView: View {
             OptionsSheetView(
                 viewModel: optionsViewModel,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
-                markdown: viewModel.rawMarkdown,
+                markdown: viewModel.currentMarkdown(),
                 onShare: { pendingShareAfterOptions = true },
                 onDeleted: onDeleted
             )
         }
+    }
+
+    // MARK: - Editing
+
+    private var editingSurface: some View {
+        VStack(spacing: 0) {
+            EditorModeBar(
+                modeIndex: Binding(
+                    get: { viewModel.mode == .markdown ? 1 : 0 },
+                    set: { viewModel.setMode($0 == 1 ? .markdown : .blocks) }
+                ),
+                saveState: viewModel.saveState,
+                onSaveTap: { viewModel.saveNow() }
+            )
+
+            if viewModel.mode == .markdown {
+                MarkdownSourceView(viewModel: viewModel)
+            } else {
+                BlockEditorView(viewModel: viewModel)
+            }
+        }
+    }
+
+    // MARK: - Reading
+
+    private var readingSurface: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
+                headerBlock
+
+                if viewModel.blocks.isEmpty {
+                    if viewModel.errorMessage == nil {
+                        emptyContent
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+                        ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                            MarkdownBlockView(block: block, numberedIndex: numberedIndex(of: index, in: viewModel.blocks))
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    guard !isOffline else { return }
+                                    viewModel.startEditing(focusing: block.id)
+                                }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                subpagesSection
+            }
+            .padding(DocsSpacing.gutter)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .refreshable {
+            await viewModel.load()
+        }
+    }
+
+    private var emptyContent: some View {
+        ContentUnavailableView {
+            Label("Empty document", systemImage: "doc.text")
+        } description: {
+            Text("This document doesn't have any content yet.")
+        } actions: {
+            if !isOffline {
+                Button("Start writing") {
+                    viewModel.startEditing()
+                }
+                .font(DocsFont.body)
+                .foregroundStyle(DocsColor.textBrand)
+            }
+        }
+        .padding(.top, DocsSpacing.spaceLG)
     }
 
     private var offlineBanner: some View {
@@ -261,8 +304,7 @@ struct EditorView: View {
     private var trailingActions: [NavBarAction] {
         if viewModel.isEditing {
             return [
-                NavBarAction(systemImage: "xmark", label: "Cancel", action: { viewModel.cancelEditing() }),
-                NavBarAction(systemImage: "checkmark", label: "Save", action: { Task { await viewModel.save() } }),
+                NavBarAction(systemImage: "checkmark", label: "Done", action: { viewModel.finishEditing() }),
             ]
         }
         return [
@@ -277,11 +319,13 @@ struct EditorView: View {
 }
 
 #Preview {
+    let client = DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)
     EditorView(
         viewModel: EditorViewModel(
-            client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!),
+            client: client,
             documentID: UUID(),
-            title: "Q3 Planning"
+            title: "Q3 Planning",
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop)
         ),
         reach: .restricted,
         serverHost: "docs.llun.dev"

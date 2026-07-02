@@ -13,11 +13,13 @@ final class HomeViewModel {
     var isOffline = false
 
     let client: DocsAPIClient
+    let saveCoordinator: DocumentSaveCoordinator
     private let cache: DocumentCacheStore
 
-    init(client: DocsAPIClient, cache: DocumentCacheStore = DocumentCacheStore()) {
+    init(client: DocsAPIClient, cache: DocumentCacheStore = DocumentCacheStore(), saveCoordinator: DocumentSaveCoordinator? = nil) {
         self.client = client
         self.cache = cache
+        self.saveCoordinator = saveCoordinator ?? DocumentSaveCoordinator(client: client)
         pinnedDocuments = cache.loadPinnedDocuments()
         recentDocuments = cache.loadRecentDocuments()
     }
@@ -40,6 +42,10 @@ final class HomeViewModel {
             return
         }
         isOffline = false
+
+        // Replay any drafts stranded by a previous session (runs once).
+        let coordinator = saveCoordinator
+        Task { await coordinator.recoverDrafts() }
 
         let params = homeFilterQueryParameters(selectedFilter)
         do {

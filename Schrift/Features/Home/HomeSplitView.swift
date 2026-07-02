@@ -15,7 +15,8 @@ struct HomeSplitView: View {
                     viewModel: EditorViewModel(
                         client: viewModel.client,
                         documentID: selectedDocument.id,
-                        title: selectedDocument.title ?? "Untitled document"
+                        title: selectedDocument.title ?? "Untitled document",
+                        saveCoordinator: viewModel.saveCoordinator
                     ),
                     reach: selectedDocument.linkReach,
                     serverHost: serverHost,

@@ -53,7 +53,8 @@ struct HomeView: View {
                     viewModel: EditorViewModel(
                         client: viewModel.client,
                         documentID: document.id,
-                        title: document.title ?? "Untitled document"
+                        title: document.title ?? "Untitled document",
+                        saveCoordinator: viewModel.saveCoordinator
                     ),
                     reach: document.linkReach,
                     serverHost: serverHost,
