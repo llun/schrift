@@ -89,6 +89,16 @@ enum ButtonSize {
         case .large: return 16
         }
     }
+
+    /// Leading-glyph point size — distinct from (and larger than) the label,
+    /// matching the reference `iconSize` per size at weight 500.
+    var iconSize: CGFloat {
+        switch self {
+        case .small: return 18
+        case .medium: return 20
+        case .large: return 22
+        }
+    }
 }
 
 struct DocsButton: View {
@@ -108,6 +118,7 @@ struct DocsButton: View {
             HStack(spacing: DocsSpacing.spaceXS) {
                 if let icon {
                     Image(systemName: icon)
+                        .font(.system(size: size.iconSize, weight: .medium))
                 }
                 Text(title)
                     .font(.system(size: size.fontSize, weight: .semibold))
