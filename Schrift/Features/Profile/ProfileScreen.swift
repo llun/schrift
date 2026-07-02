@@ -7,7 +7,6 @@ struct ProfileScreen: View {
     var onOpenAccount: () -> Void
     var onSignOut: () -> Void
 
-    @AppStorage("schrift.appearance") private var appearance: String = "system"
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
 
@@ -90,29 +89,19 @@ struct ProfileScreen: View {
 
     // MARK: - 2) Preferences
 
-    private var appearanceLabel: String {
-        appearance.prefix(1).uppercased() + appearance.dropFirst()
-    }
-
-    private func cycleAppearance() {
-        switch appearance {
-        case "system": appearance = "light"
-        case "light": appearance = "dark"
-        default: appearance = "system"
-        }
-    }
-
     private var preferencesSection: some View {
         ListSection(
             header: "Preferences",
             footer: "When on, documents you've opened stay readable on this device without a connection."
         ) {
+            // The palette has no dark variant yet, so appearance follows the
+            // system. Show it as a static value rather than a cycler that changes
+            // nothing (matching the reference's static "System").
             ListRow(
                 systemImage: "moon",
                 title: "Appearance",
-                value: appearanceLabel,
-                showsChevron: true,
-                action: cycleAppearance
+                value: "System",
+                showsChevron: true
             )
             ProfileRowDivider()
             ListRow(
