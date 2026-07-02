@@ -57,8 +57,8 @@ struct ShareSheetView: View {
             .task {
                 await viewModel.load()
             }
-            .onChange(of: viewModel.searchQuery) {
-                Task { await viewModel.search() }
+            .task(id: viewModel.searchQuery) {
+                await viewModel.search()
             }
             .confirmationDialog(
                 "Change Role",

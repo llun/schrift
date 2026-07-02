@@ -42,9 +42,16 @@ final class ShareViewModel {
             searchResults = []
             return
         }
+        // Debounce: driven by `.task(id: searchQuery)`, a newer keystroke cancels
+        // this task, so a stale response can't overwrite fresher results.
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        if Task.isCancelled { return }
         do {
-            searchResults = try await client.searchUsers(query: trimmed, excludingDocumentID: documentID)
+            let results = try await client.searchUsers(query: trimmed, excludingDocumentID: documentID)
+            if Task.isCancelled || trimmed != searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) { return }
+            searchResults = results
         } catch {
+            if Task.isCancelled { return }
             errorMessage = "Search failed. Please try again."
         }
     }
