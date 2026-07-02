@@ -13,6 +13,8 @@ final class DocTreeModel {
 
     func children(of id: UUID) -> [Document] { childrenCache[id] ?? [] }
     func isExpanded(_ id: UUID) -> Bool { expanded.contains(id) }
+    /// Whether the children for `id` have finished loading (cache populated).
+    func isLoaded(_ id: UUID) -> Bool { childrenCache[id] != nil }
 
     func expand(_ id: UUID) { expanded.insert(id) }
 
@@ -136,7 +138,7 @@ struct DocTreePanel: View {
                         }
                     }
 
-                    if model.children(of: rootID).isEmpty {
+                    if model.isLoaded(rootID), model.children(of: rootID).isEmpty {
                         Text("No subpages yet. Add one to organize this document.")
                             .font(DocsFont.footnote)
                             .foregroundStyle(DocsColor.textTertiary)
