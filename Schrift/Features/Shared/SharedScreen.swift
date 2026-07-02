@@ -49,6 +49,8 @@ struct SharedScreen: View {
                         selectedIndex: scopeIndex
                     )
                     .padding(.horizontal, DocsSpacing.gutter)
+                    // 18pt gap below the control, matching Home/Search and the reference.
+                    .padding(.bottom, DocsSpacing.space4xs)
 
                     ListSection(header: "\(viewModel.documents.count) documents") {
                         ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
