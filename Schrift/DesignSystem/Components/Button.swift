@@ -61,10 +61,41 @@ enum ButtonStyleResolver {
     }
 }
 
+enum ButtonSize {
+    case small
+    case medium
+    case large
+
+    var height: CGFloat {
+        switch self {
+        case .small: return 32
+        case .medium: return 40
+        case .large: return 52
+        }
+    }
+
+    var horizontalPadding: CGFloat {
+        switch self {
+        case .small: return 12
+        case .medium: return 16
+        case .large: return 22
+        }
+    }
+
+    var fontSize: CGFloat {
+        switch self {
+        case .small: return 13
+        case .medium: return 14
+        case .large: return 16
+        }
+    }
+}
+
 struct DocsButton: View {
     let title: String
     var variant: ButtonVariant = .primary
     var color: ButtonColor = .brand
+    var size: ButtonSize = .medium
     var icon: String? = nil
     var fullWidth: Bool = false
     var pill: Bool = false
@@ -79,10 +110,10 @@ struct DocsButton: View {
                     Image(systemName: icon)
                 }
                 Text(title)
-                    .font(DocsFont.headline)
+                    .font(.system(size: size.fontSize, weight: .semibold))
             }
-            .padding(.horizontal, DocsSpacing.spaceBase)
-            .padding(.vertical, DocsSpacing.spaceSM)
+            .padding(.horizontal, size.horizontalPadding)
+            .frame(height: size.height)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .foregroundStyle(Color(hex: style.foregroundHex))
             .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
