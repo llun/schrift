@@ -45,6 +45,7 @@ struct ShareSheetView: View {
                         .padding(.top, DocsSpacing.space3xs)
                     }
                 }
+                .refreshable { await viewModel.load() }
             }
             .background(DocsColor.surfacePage)
             .navigationTitle("Share")
