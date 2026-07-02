@@ -1,0 +1,19 @@
+project.yml
+  s_235a2295788e87::t_a0bbed45810c7a 31-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "79d90fa333c39ce434acfd7786706b7e4afb319d",
+  "prompts": {},
+  "sessions": {
+    "s_235a2295788e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b94da7b-025e-4a6e-aac5-16d4aaca7684",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
