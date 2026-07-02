@@ -68,9 +68,12 @@ struct ShareSheetView: View {
                 ),
                 presenting: memberPendingRoleChange
             ) { member in
-                ForEach([DocumentRole.reader, .commenter, .editor, .administrator], id: \.self) { role in
-                    Button(role.rawValue.capitalized) {
-                        if case .access(let access) = member {
+                // Role changes only apply to existing accesses; pending invitations
+                // have no update-role endpoint, so offering role buttons there would
+                // be dead UI. Show only "Remove" for invitations.
+                if case .access(let access) = member {
+                    ForEach([DocumentRole.reader, .commenter, .editor, .administrator], id: \.self) { role in
+                        Button(role.rawValue.capitalized) {
                             Task { await viewModel.updateRole(accessID: access.id, role: role) }
                         }
                     }
@@ -124,7 +127,7 @@ struct ShareSheetView: View {
                 LinkReachPill(reach: viewModel.linkReach, showsHint: true)
                 Spacer()
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 20))
+                    .font(.system(size: 22))
                     .foregroundStyle(DocsColor.gray300)
             }
             .contentShape(Rectangle())
