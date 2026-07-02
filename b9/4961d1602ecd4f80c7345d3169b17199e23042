@@ -1,0 +1,20 @@
+Schrift/DesignSystem/Components/ListRow.swift
+  s_a9c5d21d88404f::t_bec26bbfd000db 52
+  s_a9c5d21d88404f::t_583379df5a5d35 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "b94961d1602ecd4f80c7345d3169b17199e23042",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
