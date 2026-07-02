@@ -21,7 +21,6 @@ struct SegmentedControl: View {
     var body: some View {
         GeometryReader { geometry in
             let layout = segmentedControlLayout(segmentCount: segments.count, selectedIndex: selectedIndex)
-            let usable = geometry.size.width - trackPadding * 2
             ZStack(alignment: .leading) {
                 // Sunken rounded-rect track (not a full pill).
                 RoundedRectangle(cornerRadius: DocsRadius.md)
@@ -37,11 +36,12 @@ struct SegmentedControl: View {
                             .strokeBorder(DocsColor.borderDefault, lineWidth: 0.5)
                     )
                     .shadow(color: DocsColor.textPrimary.opacity(0.08), radius: 2, x: 0, y: 1)
-                    // Inset the thumb 2pt on every edge so the sunken track shows
-                    // as a frame around it (reference top/bottom/left/right: 2).
-                    .frame(width: usable * layout.segmentFraction,
+                    // Per-segment cell model (reference): each cell is width/n and
+                    // the thumb is inset 2pt on every edge within its cell, so the
+                    // pill stays centered under every label.
+                    .frame(width: geometry.size.width * layout.segmentFraction - trackPadding * 2,
                            height: geometry.size.height - trackPadding * 2)
-                    .offset(x: trackPadding + usable * layout.thumbOffsetFraction)
+                    .offset(x: geometry.size.width * layout.thumbOffsetFraction + trackPadding)
                     .animation(.easeOut(duration: 0.2), value: selectedIndex)
 
                 HStack(spacing: 0) {
