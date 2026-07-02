@@ -42,6 +42,8 @@ struct ShareMemberRow: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(DocsColor.textSecondary)
                 }
+                .frame(minHeight: DocsSpacing.rowMinHeight)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Role: \(role)")
             .accessibilityHint("Double tap to change role")
