@@ -1,0 +1,19 @@
+Schrift/Features/Home/DocumentListView.swift
+  s_a9c5d21d88404f::t_1049a91f864d35 16-28,35,38-39,43-54,57-66,68-70,98-146,148-153,155-172,175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "2c9ab96e872e9fd99d88cfeae434ef055b24e20c",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
