@@ -1,0 +1,19 @@
+Schrift/Features/Editor/SubpageRow.swift
+  s_a9c5d21d88404f::t_bbd130c1bdc8f8 21-22,49-50,52-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "1a8301f0e45dd38be4a4a2ff3d32e355e434712e",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
