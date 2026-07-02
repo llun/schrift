@@ -38,6 +38,8 @@ struct DocIcon: View {
                     .offset(x: 4, y: 4)
             }
         }
+        // Decorative in every usage — the adjacent title carries the identity.
+        .accessibilityHidden(true)
     }
 }
 
