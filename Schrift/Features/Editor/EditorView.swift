@@ -249,7 +249,7 @@ struct EditorView: View {
                 .fill(DocsColor.borderDefault)
                 .frame(height: 1)
 
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space2xs) {
                     Image(systemName: "list.bullet.indent")
                     .font(.system(size: 16))
@@ -261,6 +261,8 @@ struct EditorView: View {
             .textCase(.uppercase)
             .foregroundStyle(DocsColor.textTertiary)
             .padding(.horizontal, DocsSpacing.spaceXS)
+            // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
+            .padding(.bottom, DocsSpacing.space3xs)
 
             if viewModel.subpages.isEmpty {
                 Text("Organize this document by creating subpages.")
