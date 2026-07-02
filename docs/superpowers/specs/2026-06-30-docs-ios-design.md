@@ -2,6 +2,11 @@
 
 Date: 2026-06-30
 Status: Approved (v1 scope)
+Revised: 2026-07-02 — the save mechanism section was updated to match the shipped
+implementation. The original design created a temporary document to reuse the
+backend's file→Yjs conversion; the app now builds the Yjs update **on-device**
+(a hand-written encoder in `Core/Yjs`) and PATCHes it directly. Everything else is
+as originally approved.
 
 ## Summary
 
@@ -18,7 +23,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative editing (live cursors, multi-user simultaneous edit). No Yjs/Hocuspocus client.
+- Real-time collaborative editing (live cursors, multi-user simultaneous edit) — no Hocuspocus WebSocket / live-sync client. (The app *does* build Yjs CRDT updates on-device — a hand-written encoder in `Core/Yjs` — but only to save content via a single HTTP PATCH; there is no persistent collaborative connection. See "Editing & save mechanism".)
 - Offline editing/sync queue.
 - Comments/threads.
 - AI features (proxy/transform/translate endpoints exist server-side but are out of scope).
@@ -48,6 +53,7 @@ DocsIOS/
 ├── Core/
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
 │   ├── Auth/             — SessionStore (Keychain-backed cookie + server URL persistence), WebLoginController (WKWebView-driven OIDC login)
+│   └── Yjs/              — on-device Markdown→BlockNote→Yjs encoder (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, sign-in
 │   ├── Home/             — document list: pinned/recent, search, segmented filter (All/Shared/Pinned), favorite toggle
@@ -58,7 +64,7 @@ DocsIOS/
 
 ### Why no third-party CRDT/networking dependencies
 
-Given the Non-goals above (no real-time collaboration), the app never needs to parse or construct Yjs binary data directly — see "Editing & save mechanism" below for how writes are achieved without it. This keeps the dependency surface at zero for v1.
+The app *constructs* Yjs binary updates to save (see "Editing & save mechanism" below), but does so with a small hand-written lib0/Yjs-v1 encoder (`Core/Yjs`) rather than pulling in a CRDT library. It never needs to *parse* incoming Yjs — reads go through `formatted-content`. This keeps third-party dependencies at zero for v1.
 
 ## Authentication
 
@@ -98,8 +104,8 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 | Favorites list | `GET /documents/favorite_list/` |
 | Search | `GET /documents/search/?q=` |
 | Read rendered content | `GET /documents/{id}/formatted-content/?content_format=markdown` |
-| Read raw content | `GET /documents/{id}/content/` |
-| Write raw content | `PATCH /documents/{id}/content/` |
+| Read raw content *(not used in v1)* | `GET /documents/{id}/content/` |
+| Write raw content | `PATCH /documents/{id}/content/` (base64 Yjs built on-device) |
 | Link sharing config | `PUT /documents/{id}/link-configuration/` |
 | Accesses (members) | `GET/POST/PATCH/DELETE /documents/{id}/accesses/` |
 | Invitations | `GET/POST/PATCH/DELETE /documents/{id}/invitations/` |
@@ -115,10 +121,11 @@ This is the part with no direct backend support, so it's called out explicitly:
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).
 2. **Save** (full content replace, since v1 explicitly excludes real-time merge):
    a. Serialize the edited native content back to Markdown.
-   b. `POST /documents/` with a `file` field containing that Markdown (uses the backend's existing "create from file" conversion, which the update path doesn't have) — creates a **temporary** document whose content is now valid converted Yjs.
-   c. `GET /documents/{temp_id}/content/` — read the resulting raw base64 Yjs bytes.
-   d. `PATCH /documents/{id}/content/` — write those bytes onto the *real* document, preserving its id/title/sharing/metadata.
-   e. `DELETE /documents/{temp_id}/` — clean up the temporary document (soft-delete; lands in trash, not left visible).
+   b. Convert Markdown → a Yjs v1 update entirely **on-device** (`Core/Yjs`: `MarkdownYjs.encode`, backed by the hand-written `YjsUpdateEncoder`).
+   c. `PATCH /documents/{id}/content/` with the base64-encoded Yjs bytes.
+   d. `PATCH /documents/{id}/` to persist the title.
+
+   (Two requests total; no temporary document and no server-side file conversion. This supersedes an earlier design that created a temp document via `POST /documents/` with a Markdown `file` field, read back its converted Yjs, PATCHed it onto the real doc, then deleted the temp — that path depended on the backend's file-upload-to-Yjs conversion, which is gated behind `CONVERSION_UPLOAD_ENABLED` and off on the target deployment.)
 
 **Known limitation:** this is a full-document overwrite with no conflict detection (no ETag/version check in v1). If someone edits the same document live in the web app concurrently, the loser's changes are silently overwritten. This is an explicit, accepted trade-off of choosing non-realtime editing — not hidden from the user; the Editor screen should make clear this isn't live-collaborative.
 
@@ -161,7 +168,7 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 ## Testing
 
 - Unit tests for `DocsAPIClient` and Codable models against mocked `URLSession` responses (fixture JSON matching the real serializer shapes documented above).
-- Unit tests for the markdown-edit → temp-document-conversion save flow, with a mocked API verifying the create → fetch-content → patch → delete call sequence (including the delete happening even if a later step fails, to avoid orphaned temp docs).
+- Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinatorTests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title).
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 
@@ -175,7 +182,7 @@ High-level phases; the implementation plan will break each into small, separatel
 4. Connect screen, wired to real auth.
 5. Home screen, wired to real document list/search/favorite APIs.
 6. Editor screen — read-only rendering of `formatted-content`.
-7. Editor screen — editing + save (temp-document conversion technique).
+7. Editor screen — editing + save (on-device Markdown→Yjs encoding; `PATCH` content then `PATCH` title).
 8. Share sheet + Options sheet, wired to real sharing/permissions APIs.
 9. iPad adaptive layout (`NavigationSplitView`).
 10. Polish: empty states, loading states, error states, pull-to-refresh.
@@ -184,6 +191,6 @@ High-level phases; the implementation plan will break each into small, separatel
 
 - Save is a full-content overwrite with no conflict detection — concurrent edits in the web app can be clobbered.
 - WebView-based login means periodic re-auth; no silent token refresh.
-- The temp-document save technique depends on backend behavior (file-upload-to-Yjs conversion on create) that isn't a documented-stable public contract — if a future Docs backend version changes this, saving breaks. Worth a lightweight capability check (e.g. verify on first use) and a clear error if it stops working.
+- Save depends on the on-device Yjs encoder (`Core/Yjs`) producing bytes the backend's Yjs content-validator accepts and BlockNote can interpret. If the backend's Yjs/BlockNote schema changes, saves could break — worth verifying against the target server and surfacing a clear error if the server rejects the content. (Byte-exact golden tests against the real Yjs library guard the encoder itself.)
 - Material Symbols vs SF Symbols decision deferred to implementation (visual fidelity vs native idiom trade-off).
 - Download/export and version history are explicitly deferred past v1.
