@@ -134,9 +134,21 @@ struct DocumentListView: View {
                 documentSection(title: "Pinned", icon: "pin.fill", documents: viewModel.pinnedDocuments)
             }
             documentSection(
-                title: viewModel.selectedFilter == .shared ? "Shared with me" : "Recent",
+                title: mainSectionTitle,
+                icon: viewModel.selectedFilter == .pinned ? "pin.fill" : nil,
                 documents: viewModel.recentDocuments
             )
+        }
+    }
+
+    /// Header for the main (non-pinned) section, which reflects the active
+    /// filter: the Pinned filter loads favorites here, so it must read "Pinned"
+    /// rather than the default "Recent".
+    private var mainSectionTitle: String {
+        switch viewModel.selectedFilter {
+        case .shared: return "Shared with me"
+        case .pinned: return "Pinned"
+        default: return "Recent"
         }
     }
 
