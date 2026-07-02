@@ -149,12 +149,12 @@ struct DocumentListView: View {
                 HStack(spacing: DocsSpacing.space3xs + 1) {
                     if let icon {
                         Image(systemName: icon)
-                            .font(.system(size: 13))
+                            .font(.system(size: 15))
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                     Text(title.uppercased())
                         .font(DocsFont.footnote.weight(.semibold))
-                        .tracking(DocsTypographySpec.footnote.size * 0.05)
+                        .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
                         .foregroundStyle(DocsColor.textTertiary)
                 }
                 .padding(.horizontal, DocsSpacing.spaceXS)

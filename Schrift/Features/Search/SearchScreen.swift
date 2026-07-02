@@ -134,7 +134,7 @@ struct SearchScreen: View {
             }
             Text(text.uppercased())
                 .font(DocsFont.footnote.weight(.semibold))
-                .tracking(DocsTypographySpec.footnote.size * 0.05)
+                .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
         }
         .foregroundStyle(DocsColor.textTertiary)
         .padding(.horizontal, DocsSpacing.spaceXS)

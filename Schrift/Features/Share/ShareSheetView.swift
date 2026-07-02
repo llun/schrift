@@ -90,7 +90,7 @@ struct ShareSheetView: View {
     private func sectionLabel(_ text: String) -> some View {
         Text(text.uppercased())
             .font(DocsFont.footnote)
-            .tracking(DocsTypographySpec.footnote.size * 0.05)
+            .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
             .foregroundStyle(DocsColor.textTertiary)
     }
 

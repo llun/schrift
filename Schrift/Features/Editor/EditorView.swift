@@ -255,7 +255,7 @@ struct EditorView: View {
                     .font(.system(size: 16))
                 Text(viewModel.subpages.isEmpty ? "Subpages" : "Subpages · \(viewModel.subpages.count)")
                     .font(DocsFont.footnote.weight(.semibold))
-                    .tracking(DocsTypographySpec.footnote.size * 0.05)
+                    .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
             }
             .textCase(.uppercase)
             .foregroundStyle(DocsColor.textTertiary)

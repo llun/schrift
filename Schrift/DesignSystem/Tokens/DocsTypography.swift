@@ -23,6 +23,10 @@ enum DocsTypographySpec {
 enum DocsTracking {
     static let tight: CGFloat = -0.02
     static let wide: CGFloat = 0.01
+    /// Uppercase screen "eyebrow" section labels (`letter-spacing: 0.05em`).
+    static let eyebrow: CGFloat = 0.05
+    /// Grouped-list card headers (`letter-spacing: 0.04em`).
+    static let groupedHeader: CGFloat = 0.04
 }
 
 enum DocsFont {

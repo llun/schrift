@@ -16,7 +16,7 @@ struct ListSection<Content: View>: View {
             if let header {
                 Text(header.uppercased())
                     .font(DocsFont.footnote)
-                    .tracking(DocsTypographySpec.footnote.size * 0.04)
+                    .tracking(DocsTypographySpec.footnote.size * DocsTracking.groupedHeader)
                     .foregroundStyle(DocsColor.textTertiary)
                     .padding(.horizontal, DocsSpacing.gutter)
             }
