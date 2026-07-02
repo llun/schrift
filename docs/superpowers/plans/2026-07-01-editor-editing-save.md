@@ -2,6 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-02):** The temp-document conversion pipeline designed and
+> built here (`POST /documents/` with a Markdown `file` → `GET` raw Yjs → `PATCH`
+> the real doc → `DELETE` the temp) was later replaced by on-device Yjs encoding
+> in commit `b68c4c6` — `DocsAPIClient.saveDocumentContent` now calls
+> `MarkdownYjs.encode` (`Schrift/Core/Yjs`) and PATCHes content + title directly
+> (`Schrift/Core/Networking/DocumentSave.swift`), with no temp document. The
+> multipart-upload / raw-content-GET capabilities this plan added to
+> `DocsAPIClient` are no longer used by the save path. Retained as a dated record.
+
 **Goal:** Complete the Editor screen (design spec Phase 7): editing and saving a document's content, using the temp-document conversion technique the design spec's Authentication section describes (serialize the edit → `POST /documents/` with a `file` field to create a temp document that gets converted to Yjs → `GET` the temp document's raw content → `PATCH` the real document's content with those bytes → `DELETE` the temp document, guaranteed even if an earlier step fails). Adds an Edit/Save/Cancel flow to `EditorView` and the underlying `DocsAPIClient` capability the app has never had: multipart file uploads and raw (non-JSON) response handling.
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan — including a Simulator screenshot of the editing UI — and the exact request/response shapes were read directly from the real `suitenumerique/docs` backend source, not assumed. This plan surfaced more backend detail than any prior plan, and two of those details changed the design meaningfully:

@@ -5,6 +5,16 @@
 > base64-Yjs PATCH, but experimental mobile touch support upstream, a JS build
 > pipeline, and a pre-1.0 dependency); the native SwiftUI reimplementation
 > below was chosen.
+>
+> **Amendment (2026-07-02, post-merge):** Superseded shortly after this plan by
+> commit `b68c4c6`. `DocsAPIClient.saveDocumentContent` no longer uses the
+> 4-request temp-document pipeline described below (POST temp `.md` → GET raw Yjs
+> → PATCH → DELETE); it now encodes markdown to Yjs **on-device**
+> (`MarkdownYjs.encode`) and PATCHes content + title directly
+> (`Schrift/Core/Networking/DocumentSave.swift`). The method's signature is
+> unchanged, so the `DocumentSaveCoordinator` / autosave / drafts design below
+> still holds — only the internal request pipeline (and the "networking layer
+> needs no changes" note) is out of date. Kept as a dated record.
 
 ## Context
 
