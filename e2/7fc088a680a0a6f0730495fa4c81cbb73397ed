@@ -1,0 +1,66 @@
+SchriftTests/Core/Yjs/MarkdownYjsTests.swift
+  s_f4d8885f87df23::t_a812dfac7b2dda 1-70
+SchriftTests/Support/AsyncTestHelpers.swift
+  s_f4d8885f87df23::t_4fed862c2b380e 26-31
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_f4d8885f87df23::t_566201609433df 1-172
+SchriftTests/Core/Yjs/YjsEncoderTests.swift
+  s_f4d8885f87df23::t_ca91d46bf5a741 1-104
+SchriftTests/Core/Yjs/InlineMarkdownTests.swift
+  s_f4d8885f87df23::t_716303b991f3df 1-64
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_f4d8885f87df23::t_bcac6d43a0b985 48-54,58,60,62-63,65
+  s_f4d8885f87df23::t_a62d9e69263b95 218-219,222
+  s_f4d8885f87df23::t_81df750644add6 237,240
+  s_f4d8885f87df23::t_dc831c5f2b7495 280,301,311
+  s_f4d8885f87df23::t_6eba48f8546019 274
+  s_f4d8885f87df23::t_c236f799a5e912 256
+Schrift/Core/Yjs/MarkdownYjs.swift
+  s_f4d8885f87df23::t_566201609433df 1-14,19-77
+  s_f4d8885f87df23::t_04875a51b1e0f3 15-18
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_f4d8885f87df23::t_9240dbc4e473d8 48-55,59,61,63-67,69
+  s_f4d8885f87df23::t_0500de14d4daff 213
+  s_f4d8885f87df23::t_3fc554f6e0c32f 146
+  s_f4d8885f87df23::t_ddde803e10a07c 185
+  s_f4d8885f87df23::t_d4b600ef9f1406 198
+  s_f4d8885f87df23::t_60223ae7d1377e 100-102
+  s_f4d8885f87df23::t_6237a9a1231cdb 224,229
+  s_f4d8885f87df23::t_d4b8375e4ae14d 131,141
+  s_f4d8885f87df23::t_cd2d3b9063521d 110,120,124
+Schrift/Core/Yjs/YjsUpdateEncoder.swift
+  s_f4d8885f87df23::t_566201609433df 1-174
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_f4d8885f87df23::t_9f3dd266f45493 26-32
+Schrift/Core/Networking/DocumentSave.swift
+  s_f4d8885f87df23::t_f5d8031478f31e 4-10,13-17,20-23,30-33,35-37
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_f4d8885f87df23::t_ffc6a47304db92 18-27
+  s_f4d8885f87df23::t_2270d329ebec83 67-76
+Schrift/Features/Home/HomeViewModel.swift
+  s_f4d8885f87df23::t_876ce18e248c57 93
+SchriftTests/Core/Networking/DocumentSaveTests.swift
+  s_f4d8885f87df23::t_05404b23227f30 97-98
+  s_f4d8885f87df23::t_a7925e296b5b40 29-32,47,51,70,75,79-81,84-85,87,89,91-93,96,101,104-105,112,115,118,126,128-131,133-139,141
+  s_f4d8885f87df23::t_6c8981f0272b2f 71
+Schrift/Core/Yjs/BlockNoteDocument.swift
+  s_f4d8885f87df23::t_566201609433df 1-127
+SchriftTests/Core/Networking/DocsAPIClientTests.swift
+  s_f4d8885f87df23::t_cefe0423d76995 120-161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "e27fc088a680a0a6f0730495fa4c81cbb73397ed",
+  "prompts": {},
+  "sessions": {
+    "s_f4d8885f87df23": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9e82b25-f8d1-444e-addc-05c6938021a9",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
