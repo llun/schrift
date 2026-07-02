@@ -1,4 +1,4 @@
-name: DocsIOS
+name: Schrift
 options:
   bundleIdPrefix: dev.llun
   deploymentTarget:
@@ -10,32 +10,32 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
-  DocsIOS:
+  Schrift:
     type: application
     platform: iOS
     sources:
-      - path: DocsIOS
+      - path: Schrift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.DocsIOS
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift
         GENERATE_INFOPLIST_FILE: true
-        INFOPLIST_KEY_CFBundleDisplayName: Docs
+        INFOPLIST_KEY_CFBundleDisplayName: Schrift
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     scheme:
       testTargets:
-        - DocsIOSTests
+        - SchriftTests
       gatherCoverageData: true
-  DocsIOSTests:
+  SchriftTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: DocsIOSTests
+      - path: SchriftTests
     dependencies:
-      - target: DocsIOS
+      - target: Schrift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.DocsIOS.Tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.Tests
         GENERATE_INFOPLIST_FILE: true
