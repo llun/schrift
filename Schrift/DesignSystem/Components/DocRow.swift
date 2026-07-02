@@ -3,7 +3,7 @@ import SwiftUI
 func docRowReachIndicatorSystemImage(reach: LinkReach) -> String? {
     switch reach {
     case .restricted: return nil
-    case .authenticated: return "network"
+    case .authenticated: return "network.badge.shield.half.filled"
     case .public: return "globe"
     }
 }

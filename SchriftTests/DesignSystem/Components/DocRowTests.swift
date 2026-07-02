@@ -7,7 +7,7 @@ final class DocRowTests: XCTestCase {
     }
 
     func testAuthenticatedShowsNetworkIndicator() {
-        XCTAssertEqual(docRowReachIndicatorSystemImage(reach: .authenticated), "network")
+        XCTAssertEqual(docRowReachIndicatorSystemImage(reach: .authenticated), "network.badge.shield.half.filled")
     }
 
     func testPublicShowsGlobeIndicator() {

@@ -20,7 +20,8 @@ enum LinkReachPillStyleResolver {
         case .restricted:
             return LinkReachPillStyleHex(backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textSecondary, systemImage: "lock.fill", label: "Restricted", hint: "Only invited people")
         case .authenticated:
-            return LinkReachPillStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650, systemImage: "network", label: "Connected", hint: "Anyone in the org")
+            // Reference uses `vpn_lock` (a lock over a globe) for the org-gated state.
+            return LinkReachPillStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650, systemImage: "network.badge.shield.half.filled", label: "Connected", hint: "Anyone in the org")
         case .public:
             return LinkReachPillStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary, systemImage: "globe", label: "Public", hint: "Anyone with the link")
         }

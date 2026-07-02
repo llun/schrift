@@ -9,7 +9,7 @@ final class LinkReachPillTests: XCTestCase {
 
     func testAuthenticatedUsesInfoStyle() {
         let style = LinkReachPillStyleResolver.style(reach: .authenticated)
-        XCTAssertEqual(style, LinkReachPillStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650, systemImage: "network", label: "Connected", hint: "Anyone in the org"))
+        XCTAssertEqual(style, LinkReachPillStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650, systemImage: "network.badge.shield.half.filled", label: "Connected", hint: "Anyone in the org"))
     }
 
     func testPublicUsesBrandStyle() {
