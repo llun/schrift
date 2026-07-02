@@ -29,17 +29,18 @@ struct ProfileTrailingRow<Trailing: View>: View {
 
             trailing
         }
-        .padding(.horizontal, DocsSpacing.gutterGrouped)
+        .padding(.horizontal, DocsSpacing.gutter)
         .frame(minHeight: DocsSpacing.rowMinHeight)
     }
 }
 
-/// Hairline divider matching the inset row grouping.
+/// Hairline divider inset past the leading icon so it starts under the text
+/// (16pt gutter + 24pt icon + 12pt gap), matching the grouped-list rows.
 struct ProfileRowDivider: View {
     var body: some View {
         Rectangle()
             .fill(DocsColor.borderDefault)
             .frame(height: 1)
-            .padding(.leading, DocsSpacing.gutterGrouped)
+            .padding(.leading, 52)
     }
 }
