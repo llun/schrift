@@ -51,7 +51,7 @@ struct EditorView: View {
             )
 
             if isOffline {
-                offlineBanner
+                OfflineBanner(note: "Editing the copy saved on this device")
             }
 
             if let errorMessage = viewModel.errorMessage {
@@ -82,7 +82,15 @@ struct EditorView: View {
                 currentID: viewModel.documentID,
                 isOpen: isPresentingTreePanel,
                 onOpen: { document in onOpenDocument?(document) },
-                onClose: { isPresentingTreePanel = false }
+                onClose: { isPresentingTreePanel = false },
+                onNewPage: {
+                    isPresentingTreePanel = false
+                    Task {
+                        if let child = await viewModel.addSubpage() {
+                            onOpenDocument?(child)
+                        }
+                    }
+                }
             )
         }
         .task {
@@ -192,7 +200,9 @@ struct EditorView: View {
 
                 subpagesSection
             }
-            .padding(DocsSpacing.gutter)
+            .padding(.horizontal, DocsSpacing.spaceMD - DocsSpacing.space4xs)
+            .padding(.top, DocsSpacing.spaceSM)
+            .padding(.bottom, DocsSpacing.spaceLG)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .refreshable {
@@ -217,30 +227,6 @@ struct EditorView: View {
         .padding(.top, DocsSpacing.spaceLG)
     }
 
-    private var offlineBanner: some View {
-        HStack(spacing: DocsSpacing.spaceXS) {
-            Image(systemName: "checkmark.icloud")
-                .foregroundStyle(DocsColor.textSecondary)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Offline")
-                    .font(DocsFont.caption.weight(.bold))
-                    .foregroundStyle(DocsColor.textSecondary)
-                Text("Editing the copy saved on this device")
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.vertical, DocsSpacing.spaceXS)
-        .background(DocsColor.surfaceSunken)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(DocsColor.borderDefault)
-                .frame(height: 0.5)
-        }
-    }
-
     private var headerBlock: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
             Image(systemName: "doc.text")
@@ -249,6 +235,7 @@ struct EditorView: View {
 
             Text(viewModel.title)
                 .font(DocsFont.title1.weight(.bold))
+                .tracking(DocsTypographySpec.title1.size * DocsTracking.tight)
                 .foregroundStyle(DocsColor.textPrimary)
 
             HStack(spacing: DocsSpacing.spaceXS) {
@@ -263,39 +250,29 @@ struct EditorView: View {
 
     private var subpagesSection: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            HStack(spacing: DocsSpacing.space3xs) {
+            HStack(spacing: DocsSpacing.space3xs + 1) {
                 Image(systemName: "list.bullet.indent")
-                Text("Subpages · \(viewModel.subpages.count)")
+                    .font(.system(size: 16))
+                Text(viewModel.subpages.isEmpty ? "Subpages" : "Subpages · \(viewModel.subpages.count)")
+                    .font(DocsFont.footnote.weight(.semibold))
+                    .tracking(DocsTypographySpec.footnote.size * 0.05)
             }
-            .font(DocsFont.footnote)
             .textCase(.uppercase)
             .foregroundStyle(DocsColor.textTertiary)
+            .padding(.horizontal, DocsSpacing.spaceXS)
 
             if viewModel.subpages.isEmpty {
                 Text("Organize this document by creating subpages.")
                     .font(DocsFont.footnote)
                     .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.spaceBase)
-                    .frame(minHeight: DocsSpacing.rowMinHeight)
+                    .padding(.horizontal, DocsSpacing.spaceXS)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(viewModel.subpages.enumerated()), id: \.element.id) { index, child in
-                        if index > 0 {
-                            Rectangle()
-                                .fill(DocsColor.borderDefault)
-                                .frame(height: 0.5)
-                                .padding(.leading, DocsSpacing.spaceBase)
-                        }
+                    ForEach(viewModel.subpages) { child in
                         SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
                     }
                 }
-                .background(DocsColor.surfacePage)
-                .overlay(
-                    RoundedRectangle(cornerRadius: DocsRadius.lg)
-                        .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
             }
 
             Button {
@@ -307,19 +284,25 @@ struct EditorView: View {
             } label: {
                 HStack(spacing: DocsSpacing.spaceXS) {
                     Image(systemName: "plus")
+                        .font(.system(size: 22))
                     Text("Add a subpage")
-                    Spacer()
+                        .font(.system(size: 15, weight: .semibold))
                 }
-                .font(DocsFont.body)
                 .foregroundStyle(DocsColor.textBrand)
-                .padding(.horizontal, DocsSpacing.spaceBase)
-                .frame(minHeight: DocsSpacing.rowMinHeight)
+                .padding(.horizontal, DocsSpacing.spaceXS)
+                .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
+        .padding(.top, DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(DocsColor.borderDefault)
+                .frame(height: 1)
+        }
     }
 
     private var trailingActions: [NavBarAction] {
@@ -329,9 +312,8 @@ struct EditorView: View {
             ]
         }
         return [
-            NavBarAction(systemImage: "sidebar.left", label: "Pages", action: { isPresentingTreePanel = true }),
+            NavBarAction(systemImage: "list.bullet.indent", label: "Pages", action: { isPresentingTreePanel = true }),
             NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: { isPresentingShareSheet = true }),
-            NavBarAction(systemImage: "pencil", label: "Edit", action: { viewModel.startEditing() }),
             NavBarAction(systemImage: "ellipsis", label: "Options", action: {
                 isPresentingOptionsSheet = true
             }),
