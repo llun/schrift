@@ -14,7 +14,7 @@ struct SearchScreen: View {
             NavBar(title: "Search", subtitle: serverHost, largeTitle: true)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
+                VStack(alignment: .leading, spacing: 18) {
                     SearchField(text: $viewModel.query, placeholder: "Search all documents")
                         .onSubmit {
                             viewModel.recordSearch()
@@ -27,7 +27,8 @@ struct SearchScreen: View {
                     }
                 }
                 .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.vertical, DocsSpacing.spaceBase)
+                .padding(.top, DocsSpacing.space3xs)
+                .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
         .background(DocsColor.surfacePage)
@@ -45,7 +46,7 @@ struct SearchScreen: View {
     private var emptyQueryContent: some View {
         if !viewModel.recentSearches.isEmpty {
             VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                sectionLabel("Recent searches", icon: "clock")
+                sectionLabel("Recent searches", icon: "clock.arrow.circlepath")
                 RecentSearchesFlow(terms: viewModel.recentSearches) { term in
                     viewModel.selectRecent(term)
                 }
@@ -53,7 +54,7 @@ struct SearchScreen: View {
         }
 
         VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            sectionLabel("Quick access", icon: "pin")
+            sectionLabel("Quick access", icon: "pin.fill")
             if viewModel.quickAccess.isEmpty {
                 Text("Pinned documents will appear here.")
                     .font(DocsFont.subhead)
@@ -91,20 +92,21 @@ struct SearchScreen: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DocsSpacing.spaceSM) {
+        VStack(spacing: DocsSpacing.space2xs) {
             Image(systemName: "exclamationmark.magnifyingglass")
                 .font(.system(size: 44))
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(DocsColor.gray300)
             Text("No documents found")
                 .font(DocsFont.headline)
                 .foregroundStyle(DocsColor.textPrimary)
-            Text("Nothing matches \"\(trimmedQuery)\". Try another title or keyword.")
+            Text("Nothing matches \u{201C}\(trimmedQuery)\u{201D}. Try another title or keyword.")
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.textTertiary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, DocsSpacing.spaceXL)
+        .padding(.vertical, DocsSpacing.space2XL)
+        .padding(.horizontal, DocsSpacing.spaceMD)
     }
 
     // MARK: - Helpers
@@ -125,16 +127,17 @@ struct SearchScreen: View {
     }
 
     private func sectionLabel(_ text: String, icon: String?) -> some View {
-        HStack(spacing: DocsSpacing.space2xs) {
+        HStack(spacing: DocsSpacing.space3xs + 1) {
             if let icon {
                 Image(systemName: icon)
-                    .font(DocsFont.footnote)
+                    .font(.system(size: 15))
             }
             Text(text.uppercased())
-                .font(DocsFont.footnote)
-                .tracking(0.05 * 13)
+                .font(DocsFont.footnote.weight(.semibold))
+                .tracking(DocsTypographySpec.footnote.size * 0.05)
         }
         .foregroundStyle(DocsColor.textTertiary)
+        .padding(.horizontal, DocsSpacing.spaceXS)
     }
 }
 
@@ -150,16 +153,17 @@ private struct RecentSearchesFlow: View {
                 Button {
                     onSelect(term)
                 } label: {
-                    HStack(spacing: DocsSpacing.space3xs) {
-                        Image(systemName: "clock")
-                            .font(DocsFont.subhead)
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 16))
+                            .foregroundStyle(DocsColor.textTertiary)
                         Text(term)
                             .font(DocsFont.subhead)
+                            .foregroundStyle(DocsColor.textSecondary)
                             .lineLimit(1)
                     }
-                    .foregroundStyle(DocsColor.textSecondary)
                     .padding(.horizontal, DocsSpacing.spaceSM)
-                    .padding(.vertical, DocsSpacing.spaceXS)
+                    .padding(.vertical, 7)
                     .background(DocsColor.surfaceSunken)
                     .overlay(
                         RoundedRectangle(cornerRadius: DocsRadius.pill)
