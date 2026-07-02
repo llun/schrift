@@ -84,6 +84,9 @@ struct DocTreePanel: View {
                             .fill(DocsColor.borderDefault)
                             .frame(width: 0.5)
                     }
+                    // Reach the screen bottom like the reference full-height panel,
+                    // so the scrim doesn't show through beneath the sidebar.
+                    .ignoresSafeArea(edges: .bottom)
                     .shadow(color: DocsColor.textPrimary.opacity(0.16), radius: 16, x: 4, y: 0)
                     .transition(.move(edge: .leading))
             }
