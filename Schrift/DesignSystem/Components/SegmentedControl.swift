@@ -16,23 +16,29 @@ struct SegmentedControl: View {
     let segments: [String]
     @Binding var selectedIndex: Int
 
+    private let trackPadding: CGFloat = 2
+
     var body: some View {
         GeometryReader { geometry in
             let layout = segmentedControlLayout(segmentCount: segments.count, selectedIndex: selectedIndex)
+            let usable = geometry.size.width - trackPadding * 2
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(DocsColor.surfaceMuted)
+                // Sunken rounded-rect track (not a full pill).
+                RoundedRectangle(cornerRadius: DocsRadius.md)
+                    .fill(DocsColor.surfaceSunken)
 
-                Capsule()
-                    .fill(DocsColor.surfacePage)
-                    .frame(width: geometry.size.width * layout.segmentFraction)
-                    .offset(x: geometry.size.width * layout.thumbOffsetFraction)
+                // White sliding thumb, one radius step tighter than the track.
+                RoundedRectangle(cornerRadius: DocsRadius.sm)
+                    .fill(DocsColor.surfaceRaised)
+                    .shadow(color: DocsColor.textPrimary.opacity(0.06), radius: 1, x: 0, y: 1)
+                    .frame(width: usable * layout.segmentFraction)
+                    .offset(x: trackPadding + usable * layout.thumbOffsetFraction)
                     .animation(.easeOut(duration: 0.2), value: selectedIndex)
 
                 HStack(spacing: 0) {
                     ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                         Text(segment)
-                            .font(DocsFont.subhead)
+                            .font(.system(size: 13, weight: index == selectedIndex ? .semibold : .medium))
                             .foregroundStyle(index == selectedIndex ? DocsColor.textPrimary : DocsColor.textSecondary)
                             .frame(maxWidth: .infinity)
                             .contentShape(Rectangle())
@@ -42,7 +48,7 @@ struct SegmentedControl: View {
                 }
             }
         }
-        .frame(height: DocsSpacing.rowMinHeight)
+        .frame(height: 32)
     }
 }
 
