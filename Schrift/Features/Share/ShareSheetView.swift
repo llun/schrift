@@ -100,7 +100,8 @@ struct ShareSheetView: View {
     private var searchResultsSection: some View {
         ListSection(header: "Add people") {
             VStack(spacing: 0) {
-                ForEach(viewModel.searchResults) { user in
+                ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, user in
+                    if index > 0 { ProfileRowDivider() }
                     ListRow(title: user.fullName, subtitle: user.email, action: {
                         Task { await viewModel.invite(user: user, role: .reader) }
                     })
@@ -130,8 +131,12 @@ struct ShareSheetView: View {
                     .font(.system(size: 22))
                     .foregroundStyle(DocsColor.gray300)
             }
+            .frame(minHeight: DocsSpacing.rowMinHeight)
             .contentShape(Rectangle())
             .onTapGesture { isChoosingLinkReach = true }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Change link access")
         }
     }
 
