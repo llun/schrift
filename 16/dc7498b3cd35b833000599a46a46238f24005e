@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/SegmentedControl.swift
+  s_a9c5d21d88404f::t_05e6c32bf13bb6 39-42,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "16dc7498b3cd35b833000599a46a46238f24005e",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
