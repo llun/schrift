@@ -50,6 +50,7 @@ struct SearchScreen: View {
                 RecentSearchesFlow(terms: viewModel.recentSearches) { term in
                     viewModel.selectRecent(term)
                 }
+                .padding(.horizontal, DocsSpacing.spaceXS)
             }
         }
 
@@ -184,7 +185,6 @@ private struct FlowLayout: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
-        var rows: [CGFloat] = [0]
         var rowWidth: CGFloat = 0
         var totalHeight: CGFloat = 0
         var rowHeight: CGFloat = 0
@@ -195,7 +195,6 @@ private struct FlowLayout: Layout {
                 totalHeight += rowHeight + spacing
                 rowWidth = size.width
                 rowHeight = size.height
-                rows.append(0)
             } else {
                 rowWidth += (rowWidth > 0 ? spacing : 0) + size.width
                 rowHeight = max(rowHeight, size.height)
