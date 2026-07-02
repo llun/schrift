@@ -16,3 +16,16 @@ DerivedData/
 .swiftpm/
 Package.resolved
 .build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+fastlane/README.md
+build/
+
+# Signing secrets — NEVER commit these
+*.p8
+*.p12
+*.mobileprovision
+*.cer

@@ -1,0 +1,73 @@
+name: TestFlight
+
+# Ship a build by pushing a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
+# or trigger it by hand from the Actions tab.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & upload to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    env:
+      # --- App Store Connect API key (auth + signing + upload) ---
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}   # base64 of the .p8 file
+      # --- Signing (fastlane match) ---
+      DEVELOPER_TEAM_ID: ${{ secrets.DEVELOPER_TEAM_ID }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      # --- Build metadata ---
+      BUILD_NUMBER: ${{ github.run_number }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Match the Xcode version to what you build with locally.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          # Ruby version is read from .ruby-version (kept in sync with local dev)
+          bundler-cache: true
+
+      - name: Set up SSH access to the certificates repo
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$MATCH_SSH_PRIVATE_KEY" > ~/.ssh/match_ed25519
+          chmod 600 ~/.ssh/match_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+        env:
+          MATCH_SSH_PRIVATE_KEY: ${{ secrets.MATCH_SSH_PRIVATE_KEY }}
+
+      - name: Build & upload
+        run: bundle exec fastlane beta
+        env:
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/match_ed25519 -o IdentitiesOnly=yes"
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            *.ipa
+            fastlane/report.xml
+            ~/Library/Logs/gym/*.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -19,3 +19,10 @@ The `.xcodeproj` is generated from `project.yml` and is not committed — regene
 ```sh
 xcodebuild test -project Schrift.xcodeproj -scheme Schrift -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
+
+## Distribution (TestFlight)
+
+Builds are shipped to TestFlight via fastlane + GitHub Actions (push a `v*`
+tag). The pipeline is already scaffolded — see
+[`docs/testflight-setup.md`](docs/testflight-setup.md) for the one-time setup
+(Apple Developer enrollment, signing, and secrets).

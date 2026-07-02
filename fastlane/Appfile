@@ -1,0 +1,8 @@
+# App Store Connect / Developer Portal identity.
+# Values come from environment variables so nothing sensitive is committed.
+# See docs/testflight-setup.md for where each one comes from.
+
+app_identifier("dev.llun.Schrift")
+apple_id(ENV["APPLE_ID"])              # your Apple account email (optional when using an API key)
+team_id(ENV["DEVELOPER_TEAM_ID"])      # 10-char Developer Portal Team ID
+itc_team_id(ENV["ITC_TEAM_ID"])        # App Store Connect team id (optional; only if you belong to several)
