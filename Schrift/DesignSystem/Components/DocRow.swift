@@ -84,6 +84,10 @@ struct DocRow: View {
         .frame(minHeight: DocsSpacing.rowMinHeight)
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
+        // Collapse the row into a single button carrying the composed label,
+        // otherwise the child Texts/glyphs stay separately focusable and the
+        // label is never applied.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(docRowAccessibilityLabel(title: title, reach: reach, date: date, pinned: pinned))
         .accessibilityAddTraits(.isButton)
     }
