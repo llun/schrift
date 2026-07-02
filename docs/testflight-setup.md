@@ -66,9 +66,9 @@ Apple has no API to create an app record, so this one is done in the web UI
 (the bundle id it needs is already registered by the bootstrap above):
 
 1. <https://appstoreconnect.apple.com> → **Apps** → **＋** → **New App**
-2. Platform **iOS**, Name **Schrift** (must be unique on the App Store — pick a
-   variant like *Schrift Docs* if it's taken; this is only the store listing
-   name, not the on-device name), Bundle ID **dev.llun.Schrift**, SKU e.g.
+2. Platform **iOS**, Name **Schrift Docs** (the store listing name — the app
+   still shows as *Schrift* on device via `CFBundleDisplayName`; "Schrift" alone
+   was already taken on the App Store), Bundle ID **dev.llun.Schrift**, SKU
    `schrift-ios`.
 3. Create. No screenshots/marketing are needed for TestFlight.
 
