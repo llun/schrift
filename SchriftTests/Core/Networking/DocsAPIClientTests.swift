@@ -147,6 +147,22 @@ final class DocsAPIClientTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
     }
 
+    func testMutatingRequestUsesBracketedOriginForIPv6Host() async throws {
+        struct Empty: Decodable {}
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+        let client = DocsAPIClient(
+            baseURL: URL(string: "https://[fe80::1]:8443/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] }
+        )
+        let _: Empty = try await client.send(path: "documents/", method: "POST", body: "{}".data(using: .utf8))
+
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"), "https://[fe80::1]:8443")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"), "https://[fe80::1]:8443/")
+    }
+
     func testGetRequestDoesNotAttachOriginOrReferer() async throws {
         struct Empty: Decodable {}
         MockURLProtocol.stubHandler = { _ in

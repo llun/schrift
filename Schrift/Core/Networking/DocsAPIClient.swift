@@ -19,7 +19,10 @@ actor DocsAPIClient {
     /// for the CSRF `Origin`/`Referer` headers. Note this is *not* `baseURL`,
     /// which includes the `/api/v1.0/` path.
     private var siteOrigin: String? {
-        guard let scheme = baseURL.scheme, let host = baseURL.host else { return nil }
+        guard let scheme = baseURL.scheme, var host = baseURL.host else { return nil }
+        // URL.host strips the brackets from an IPv6 literal; restore them so the
+        // Origin/Referer stay valid URLs for self-hosted IPv6 servers.
+        if host.contains(":") { host = "[\(host)]" }
         var origin = "\(scheme)://\(host)"
         if let port = baseURL.port { origin += ":\(port)" }
         return origin

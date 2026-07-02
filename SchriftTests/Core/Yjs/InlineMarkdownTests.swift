@@ -61,4 +61,19 @@ final class InlineMarkdownTests: XCTestCase {
     func testEmptyStringYieldsNoRuns() {
         XCTAssertEqual(InlineMarkdown.parse(""), [])
     }
+
+    func testAdjacentBackticksStayLiteral() {
+        // An empty code span is not a code span (matching CommonMark/BlockNote);
+        // it must not emit a zero-length code run.
+        XCTAssertEqual(InlineMarkdown.parse("a``b"), [InlineRun("a``b")])
+    }
+
+    func testBackslashInsideCodeSpanIsLiteralContent() {
+        // Code span content is literal: the backslash does not escape the
+        // closing backtick, so the span closes at the first backtick.
+        let runs = InlineMarkdown.parse("`x\\`y")
+        XCTAssertEqual(runs.map(\.text), ["x\\", "y"])
+        XCTAssertEqual(keys(runs[0]), ["code"])
+        XCTAssertTrue(runs[1].marks.isEmpty)
+    }
 }

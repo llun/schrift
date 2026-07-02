@@ -45,8 +45,10 @@ enum InlineMarkdown {
                 continue
             }
 
-            // Inline code span: content is literal, no nested parsing.
-            if c == "`", let close = indexOf("`", in: chars, from: i + 1) {
+            // Inline code span: content is literal — no nested parsing and no
+            // backslash escapes (backslash is a literal character inside code).
+            // Require non-empty content so adjacent backticks stay literal.
+            if c == "`", let close = indexOf("`", in: chars, from: i + 1, honoringEscapes: false), close > i + 1 {
                 flushLiteral()
                 let inner = String(chars[(i + 1)..<close])
                 runs.append(InlineRun(inner, marks: marks + [("code", codeValue)]))
@@ -103,10 +105,13 @@ enum InlineMarkdown {
         "\\`*_{}[]()#+-.!~>|".contains(c)
     }
 
-    private static func indexOf(_ ch: Character, in chars: [Character], from: Int) -> Int? {
+    /// Finds `ch` at or after `from`. When `honoringEscapes` is true a backslash
+    /// escapes the following character (used for link `]`/`)` scanning); code
+    /// spans pass false because their content is literal.
+    private static func indexOf(_ ch: Character, in chars: [Character], from: Int, honoringEscapes: Bool = true) -> Int? {
         var i = from
         while i < chars.count {
-            if chars[i] == "\\" { i += 2; continue } // skip escaped char
+            if honoringEscapes, chars[i] == "\\" { i += 2; continue } // skip escaped char
             if chars[i] == ch { return i }
             i += 1
         }
