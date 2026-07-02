@@ -35,15 +35,9 @@ struct ConnectView: View {
                     text: $viewModel.serverURLInput,
                     placeholder: "schrift.example.org",
                     icon: "cloud",
-                    helper: "The app signs in with your existing session — no password stored."
+                    helper: "The app signs in with your existing session — no password stored.",
+                    error: viewModel.errorMessage
                 )
-
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.danger)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
                 DocsButton(title: signInTitle, size: .large, icon: "rectangle.portrait.and.arrow.right", fullWidth: true, pill: true, isDisabled: viewModel.isSigningIn) {
                     viewModel.startSignIn()
