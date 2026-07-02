@@ -17,6 +17,7 @@ struct ProfileTrailingRow<Trailing: View>: View {
         HStack(spacing: DocsSpacing.spaceSM) {
             if let systemImage {
                 Image(systemName: systemImage)
+                    .font(.system(size: 24))
                     .foregroundStyle(DocsColor.textSecondary)
                     .frame(width: 24)
             }
