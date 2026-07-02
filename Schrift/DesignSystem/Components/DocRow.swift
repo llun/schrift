@@ -47,7 +47,7 @@ struct DocRow: View {
 
             if let indicatorImage = docRowReachIndicatorSystemImage(reach: reach) {
                 Image(systemName: indicatorImage)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundStyle(DocsColor.textTertiary)
             }
 
@@ -61,7 +61,7 @@ struct DocRow: View {
                     .layoutPriority(1)
             }
 
-            IconButton(systemImage: "ellipsis", label: "More options", action: { onMore?() })
+            IconButton(systemImage: "ellipsis", label: "More options", size: .small, action: { onMore?() })
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
         .padding(.vertical, DocsSpacing.space2xs)
