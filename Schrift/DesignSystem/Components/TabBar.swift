@@ -26,6 +26,7 @@ struct TabBar: View {
                         Text(item.label)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                     }
+                    .padding(.vertical, DocsSpacing.space4xs)
                     .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.gray450)
                     .frame(maxWidth: .infinity)
                 }
@@ -33,10 +34,17 @@ struct TabBar: View {
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .padding(.top, DocsSpacing.space3xs)
-        .padding(.bottom, showsSafeArea ? DocsSpacing.homeIndicatorHeight : DocsSpacing.space3xs)
-        .frame(height: DocsSpacing.tabBarHeight + (showsSafeArea ? DocsSpacing.homeIndicatorHeight : 0))
-        .background(DocsColor.surfacePage.opacity(0.9))
+        .padding(.top, DocsSpacing.space2xs)
+        .padding(.bottom, DocsSpacing.space2xs)
+        .frame(maxWidth: .infinity)
+        // The translucent bar fills the home-indicator safe area itself; the
+        // content sits just above it. Padding the content by the full safe-area
+        // inset (as before) double-counted it against the device inset and left
+        // a large empty gap below the labels.
+        .background(
+            DocsColor.surfacePage.opacity(0.9)
+                .ignoresSafeArea(edges: showsSafeArea ? .bottom : [])
+        )
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(DocsColor.borderDefault)
