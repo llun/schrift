@@ -45,7 +45,7 @@ struct AccountScreen: View {
                             .foregroundStyle(.white)
                     }
                     .offset(x: 2, y: 2)
-                    .accessibilityLabel("Change photo")
+                    .accessibilityHidden(true)
                 }
                 .padding(.bottom, DocsSpacing.space2xs)
 
