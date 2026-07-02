@@ -102,6 +102,7 @@ struct NavBar: View {
                         Text(subtitle)
                             .font(DocsFont.subhead)
                             .foregroundStyle(DocsColor.textTertiary)
+                            .padding(.top, DocsSpacing.space4xs)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
