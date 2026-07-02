@@ -28,9 +28,15 @@ struct SegmentedControl: View {
                     .fill(DocsColor.surfaceSunken)
 
                 // White sliding thumb, one radius step tighter than the track.
+                // A hairline border plus a soft shadow give it the crisp edge
+                // the reference thumb reads with over the sunken track.
                 RoundedRectangle(cornerRadius: DocsRadius.sm)
                     .fill(DocsColor.surfaceRaised)
-                    .shadow(color: DocsColor.textPrimary.opacity(0.06), radius: 1, x: 0, y: 1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DocsRadius.sm)
+                            .strokeBorder(DocsColor.borderDefault, lineWidth: 0.5)
+                    )
+                    .shadow(color: DocsColor.textPrimary.opacity(0.08), radius: 2, x: 0, y: 1)
                     .frame(width: usable * layout.segmentFraction)
                     .offset(x: trackPadding + usable * layout.thumbOffsetFraction)
                     .animation(.easeOut(duration: 0.2), value: selectedIndex)
