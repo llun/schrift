@@ -14,14 +14,17 @@ struct TextFieldStyleHex: Equatable {
 
 enum TextFieldStyleResolver {
     static func style(state: TextFieldState) -> TextFieldStyleHex {
+        // The label stays a constant neutral gray in every state (reference);
+        // only the border (and the focus ring) convey focus/error. Disabled
+        // dims the label to preserve the sunk look.
         switch state {
         case .normal:
             return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textSecondary)
         case .focused:
             // Reference focused border is --border-brand (#5E5CD0 == brandFill); --border-focus is the soft ring.
-            return TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textBrandSecondary)
+            return TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textSecondary)
         case .error:
-            return TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.danger)
+            return TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.textSecondary)
         case .disabled:
             return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textDisabled)
         }
