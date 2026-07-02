@@ -46,9 +46,11 @@ struct LinkReachPill: View {
                 }
             }
         }
-        .padding(.leading, DocsSpacing.spaceXS)
-        .padding(.trailing, DocsSpacing.spaceSM)
-        .padding(.vertical, DocsSpacing.space2xs)
+        // Reference uses a fuller asymmetric pad with the hint (6/8-left/12-right)
+        // and a compact symmetric pad without it (5/10).
+        .padding(.leading, showsHint ? DocsSpacing.spaceXS : 10)
+        .padding(.trailing, showsHint ? DocsSpacing.spaceSM : 10)
+        .padding(.vertical, showsHint ? DocsSpacing.space2xs : 5)
         .foregroundStyle(Color(hex: style.foregroundHex))
         .background(Color(hex: style.backgroundHex))
         .clipShape(Capsule())
