@@ -12,14 +12,14 @@ final class AvatarGroupTests: XCTestCase {
         XCTAssertEqual(layout, AvatarGroupLayout(visibleNames: ["A", "B", "C", "D"], overflowCount: 0))
     }
 
-    func testMoreNamesThanMaxReservesLastSlotForOverflowBadge() {
+    func testMoreNamesThanMaxShowsMaxAvatarsThenOverflowBadge() {
         let layout = avatarGroupLayout(names: ["A", "B", "C", "D", "E"], max: 3)
-        XCTAssertEqual(layout, AvatarGroupLayout(visibleNames: ["A", "B"], overflowCount: 3))
+        XCTAssertEqual(layout, AvatarGroupLayout(visibleNames: ["A", "B", "C"], overflowCount: 2))
     }
 
     func testLargeOverflowCount() {
         let layout = avatarGroupLayout(names: (1...10).map { "User \($0)" }, max: 3)
-        XCTAssertEqual(layout.visibleNames.count, 2)
-        XCTAssertEqual(layout.overflowCount, 8)
+        XCTAssertEqual(layout.visibleNames.count, 3)
+        XCTAssertEqual(layout.overflowCount, 7)
     }
 }
