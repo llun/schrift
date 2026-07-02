@@ -45,6 +45,8 @@ struct Avatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        // Decorative: an adjacent name label carries the identity in every use.
+        .accessibilityHidden(true)
     }
 
     private var initialsView: some View {
