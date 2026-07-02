@@ -3,10 +3,11 @@ import SwiftUI
 struct SearchField: View {
     @Binding var text: String
     var placeholder: String = "Search"
+    var icon: String = "magnifyingglass"
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceXS) {
-            Image(systemName: "magnifyingglass")
+            Image(systemName: icon)
                 .font(.system(size: 18))
                 .foregroundStyle(DocsColor.textTertiary)
             TextField(placeholder, text: $text)
