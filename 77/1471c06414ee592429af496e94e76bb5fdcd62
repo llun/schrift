@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/Button.swift
+  s_a9c5d21d88404f::t_5aba541e12d561 64-93,98,113,115-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "771471c06414ee592429af496e94e76bb5fdcd62",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
