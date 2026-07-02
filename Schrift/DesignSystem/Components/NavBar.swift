@@ -7,7 +7,23 @@ func navBarHeight(largeTitle: Bool) -> CGFloat {
 struct NavBarAction {
     let systemImage: String
     let label: String
+    var color: IconButtonColor = .neutral
+    var filled: Bool = false
     let action: () -> Void
+}
+
+/// The bar's fill: white for standard chrome, sunken for screens whose page
+/// background is `--surface-sunken` (Profile, Account).
+enum NavBarTint {
+    case page
+    case sunken
+
+    var color: Color {
+        switch self {
+        case .page: return DocsColor.surfacePage
+        case .sunken: return DocsColor.surfaceSunken
+        }
+    }
 }
 
 struct NavBar: View {
@@ -19,6 +35,7 @@ struct NavBar: View {
     var onBack: (() -> Void)? = nil
     var trailingActions: [NavBarAction] = []
     var translucent: Bool = true
+    var surfaceTint: NavBarTint = .page
     var showsBorder: Bool = true
 
     var body: some View {
@@ -31,7 +48,7 @@ struct NavBar: View {
                             Text(backTitle)
                         }
                         .font(DocsFont.body)
-                        .foregroundStyle(DocsColor.textBrand)
+                        .foregroundStyle(DocsColor.brandFill)
                     }
                 }
 
@@ -54,7 +71,13 @@ struct NavBar: View {
 
                 HStack(spacing: DocsSpacing.spaceXS) {
                     ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
-                        IconButton(systemImage: action.systemImage, label: action.label, action: action.action)
+                        IconButton(
+                            systemImage: action.systemImage,
+                            label: action.label,
+                            color: action.color,
+                            filled: action.filled,
+                            action: action.action
+                        )
                     }
                 }
             }
@@ -66,6 +89,7 @@ struct NavBar: View {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         Text(title)
                             .font(DocsFont.largeTitle)
+                            .tracking(DocsTypographySpec.largeTitle.size * DocsTracking.tight)
                             .foregroundStyle(DocsColor.textPrimary)
                         if let titleBadge {
                             titleBadge
@@ -73,7 +97,7 @@ struct NavBar: View {
                     }
                     if let subtitle {
                         Text(subtitle)
-                            .font(DocsFont.footnote)
+                            .font(DocsFont.subhead)
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                 }
@@ -83,7 +107,7 @@ struct NavBar: View {
             }
         }
         .frame(minHeight: navBarHeight(largeTitle: largeTitle))
-        .background(translucent ? DocsColor.surfacePage.opacity(0.82) : DocsColor.surfacePage)
+        .background(translucent ? surfaceTint.color.opacity(0.82) : surfaceTint.color)
         .overlay(alignment: .bottom) {
             if showsBorder {
                 Rectangle()
