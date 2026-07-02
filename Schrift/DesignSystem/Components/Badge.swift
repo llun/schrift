@@ -15,20 +15,22 @@ struct BadgeStyleHex: Equatable {
 }
 
 enum BadgeStyleResolver {
+    // Foregrounds match the prototype's Cunningham badge tones: the deeper
+    // -650 / -strong inks (not the -550 body colors) for readable pills.
     static func style(tone: BadgeTone) -> BadgeStyleHex {
         switch tone {
         case .accent:
             return BadgeStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary)
         case .neutral:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textSecondary)
+            return BadgeStyleHex(backgroundHex: DocsColorHex.gray100, foregroundHex: DocsColorHex.gray600)
         case .danger:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.dangerSoft, foregroundHex: DocsColorHex.danger)
+            return BadgeStyleHex(backgroundHex: DocsColorHex.dangerSoft, foregroundHex: DocsColorHex.dangerStrong)
         case .success:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.successSoft, foregroundHex: DocsColorHex.success)
+            return BadgeStyleHex(backgroundHex: DocsColorHex.successSoft, foregroundHex: DocsColorHex.success650)
         case .warning:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.warningSoft, foregroundHex: DocsColorHex.warning)
+            return BadgeStyleHex(backgroundHex: DocsColorHex.warningSoft, foregroundHex: DocsColorHex.warning650)
         case .info:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info)
+            return BadgeStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650)
         }
     }
 }
@@ -37,22 +39,30 @@ struct Badge: View {
     let text: String
     var tone: BadgeTone = .neutral
     var icon: String? = nil
+    /// Leading status dot (used by the Profile "• Connected" server badge).
+    var dot: Bool = false
 
     var body: some View {
         let style = BadgeStyleResolver.style(tone: tone)
-        HStack(spacing: DocsSpacing.space4xs) {
+        let foreground = Color(hex: style.foregroundHex)
+        HStack(spacing: DocsSpacing.space3xs) {
+            if dot {
+                Circle()
+                    .fill(foreground)
+                    .frame(width: 6, height: 6)
+            }
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: 14))
             }
             Text(text)
-                .font(DocsFont.caption)
+                .font(DocsFont.caption.weight(.semibold))
         }
         .padding(.horizontal, DocsSpacing.spaceXS)
-        .padding(.vertical, DocsSpacing.space4xs)
-        .foregroundStyle(Color(hex: style.foregroundHex))
+        .padding(.vertical, 5)
+        .foregroundStyle(foreground)
         .background(Color(hex: style.backgroundHex))
-        .clipShape(Capsule())
+        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
     }
 }
 
