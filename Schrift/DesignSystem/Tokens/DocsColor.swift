@@ -51,6 +51,7 @@ enum DocsColorHex {
     static let gray050: UInt32 = 0xF0F0F3
     static let gray100: UInt32 = 0xE2E2EA
     static let gray300: UInt32 = 0xA9A9BF
+    static let gray350: UInt32 = 0x9C9CB2
     static let gray450: UInt32 = 0x828297
     static let gray600: UInt32 = 0x5D5D70
 
@@ -104,6 +105,7 @@ enum DocsColor {
 
     static let gray050 = Color(hex: DocsColorHex.gray050)
     static let gray300 = Color(hex: DocsColorHex.gray300)
+    static let gray350 = Color(hex: DocsColorHex.gray350)
     static let gray450 = Color(hex: DocsColorHex.gray450)
 
     static let surfaceRaised = Color(hex: DocsColorHex.surfaceRaised)

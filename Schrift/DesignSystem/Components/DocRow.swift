@@ -61,7 +61,7 @@ struct DocRow: View {
             if offlineAvailable {
                 Image(systemName: "checkmark.icloud.fill")
                     .font(.system(size: 16))
-                    .foregroundStyle(DocsColor.gray300)
+                    .foregroundStyle(DocsColor.gray350)
                     .accessibilityLabel("Available offline")
             }
 
