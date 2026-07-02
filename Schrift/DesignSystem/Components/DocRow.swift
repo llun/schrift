@@ -38,30 +38,33 @@ struct DocRow: View {
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
-            DocIcon(emoji: emoji, pinned: pinned)
+            DocIcon(emoji: emoji, tinted: true, pinned: pinned)
 
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: DocsSpacing.space4xs) {
-                    Text(title)
-                        .font(DocsFont.body)
-                        .foregroundStyle(DocsColor.textPrimary)
-                        .lineLimit(1)
-                    if let indicatorImage = docRowReachIndicatorSystemImage(reach: reach) {
-                        Image(systemName: indicatorImage)
-                            .font(.system(size: 11))
-                            .foregroundStyle(DocsColor.textTertiary)
-                    }
-                }
-                Text(date)
-                    .font(DocsFont.footnote)
+            Text(title)
+                .font(DocsFont.body)
+                .foregroundStyle(DocsColor.textPrimary)
+                .lineLimit(1)
+
+            if let indicatorImage = docRowReachIndicatorSystemImage(reach: reach) {
+                Image(systemName: indicatorImage)
+                    .font(.system(size: 14))
                     .foregroundStyle(DocsColor.textTertiary)
             }
 
-            Spacer()
+            Spacer(minLength: DocsSpacing.spaceXS)
+
+            if !date.isEmpty {
+                Text(date)
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textTertiary)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+            }
 
             IconButton(systemImage: "ellipsis", label: "More options", action: { onMore?() })
         }
-        .padding(.horizontal, DocsSpacing.gutterGrouped)
+        .padding(.horizontal, DocsSpacing.spaceSM)
+        .padding(.vertical, DocsSpacing.space2xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
