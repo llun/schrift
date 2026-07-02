@@ -179,8 +179,9 @@ new code reads like the surrounding code.
   Adding a color means adding it to **both** `DocsColorHex` (raw `UInt32`) and
   `DocsColor` (SwiftUI `Color`), plus a value assertion in `DocsColorHexTests`.
 - Views **never** use raw color/hex/font literals — always tokens. (One-off
-  numeric sizes may be inline; colors are always tokenized.) Use `Capsule()` /
-  `Circle()` for full-round shapes, not `DocsRadius.pill`.
+  numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
+  `Circle()` for full-round shapes (a few components — `DocsButton`,
+  `SearchScreen` — still use `DocsRadius.pill` directly).
 - Variant/state components use the **Style Resolver** pattern: plain `enum`s for
   the axes → an `Equatable` `XStyleHex` struct of **raw** values → a caseless
   `enum XStyleResolver { static func style(...) -> XStyleHex }`. The view converts
