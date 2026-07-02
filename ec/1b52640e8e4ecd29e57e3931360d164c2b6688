@@ -1,0 +1,19 @@
+Schrift/Features/Editor/DocTreePanel.swift
+  s_a9c5d21d88404f::t_e3d4a2473112a4 83-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "ec1b52640e8e4ecd29e57e3931360d164c2b6688",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
