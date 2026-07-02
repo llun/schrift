@@ -8,14 +8,14 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: DocsSpacing.spaceXS) {
             Image(systemName: icon)
-                .font(.system(size: 18))
+                .font(.system(size: 20))
                 .foregroundStyle(DocsColor.textTertiary)
             TextField(placeholder, text: $text)
                 .font(DocsFont.callout)
             if !text.isEmpty {
                 Button(action: { text = "" }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
+                        .font(.system(size: 20))
                         .foregroundStyle(DocsColor.textTertiary)
                 }
                 .accessibilityLabel("Clear search")
