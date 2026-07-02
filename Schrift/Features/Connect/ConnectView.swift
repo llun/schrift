@@ -14,6 +14,7 @@ struct ConnectView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                     .shadow(color: DocsColor.brandLogo.opacity(0.28), radius: 12, x: 0, y: 8)
                     .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
+                    .accessibilityHidden(true)
                 Text("Welcome to Schrift")
                     .font(DocsFont.title1)
                     .foregroundStyle(DocsColor.textPrimary)
