@@ -21,32 +21,46 @@ struct OptionsSheetView: View {
                         .padding(.top, DocsSpacing.spaceSM)
                 }
 
-                ListSection {
-                    VStack(spacing: 0) {
-                        ListRow(
-                            systemImage: viewModel.isFavorite ? "pin.slash" : "pin",
-                            title: viewModel.isFavorite ? "Unpin" : "Pin",
-                            action: { Task { await viewModel.toggleFavorite() } }
-                        )
-                        ListRow(systemImage: "link", title: "Copy link", action: { copyLink() })
-                        if onShare != nil {
-                            ListRow(systemImage: "person.2", title: "Share", showsChevron: true, action: {
-                                onShare?()
-                                dismiss()
+                ScrollView {
+                    VStack(spacing: DocsSpacing.spaceBase) {
+                        ListSection {
+                            ListRow(
+                                systemImage: viewModel.isFavorite ? "pin.slash" : "pin",
+                                title: viewModel.isFavorite ? "Unpin" : "Pin",
+                                value: viewModel.isFavorite ? "Pinned" : nil,
+                                action: { Task { await viewModel.toggleFavorite() } }
+                            )
+                        }
+
+                        ListSection {
+                            ListRow(systemImage: "link", title: "Copy link", action: { copyLink() })
+                            if onShare != nil {
+                                ProfileRowDivider()
+                                ListRow(systemImage: "person.2", title: "Share", showsChevron: true, action: {
+                                    onShare?()
+                                    dismiss()
+                                })
+                            }
+                            ProfileRowDivider()
+                            ListRow(systemImage: "doc.plaintext", title: "Copy as Markdown", action: { copyMarkdown() })
+                        }
+
+                        ListSection {
+                            ListRow(systemImage: "doc.on.doc", title: "Duplicate", action: {
+                                Task {
+                                    await viewModel.duplicate()
+                                    dismiss()
+                                }
                             })
                         }
-                        ListRow(systemImage: "doc.on.doc", title: "Copy as Markdown", action: { copyMarkdown() })
-                        ListRow(systemImage: "plus.square.on.square", title: "Duplicate", action: {
-                            Task {
-                                await viewModel.duplicate()
-                                dismiss()
-                            }
-                        })
-                        ListRow(title: "Delete document", isDestructive: true, action: { isConfirmingDelete = true })
-                    }
-                }
 
-                Spacer()
+                        ListSection {
+                            ListRow(systemImage: "trash", title: "Delete document", isDestructive: true, action: { isConfirmingDelete = true })
+                        }
+                    }
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.top, DocsSpacing.space3xs)
+                }
             }
             .background(DocsColor.surfacePage)
             .navigationTitle("Options")
