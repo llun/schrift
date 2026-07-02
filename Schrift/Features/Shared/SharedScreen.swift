@@ -13,6 +13,8 @@ struct SharedScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @AppStorage("schrift.workOffline") private var workOffline = false
+
     private var scopeIndex: Binding<Int> {
         Binding(
             get: { viewModel.scope == .withMe ? 0 : 1 },
@@ -41,6 +43,8 @@ struct SharedScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             NavBar(title: "Shared", subtitle: serverHost, largeTitle: true)
+
+            if workOffline { OfflineBanner() }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {

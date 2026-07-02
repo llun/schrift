@@ -5,6 +5,8 @@ struct SearchScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @AppStorage("schrift.workOffline") private var workOffline = false
+
     private var trimmedQuery: String {
         viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -12,6 +14,8 @@ struct SearchScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             NavBar(title: "Search", subtitle: serverHost, largeTitle: true)
+
+            if workOffline { OfflineBanner() }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
