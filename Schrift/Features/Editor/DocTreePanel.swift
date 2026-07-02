@@ -246,7 +246,8 @@ private struct DocTreeRow: View {
                 .disabled(!hasChildren)
             }
 
-            DocIcon(size: isRoot ? 18 : 16)
+            // Reference renders the tree glyph at size + 3 (root 21, child 19).
+            DocIcon(size: isRoot ? 21 : 19)
                 .frame(width: 20)
 
             Text(title)
