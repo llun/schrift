@@ -32,7 +32,11 @@ struct SearchField: View {
         .background(DocsColor.surfaceSunken)
         .clipShape(Capsule())
         .onAppear {
-            if autoFocus { isFocused = true }
+            // Defer off the current run loop so the field is in the responder
+            // chain before we request focus (onAppear-synchronous focus is dropped).
+            if autoFocus {
+                DispatchQueue.main.async { isFocused = true }
+            }
         }
     }
 }
