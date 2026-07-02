@@ -41,8 +41,9 @@ struct DocTreePanel: View {
     var isOpen: Bool
     var onOpen: (Document) -> Void
     var onClose: () -> Void
+    var onNewPage: (() -> Void)? = nil
 
-    private let panelWidth: CGFloat = 300
+    private let panelWidth: CGFloat = 306
     @State private var model: DocTreeModel
 
     init(
@@ -52,7 +53,8 @@ struct DocTreePanel: View {
         currentID: UUID,
         isOpen: Bool,
         onOpen: @escaping (Document) -> Void,
-        onClose: @escaping () -> Void
+        onClose: @escaping () -> Void,
+        onNewPage: (() -> Void)? = nil
     ) {
         self.rootTitle = rootTitle
         self.client = client
@@ -61,13 +63,14 @@ struct DocTreePanel: View {
         self.isOpen = isOpen
         self.onOpen = onOpen
         self.onClose = onClose
+        self.onNewPage = onNewPage
         _model = State(initialValue: DocTreeModel(client: client))
     }
 
     var body: some View {
         ZStack(alignment: .leading) {
             if isOpen {
-                Color.black.opacity(0.28)
+                DocsColor.surfaceScrim
                     .ignoresSafeArea()
                     .onTapGesture { onClose() }
                     .transition(.opacity)
@@ -99,13 +102,9 @@ struct DocTreePanel: View {
                     onClose()
                 }
             }
-            .padding(.horizontal, DocsSpacing.spaceBase)
+            .padding(.leading, DocsSpacing.spaceBase)
+            .padding(.trailing, DocsSpacing.space2xs)
             .frame(height: DocsSpacing.navBarHeight)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(DocsColor.borderDefault)
-                    .frame(height: 0.5)
-            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -115,24 +114,52 @@ struct DocTreePanel: View {
                         hasChildren: !model.children(of: rootID).isEmpty,
                         isSelected: currentID == rootID,
                         isExpanded: model.isExpanded(rootID),
+                        isRoot: true,
                         onToggle: { model.toggle(rootID) },
                         onSelect: { onClose() }
                     )
+                    .padding(.bottom, DocsSpacing.space2xs)
 
                     if model.isExpanded(rootID) {
                         ForEach(model.children(of: rootID)) { child in
                             DocTreeNode(
                                 model: model,
                                 document: child,
-                                depth: 1,
+                                depth: 0,
                                 currentID: currentID,
                                 onOpen: onOpen,
                                 onClose: onClose
                             )
                         }
                     }
+
+                    if model.children(of: rootID).isEmpty {
+                        Text("No subpages yet. Add one to organize this document.")
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(DocsColor.textTertiary)
+                            .padding(.horizontal, DocsSpacing.spaceSM)
+                            .padding(.vertical, DocsSpacing.space4xs)
+                    }
                 }
+                .padding(.horizontal, DocsSpacing.spaceXS)
                 .padding(.vertical, DocsSpacing.spaceXS)
+            }
+
+            if let onNewPage {
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(DocsColor.borderDefault)
+                        .frame(height: 1)
+                    HStack {
+                        DocsButton(title: "New page", variant: .tertiary, color: .brand, size: .small, icon: "plus") {
+                            onNewPage()
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, DocsSpacing.spaceSM)
+                    .padding(.top, DocsSpacing.spaceXS)
+                    .padding(.bottom, DocsSpacing.spaceSM + DocsSpacing.space4xs)
+                }
             }
         }
         .task {
@@ -195,37 +222,46 @@ private struct DocTreeRow: View {
     let hasChildren: Bool
     let isSelected: Bool
     let isExpanded: Bool
+    var isRoot: Bool = false
     var onToggle: () -> Void
     var onSelect: () -> Void
 
-    var body: some View {
-        HStack(spacing: DocsSpacing.spaceXS) {
-            Button(action: onToggle) {
-                Image(systemName: "chevron.right")
-                    .font(DocsFont.caption)
-                    .foregroundStyle(hasChildren ? DocsColor.textSecondary : Color.clear)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(!hasChildren)
+    private var background: Color {
+        if isSelected { return DocsColor.brandFillSubtle }
+        return isRoot ? DocsColor.surfaceSunken : Color.clear
+    }
 
-            DocIcon(size: 20, tinted: isSelected)
+    var body: some View {
+        HStack(spacing: DocsSpacing.space2xs) {
+            if !isRoot {
+                Button(action: onToggle) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 18))
+                        .foregroundStyle(hasChildren ? DocsColor.textTertiary : Color.clear)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasChildren)
+            }
+
+            DocIcon(size: isRoot ? 18 : 16)
+                .frame(width: 20)
 
             Text(title)
-                .font(DocsFont.subhead)
+                .font(.system(size: 15, weight: (isSelected || isRoot) ? .semibold : .regular))
                 .foregroundStyle(isSelected ? DocsColor.textBrand : DocsColor.textPrimary)
                 .lineLimit(1)
 
             Spacer(minLength: 0)
         }
-        .padding(.leading, DocsSpacing.spaceBase + CGFloat(depth) * DocsSpacing.spaceBase)
-        .padding(.trailing, DocsSpacing.spaceBase)
-        .frame(minHeight: DocsSpacing.rowMinHeight)
+        .padding(.leading, DocsSpacing.spaceXS + CGFloat(depth) * 18)
+        .padding(.trailing, DocsSpacing.spaceXS)
+        .frame(minHeight: 34)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? DocsColor.brandFillSubtle : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
+        .background(background)
+        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
     }
