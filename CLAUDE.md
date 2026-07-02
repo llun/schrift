@@ -132,8 +132,8 @@ new code reads like the surrounding code.
 - Inject every collaborator through the initializer as a **protocol or closure
   type with a production default value**: `keychain: KeychainStoring =
   KeychainStore()`, `session: URLSession = .shared`, `userDefaults: UserDefaults =
-  .standard`, `cookieProvider:`, `apiClientFactory:`, `backgroundTasks: .noop`.
-  No singletons or service locators.
+  .standard`, `cookieProvider:`, `apiClientFactory:`, `backgroundTasks: .uiApplication`
+  (tests pass `.noop`). No singletons or service locators.
 - Wrap platform seams (Keychain, cookie storage, `UIApplication` background
   tasks) behind a minimal protocol or a small closure struct so tests inject a
   fake / `.noop`. To make a system type testable, declare a tiny protocol of just
