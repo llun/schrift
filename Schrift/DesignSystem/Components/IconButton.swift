@@ -99,6 +99,10 @@ struct IconButton: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         }
+        // Keep the reference's smaller visual box, but never let the tap target
+        // fall below the 44pt iOS minimum (the reference documents this too).
+        .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
+        .contentShape(Rectangle())
         .disabled(isDisabled)
         .accessibilityLabel(label)
     }
