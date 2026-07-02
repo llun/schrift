@@ -53,8 +53,7 @@ private struct BlockEditorRow: View {
     let index: Int
 
     var body: some View {
-        switch block.kind {
-        case .divider:
+        if case .divider = block.kind {
             Rectangle()
                 .fill(DocsColor.borderDefault)
                 .frame(height: 1)
@@ -62,58 +61,79 @@ private struct BlockEditorRow: View {
                 .padding(.vertical, DocsSpacing.spaceXS)
                 .contentShape(Rectangle())
                 .accessibilityLabel("Divider")
-
-        case .codeBlock, .unknown:
-            textView
-                .padding(DocsSpacing.spaceSM)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DocsColor.surfaceSunken)
-                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-
-        case .quote:
-            textView
-                .padding(.leading, DocsSpacing.spaceSM)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(DocsColor.borderDefault)
-                        .frame(width: 3)
-                }
-
-        case .bulletItem:
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                Text("•")
-                    .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
+        } else {
+            // Every editable kind shares one structural shape (adornment slot
+            // + text view with value-varying modifiers): converting the
+            // focused block's kind must NOT recreate the UITextView, or the
+            // keyboard would drop on every "- "/slash/toolbar conversion.
+            HStack(alignment: .top, spacing: hasAdornment ? DocsSpacing.spaceXS : 0) {
+                adornment
                 textView
+                    .padding(isCodePanel ? DocsSpacing.spaceSM : 0)
+                    .padding(.leading, isQuote ? DocsSpacing.spaceSM : 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(isCodePanel ? DocsColor.surfaceSunken : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: isCodePanel ? DocsRadius.md : 0))
+                    .overlay(alignment: .leading) {
+                        if isQuote {
+                            Rectangle()
+                                .fill(DocsColor.borderDefault)
+                                .frame(width: 3)
+                        }
+                    }
             }
+        }
+    }
+
+    private var isCodePanel: Bool {
+        switch block.kind {
+        case .codeBlock, .unknown:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var isQuote: Bool {
+        block.kind == .quote
+    }
+
+    private var hasAdornment: Bool {
+        switch block.kind {
+        case .bulletItem, .numberedItem, .checklistItem:
+            return true
+        default:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var adornment: some View {
+        switch block.kind {
+        case .bulletItem:
+            Text("•")
+                .font(DocsFont.body)
+                .foregroundStyle(DocsColor.textPrimary)
 
         case .numberedItem:
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                Text("\(numberedIndex(of: index, in: viewModel.blocks)).")
-                    .font(DocsFont.body)
-                    .monospacedDigit()
-                    .foregroundStyle(DocsColor.textPrimary)
-                textView
-            }
+            Text("\(numberedIndex(of: index, in: viewModel.blocks)).")
+                .font(DocsFont.body)
+                .monospacedDigit()
+                .foregroundStyle(DocsColor.textPrimary)
 
         case .checklistItem(let checked):
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                Button {
-                    viewModel.toggleChecklist(blockID: block.id)
-                } label: {
-                    Image(systemName: checked ? "checkmark.square.fill" : "square")
-                        .font(DocsFont.body)
-                        .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(checked ? "Mark as not done" : "Mark as done")
-                textView
+            Button {
+                viewModel.toggleChecklist(blockID: block.id)
+            } label: {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .font(DocsFont.body)
+                    .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(checked ? "Mark as not done" : "Mark as done")
 
-        case .heading, .paragraph:
-            textView
-                .frame(maxWidth: .infinity, alignment: .leading)
+        default:
+            EmptyView()
         }
     }
 
@@ -157,6 +177,7 @@ private struct BlockEditorRow: View {
         case .endedEditing:
             if viewModel.focusedBlockID == block.id {
                 viewModel.focusedBlockID = nil
+                viewModel.slashQueryText = nil
             }
         }
     }

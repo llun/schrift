@@ -106,18 +106,23 @@ private func canonicalLineCounts(_ markdown: String) -> [String: Int] {
 }
 
 private func canonicalizeLine(_ line: String) -> String {
-    var result = rstrip(line)
-    let trimmed = result.trimmingCharacters(in: .whitespaces)
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
     if trimmed.isEmpty { return "" }
 
-    if isDividerLine(trimmed), result.first != " ", result.first != "\t" {
+    if isDividerLine(trimmed), line.first != " ", line.first != "\t" {
         return "---"
     }
-    if let block = parseClassifiedLine(result) {
-        // Mirror the parser's own canonical form for classified lines.
+    // Fence lines normalize to a bare fence plus language so the serializer's
+    // canonical (or escalated) fences compare equal to the source's.
+    if let fence = parseCodeFenceOpening(line) {
+        return "```" + fence.language
+    }
+    // Mirror the parser's own canonical form for classified lines. This must
+    // see the raw line — the individual parsers do their own trimming.
+    if let block = parseClassifiedLine(line) {
         return serializeBlock(block, numberedIndex: 1)
     }
-    return result
+    return rstrip(line)
 }
 
 private func rstrip(_ line: String) -> String {
@@ -183,8 +188,14 @@ private func parseBulletItem(_ line: String) -> EditorBlock? {
 
 private func parseQuote(_ line: String) -> EditorBlock? {
     guard line.hasPrefix(">") else { return nil }
-    let rest = line.dropFirst()
-    return EditorBlock(kind: .quote, text: rest.trimmingCharacters(in: .whitespaces))
+    // The marker consumes exactly one optional space; further leading
+    // whitespace is significant content (e.g. indented code in a blockquote)
+    // and must survive the round trip.
+    var rest = String(line.dropFirst())
+    if rest.hasPrefix(" ") {
+        rest.removeFirst()
+    }
+    return EditorBlock(kind: .quote, text: rstrip(rest))
 }
 
 private func parseNumberedItem(_ line: String) -> EditorBlock? {

@@ -55,9 +55,17 @@ final class EditorViewModel {
     let autosaveInterval: Duration
 
     private(set) var isDirty = false
+    /// Editing is only allowed once content has loaded — otherwise autosave
+    /// would overwrite the whole server document with an empty draft.
+    private(set) var hasLoadedContent = false
     private var savedMarkdown = ""
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
+    private var dirtySince: Date?
+
+    /// Continuous typing keeps restarting the trailing debounce; cap the total
+    /// deferral so a long burst still persists periodically.
+    private static let maxAutosaveDeferral: TimeInterval = 30
 
     init(
         client: DocsAPIClient,
@@ -104,7 +112,7 @@ final class EditorViewModel {
                 content = pending.markdown
                 contentTitle = pending.title
             } else if let draft = saveCoordinator.storedDraft(documentID: documentID),
-                      formatted.updatedAt <= draft.updatedAt {
+                      formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
                 content = draft.markdown
                 contentTitle = draft.title
             }
@@ -119,6 +127,7 @@ final class EditorViewModel {
             // produces, so an unchanged document never triggers a save.
             savedMarkdown = openInMarkdownMode ? content : serializeMarkdown(blocks)
             updatedAt = formatted.updatedAt
+            hasLoadedContent = true
             await loadChildren()
         } catch {
             errorMessage = "Couldn't load this document. Pull to refresh to try again."
@@ -137,6 +146,7 @@ final class EditorViewModel {
     // MARK: - Editing session
 
     func startEditing(focusing blockID: UUID? = nil) {
+        guard hasLoadedContent else { return }
         errorMessage = nil
         if blocks.isEmpty {
             let seed = EditorBlock(kind: .paragraph)
@@ -155,8 +165,12 @@ final class EditorViewModel {
 
     func finishEditing() {
         flushPendingChanges()
+        // Keep both representations in sync so the next editing session
+        // (whichever mode it opens in) never shows or saves stale content.
         if mode == .markdown {
             blocks = parseEditorBlocks(rawMarkdown)
+        } else {
+            rawMarkdown = serializeMarkdown(blocks)
         }
         mode = .reading
         focusedBlockID = nil
@@ -202,7 +216,12 @@ final class EditorViewModel {
             blocks[index].kind = match.kind
             blocks[index].text = match.remainderText
             slashQueryText = nil
-            focusBlock(blockID, cursorAt: (match.remainderText as NSString).length)
+            // The caret stays where the user was typing, shifted back by the
+            // consumed prefix — not at the end of any pre-existing text.
+            let prefixLength = (text as NSString).length - (match.remainderText as NSString).length
+            let caretBefore = selection?.location ?? (text as NSString).length
+            let caret = min(max(0, caretBefore - prefixLength), (match.remainderText as NSString).length)
+            focusBlock(blockID, cursorAt: caret)
             markDirty()
             return
         }
@@ -436,6 +455,7 @@ final class EditorViewModel {
     func flushPendingChanges() {
         autosaveTask?.cancel()
         autosaveTask = nil
+        dirtySince = nil
         guard isDirty else { return }
         isDirty = false
         let markdown = currentMarkdown()
@@ -460,6 +480,14 @@ final class EditorViewModel {
 
     private func markDirty() {
         isDirty = true
+        let now = Date()
+        if dirtySince == nil {
+            dirtySince = now
+        }
+        if let dirtySince, now.timeIntervalSince(dirtySince) >= Self.maxAutosaveDeferral {
+            flushPendingChanges()
+            return
+        }
         let interval = autosaveInterval
         autosaveTask?.cancel()
         autosaveTask = Task { [weak self] in

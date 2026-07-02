@@ -339,15 +339,18 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[2].id)
     }
 
-    func testStartEditingOnEmptyDocumentSeedsAParagraph() {
-        let viewModel = makeViewModel(blocks: [])
-        viewModel.mode = .reading
+    func testShortcutKeepsCaretAtTypingPosition() {
+        // Typing "# " at the start of an existing paragraph must not fling
+        // the caret to the end of the block.
+        let block = EditorBlock(kind: .paragraph, text: "Title")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+        viewModel.selection = NSRange(location: 2, length: 0)
 
-        viewModel.startEditing()
+        viewModel.updateText(blockID: block.id, text: "# Title")
 
-        XCTAssertEqual(viewModel.mode, .blocks)
-        XCTAssertEqual(viewModel.blocks.count, 1)
-        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
-        XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[0].id)
+        XCTAssertEqual(viewModel.blocks[0].kind, .heading(level: 1))
+        XCTAssertEqual(viewModel.blocks[0].text, "Title")
+        XCTAssertEqual(viewModel.cursorRequest?.offset, 0)
     }
 }

@@ -14,7 +14,10 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
     private func makeViewModel(title: String = "Untitled document") -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        return EditorViewModel(client: client, documentID: documentID, title: title)
+        let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
+        return EditorViewModel(client: client, documentID: documentID, title: title, saveCoordinator: coordinator)
     }
 
     private static func childrenFixture(id: String, title: String) -> Data {

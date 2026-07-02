@@ -58,6 +58,16 @@ final class MarkdownParserTests: XCTestCase {
         assertParses("> Quoted text", [EditorBlock(kind: .quote, text: "Quoted text")])
     }
 
+    func testQuotePreservesLeadingWhitespaceBeyondTheMarkerSpace() {
+        // ">     code" is indented code inside a blockquote — the marker eats
+        // exactly one space; the rest is significant content.
+        assertParses(">     let x = 1", [EditorBlock(kind: .quote, text: "    let x = 1")])
+        XCTAssertTrue(blocksContentEqual(
+            parseEditorBlocks(serializeMarkdown([EditorBlock(kind: .quote, text: "  indented")])),
+            [EditorBlock(kind: .quote, text: "  indented")]
+        ))
+    }
+
     func testParsesMultipleBlocksInOrder() {
         let markdown = """
         # Heading

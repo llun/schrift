@@ -101,7 +101,13 @@ final class DocumentSaveCoordinator {
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             do {
                 let formatted = try await client.formattedContent(documentID: draft.documentID)
-                if formatted.updatedAt <= draft.updatedAt {
+                // The session may have started editing/saving this document
+                // while we awaited — a stale replay would clobber the newer
+                // content and its draft. Re-check before acting.
+                guard inFlight[draft.documentID] == nil,
+                      queued[draft.documentID] == nil,
+                      draftStore.draft(for: draft.documentID) == draft else { continue }
+                if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
                     enqueue(documentID: draft.documentID, title: draft.title, markdown: draft.markdown)
                 } else {
                     draftStore.remove(documentID: draft.documentID)

@@ -11,13 +11,11 @@ struct HomeSplitView: View {
             DocumentListView(viewModel: viewModel, serverHost: serverHost, onSelect: { selectedDocument = $0 })
         } detail: {
             if let selectedDocument {
-                EditorView(
-                    viewModel: EditorViewModel(
-                        client: viewModel.client,
-                        documentID: selectedDocument.id,
-                        title: selectedDocument.title ?? "Untitled document",
-                        saveCoordinator: viewModel.saveCoordinator
-                    ),
+                EditorScreen(
+                    client: viewModel.client,
+                    documentID: selectedDocument.id,
+                    title: selectedDocument.title ?? "Untitled document",
+                    saveCoordinator: viewModel.saveCoordinator,
                     reach: selectedDocument.linkReach,
                     serverHost: serverHost,
                     linkRole: selectedDocument.linkRole,

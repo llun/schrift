@@ -167,6 +167,32 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty)
     }
 
+    func testStartEditingOnEmptyDocumentSeedsAParagraph() async {
+        let (viewModel, _, _) = makeEnvironment()
+        stubLoad(content: nil)
+        await viewModel.load()
+
+        viewModel.startEditing()
+
+        XCTAssertEqual(viewModel.mode, .blocks)
+        XCTAssertEqual(viewModel.blocks.count, 1)
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[0].id)
+    }
+
+    func testStartEditingIsBlockedUntilContentLoads() async {
+        let (viewModel, _, _) = makeEnvironment()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()
+
+        viewModel.startEditing()
+
+        // Editing an unloaded document would autosave an empty draft over
+        // the entire server copy.
+        XCTAssertFalse(viewModel.isEditing)
+        XCTAssertEqual(viewModel.mode, .reading)
+    }
+
     func testEditingMarksDirty() async {
         let (viewModel, _, _) = makeEnvironment()
         stubLoad(content: "Original text")

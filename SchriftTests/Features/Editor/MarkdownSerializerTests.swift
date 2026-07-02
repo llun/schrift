@@ -18,11 +18,29 @@ final class MarkdownSerializerTests: XCTestCase {
         ]), "- [ ] Todo\n- [x] Done\n")
     }
 
-    func testSerializesQuoteBlocksSeparatedByBlankLines() {
+    func testAdjacentQuoteLinesJoinTightly() {
+        // "> a\n> b" is one blockquote in the source; re-serializing with a
+        // blank line would split it into two.
         XCTAssertEqual(serializeMarkdown([
             EditorBlock(kind: .quote, text: "First"),
             EditorBlock(kind: .quote, text: "Second"),
-        ]), "> First\n\n> Second\n")
+        ]), "> First\n> Second\n")
+    }
+
+    func testIndentedUnknownStaysTightlyBoundToListItems() {
+        // A nested list parses as [bullet, unknown]; a blank line between them
+        // would turn the tight list loose on every save.
+        XCTAssertEqual(serializeMarkdown([
+            EditorBlock(kind: .bulletItem, text: "top"),
+            EditorBlock(kind: .unknown, text: "  - inner\n    - deeper"),
+        ]), "- top\n  - inner\n    - deeper\n")
+    }
+
+    func testNonIndentedUnknownIsSeparatedByBlankLine() {
+        XCTAssertEqual(serializeMarkdown([
+            EditorBlock(kind: .bulletItem, text: "item"),
+            EditorBlock(kind: .unknown, text: "| a | b |"),
+        ]), "- item\n\n| a | b |\n")
     }
 
     func testAdjacentListItemsJoinTightly() {

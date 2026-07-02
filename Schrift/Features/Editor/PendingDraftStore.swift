@@ -10,6 +10,14 @@ struct PendingDraft: Codable, Equatable, Sendable {
     let updatedAt: Date
 }
 
+/// Slack applied when comparing a client-stamped draft timestamp against the
+/// server's `updated_at`: they come from different clocks, and a save's
+/// server timestamp always lands after the client stamped the draft that
+/// produced it. Within this window a stranded draft is treated as newer —
+/// losing the user's own typed content is worse than replaying it over a
+/// near-simultaneous web edit (full-overwrite saves are already last-writer-wins).
+let pendingDraftClockTolerance: TimeInterval = 120
+
 final class PendingDraftStore {
     private static let draftsKey = "dev.llun.Schrift.pendingDrafts"
 
@@ -20,10 +28,12 @@ final class PendingDraftStore {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        // Millisecond precision: plain .iso8601 truncates to whole seconds,
+        // which can make a draft look older than the save it raced against.
+        encoder.dateEncodingStrategy = .millisecondsSince1970
         self.encoder = encoder
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .millisecondsSince1970
         self.decoder = decoder
     }
 
