@@ -80,7 +80,7 @@ struct DocRow: View {
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
-        .padding(.vertical, DocsSpacing.space2xs)
+        .padding(.vertical, DocsSpacing.spaceSM - DocsSpacing.space4xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
