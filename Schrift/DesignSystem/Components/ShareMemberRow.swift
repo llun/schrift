@@ -16,7 +16,7 @@ struct ShareMemberRow: View {
             Avatar(name: name, size: 40)
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: DocsSpacing.space4xs) {
+                HStack(spacing: DocsSpacing.space2xs) {
                     Text(name)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(DocsColor.textPrimary)
