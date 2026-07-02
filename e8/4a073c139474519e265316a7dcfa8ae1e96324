@@ -1,0 +1,20 @@
+Schrift/Features/Share/ShareSheetView.swift
+  s_a9c5d21d88404f::t_2156c60bb35db6 90-96,107-108,112,121-122,126-128,136-144
+  s_a9c5d21d88404f::t_dd79e916ab03af 19,34-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "e84a073c139474519e265316a7dcfa8ae1e96324",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
