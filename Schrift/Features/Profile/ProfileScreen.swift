@@ -11,6 +11,8 @@ struct ProfileScreen: View {
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
 
+    @State private var isConfirmingDisconnect = false
+
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
     }
@@ -34,6 +36,15 @@ struct ProfileScreen: View {
         }
         .background(DocsColor.surfaceSunken)
         .task { await viewModel.load() }
+        .confirmationDialog(
+            "Disconnect from \(serverHost)?",
+            isPresented: $isConfirmingDisconnect,
+            titleVisibility: .visible
+        ) {
+            Button("Disconnect", role: .destructive) { onSignOut() }
+        } message: {
+            Text("You'll need to sign in again to reconnect.")
+        }
     }
 
     // MARK: - 1) Account banner
@@ -125,7 +136,7 @@ struct ProfileScreen: View {
             header: "Server",
             footer: "The app connects to any Schrift server using your existing web session."
         ) {
-            Button(action: onSignOut) {
+            Button(action: { isConfirmingDisconnect = true }) {
                 ProfileTrailingRow(systemImage: "server.rack", title: serverHost) {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         Badge(
@@ -134,7 +145,7 @@ struct ProfileScreen: View {
                             dot: true
                         )
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 18))
                             .foregroundStyle(DocsColor.gray300)
                     }
                 }
