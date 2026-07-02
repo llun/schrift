@@ -1,0 +1,27 @@
+SchriftTests/DesignSystem/Components/ButtonStyleResolverTests.swift
+  s_a9c5d21d88404f::t_2a29d04a8a8c94 28-33
+SchriftTests/DesignSystem/Components/IconButtonStyleResolverTests.swift
+  s_a9c5d21d88404f::t_42f26370ab805f 24-29
+Schrift/DesignSystem/Components/Button.swift
+  s_a9c5d21d88404f::t_04dadee9ab9143 137
+  s_a9c5d21d88404f::t_386c41ce77a810 23-25
+Schrift/DesignSystem/Components/IconButton.swift
+  s_a9c5d21d88404f::t_fb70b4d29c3929 106
+  s_a9c5d21d88404f::t_37b5d3645c7162 22-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "d9d8e70df94169be9ec94d33dcda6fb201c10c91",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
