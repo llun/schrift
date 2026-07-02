@@ -77,6 +77,14 @@ struct SearchScreen: View {
                 Spacer()
             }
             .padding(.vertical, DocsSpacing.spaceLG)
+        } else if let errorMessage = viewModel.errorMessage {
+            // A failed request isn't "no matches" — surface the error instead.
+            Text(errorMessage)
+                .font(DocsFont.subhead)
+                .foregroundStyle(DocsColor.danger)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DocsSpacing.spaceLG)
         } else if viewModel.results.isEmpty {
             emptyState
         } else {
