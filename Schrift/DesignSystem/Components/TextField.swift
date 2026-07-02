@@ -56,6 +56,7 @@ struct DocsTextField: View {
             HStack(spacing: DocsSpacing.spaceXS) {
                 if let icon {
                     Image(systemName: icon)
+                        .font(.system(size: 20))
                         .foregroundStyle(DocsColor.textTertiary)
                 }
                 TextField(placeholder, text: $text)
@@ -64,12 +65,21 @@ struct DocsTextField: View {
                     .disabled(isDisabled)
             }
             .padding(DocsSpacing.spaceSM)
-            .background(DocsColor.surfacePage)
+            // Disabled fields sink to the sunken surface (reference); enabled stay white.
+            .background(isDisabled ? DocsColor.surfaceSunken : DocsColor.surfacePage)
+            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: DocsRadius.sm)
-                    .strokeBorder(Color(hex: style.borderHex), lineWidth: state == .focused ? 2 : 1)
+                    .strokeBorder(Color(hex: style.borderHex), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
+            // Soft brand-400 focus ring sitting just outside the field, matching
+            // the reference's 3px glow.
+            .overlay(
+                RoundedRectangle(cornerRadius: DocsRadius.sm)
+                    .inset(by: -1.5)
+                    .stroke(DocsColor.borderFocus.opacity(0.25), lineWidth: state == .focused ? 3 : 0)
+            )
+            .opacity(isDisabled ? 0.6 : 1)
 
             if let error {
                 Text(error)
