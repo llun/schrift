@@ -68,7 +68,7 @@ struct ProfileScreen: View {
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 18))
                     .foregroundStyle(DocsColor.gray300)
             }
             .padding(.horizontal, 14)
