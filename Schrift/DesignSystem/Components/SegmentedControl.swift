@@ -37,7 +37,10 @@ struct SegmentedControl: View {
                             .strokeBorder(DocsColor.borderDefault, lineWidth: 0.5)
                     )
                     .shadow(color: DocsColor.textPrimary.opacity(0.08), radius: 2, x: 0, y: 1)
-                    .frame(width: usable * layout.segmentFraction)
+                    // Inset the thumb 2pt on every edge so the sunken track shows
+                    // as a frame around it (reference top/bottom/left/right: 2).
+                    .frame(width: usable * layout.segmentFraction,
+                           height: geometry.size.height - trackPadding * 2)
                     .offset(x: trackPadding + usable * layout.thumbOffsetFraction)
                     .animation(.easeOut(duration: 0.2), value: selectedIndex)
 
