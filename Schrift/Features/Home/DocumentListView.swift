@@ -102,6 +102,10 @@ struct DocumentListView: View {
                     .allowsHitTesting(false)
             }
             .buttonStyle(.plain)
+            // Announce one actionable button, not the inert editable field inside.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Search \(serverHost)")
+            .accessibilityAddTraits(.isButton)
         } else {
             SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
         }
