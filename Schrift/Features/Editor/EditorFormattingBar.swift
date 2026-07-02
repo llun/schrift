@@ -12,70 +12,54 @@ struct EditorFormattingBar: View {
     private var hasTarget: Bool { isMarkdownMode || viewModel.focusedBlockID != nil }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: DocsSpacing.space3xs) {
-                IconButton(systemImage: "plus", label: "Add block", variant: .ghost, color: .brand) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n")
-                    } else {
-                        viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
-                    }
-                }
-                IconButton(systemImage: "bold", label: "Bold", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    viewModel.applyInlineMarker("**")
-                }
-                IconButton(systemImage: "italic", label: "Italic", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    viewModel.applyInlineMarker("_")
-                }
-                IconButton(systemImage: "chevron.left.forwardslash.chevron.right", label: "Inline code", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    viewModel.applyInlineMarker("`")
-                }
-                IconButton(systemImage: "list.bullet", label: "Bulleted list", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n- ")
-                    } else {
-                        viewModel.convertFocusedBlock(to: .bulletItem)
-                    }
-                }
-                IconButton(systemImage: "checklist", label: "Checklist", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n- [ ] ")
-                    } else {
-                        viewModel.convertFocusedBlock(to: .checklistItem(checked: false))
-                    }
-                }
-                IconButton(systemImage: "list.number", label: "Numbered list", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n1. ")
-                    } else {
-                        viewModel.convertFocusedBlock(to: .numberedItem)
-                    }
-                }
-                IconButton(systemImage: "text.quote", label: "Quote", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n> ")
-                    } else {
-                        viewModel.convertFocusedBlock(to: .quote)
-                    }
-                }
-                IconButton(systemImage: "curlybraces", label: "Code block", variant: .ghost, color: .neutral, isDisabled: !hasTarget) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n```\n\n```\n")
-                    } else {
-                        viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
-                    }
-                }
-                IconButton(systemImage: "minus", label: "Divider", variant: .ghost, color: .neutral, isDisabled: !hasTarget && !isMarkdownMode) {
-                    if isMarkdownMode {
-                        viewModel.insertAtCursor("\n---\n")
-                    } else {
-                        viewModel.insertDividerBelowFocused()
-                    }
+        // A fixed pill of evenly-spaced actions (matching the reference accessory
+        // bar): add + the core block/inline formatters. Numbered list, inline
+        // code and divider remain reachable via their Markdown shortcuts.
+        HStack(spacing: DocsSpacing.space4xs) {
+            barButton(icon: "plus", label: "Add block", brand: true, disabled: false) {
+                if isMarkdownMode {
+                    viewModel.insertAtCursor("\n")
+                } else {
+                    viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
                 }
             }
-            .padding(.horizontal, DocsSpacing.spaceXS)
-            .padding(.vertical, DocsSpacing.space3xs)
+            barButton(icon: "bold", label: "Bold") {
+                viewModel.applyInlineMarker("**")
+            }
+            barButton(icon: "italic", label: "Italic") {
+                viewModel.applyInlineMarker("_")
+            }
+            barButton(icon: "list.bullet", label: "Bulleted list") {
+                if isMarkdownMode {
+                    viewModel.insertAtCursor("\n- ")
+                } else {
+                    viewModel.convertFocusedBlock(to: .bulletItem)
+                }
+            }
+            barButton(icon: "checklist", label: "Checklist") {
+                if isMarkdownMode {
+                    viewModel.insertAtCursor("\n- [ ] ")
+                } else {
+                    viewModel.convertFocusedBlock(to: .checklistItem(checked: false))
+                }
+            }
+            barButton(icon: "text.quote", label: "Quote") {
+                if isMarkdownMode {
+                    viewModel.insertAtCursor("\n> ")
+                } else {
+                    viewModel.convertFocusedBlock(to: .quote)
+                }
+            }
+            barButton(icon: "curlybraces", label: "Code block") {
+                if isMarkdownMode {
+                    viewModel.insertAtCursor("\n```\n\n```\n")
+                } else {
+                    viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
+                }
+            }
         }
+        .padding(.horizontal, DocsSpacing.space2xs)
+        .padding(.vertical, DocsSpacing.space3xs)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(
             Capsule()
@@ -83,5 +67,19 @@ struct EditorFormattingBar: View {
         )
         .clipShape(Capsule())
         .shadow(color: DocsColor.textPrimary.opacity(0.12), radius: 12, x: 0, y: 4)
+    }
+
+    @ViewBuilder
+    private func barButton(icon: String, label: String, brand: Bool = false, disabled: Bool? = nil, action: @escaping () -> Void) -> some View {
+        IconButton(
+            systemImage: icon,
+            label: label,
+            variant: .ghost,
+            color: brand ? .brand : .neutral,
+            size: .small,
+            isDisabled: disabled ?? !hasTarget,
+            action: action
+        )
+        .frame(maxWidth: .infinity)
     }
 }
