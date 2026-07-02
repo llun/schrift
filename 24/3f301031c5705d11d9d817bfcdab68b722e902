@@ -1,0 +1,24 @@
+Schrift/DesignSystem/Components/DocRow.swift
+  s_a9c5d21d88404f::t_cf0c4166286aef 36
+  s_a9c5d21d88404f::t_719897a301b2f6 61-63,65-66
+  s_a9c5d21d88404f::t_85634dad8b7712 64
+  s_a9c5d21d88404f::t_d8839bf38ef61f 67
+Schrift/Features/Home/DocumentListView.swift
+  s_a9c5d21d88404f::t_3ea4d0655bae5d 182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "243f301031c5705d11d9d817bfcdab68b722e902",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
