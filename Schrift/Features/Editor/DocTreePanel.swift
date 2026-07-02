@@ -244,7 +244,10 @@ private struct DocTreeRow: View {
                         .font(.system(size: 18))
                         .foregroundStyle(hasChildren ? DocsColor.textTertiary : Color.clear)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .frame(width: 18, height: 18)
+                        // Keep the 18pt glyph but enlarge the hit target to the full
+                        // compact-row height (34pt) so a near miss toggles rather than
+                        // opening the doc. A full 44pt would break the compact tree.
+                        .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
