@@ -32,7 +32,8 @@ enum IconButtonStyleResolver {
             foregroundHex = DocsColorHex.textSecondary
             softHex = DocsColorHex.surfaceMuted
         case .brand:
-            foregroundHex = DocsColorHex.textBrandSecondary
+            // Reference IconButton brand hue is --text-brand.
+            foregroundHex = DocsColorHex.textBrand
             softHex = DocsColorHex.brandFillSoft
         case .danger:
             foregroundHex = DocsColorHex.danger
@@ -45,7 +46,8 @@ enum IconButtonStyleResolver {
         case .soft:
             return IconButtonStyleHex(backgroundHex: softHex, foregroundHex: foregroundHex, borderHex: nil)
         case .outline:
-            return IconButtonStyleHex(backgroundHex: nil, foregroundHex: foregroundHex, borderHex: foregroundHex)
+            // Reference outline = raised surface fill + neutral hairline border + ink glyph.
+            return IconButtonStyleHex(backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: foregroundHex, borderHex: DocsColorHex.borderDefault)
         }
     }
 }

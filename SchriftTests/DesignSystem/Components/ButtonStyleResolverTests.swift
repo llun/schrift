@@ -9,20 +9,20 @@ final class ButtonStyleResolverTests: XCTestCase {
 
     func testSecondaryBrandUsesSoftBackground() {
         let style = ButtonStyleResolver.style(variant: .secondary, color: .brand, isDisabled: false)
-        XCTAssertEqual(style, ButtonStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary, borderHex: nil))
+        XCTAssertEqual(style, ButtonStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrand, borderHex: nil))
     }
 
     func testTertiaryHasNoBackground() {
         let style = ButtonStyleResolver.style(variant: .tertiary, color: .brand, isDisabled: false)
         XCTAssertNil(style.backgroundHex)
-        XCTAssertEqual(style.foregroundHex, DocsColorHex.textBrandSecondary)
+        XCTAssertEqual(style.foregroundHex, DocsColorHex.textBrand)
     }
 
-    func testOutlineHasMatchingBorderAndForeground() {
+    func testOutlineUsesRaisedSurfaceAndHairlineBorder() {
         let style = ButtonStyleResolver.style(variant: .outline, color: .danger, isDisabled: false)
-        XCTAssertNil(style.backgroundHex)
+        XCTAssertEqual(style.backgroundHex, DocsColorHex.surfaceRaised)
         XCTAssertEqual(style.foregroundHex, DocsColorHex.danger)
-        XCTAssertEqual(style.borderHex, DocsColorHex.danger)
+        XCTAssertEqual(style.borderHex, DocsColorHex.borderDefault)
     }
 
     func testDisabledIgnoresVariantAndColor() {

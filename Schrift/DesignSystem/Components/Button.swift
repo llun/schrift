@@ -35,7 +35,8 @@ enum ButtonStyleResolver {
             fillHex = DocsColorHex.brandFill
             softHex = DocsColorHex.brandFillSoft
             onFillHex = DocsColorHex.textOnBrand
-            softForegroundHex = DocsColorHex.textBrandSecondary
+            // Reference Button hues use --text-brand as the ink for soft/ghost/outline.
+            softForegroundHex = DocsColorHex.textBrand
         case .neutral:
             fillHex = DocsColorHex.textPrimary
             softHex = DocsColorHex.surfaceMuted
@@ -56,7 +57,8 @@ enum ButtonStyleResolver {
         case .tertiary:
             return ButtonStyleHex(backgroundHex: nil, foregroundHex: softForegroundHex, borderHex: nil)
         case .outline:
-            return ButtonStyleHex(backgroundHex: nil, foregroundHex: softForegroundHex, borderHex: softForegroundHex)
+            // Reference outline = raised surface fill + neutral hairline border + ink label.
+            return ButtonStyleHex(backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: softForegroundHex, borderHex: DocsColorHex.borderDefault)
         }
     }
 }

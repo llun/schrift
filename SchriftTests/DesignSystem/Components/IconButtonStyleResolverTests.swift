@@ -11,14 +11,14 @@ final class IconButtonStyleResolverTests: XCTestCase {
     func testSoftBrandUsesBrandSoftBackground() {
         let style = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: false)
         XCTAssertEqual(style.backgroundHex, DocsColorHex.brandFillSoft)
-        XCTAssertEqual(style.foregroundHex, DocsColorHex.textBrandSecondary)
+        XCTAssertEqual(style.foregroundHex, DocsColorHex.textBrand)
     }
 
-    func testOutlineDangerHasMatchingBorder() {
+    func testOutlineDangerUsesRaisedSurfaceAndHairlineBorder() {
         let style = IconButtonStyleResolver.style(variant: .outline, color: .danger, isDisabled: false)
-        XCTAssertNil(style.backgroundHex)
+        XCTAssertEqual(style.backgroundHex, DocsColorHex.surfaceRaised)
         XCTAssertEqual(style.foregroundHex, DocsColorHex.danger)
-        XCTAssertEqual(style.borderHex, DocsColorHex.danger)
+        XCTAssertEqual(style.borderHex, DocsColorHex.borderDefault)
     }
 
     func testDisabledIgnoresVariantAndColor() {
