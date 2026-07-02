@@ -97,19 +97,29 @@ struct ShareSheetView: View {
             .foregroundStyle(DocsColor.textTertiary)
     }
 
+    @ViewBuilder
     private var searchResultsSection: some View {
-        ListSection(header: "Add people") {
-            VStack(spacing: 0) {
-                ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, user in
-                    if index > 0 { ProfileRowDivider() }
-                    ListRow(title: user.fullName, subtitle: user.email, action: {
-                        Task { await viewModel.invite(user: user, role: .reader) }
-                    })
+        if viewModel.searchResults.isEmpty {
+            // Avoid an empty bordered card while there are no matches.
+            Text("No people found")
+                .font(DocsFont.subhead)
+                .foregroundStyle(DocsColor.textTertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DocsSpacing.spaceLG)
+        } else {
+            ListSection(header: "Add people") {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, user in
+                        if index > 0 { ProfileRowDivider() }
+                        ListRow(title: user.fullName, subtitle: user.email, action: {
+                            Task { await viewModel.invite(user: user, role: .reader) }
+                        })
+                    }
                 }
             }
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.top, DocsSpacing.space3xs)
         }
-        .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.top, DocsSpacing.space3xs)
     }
 
     private var copyLinkButton: some View {
@@ -141,7 +151,7 @@ struct ShareSheetView: View {
     }
 
     private var membersSection: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.space3xs) {
+        VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
             sectionLabel("Shared with \(viewModel.members.count) \(viewModel.members.count == 1 ? "person" : "people")")
             ForEach(viewModel.members) { member in
                 ShareMemberRow(
