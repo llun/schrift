@@ -45,7 +45,7 @@ struct SearchScreen: View {
     @ViewBuilder
     private var emptyQueryContent: some View {
         if !viewModel.recentSearches.isEmpty {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+            VStack(alignment: .leading, spacing: 0) {
                 sectionLabel("Recent searches", icon: "clock.arrow.circlepath")
                 RecentSearchesFlow(terms: viewModel.recentSearches) { term in
                     viewModel.selectRecent(term)
@@ -54,7 +54,7 @@ struct SearchScreen: View {
             }
         }
 
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+        VStack(alignment: .leading, spacing: 0) {
             sectionLabel("Quick access", icon: "pin.fill")
             if viewModel.quickAccess.isEmpty {
                 Text("Pinned documents will appear here.")
@@ -88,7 +88,7 @@ struct SearchScreen: View {
         } else if viewModel.results.isEmpty {
             emptyState
         } else {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+            VStack(alignment: .leading, spacing: 0) {
                 sectionLabel(resultsCountLabel, icon: nil)
                 documentList(viewModel.results)
             }
@@ -147,6 +147,9 @@ struct SearchScreen: View {
         }
         .foregroundStyle(DocsColor.textTertiary)
         .padding(.horizontal, DocsSpacing.spaceXS)
+        // Carry a ~4pt gap to the rows below, matching Home's documentSection
+        // and the reference (the wrapping VStacks use spacing 0).
+        .padding(.bottom, DocsSpacing.space3xs)
     }
 }
 
