@@ -18,12 +18,11 @@ struct ShareMemberRow: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space4xs) {
                     Text(name)
-                        .font(DocsFont.body)
-                        .fontWeight(.semibold)
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(DocsColor.textPrimary)
                     if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser) {
                         Text(suffix)
-                            .font(DocsFont.footnote)
+                            .font(DocsFont.caption)
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                 }
@@ -37,18 +36,18 @@ struct ShareMemberRow: View {
             Button(action: { onTapRole?() }) {
                 HStack(spacing: DocsSpacing.space4xs) {
                     Text(role)
-                        .font(DocsFont.body)
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(DocsColor.textSecondary)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(DocsColor.gray300)
                 }
             }
             .accessibilityLabel("Role: \(role)")
             .accessibilityHint("Double tap to change role")
         }
-        .padding(.horizontal, DocsSpacing.gutterGrouped)
-        .frame(minHeight: DocsSpacing.rowMinHeight)
+        .padding(.horizontal, DocsSpacing.space3xs)
+        .padding(.vertical, DocsSpacing.spaceXS)
     }
 }
 
