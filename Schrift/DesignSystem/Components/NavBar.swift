@@ -45,9 +45,12 @@ struct NavBar: View {
                     Button(action: onBack) {
                         HStack(spacing: DocsSpacing.space4xs) {
                             Image(systemName: "chevron.left")
+                                // Reference back glyph is larger than its 17pt label
+                                // (26px arrow_back_ios_new).
+                                .font(.system(size: 20, weight: .semibold))
                             Text(backTitle)
+                                .font(DocsFont.body)
                         }
-                        .font(DocsFont.body)
                         .foregroundStyle(DocsColor.brandFill)
                     }
                 }
