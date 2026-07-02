@@ -22,10 +22,11 @@ struct TabBar: View {
                 Button(action: { selection = item.value }) {
                     VStack(spacing: DocsSpacing.space4xs) {
                         Image(systemName: tabBarIconName(baseSystemImage: item.systemImage, isSelected: isSelected))
+                            .font(.system(size: 22))
                         Text(item.label)
-                            .font(DocsFont.caption)
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                     }
-                    .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.textTertiary)
+                    .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.gray450)
                     .frame(maxWidth: .infinity)
                 }
                 .accessibilityLabel(item.label)
@@ -35,7 +36,7 @@ struct TabBar: View {
         .padding(.top, DocsSpacing.space3xs)
         .padding(.bottom, showsSafeArea ? DocsSpacing.homeIndicatorHeight : DocsSpacing.space3xs)
         .frame(height: DocsSpacing.tabBarHeight + (showsSafeArea ? DocsSpacing.homeIndicatorHeight : 0))
-        .background(DocsColor.surfacePage.opacity(0.94))
+        .background(DocsColor.surfacePage.opacity(0.9))
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(DocsColor.borderDefault)
