@@ -17,6 +17,7 @@ struct EditorView: View {
     @State private var isPresentingTreePanel = false
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
+    @State private var shareViewModel: ShareViewModel
 
     init(
         viewModel: EditorViewModel,
@@ -39,6 +40,7 @@ struct EditorView: View {
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
         _optionsViewModel = State(initialValue: OptionsViewModel(client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite))
+        _shareViewModel = State(initialValue: ShareViewModel(client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
     }
 
     var body: some View {
@@ -105,12 +107,7 @@ struct EditorView: View {
         }
         .sheet(isPresented: $isPresentingShareSheet) {
             ShareSheetView(
-                viewModel: ShareViewModel(
-                    client: viewModel.client,
-                    documentID: viewModel.documentID,
-                    linkReach: reach,
-                    linkRole: linkRole
-                ),
+                viewModel: shareViewModel,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID)
             )
         }
