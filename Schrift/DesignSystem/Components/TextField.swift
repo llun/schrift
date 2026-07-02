@@ -49,7 +49,7 @@ struct DocsTextField: View {
         let style = TextFieldStyleResolver.style(state: state)
         VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
             Text(label)
-                .font(DocsFont.footnote)
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Color(hex: style.labelHex))
 
             HStack(spacing: DocsSpacing.spaceXS) {
