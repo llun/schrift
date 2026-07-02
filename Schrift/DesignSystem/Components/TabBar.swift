@@ -22,7 +22,7 @@ struct TabBar: View {
                 Button(action: { selection = item.value }) {
                     VStack(spacing: DocsSpacing.space4xs) {
                         Image(systemName: tabBarIconName(baseSystemImage: item.systemImage, isSelected: isSelected))
-                            .font(.system(size: 22))
+                            .font(.system(size: 25, weight: isSelected ? .medium : .regular))
                         Text(item.label)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                     }
