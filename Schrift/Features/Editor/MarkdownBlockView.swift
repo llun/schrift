@@ -13,48 +13,78 @@ func markdownHeadingFont(level: Int) -> Font {
 }
 
 struct MarkdownBlockView: View {
-    let block: MarkdownBlock
+    let block: EditorBlock
+    var numberedIndex: Int = 1
 
     var body: some View {
-        switch block {
-        case .heading(let level, let text):
-            Text(markdownInlineText(text))
+        switch block.kind {
+        case .heading(let level):
+            Text(markdownInlineText(block.text))
                 .font(markdownHeadingFont(level: level))
                 .foregroundStyle(DocsColor.textPrimary)
 
-        case .paragraph(let text):
-            Text(markdownInlineText(text))
+        case .paragraph:
+            Text(markdownInlineText(block.text))
                 .font(DocsFont.body)
                 .foregroundStyle(DocsColor.textPrimary)
 
-        case .bulletItem(let text):
+        case .bulletItem:
             HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
                 Text("•")
-                Text(markdownInlineText(text))
+                Text(markdownInlineText(block.text))
             }
             .font(DocsFont.body)
             .foregroundStyle(DocsColor.textPrimary)
 
-        case .checklistItem(let checked, let text):
+        case .numberedItem:
+            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
+                Text("\(numberedIndex).")
+                    .monospacedDigit()
+                Text(markdownInlineText(block.text))
+            }
+            .font(DocsFont.body)
+            .foregroundStyle(DocsColor.textPrimary)
+
+        case .checklistItem(let checked):
             HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
                     .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
-                Text(markdownInlineText(text))
+                Text(markdownInlineText(block.text))
                     .strikethrough(checked)
             }
             .font(DocsFont.body)
             .foregroundStyle(DocsColor.textPrimary)
 
-        case .quote(let text):
+        case .quote:
             HStack(spacing: DocsSpacing.spaceXS) {
                 Rectangle()
                     .fill(DocsColor.borderDefault)
                     .frame(width: 3)
-                Text(markdownInlineText(text))
+                Text(markdownInlineText(block.text))
                     .italic()
             }
             .font(DocsFont.body)
             .foregroundStyle(DocsColor.textSecondary)
+
+        case .codeBlock:
+            Text(block.text)
+                .font(DocsFont.code)
+                .foregroundStyle(DocsColor.textPrimary)
+                .padding(DocsSpacing.spaceSM)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DocsColor.surfaceSunken)
+                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+
+        case .divider:
+            Rectangle()
+                .fill(DocsColor.borderDefault)
+                .frame(height: 1)
+                .padding(.vertical, DocsSpacing.spaceXS)
+
+        case .unknown:
+            Text(block.text)
+                .font(DocsFont.code)
+                .foregroundStyle(DocsColor.textPrimary)
         }
     }
 }

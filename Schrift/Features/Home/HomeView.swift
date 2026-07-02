@@ -49,12 +49,11 @@ struct HomeView: View {
             .background(DocsColor.surfacePage)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Document.self) { document in
-                EditorView(
-                    viewModel: EditorViewModel(
-                        client: viewModel.client,
-                        documentID: document.id,
-                        title: document.title ?? "Untitled document"
-                    ),
+                EditorScreen(
+                    client: viewModel.client,
+                    documentID: document.id,
+                    title: document.title ?? "Untitled document",
+                    saveCoordinator: viewModel.saveCoordinator,
                     reach: document.linkReach,
                     serverHost: serverHost,
                     linkRole: document.linkRole,
