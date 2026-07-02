@@ -225,10 +225,7 @@ struct EditorView: View {
 
     private var headerBlock: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 40))
-                .foregroundStyle(DocsColor.brandFill)
-                .accessibilityHidden(true)
+            DocIcon(size: 40)
 
             Text(viewModel.title)
                 .font(DocsFont.title1.weight(.bold))
@@ -253,7 +250,7 @@ struct EditorView: View {
                 .frame(height: 1)
 
             VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                HStack(spacing: DocsSpacing.space3xs + 1) {
+                HStack(spacing: DocsSpacing.space2xs) {
                     Image(systemName: "list.bullet.indent")
                     .font(.system(size: 16))
                     .accessibilityHidden(true)
