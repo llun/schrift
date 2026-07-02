@@ -20,6 +20,8 @@ struct ShareMemberRow: View {
                     Text(name)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(DocsColor.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser) {
                         Text(suffix)
                             .font(DocsFont.caption)
@@ -29,9 +31,10 @@ struct ShareMemberRow: View {
                 Text(email)
                     .font(DocsFont.footnote)
                     .foregroundStyle(DocsColor.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: { onTapRole?() }) {
                 HStack(spacing: DocsSpacing.space4xs) {
