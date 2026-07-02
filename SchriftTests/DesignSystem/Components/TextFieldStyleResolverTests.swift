@@ -9,7 +9,7 @@ final class TextFieldStyleResolverTests: XCTestCase {
 
     func testFocusedStateUsesBrandBorder() {
         let style = TextFieldStyleResolver.style(state: .focused)
-        XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.borderFocus, labelHex: DocsColorHex.textBrandSecondary))
+        XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textBrandSecondary))
     }
 
     func testErrorStateUsesDangerBorder() {

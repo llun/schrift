@@ -18,7 +18,8 @@ enum TextFieldStyleResolver {
         case .normal:
             return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textSecondary)
         case .focused:
-            return TextFieldStyleHex(borderHex: DocsColorHex.borderFocus, labelHex: DocsColorHex.textBrandSecondary)
+            // Reference focused border is --border-brand (#5E5CD0 == brandFill); --border-focus is the soft ring.
+            return TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textBrandSecondary)
         case .error:
             return TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.danger)
         case .disabled:
@@ -58,7 +59,7 @@ struct DocsTextField: View {
                         .foregroundStyle(DocsColor.textTertiary)
                 }
                 TextField(placeholder, text: $text)
-                    .font(DocsFont.body)
+                    .font(DocsFont.callout)
                     .focused($isFocused)
                     .disabled(isDisabled)
             }
