@@ -54,6 +54,22 @@ struct NavBar: View {
 
                 Spacer()
 
+                HStack(spacing: DocsSpacing.spaceXS) {
+                    ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
+                        IconButton(
+                            systemImage: action.systemImage,
+                            label: action.label,
+                            color: action.color,
+                            filled: action.filled,
+                            action: action.action
+                        )
+                    }
+                }
+            }
+            // Center the standard-mode title across the FULL bar (matching the
+            // reference's absolutely-centered title) so it stays optically
+            // centered regardless of the leading/trailing control widths.
+            .overlay {
                 if !largeTitle, !title.isEmpty {
                     VStack(spacing: 0) {
                         Text(title)
@@ -65,20 +81,7 @@ struct NavBar: View {
                                 .foregroundStyle(DocsColor.textTertiary)
                         }
                     }
-                }
-
-                Spacer()
-
-                HStack(spacing: DocsSpacing.spaceXS) {
-                    ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
-                        IconButton(
-                            systemImage: action.systemImage,
-                            label: action.label,
-                            color: action.color,
-                            filled: action.filled,
-                            action: action.action
-                        )
-                    }
+                    .allowsHitTesting(false)
                 }
             }
             .padding(.horizontal, DocsSpacing.gutter)
