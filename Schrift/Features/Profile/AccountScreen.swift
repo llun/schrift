@@ -11,17 +11,18 @@ struct AccountScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Account", backTitle: "Profile", onBack: onBack)
+            NavBar(title: "Account", backTitle: "Profile", onBack: onBack, surfaceTint: .sunken)
 
             ScrollView {
-                VStack(spacing: DocsSpacing.spaceMD) {
+                VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
                     identityHeader
                     profileSection
                     signInSection
                     manageSection
                 }
                 .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.vertical, DocsSpacing.spaceMD)
+                .padding(.top, DocsSpacing.spaceXS)
+                .padding(.bottom, DocsSpacing.spaceMD + DocsSpacing.space3xs)
             }
         }
         .background(DocsColor.surfaceSunken)
@@ -31,10 +32,24 @@ struct AccountScreen: View {
     // MARK: - Identity header
 
     private var identityHeader: some View {
-        VStack(spacing: DocsSpacing.spaceSM) {
+        VStack(spacing: DocsSpacing.space3xs) {
             Avatar(name: viewModel.user?.displayName ?? "Account", size: 88)
+                .overlay(alignment: .bottomTrailing) {
+                    ZStack {
+                        Circle()
+                            .fill(DocsColor.brandFill)
+                            .frame(width: 30, height: 30)
+                            .overlay(Circle().stroke(DocsColor.surfaceSunken, lineWidth: 3))
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white)
+                    }
+                    .offset(x: 2, y: 2)
+                    .accessibilityLabel("Change photo")
+                }
+                .padding(.bottom, DocsSpacing.space2xs)
 
-            VStack(spacing: DocsSpacing.space4xs) {
+            VStack(spacing: DocsSpacing.space3xs) {
                 Text(viewModel.user?.displayName ?? "Account")
                     .font(DocsFont.title2)
                     .foregroundStyle(DocsColor.textPrimary)
@@ -46,7 +61,8 @@ struct AccountScreen: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, DocsSpacing.spaceSM)
+        .padding(.top, DocsSpacing.spaceXS)
+        .padding(.bottom, DocsSpacing.space3xs)
     }
 
     // MARK: - Profile
@@ -54,12 +70,14 @@ struct AccountScreen: View {
     private var profileSection: some View {
         ListSection(header: "Profile") {
             ListRow(
+                systemImage: "person.text.rectangle",
                 title: "Full name",
                 value: viewModel.user?.displayName ?? "—",
                 showsChevron: true
             )
             ProfileRowDivider()
             ListRow(
+                systemImage: "translate",
                 title: "Language",
                 value: viewModel.user?.languageLabel ?? "—",
                 showsChevron: true
