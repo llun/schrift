@@ -64,7 +64,8 @@ struct DocsTextField: View {
                     .focused($isFocused)
                     .disabled(isDisabled)
             }
-            .padding(DocsSpacing.spaceSM)
+            .padding(.horizontal, DocsSpacing.spaceSM)
+            .frame(height: 40)
             // Disabled fields sink to the sunken surface (reference); enabled stay white.
             .background(isDisabled ? DocsColor.surfaceSunken : DocsColor.surfacePage)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
