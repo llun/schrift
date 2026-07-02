@@ -43,11 +43,11 @@ struct ListRow: View {
 
                 if showsChevron {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(DocsColor.gray300)
                 }
             }
-            .padding(.horizontal, DocsSpacing.gutterGrouped)
+            .padding(.horizontal, DocsSpacing.gutter)
             .frame(minHeight: DocsSpacing.rowMinHeight)
         }
         .buttonStyle(.plain)
