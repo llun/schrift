@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/OfflineBanner.swift
+  s_a9c5d21d88404f::t_8b8807f02665ce 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "dd8ebfd477854f28e2500cd26dd0b193d1fa508a",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
