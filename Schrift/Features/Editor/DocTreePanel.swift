@@ -80,15 +80,16 @@ struct DocTreePanel: View {
                 panel
                     .frame(width: panelWidth)
                     .frame(maxHeight: .infinity, alignment: .top)
-                    .background(DocsColor.surfacePage)
+                    // Extend only the surface into the bottom safe area (so the
+                    // scrim doesn't show through beneath the sidebar); the content
+                    // stack keeps its inset so the New page button clears the home
+                    // indicator.
+                    .background(DocsColor.surfacePage.ignoresSafeArea(edges: .bottom))
                     .overlay(alignment: .trailing) {
                         Rectangle()
                             .fill(DocsColor.borderDefault)
                             .frame(width: 0.5)
                     }
-                    // Reach the screen bottom like the reference full-height panel,
-                    // so the scrim doesn't show through beneath the sidebar.
-                    .ignoresSafeArea(edges: .bottom)
                     .shadow(color: DocsColor.textPrimary.opacity(0.16), radius: 16, x: 4, y: 0)
                     .transition(.move(edge: .leading))
             }
