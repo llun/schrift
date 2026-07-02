@@ -103,7 +103,8 @@ struct NavBar: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.bottom, DocsSpacing.spaceXS)
+                .padding(.top, DocsSpacing.space4xs)
+                .padding(.bottom, DocsSpacing.spaceSM - DocsSpacing.space4xs)
             }
         }
         .frame(minHeight: navBarHeight(largeTitle: largeTitle))
