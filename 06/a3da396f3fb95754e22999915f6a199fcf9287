@@ -1,0 +1,21 @@
+SchriftTests/DesignSystem/Components/BadgeStyleResolverTests.swift
+  s_a9c5d21d88404f::t_7161c51fa4980f 9-10,13-14,17-18,21-22,25-26
+Schrift/DesignSystem/Components/Badge.swift
+  s_a9c5d21d88404f::t_512e894520b15f 18-19,25,27,29,31,33,42-43,47-53,56,59,62-63,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "06a3da396f3fb95754e22999915f6a199fcf9287",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
