@@ -117,4 +117,46 @@ final class DocsAPIClientTests: XCTestCase {
 
         XCTAssertNil(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "X-CSRFToken"))
     }
+
+    // Django's CsrfViewMiddleware rejects unsafe requests on HTTPS that carry a
+    // valid token but no Origin/Referer ("CSRF Failed: Referer checking failed -
+    // no Referer."). These regression tests pin the Origin/Referer headers that
+    // every write must carry, matching the site origin — not the /api/v1.0/ path.
+    func testMutatingRequestAttachesOriginAndRefererForSiteOrigin() async throws {
+        struct Empty: Decodable {}
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+
+        let client = makeClient()
+        let _: Empty = try await client.send(path: "documents/1/", method: "PATCH", body: "{}".data(using: .utf8))
+
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"), "https://docs.example.org/")
+    }
+
+    func testPostRequestAttachesOrigin() async throws {
+        struct Empty: Decodable {}
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 201, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+
+        let client = makeClient()
+        let _: Empty = try await client.send(path: "documents/", method: "POST", body: "{}".data(using: .utf8))
+
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+    }
+
+    func testGetRequestDoesNotAttachOriginOrReferer() async throws {
+        struct Empty: Decodable {}
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+
+        let client = makeClient()
+        let _: Empty = try await client.get("documents/")
+
+        XCTAssertNil(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"))
+        XCTAssertNil(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"))
+    }
 }

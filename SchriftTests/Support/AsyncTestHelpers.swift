@@ -23,6 +23,12 @@ final class RequestRecorder: @unchecked Sendable {
         defer { lock.unlock() }
         return entries.filter { $0.method == method }.count
     }
+
+    func count(ofMethod method: String, urlContaining substring: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.filter { $0.method == method && $0.url.contains(substring) }.count
+    }
 }
 
 /// Polls a condition on the main actor until it holds or the timeout passes.

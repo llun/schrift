@@ -6,10 +6,6 @@ final class EditorViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
 
-    private static let tempDocBody = Data("""
-    {"id": "22222222-2222-4222-8222-222222222222", "title": "Doc.md", "excerpt": null, "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null, "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0002", "updated_at": "2026-01-15T10:30:00Z", "user_role": "owner", "is_favorite": false}
-    """.utf8)
-
     override func tearDown() {
         MockURLProtocol.stubHandler = nil
         MockURLProtocol.lastRequest = nil
@@ -49,20 +45,24 @@ final class EditorViewModelTests: XCTestCase {
         }
     }
 
-    private func stubLoadAndSavePipeline(content: String?, log: RequestRecorder, patchStatus: Int = 204) {
+    /// A save is a content PATCH (base64 Yjs) followed by a title PATCH; each
+    /// save is counted by its single content PATCH.
+    private func savesInFlight(_ log: RequestRecorder) -> Int {
+        log.count(ofMethod: "PATCH", urlContaining: "/content/")
+    }
+
+    private func stubLoadAndSavePipeline(content: String?, log: RequestRecorder, contentStatus: Int = 204) {
         let body = formattedBody(content: content)
-        let tempDocBody = Self.tempDocBody
         MockURLProtocol.stubHandler = { request in
             log.record(request)
+            let url = request.url?.absoluteString ?? ""
             switch request.httpMethod {
-            case "POST":
-                return .init(statusCode: 201, headers: [:], body: tempDocBody, error: nil)
-            case "GET" where request.url?.absoluteString.contains("formatted-content") == true:
+            case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: body, error: nil)
-            case "GET":
-                return .init(statusCode: 200, headers: [:], body: Data([0xAA]), error: nil)
+            case "PATCH" where url.hasSuffix("/content/"):
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
             case "PATCH":
-                return .init(statusCode: patchStatus, headers: [:], body: Data(), error: nil)
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil) // title
             default:
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -215,11 +215,11 @@ final class EditorViewModelTests: XCTestCase {
 
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
 
-        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
-        await waitUntil { log.count(ofMethod: "POST") >= 1 && viewModel.saveState == .saved }
+        XCTAssertEqual(savesInFlight(log), 0)
+        await waitUntil { self.savesInFlight(log) >= 1 && viewModel.saveState == .saved }
 
         XCTAssertEqual(viewModel.saveState, .saved)
-        XCTAssertGreaterThanOrEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertGreaterThanOrEqual(savesInFlight(log), 1)
     }
 
     func testTypingRestartsTheDebounce() async {
@@ -234,10 +234,10 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Change two")
 
         // 200ms after the first edit the (restarted) debounce must not have fired.
-        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+        XCTAssertEqual(savesInFlight(log), 0)
 
         await waitUntil { viewModel.saveState == .saved }
-        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertEqual(savesInFlight(log), 1)
     }
 
     func testFlushSkipsWhenContentUnchanged() async {
@@ -253,7 +253,7 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.flushPendingChanges()
 
         XCTAssertFalse(viewModel.isDirty)
-        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+        XCTAssertEqual(savesInFlight(log), 0)
         XCTAssertEqual(viewModel.saveState, .idle)
     }
 
@@ -271,13 +271,13 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty)
         XCTAssertNil(viewModel.focusedBlockID)
         await waitUntil { viewModel.saveState == .saved }
-        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertEqual(savesInFlight(log), 1)
     }
 
     func testFailedSaveSurfacesFailedStateAndKeepsDraft() async {
         let log = RequestRecorder()
         let (viewModel, _, draftStore) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "Original text", log: log, patchStatus: 500)
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
         await viewModel.load()
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
@@ -298,7 +298,7 @@ final class EditorViewModelTests: XCTestCase {
     func testSaveNowRetriesAfterFailure() async {
         let log = RequestRecorder()
         let (viewModel, _, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "Original text", log: log, patchStatus: 500)
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
         await viewModel.load()
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
@@ -308,7 +308,7 @@ final class EditorViewModelTests: XCTestCase {
             return false
         }
 
-        stubLoadAndSavePipeline(content: "Original text", log: log, patchStatus: 204)
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 204)
         viewModel.saveNow()
 
         await waitUntil { viewModel.saveState == .saved }

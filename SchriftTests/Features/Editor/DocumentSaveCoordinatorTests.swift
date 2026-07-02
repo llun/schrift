@@ -7,10 +7,6 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     private let otherDocumentID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
 
-    private static let tempDocBody = Data("""
-    {"id": "22222222-2222-4222-8222-222222222222", "title": "Doc.md", "excerpt": null, "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null, "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0002", "updated_at": "2026-01-15T10:30:00Z", "user_role": "owner", "is_favorite": false}
-    """.utf8)
-
     private static let formattedBody = Data("""
     {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Server content", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
     """.utf8)
@@ -49,23 +45,28 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         return (coordinator, draftStore)
     }
 
-    private func stubSavePipeline(log: RequestRecorder, postDelay: TimeInterval = 0, patchStatus: Int = 204) {
-        let tempDocBody = Self.tempDocBody
+    /// A save is now two PATCHes: content (base64 Yjs) then title. Each save is
+    /// counted by its single content PATCH. `recoverDrafts` first GETs
+    /// formatted-content to compare timestamps.
+    private func savesInFlight(_ log: RequestRecorder) -> Int {
+        log.count(ofMethod: "PATCH", urlContaining: "/content/")
+    }
+
+    private func stubSavePipeline(log: RequestRecorder, saveDelay: TimeInterval = 0, contentStatus: Int = 204) {
         let formattedBody = Self.formattedBody
         MockURLProtocol.stubHandler = { request in
             log.record(request)
+            let url = request.url?.absoluteString ?? ""
             switch request.httpMethod {
-            case "POST":
-                if postDelay > 0 {
-                    Thread.sleep(forTimeInterval: postDelay)
-                }
-                return .init(statusCode: 201, headers: [:], body: tempDocBody, error: nil)
-            case "GET" where request.url?.absoluteString.contains("formatted-content") == true:
+            case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
-            case "GET":
-                return .init(statusCode: 200, headers: [:], body: Data([0xAA]), error: nil)
+            case "PATCH" where url.hasSuffix("/content/"):
+                if saveDelay > 0 {
+                    Thread.sleep(forTimeInterval: saveDelay)
+                }
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
             case "PATCH":
-                return .init(statusCode: patchStatus, headers: [:], body: Data(), error: nil)
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil) // title
             default:
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -96,7 +97,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
         XCTAssertTrue(isSaved(coordinator.state(for: documentID)))
-        XCTAssertEqual(log.methods, ["POST", "GET", "PATCH", "DELETE"])
+        // A save PATCHes content (base64 Yjs) then title.
+        XCTAssertEqual(log.methods, ["PATCH", "PATCH"])
+        XCTAssertEqual(savesInFlight(log), 1)
         XCTAssertNil(draftStore.draft(for: documentID))
         XCTAssertEqual(recorder.beginCount, 1)
         XCTAssertEqual(recorder.endCount, 1)
@@ -104,7 +107,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
     func testEnqueueWhileInFlightCoalescesToLatestContent() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, postDelay: 0.2)
+        stubSavePipeline(log: log, saveDelay: 0.2)
         let (coordinator, draftStore) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "v1")
@@ -114,18 +117,18 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, "v3")
 
         await waitUntil(timeout: 5) {
-            self.isSaved(coordinator.state(for: self.documentID)) && log.count(ofMethod: "POST") == 2
+            self.isSaved(coordinator.state(for: self.documentID)) && self.savesInFlight(log) == 2
         }
 
         // v1 saved, v2 dropped by coalescing, v3 saved as the follow-up.
-        XCTAssertEqual(log.count(ofMethod: "POST"), 2)
+        XCTAssertEqual(savesInFlight(log), 2)
         XCTAssertNil(coordinator.pendingSave(documentID: documentID))
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 
     func testReenqueueingIdenticalContentWhileInFlightSkipsFollowUp() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, postDelay: 0.2)
+        stubSavePipeline(log: log, saveDelay: 0.2)
         let (coordinator, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
@@ -135,12 +138,12 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         // Give any (incorrect) follow-up a moment to start.
         try? await Task.sleep(for: .milliseconds(100))
 
-        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertEqual(savesInFlight(log), 1)
     }
 
     func testFailedSaveKeepsDraftAndReportsFailure() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, patchStatus: 500)
+        stubSavePipeline(log: log, contentStatus: 500)
         let (coordinator, draftStore) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
@@ -179,7 +182,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
         XCTAssertTrue(isSaved(coordinator.state(for: documentID)))
-        XCTAssertGreaterThanOrEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertGreaterThanOrEqual(savesInFlight(log), 1)
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 
@@ -192,7 +195,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await coordinator.recoverDrafts()
 
         XCTAssertNil(draftStore.draft(for: documentID))
-        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+        XCTAssertEqual(savesInFlight(log), 0)
     }
 
     func testRecoverDraftsDropsDraftForInaccessibleDocument() async {
@@ -207,7 +210,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await coordinator.recoverDrafts()
 
         XCTAssertNil(draftStore.draft(for: documentID))
-        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+        XCTAssertEqual(savesInFlight(log), 0)
     }
 
     func testRecoverDraftsRunsOnlyOnce() async {
@@ -218,11 +221,11 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
         await coordinator.recoverDrafts()
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
-        let postsAfterFirstRecovery = log.count(ofMethod: "POST")
+        let savesAfterFirstRecovery = savesInFlight(log)
 
         await coordinator.recoverDrafts()
         try? await Task.sleep(for: .milliseconds(100))
 
-        XCTAssertEqual(log.count(ofMethod: "POST"), postsAfterFirstRecovery)
+        XCTAssertEqual(savesInFlight(log), savesAfterFirstRecovery)
     }
 }
