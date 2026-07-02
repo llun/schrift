@@ -17,7 +17,7 @@ struct ConnectView: View {
                 Text("Welcome to Schrift")
                     .font(DocsFont.title1)
                     .foregroundStyle(DocsColor.textPrimary)
-                Text("Connect to any Schrift server to write, organize and collaborate — in real time.")
+                Text("Connect to any server to write, organize and collaborate — in real time.")
                     .font(DocsFont.callout)
                     .foregroundStyle(DocsColor.textSecondary)
                     .multilineTextAlignment(.center)
@@ -30,7 +30,7 @@ struct ConnectView: View {
             // Form group — pinned to the bottom.
             VStack(spacing: 14) {
                 DocsTextField(
-                    label: "Schrift server",
+                    label: "Server",
                     text: $viewModel.serverURLInput,
                     placeholder: "schrift.example.org",
                     icon: "cloud",
