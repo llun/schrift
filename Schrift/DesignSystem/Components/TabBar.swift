@@ -43,6 +43,7 @@ struct TabBar: View {
         // a large empty gap below the labels.
         .background(
             DocsColor.surfacePage.opacity(0.9)
+                .background(.ultraThinMaterial)
                 .ignoresSafeArea(edges: showsSafeArea ? .bottom : [])
         )
         .overlay(alignment: .top) {

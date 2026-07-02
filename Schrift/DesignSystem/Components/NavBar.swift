@@ -111,7 +111,15 @@ struct NavBar: View {
             }
         }
         .frame(minHeight: navBarHeight(largeTitle: largeTitle))
-        .background(translucent ? surfaceTint.color.opacity(0.82) : surfaceTint.color)
+        // Translucent bars are frosted glass: a system material blur under a
+        // ~0.82 tint, matching the reference `backdrop-filter: blur(20px)`.
+        .background {
+            if translucent {
+                surfaceTint.color.opacity(0.82).background(.ultraThinMaterial)
+            } else {
+                surfaceTint.color
+            }
+        }
         .overlay(alignment: .bottom) {
             if showsBorder {
                 Rectangle()
