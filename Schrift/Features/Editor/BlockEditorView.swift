@@ -120,7 +120,7 @@ private struct BlockEditorRow: View {
     private var textView: some View {
         BlockTextView(
             text: Binding(
-                get: { viewModel.blocks.first(where: { $0.id == block.id })?.text ?? block.text },
+                get: { block.text },
                 set: { viewModel.updateText(blockID: block.id, text: $0) }
             ),
             styling: blockTextStyling(for: block.kind),
