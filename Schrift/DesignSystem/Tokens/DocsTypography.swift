@@ -16,15 +16,12 @@ enum DocsTypographySpec {
     static let footnote = TypographySpec(size: 13, weight: .regular)
     static let caption = TypographySpec(size: 12, weight: .regular)
     static let code = TypographySpec(size: 15, weight: .regular)
-    /// Marketing / empty-state hero size (`--fs-display`, 48px).
-    static let display = TypographySpec(size: 48, weight: .bold)
 }
 
 /// Letter-spacing scale (`--tracking-*`), expressed as an em fraction.
 /// Apply with `.tracking(size * DocsTracking.tight)` at a call site.
 enum DocsTracking {
     static let tight: CGFloat = -0.02
-    static let normal: CGFloat = 0
     static let wide: CGFloat = 0.01
 }
 
@@ -39,5 +36,4 @@ enum DocsFont {
     static let footnote = Font.system(size: DocsTypographySpec.footnote.size, weight: DocsTypographySpec.footnote.weight)
     static let caption = Font.system(size: DocsTypographySpec.caption.size, weight: DocsTypographySpec.caption.weight)
     static let code = Font.system(size: DocsTypographySpec.code.size, weight: DocsTypographySpec.code.weight, design: .monospaced)
-    static let display = Font.system(size: DocsTypographySpec.display.size, weight: DocsTypographySpec.display.weight)
 }
