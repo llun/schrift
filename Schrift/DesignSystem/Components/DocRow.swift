@@ -40,15 +40,19 @@ struct DocRow: View {
         HStack(spacing: DocsSpacing.spaceSM) {
             DocIcon(emoji: emoji, tinted: true, pinned: pinned)
 
-            Text(title)
-                .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
-                .lineLimit(1)
+            // Title and its inline reach glyph sit 6pt apart (reference), while
+            // the DocIcon keeps the outer 12pt gap.
+            HStack(spacing: DocsSpacing.space2xs) {
+                Text(title)
+                    .font(DocsFont.body)
+                    .foregroundStyle(DocsColor.textPrimary)
+                    .lineLimit(1)
 
-            if let indicatorImage = docRowReachIndicatorSystemImage(reach: reach) {
-                Image(systemName: indicatorImage)
-                    .font(.system(size: 16))
-                    .foregroundStyle(DocsColor.textTertiary)
+                if let indicatorImage = docRowReachIndicatorSystemImage(reach: reach) {
+                    Image(systemName: indicatorImage)
+                        .font(.system(size: 16))
+                        .foregroundStyle(DocsColor.textTertiary)
+                }
             }
 
             Spacer(minLength: DocsSpacing.spaceXS)
