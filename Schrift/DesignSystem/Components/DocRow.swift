@@ -65,7 +65,11 @@ struct DocRow: View {
                     .layoutPriority(1)
             }
 
-            IconButton(systemImage: "ellipsis", label: "More options", size: .small, action: { onMore?() })
+            // Only show the more-options control when a handler is wired, so
+            // rows without one (e.g. search results) don't present an inert button.
+            if let onMore {
+                IconButton(systemImage: "ellipsis", label: "More options", size: .small, action: onMore)
+            }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
         .padding(.vertical, DocsSpacing.space2xs)
