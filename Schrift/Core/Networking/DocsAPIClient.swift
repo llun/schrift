@@ -15,6 +15,19 @@ actor DocsAPIClient {
         self.cookieProvider = cookieProvider ?? { HTTPCookieStorage.shared.cookies(for: baseURL) ?? [] }
     }
 
+    /// The bare site origin (scheme + host [+ port]) derived from `baseURL`, used
+    /// for the CSRF `Origin`/`Referer` headers. Note this is *not* `baseURL`,
+    /// which includes the `/api/v1.0/` path.
+    private var siteOrigin: String? {
+        guard let scheme = baseURL.scheme, var host = baseURL.host else { return nil }
+        // URL.host strips the brackets from an IPv6 literal; restore them so the
+        // Origin/Referer stay valid URLs for self-hosted IPv6 servers.
+        if host.contains(":") { host = "[\(host)]" }
+        var origin = "\(scheme)://\(host)"
+        if let port = baseURL.port { origin += ":\(port)" }
+        return origin
+    }
+
     func get<T: Decodable>(_ path: String) async throws -> T {
         try await send(path: path, method: "GET", body: nil)
     }
@@ -53,6 +66,16 @@ actor DocsAPIClient {
         if method != "GET" {
             if let token = csrfToken(from: cookieProvider()) {
                 request.setValue(token, forHTTPHeaderField: "X-CSRFToken")
+            }
+            // Django's CsrfViewMiddleware requires an Origin (or, failing that, a
+            // Referer) header that matches the host on HTTPS. URLSession sends
+            // neither, so every unsafe request 403s with "CSRF Failed: Referer
+            // checking failed - no Referer." until we set the site origin here.
+            // Origin is checked first and is sufficient; Referer is sent too in
+            // case the platform strips a custom Origin header.
+            if let origin = siteOrigin {
+                request.setValue(origin, forHTTPHeaderField: "Origin")
+                request.setValue(origin + "/", forHTTPHeaderField: "Referer")
             }
         }
 

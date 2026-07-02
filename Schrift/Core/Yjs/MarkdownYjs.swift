@@ -1,0 +1,77 @@
+import Foundation
+
+// Converts the editor's markdown into a base64 Yjs update that the docs backend
+// stores as document content. Reuses the editor's own line-based block parser
+// (`parseEditorBlocks`) so the block classification matches what the editor
+// shows, then maps each block to its BlockNote node and encodes to Yjs.
+
+enum MarkdownYjs {
+    private static let baseProps: [(key: String, value: YAnyValue)] = [
+        ("backgroundColor", .string("default")),
+        ("textColor", .string("default")),
+        ("textAlignment", .string("left")),
+    ]
+
+    /// Full pipeline: markdown → BlockNote blocks → Yjs update `Data`. The
+    /// clientID identifies the authoring client; a fresh random one per save is
+    /// fine because the content endpoint is a full overwrite.
+    static func encode(markdown: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)) -> Data {
+        BlockNoteYjs.encode(blockNoteBlocks(from: markdown), clientID: clientID)
+    }
+
+    /// Base64 for the `content` field of `PATCH documents/{id}/content/`.
+    static func base64(markdown: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)) -> String {
+        encode(markdown: markdown, clientID: clientID).base64EncodedString()
+    }
+
+    static func blockNoteBlocks(from markdown: String) -> [BlockNoteBlock] {
+        let mapped = parseEditorBlocks(markdown).flatMap(map)
+        // BlockNote documents must contain at least one block.
+        return mapped.isEmpty ? [emptyParagraph()] : mapped
+    }
+
+    private static func emptyParagraph() -> BlockNoteBlock {
+        BlockNoteBlock(node: "paragraph", props: baseProps, runs: [], id: UUID().uuidString.lowercased())
+    }
+
+    private static func map(_ block: EditorBlock) -> [BlockNoteBlock] {
+        let id = block.id.uuidString.lowercased()
+        switch block.kind {
+        case .heading(let level):
+            return [BlockNoteBlock(node: "heading",
+                                   props: baseProps + [("level", .int(level)), ("isToggleable", .bool(false))],
+                                   runs: InlineMarkdown.parse(block.text), id: id)]
+        case .paragraph:
+            return [BlockNoteBlock(node: "paragraph", props: baseProps,
+                                   runs: InlineMarkdown.parse(block.text), id: id)]
+        case .bulletItem:
+            return [BlockNoteBlock(node: "bulletListItem", props: baseProps,
+                                   runs: InlineMarkdown.parse(block.text), id: id)]
+        case .numberedItem:
+            return [BlockNoteBlock(node: "numberedListItem", props: baseProps + [("start", .null)],
+                                   runs: InlineMarkdown.parse(block.text), id: id)]
+        case .checklistItem(let checked):
+            return [BlockNoteBlock(node: "checkListItem", props: baseProps + [("checked", .bool(checked))],
+                                   runs: InlineMarkdown.parse(block.text), id: id)]
+        case .quote:
+            return [BlockNoteBlock(node: "quote",
+                                   props: [("backgroundColor", .string("default")), ("textColor", .string("default"))],
+                                   runs: InlineMarkdown.parse(block.text), id: id)]
+        case .codeBlock(let language):
+            let lang = language.isEmpty ? "text" : language
+            let runs = block.text.isEmpty ? [] : [InlineRun(block.text)]
+            return [BlockNoteBlock(node: "codeBlock", props: [("language", .string(lang))], runs: runs, id: id)]
+        case .divider:
+            return [BlockNoteBlock(node: "divider", props: [], runs: [], id: id)]
+        case .unknown:
+            // Content the editor can't model (tables, HTML, nested lists). Preserve
+            // the text verbatim as one paragraph per non-empty line so a save never
+            // drops it, even though the richer structure can't be reproduced.
+            return block.text
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.isEmpty }
+                .map { BlockNoteBlock(node: "paragraph", props: baseProps, runs: [InlineRun($0)], id: UUID().uuidString.lowercased()) }
+        }
+    }
+}

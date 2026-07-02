@@ -1,55 +1,39 @@
 import Foundation
 
-func multipartFormData(boundary: String, fieldName: String, filename: String, contentType: String, content: Data) -> Data {
-    var body = Data()
-    body.append("--\(boundary)\r\n".data(using: .utf8)!)
-    body.append("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-    body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
-    body.append(content)
-    body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-    return body
-}
-
 extension DocsAPIClient {
-    func createDocumentFromMarkdown(title: String, markdown: String) async throws -> Document {
-        let boundary = "Boundary-\(UUID().uuidString)"
-        let body = multipartFormData(
-            boundary: boundary,
-            fieldName: "file",
-            filename: "\(title).md",
-            contentType: "text/markdown",
-            content: markdown.data(using: .utf8) ?? Data()
-        )
-        return try await send(
-            path: "documents/",
-            method: "POST",
-            body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)"
-        )
+    /// Creates a new, empty document. The docs backend creates documents from a
+    /// JSON body (`{"title": …}`); the multipart file-upload path is gated behind
+    /// a server setting (`CONVERSION_UPLOAD_ENABLED`) that is off on the target
+    /// deployment, so it is not used.
+    func createDocument(title: String) async throws -> Document {
+        let body = try JSONEncoder().encode(["title": title])
+        return try await send(path: "documents/", method: "POST", body: body)
     }
 
-    func rawContent(documentID: UUID) async throws -> Data {
-        try await getRawData("documents/\(documentID.uuidString.lowercased())/content/")
-    }
-
-    func setContent(documentID: UUID, rawContent: Data) async throws {
-        let body = try JSONEncoder().encode(["content": rawContent.base64EncodedString()])
+    /// Replaces a document's content. The backend stores content as base64-encoded
+    /// Yjs and validates it, so `yjsUpdate` must be a real Yjs update.
+    func setContent(documentID: UUID, yjsUpdate: Data) async throws {
+        let body = try JSONEncoder().encode(["content": yjsUpdate.base64EncodedString()])
         try await sendVoid(path: "documents/\(documentID.uuidString.lowercased())/content/", method: "PATCH", body: body)
+    }
+
+    /// Persists a document's title.
+    func updateTitle(documentID: UUID, title: String) async throws {
+        let body = try JSONEncoder().encode(["title": title])
+        try await sendVoid(path: "documents/\(documentID.uuidString.lowercased())/", method: "PATCH", body: body)
     }
 
     func deleteDocument(documentID: UUID) async throws {
         try await sendVoid(path: "documents/\(documentID.uuidString.lowercased())/", method: "DELETE", body: nil)
     }
 
+    /// Full-overwrite save of a document's title and content. The editor's
+    /// markdown is converted to a Yjs update on-device (`MarkdownYjs`) and PATCHed
+    /// to the content endpoint — the docs backend only accepts base64 Yjs there
+    /// and offers no markdown-to-Yjs conversion a client session can call.
     func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws {
-        let tempDocument = try await createDocumentFromMarkdown(title: title, markdown: markdown)
-        do {
-            let raw = try await rawContent(documentID: tempDocument.id)
-            try await setContent(documentID: documentID, rawContent: raw)
-        } catch {
-            try? await deleteDocument(documentID: tempDocument.id)
-            throw error
-        }
-        try? await deleteDocument(documentID: tempDocument.id)
+        let update = MarkdownYjs.encode(markdown: markdown)
+        try await setContent(documentID: documentID, yjsUpdate: update)
+        try await updateTitle(documentID: documentID, title: title)
     }
 }

@@ -90,7 +90,7 @@ final class HomeViewModel {
 
     func createDocument() async -> Document? {
         do {
-            let document = try await client.createDocumentFromMarkdown(title: "Untitled document", markdown: "")
+            let document = try await client.createDocument(title: "Untitled document")
             if UserDefaults.standard.bool(forKey: "schrift.workOffline") {
                 // load() skips the network in work-offline mode, so reflect the
                 // new document directly rather than serving stale cache.

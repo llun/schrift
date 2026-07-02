@@ -23,7 +23,13 @@ final class HomeViewModelTests: XCTestCase {
 
     private func makeViewModel(cache: DocumentCacheStore? = nil) -> HomeViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        return HomeViewModel(client: client, cache: cache ?? makeCache())
+        // Isolate the save coordinator's draft store so `load()`'s draft recovery
+        // can't replay drafts left in UserDefaults.standard by other tests (which
+        // would fire an extra formatted-content GET and pollute recorded URLs).
+        let suiteName = "HomeViewModelTests.coordinator.\(UUID().uuidString)"
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
+        return HomeViewModel(client: client, cache: cache ?? makeCache(), saveCoordinator: coordinator)
     }
 
     private static func paginatedFixture(id: String, title: String, isFavorite: Bool) -> Data {
