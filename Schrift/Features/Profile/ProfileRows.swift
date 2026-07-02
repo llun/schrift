@@ -32,6 +32,9 @@ struct ProfileTrailingRow<Trailing: View>: View {
         }
         .padding(.horizontal, DocsSpacing.gutter)
         .frame(minHeight: DocsSpacing.rowMinHeight)
+        // Merge the title with the trailing control so VoiceOver announces which
+        // setting a switch controls (otherwise it reads a bare "switch").
+        .accessibilityElement(children: .combine)
     }
 }
 
