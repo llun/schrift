@@ -96,7 +96,7 @@ struct ConnectView: View {
                             .foregroundStyle(DocsColor.textPrimary)
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 16))
+                            .font(.system(size: 18))
                             .foregroundStyle(DocsColor.gray300)
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)
