@@ -16,7 +16,7 @@ struct ShareSheetView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                SearchField(text: $viewModel.searchQuery, placeholder: "Search by name or email")
+                SearchField(text: $viewModel.searchQuery, placeholder: "Invite by name or email", icon: "person.badge.plus")
                     .padding(.horizontal, DocsSpacing.gutter)
                     .padding(.vertical, DocsSpacing.spaceSM)
 
@@ -31,9 +31,18 @@ struct ShareSheetView: View {
                     if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         searchResultsSection
                     } else {
-                        linkSection
-                        membersSection
-                        copyLinkButton
+                        VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
+                            membersSection
+
+                            Rectangle()
+                                .fill(DocsColor.borderDefault)
+                                .frame(height: 1)
+
+                            linkSection
+                            copyLinkButton
+                        }
+                        .padding(.horizontal, DocsSpacing.gutter)
+                        .padding(.top, DocsSpacing.space3xs)
                     }
                 }
             }
@@ -78,6 +87,13 @@ struct ShareSheetView: View {
         }
     }
 
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(DocsFont.footnote)
+            .tracking(DocsTypographySpec.footnote.size * 0.05)
+            .foregroundStyle(DocsColor.textTertiary)
+    }
+
     private var searchResultsSection: some View {
         ListSection(header: "Add people") {
             VStack(spacing: 0) {
@@ -88,43 +104,44 @@ struct ShareSheetView: View {
                 }
             }
         }
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.top, DocsSpacing.space3xs)
     }
 
     private var copyLinkButton: some View {
-        DocsButton(title: "Copy link", variant: .secondary, color: .brand, icon: "link", fullWidth: true, pill: true, isDisabled: shareURL == nil) {
+        DocsButton(title: "Copy link", variant: .secondary, color: .brand, size: .large, icon: "link", fullWidth: true, pill: true, isDisabled: shareURL == nil) {
             guard let shareURL else { return }
             UIPasteboard.general.string = shareURL.absoluteString
             dismiss()
         }
-        .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.top, DocsSpacing.spaceSM)
         .padding(.bottom, DocsSpacing.spaceBase)
     }
 
     private var linkSection: some View {
-        ListSection(header: "Link parameters") {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            sectionLabel("Link parameters")
             HStack {
                 LinkReachPill(reach: viewModel.linkReach, showsHint: true)
                 Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 20))
+                    .foregroundStyle(DocsColor.gray300)
             }
-            .padding(.horizontal, DocsSpacing.gutterGrouped)
-            .frame(minHeight: DocsSpacing.rowMinHeight)
             .contentShape(Rectangle())
             .onTapGesture { isChoosingLinkReach = true }
         }
     }
 
     private var membersSection: some View {
-        ListSection(header: "Shared with \(viewModel.members.count) \(viewModel.members.count == 1 ? "person" : "people")") {
-            VStack(spacing: 0) {
-                ForEach(viewModel.members) { member in
-                    ShareMemberRow(
-                        name: member.displayName,
-                        email: member.email,
-                        role: shareRoleDisplayTitle(member.role, isPending: member.isPending),
-                        onTapRole: { memberPendingRoleChange = member }
-                    )
-                }
+        VStack(alignment: .leading, spacing: DocsSpacing.space3xs) {
+            sectionLabel("Shared with \(viewModel.members.count) \(viewModel.members.count == 1 ? "person" : "people")")
+            ForEach(viewModel.members) { member in
+                ShareMemberRow(
+                    name: member.displayName,
+                    email: member.email,
+                    role: shareRoleDisplayTitle(member.role, isPending: member.isPending),
+                    onTapRole: { memberPendingRoleChange = member }
+                )
             }
         }
     }
