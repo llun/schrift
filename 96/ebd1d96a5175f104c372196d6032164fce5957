@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/DocRow.swift
+  s_a9c5d21d88404f::t_c2c811011b0200 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "96ebd1d96a5175f104c372196d6032164fce5957",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
