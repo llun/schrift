@@ -231,6 +231,7 @@ struct EditorView: View {
             Image(systemName: "doc.text")
                 .font(.system(size: 40))
                 .foregroundStyle(DocsColor.brandFill)
+                .accessibilityHidden(true)
 
             Text(viewModel.title)
                 .font(DocsFont.title1.weight(.bold))
@@ -248,9 +249,15 @@ struct EditorView: View {
     }
 
     private var subpagesSection: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            HStack(spacing: DocsSpacing.space3xs + 1) {
-                Image(systemName: "list.bullet.indent")
+        // 40pt above the rule, 16pt below it before the header (reference spacing).
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(DocsColor.borderDefault)
+                .frame(height: 1)
+
+            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+                HStack(spacing: DocsSpacing.space3xs + 1) {
+                    Image(systemName: "list.bullet.indent")
                     .font(.system(size: 16))
                 Text(viewModel.subpages.isEmpty ? "Subpages" : "Subpages · \(viewModel.subpages.count)")
                     .font(DocsFont.footnote.weight(.semibold))
@@ -294,14 +301,11 @@ struct EditorView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            }
+            .padding(.top, DocsSpacing.spaceBase)
         }
-        .padding(.top, DocsSpacing.spaceMD)
+        .padding(.top, DocsSpacing.spaceXL)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(DocsColor.borderDefault)
-                .frame(height: 1)
-        }
     }
 
     private var trailingActions: [NavBarAction] {
