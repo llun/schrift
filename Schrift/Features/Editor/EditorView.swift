@@ -259,6 +259,7 @@ struct EditorView: View {
                 HStack(spacing: DocsSpacing.space3xs + 1) {
                     Image(systemName: "list.bullet.indent")
                     .font(.system(size: 16))
+                    .accessibilityHidden(true)
                 Text(viewModel.subpages.isEmpty ? "Subpages" : "Subpages · \(viewModel.subpages.count)")
                     .font(DocsFont.footnote.weight(.semibold))
                     .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
