@@ -40,7 +40,7 @@ struct ShareMemberRow: View {
                         .foregroundStyle(DocsColor.textSecondary)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(DocsColor.gray300)
+                        .foregroundStyle(DocsColor.textSecondary)
                 }
             }
             .accessibilityLabel("Role: \(role)")
