@@ -27,7 +27,7 @@ enum NavBarTint {
 }
 
 struct NavBar: View {
-    let title: String
+    var title: String = ""
     var subtitle: String? = nil
     var largeTitle: Bool = false
     var titleBadge: Badge? = nil
@@ -54,7 +54,7 @@ struct NavBar: View {
 
                 Spacer()
 
-                if !largeTitle {
+                if !largeTitle, !title.isEmpty {
                     VStack(spacing: 0) {
                         Text(title)
                             .font(DocsFont.headline)

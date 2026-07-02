@@ -44,7 +44,6 @@ struct EditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             NavBar(
-                title: viewModel.title,
                 backTitle: "Schrift",
                 onBack: onBack,
                 trailingActions: trailingActions
