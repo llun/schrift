@@ -69,8 +69,6 @@ struct ProfileScreen: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer()
-
                 Image(systemName: "chevron.right")
                     .font(.system(size: 18))
                     .foregroundStyle(DocsColor.gray300)
