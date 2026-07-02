@@ -28,11 +28,13 @@ struct ShareMemberRow: View {
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                 }
-                Text(email)
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if !email.isEmpty {
+                    Text(email)
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

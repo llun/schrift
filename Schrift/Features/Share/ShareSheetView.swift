@@ -157,7 +157,9 @@ struct ShareSheetView: View {
             ForEach(viewModel.members) { member in
                 ShareMemberRow(
                     name: member.displayName,
-                    email: member.email,
+                    // A pending invite has no name, so displayName == email; drop
+                    // the subtitle to avoid printing the email twice.
+                    email: member.displayName == member.email ? "" : member.email,
                     role: shareRoleDisplayTitle(member.role, isPending: member.isPending),
                     onTapRole: { memberPendingRoleChange = member }
                 )
