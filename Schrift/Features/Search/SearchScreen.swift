@@ -15,7 +15,7 @@ struct SearchScreen: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    SearchField(text: $viewModel.query, placeholder: "Search all documents")
+                    SearchField(text: $viewModel.query, placeholder: "Search all documents", autoFocus: true)
                         .onSubmit {
                             viewModel.recordSearch()
                         }
