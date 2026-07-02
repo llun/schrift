@@ -28,6 +28,10 @@ targets:
         # compliance docs are needed. Setting this avoids the manual prompt on
         # every TestFlight upload.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: "NO"
+        # iPad (device family 2) must declare all four orientations for
+        # multitasking, or App Store upload validation rejects the build.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     scheme:
       testTargets:
         - SchriftTests
