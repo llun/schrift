@@ -53,8 +53,10 @@ struct SharedScreen: View {
                     ListSection(header: "\(viewModel.documents.count) documents") {
                         ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
                             if index > 0 {
-                                Divider()
-                                    .padding(.leading, DocsSpacing.spaceBase)
+                                Rectangle()
+                                    .fill(DocsColor.borderDefault)
+                                    .frame(height: 1)
+                                    .padding(.leading, 52)
                             }
                             SharedRow(
                                 title: document.title ?? "Untitled document",
@@ -70,7 +72,8 @@ struct SharedScreen: View {
                         .foregroundStyle(DocsColor.textTertiary)
                         .padding(.horizontal, DocsSpacing.gutterGrouped)
                 }
-                .padding(.vertical, DocsSpacing.spaceBase)
+                .padding(.top, DocsSpacing.space3xs)
+                .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
         .background(DocsColor.surfacePage)
