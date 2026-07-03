@@ -42,6 +42,13 @@ This file is the shorter, operational "how we write code here" companion.
   building and running the test suite in Xcode on macOS.
 - Release: push a `v*` tag (or run the workflow manually) → TestFlight via
   fastlane + GitHub Actions. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
+- **CI must regenerate the project before building** (the `.xcodeproj` is not
+  committed): the fastlane `beta` lane runs `xcodegen generate`, and **Xcode
+  Cloud** runs it via the
+  [`ci_scripts/ci_post_clone.sh`](ci_scripts/ci_post_clone.sh) post-clone hook —
+  keep that file executable (`chmod +x`) or Xcode Cloud silently skips it. Any new
+  CI path must do the same, or the build fails with "Project Schrift.xcodeproj
+  does not exist at the root of the repository."
 
 ## Repository layout
 
@@ -67,7 +74,8 @@ Schrift/
 │   └── Editor/          block editor, Markdown toggle, save coordinator, drafts
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree 1:1
-fastlane/ scripts/ .github/workflows/   TestFlight release pipeline
+fastlane/ scripts/ .github/workflows/   TestFlight release pipeline (fastlane + GitHub Actions)
+ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
 ```
 
@@ -260,15 +268,34 @@ markdown write endpoint**. Understand this before touching the save path:
 
 ## Docs & plans convention
 
+- **Keep the docs in lockstep with the code — always, in the same change.** Any
+  change that affects how the project is **built, tested, released, or run**
+  (`project.yml` build config, `.github/workflows/`, `ci_scripts/`, fastlane
+  lanes, `scripts/`, tooling/toolchain versions, the test command), **or any
+  decision, constraint, or gotcha a future contributor would need to remember**,
+  MUST update the docs alongside it: this `CLAUDE.md` (conventions / workflow /
+  safety) **and** the relevant project docs (`README.md`, the design spec,
+  `docs/testflight-setup.md`, and any affected plan/spec under `docs/`). Never
+  land a workflow change while the docs still describe the old behavior. If you
+  learned something worth keeping, write it down here — don't leave it only in a
+  commit message or your head.
+- **This `CLAUDE.md` is the single source of truth for agent/contributor
+  guidance.** Put agent-facing conventions, workflow, and safety rules **here**,
+  and here only. [`AGENTS.md`](AGENTS.md) is a deliberately thin pointer at the
+  repo root that just sends other agents (Codex, Cursor, …) to this file — never
+  copy rules into it, so the two can't drift. Any `AGENTS.override.md` layers on
+  top of both.
 - Design and architecture decisions live under `docs/`. When you implement a
   substantial feature, commit its plan under
   `docs/superpowers/plans/YYYY-MM-DD-<name>.md` — these are **dated, point-in-time
   records**.
 - **Don't rewrite a dated plan after the fact.** If later work supersedes it, add
   a short dated amendment blockquote at the top and keep the original body as the
-  record.
-- Keep the **living docs** accurate when behavior changes: `README.md`, the design
-  spec, and `docs/testflight-setup.md`.
+  record. (Dated plans are the one exception to "keep docs current" — they are a
+  historical record, not living docs.)
+- Keep the **living docs** accurate when behavior changes: this `CLAUDE.md`,
+  `README.md`, the design spec, `docs/testflight-setup.md`, and the CI/build
+  sources (`project.yml`, `.github/workflows/testflight.yml`, `ci_scripts/`).
 
 ## Safety — never add anything dangerous
 
