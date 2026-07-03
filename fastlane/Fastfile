@@ -53,12 +53,19 @@ platform :ios do
         initial_build_number: 0
       ).next.to_s
 
+    # Marketing version. CI passes the Conventional-Commits value it computed
+    # (scripts/next-version.sh) via MARKETING_VERSION; locally we leave it unset
+    # so the build keeps project.yml's default.
+    marketing_version = ENV["MARKETING_VERSION"]
+    xcargs = "CURRENT_PROJECT_VERSION=#{build_number}"
+    xcargs += " MARKETING_VERSION=#{marketing_version}" unless marketing_version.to_s.empty?
+
     build_app(
       project: XCODE_PROJECT,
       scheme: SCHEME,
       configuration: "Release",
       export_method: "app-store",
-      xcargs: "CURRENT_PROJECT_VERSION=#{build_number}",
+      xcargs: xcargs,
       export_options: {
         method: "app-store",
         signingStyle: "manual",

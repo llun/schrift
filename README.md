@@ -60,7 +60,10 @@ xcodebuild test -project Schrift.xcodeproj -scheme Schrift -destination 'platfor
 
 ## Distribution (TestFlight)
 
-Builds are shipped to TestFlight via fastlane + GitHub Actions (push a `v*`
-tag). The pipeline is already scaffolded — see
+Every merge to `main` auto-ships to TestFlight via fastlane + GitHub Actions:
+the pipeline computes the next [Conventional-Commits](https://www.conventionalcommits.org)
+version, builds + uploads, then tags `v<version>` and cuts a GitHub Release.
+Write PR titles as Conventional Commits (`feat:` → minor, `feat!`/`BREAKING
+CHANGE` → major, otherwise patch) so the version bump is right. See
 [`docs/testflight-setup.md`](docs/testflight-setup.md) for the one-time setup
 (Apple Developer enrollment, signing, and secrets).

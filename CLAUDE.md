@@ -40,8 +40,21 @@ This file is the shorter, operational "how we write code here" companion.
 - There is **no linter** configured (no SwiftLint/SwiftFormat) and **no test/lint
   CI** — the only workflow is the TestFlight release pipeline. Verify changes by
   building and running the test suite in Xcode on macOS.
-- Release: push a `v*` tag (or run the workflow manually) → TestFlight via
-  fastlane + GitHub Actions. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
+- Release: **every merge to `main` auto-ships to TestFlight** via fastlane +
+  GitHub Actions ([`.github/workflows/testflight.yml`](.github/workflows/testflight.yml)).
+  The pipeline computes the next **Conventional-Commits** version from the latest
+  `v*` tag ([`scripts/next-version.sh`](scripts/next-version.sh) — `feat:`→minor,
+  `feat!`/`BREAKING CHANGE`→major, anything else→patch), builds + uploads, then
+  (on success) pushes the `v<version>` tag and cuts a GitHub Release. The **tag is
+  an output, not a trigger** — write PR titles as Conventional Commits so the bump
+  is right; a non-conforming title still ships a patch. Nothing is committed back
+  to `main` (version is tag-derived) and the tag is pushed with `GITHUB_TOKEN`, so
+  there is no release loop. Ship manually via **Actions → TestFlight → Run
+  workflow**; add `[skip ci]` to a commit to skip a build. Build number =
+  `github.run_number` (monotonic — do **not** rename/move the workflow file or it
+  resets). TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
+  build/test-only (no archive/deploy on `main`) so the two don't double-build or
+  collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not
   committed): the fastlane `beta` lane runs `xcodegen generate`, and **Xcode
   Cloud** runs it via the

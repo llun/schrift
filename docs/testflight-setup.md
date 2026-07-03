@@ -74,13 +74,32 @@ Apple has no API to create an app record, so this one is done in the web UI
 
 ## Ship a build
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
+**Just merge to `main`.** Every push to `main` runs the TestFlight workflow,
+which:
 
-…or **Actions → TestFlight → Run workflow**. The build lands in App Store
-Connect → **TestFlight** after a few minutes of Apple-side processing.
+1. computes the next version from the latest `v*` tag using Conventional
+   Commits ([`scripts/next-version.sh`](../scripts/next-version.sh)) —
+   `feat:` → minor, `feat!:` / `BREAKING CHANGE` → major, anything else → patch;
+2. builds a signed Release archive and uploads it to TestFlight (build number =
+   the workflow run number, which is monotonic);
+3. on a successful upload, pushes the `v<version>` tag and cuts a GitHub Release
+   with auto-generated notes.
+
+So **write PR titles as Conventional Commits** (they become the squash-commit
+subject the bump is read from). A non-conforming title still ships — it just
+falls back to a patch bump.
+
+You can also ship on demand from **Actions → TestFlight → Run workflow**, and
+skip a build by putting `[skip ci]` in the commit message. The build lands in
+App Store Connect → **TestFlight** after a few minutes of Apple-side processing.
+
+> **One owner of TestFlight.** GitHub Actions owns building + uploading. If you
+> use Xcode Cloud, keep it build/test-only — do not let it archive/deploy on
+> `main`, or the two pipelines double-build and collide on build numbers.
+
+> **The `v*` tag is an output, not a trigger.** Don't push tags by hand to
+> release — the pipeline creates them. (It pushes with `GITHUB_TOKEN`, which
+> can't start another workflow run, so there's no release loop.)
 
 ### Adding testers
 - **Internal** (you + up to 100 team members, no review): App Store Connect →
