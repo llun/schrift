@@ -53,8 +53,15 @@ This file is the shorter, operational "how we write code here" companion.
   (enforced by a repo ruleset — see [`docs/ci.md`](docs/ci.md); renaming the job
   breaks the guard). The workflow uses **no secrets and must never gain one**,
   and must never use `pull_request_target` — release/signing work lives only in
-  `testflight.yml`. Still verify changes locally by building and running the
-  test suite in Xcode on macOS before pushing.
+  `testflight.yml`.
+- **All checks must pass before a PR is merge-ready.** Work-in-progress pushes
+  don't have to run everything locally every time, but a push that makes a PR
+  ready for review/merge must arrive with the checks already satisfied: run the
+  formatter (`swift format --recursive --in-place Schrift SchriftTests`) and the
+  full test suite locally first, then confirm the PR's **`Build & Test`** check
+  is green on the final pushed state. Never merge — and never declare a PR
+  done — while that check is red, pending, or hasn't run; if CI fails, fixing
+  it is part of the change, not follow-up work.
 - Release: **every merge to `main` auto-ships to TestFlight** via fastlane +
   GitHub Actions ([`.github/workflows/testflight.yml`](.github/workflows/testflight.yml)).
   The pipeline computes the next **Conventional-Commits** version from the latest
@@ -384,6 +391,12 @@ them is simply the next round and counts toward the same round cap in step 4.
    comes first. A follow-up push outside an active loop starts a fresh cap.
    If the cap is hit with issues still open, say so explicitly on the PR
    instead of stopping silently.
+
+The loop — and the agent's work — is **not finished until the PR's `Build &
+Test` check is green on the latest pushed state**. A CI failure on the PR is
+an issue to address exactly like a review comment: diagnose it, push the fix,
+and let the check re-run. Never leave a PR as "done" with failing or unrun
+checks, and never merge around a red check.
 
 ## Safety — never add anything dangerous
 
