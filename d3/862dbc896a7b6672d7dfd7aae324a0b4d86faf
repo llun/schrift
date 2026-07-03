@@ -1,0 +1,20 @@
+Schrift/Features/Editor/EditorViewModel.swift
+  s_7320e20fa0d435::t_3ed21a63848570 119,128-143
+  s_7320e20fa0d435::t_2b35207ecbd352 144-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "d3862dbc896a7b6672d7dfd7aae324a0b4d86faf",
+  "prompts": {},
+  "sessions": {
+    "s_7320e20fa0d435": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b213e15f-ea6c-44b8-b259-9aaee65d2f2c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
