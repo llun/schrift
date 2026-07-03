@@ -9,11 +9,20 @@ final class DocTreeModel {
     var expanded: Set<UUID> = []
 
     private let client: DocsAPIClient
-    init(client: DocsAPIClient) { self.client = client }
+    private let store: DocumentChildrenCacheStore
+    /// Nodes already revalidated against the server this panel session —
+    /// persisted children render instantly but still refresh exactly once.
+    private var revalidated: Set<UUID> = []
+
+    init(client: DocsAPIClient, store: DocumentChildrenCacheStore = DocumentChildrenCacheStore()) {
+        self.client = client
+        self.store = store
+    }
 
     func children(of id: UUID) -> [Document] { childrenCache[id] ?? [] }
     func isExpanded(_ id: UUID) -> Bool { expanded.contains(id) }
-    /// Whether the children for `id` have finished loading (cache populated).
+    /// Whether the children for `id` are known (fetched or restored from the
+    /// persisted cache).
     func isLoaded(_ id: UUID) -> Bool { childrenCache[id] != nil }
 
     func expand(_ id: UUID) { expanded.insert(id) }
@@ -23,15 +32,36 @@ final class DocTreeModel {
             expanded.remove(id)
         } else {
             expanded.insert(id)
-            if childrenCache[id] == nil {
-                Task { await loadChildren(of: id) }
-            }
+            // Seed synchronously so a cached subtree expands instantly (and
+            // offline) instead of waiting on the Task's fetch.
+            seed(id)
+            Task { await loadChildren(of: id) }
         }
     }
 
+    /// Synchronous local phase: restore the persisted children (if any)
+    /// before any network round-trip.
+    private func seed(_ id: UUID) {
+        guard childrenCache[id] == nil, let cached = store.children(for: id) else { return }
+        childrenCache[id] = cached
+    }
+
+    /// Revalidates `id`'s children once per panel session: seeded entries
+    /// refresh silently; a failed fetch keeps whatever is shown (offline
+    /// reading), leaving un-cached nodes un-loaded rather than claiming
+    /// "no subpages". Only a *successful* fetch counts as the once — the id
+    /// is un-marked on failure so collapsing/re-expanding (or reopening the
+    /// panel) retries after a transient error or a cancelled first load.
     func loadChildren(of id: UUID) async {
-        guard childrenCache[id] == nil else { return }
-        childrenCache[id] = (try? await client.listChildren(documentID: id))?.results ?? []
+        seed(id)
+        guard !revalidated.contains(id) else { return }
+        revalidated.insert(id)  // marks in-flight too, so concurrent callers don't double-fetch
+        guard let results = try? await client.listChildren(documentID: id) else {
+            revalidated.remove(id)
+            return
+        }
+        childrenCache[id] = results.results
+        store.save(results.results, for: id)
     }
 }
 
@@ -54,6 +84,7 @@ struct DocTreePanel: View {
         rootID: UUID,
         currentID: UUID,
         isOpen: Bool,
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         onOpen: @escaping (Document) -> Void,
         onClose: @escaping () -> Void,
         onNewPage: (() -> Void)? = nil
@@ -66,7 +97,7 @@ struct DocTreePanel: View {
         self.onOpen = onOpen
         self.onClose = onClose
         self.onNewPage = onNewPage
-        _model = State(initialValue: DocTreeModel(client: client))
+        _model = State(initialValue: DocTreeModel(client: client, store: childrenCache))
     }
 
     var body: some View {
@@ -169,8 +200,10 @@ struct DocTreePanel: View {
             }
         }
         .task {
-            await model.loadChildren(of: rootID)
+            // Expand before awaiting the fetch so a cached root tree renders
+            // immediately (loadChildren seeds synchronously before its await).
             model.expand(rootID)
+            await model.loadChildren(of: rootID)
         }
     }
 }

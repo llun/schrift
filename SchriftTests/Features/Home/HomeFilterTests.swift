@@ -32,4 +32,17 @@ final class HomeFilterTests: XCTestCase {
     func testPinnedSectionShownForSharedFilterWithPinnedDocuments() {
         XCTAssertTrue(shouldShowPinnedSection(filter: .shared, pinnedCount: 1))
     }
+
+    func testLoadingPlaceholderShownOnlyOnFirstEverRun() {
+        XCTAssertTrue(shouldShowLoadingPlaceholder(hasCachedList: false, visibleRowCount: 0))
+    }
+
+    func testLoadingPlaceholderHiddenWhenListWasCached() {
+        // A cached empty list is a real fetch result — no spinner.
+        XCTAssertFalse(shouldShowLoadingPlaceholder(hasCachedList: true, visibleRowCount: 0))
+    }
+
+    func testLoadingPlaceholderHiddenWhenRowsAreOnScreen() {
+        XCTAssertFalse(shouldShowLoadingPlaceholder(hasCachedList: false, visibleRowCount: 2))
+    }
 }

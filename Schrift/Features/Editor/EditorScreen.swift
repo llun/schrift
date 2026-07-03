@@ -22,6 +22,7 @@ struct EditorScreen: View {
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         reach: LinkReach,
         serverHost: String,
         linkRole: LinkRole? = nil,
@@ -37,7 +38,8 @@ struct EditorScreen: View {
                 documentID: documentID,
                 title: title,
                 saveCoordinator: saveCoordinator,
-                contentCache: contentCache
+                contentCache: contentCache,
+                childrenCache: childrenCache
             ))
         self.reach = reach
         self.serverHost = serverHost

@@ -1,8 +1,25 @@
 import Foundation
 
+/// UserDefaults key for one filter's cached recent-documents list. Keyed by
+/// stable names — never `HomeFilter.rawValue` Ints, which would silently remap
+/// caches if the cases were ever reordered. `.all` keeps the original
+/// pre-per-filter key so existing caches migrate for free.
+func recentDocumentsCacheKey(_ filter: HomeFilter) -> String {
+    switch filter {
+    case .all: return "dev.llun.Schrift.cachedRecentDocuments"
+    case .shared: return "dev.llun.Schrift.cachedRecentDocuments.shared"
+    case .pinned: return "dev.llun.Schrift.cachedRecentDocuments.pinned"
+    }
+}
+
+/// Cached document-list metadata (titles, dates, abilities — never content).
+/// The Optional loads return nil when a list was never cached, which is
+/// distinct from a cached empty list (a real fetch result): the nil case is
+/// what allows the UI to show its one first-run spinner.
 final class DocumentCacheStore {
     private static let pinnedKey = "dev.llun.Schrift.cachedPinnedDocuments"
-    private static let recentKey = "dev.llun.Schrift.cachedRecentDocuments"
+    private static let sharedWithMeKey = "dev.llun.Schrift.cachedSharedWithMeDocuments"
+    private static let sharedByMeKey = "dev.llun.Schrift.cachedSharedByMeDocuments"
 
     private let userDefaults: UserDefaults
     private let encoder: JSONEncoder
@@ -19,26 +36,42 @@ final class DocumentCacheStore {
     }
 
     func loadPinnedDocuments() -> [Document] {
-        load(forKey: Self.pinnedKey)
+        load(forKey: Self.pinnedKey) ?? []
     }
 
-    func loadRecentDocuments() -> [Document] {
-        load(forKey: Self.recentKey)
+    func loadRecentDocuments(filter: HomeFilter) -> [Document]? {
+        load(forKey: recentDocumentsCacheKey(filter))
+    }
+
+    func loadSharedWithMeDocuments() -> [Document]? {
+        load(forKey: Self.sharedWithMeKey)
+    }
+
+    func loadSharedByMeDocuments() -> [Document]? {
+        load(forKey: Self.sharedByMeKey)
     }
 
     func savePinnedDocuments(_ documents: [Document]) {
         save(documents, forKey: Self.pinnedKey)
     }
 
-    func saveRecentDocuments(_ documents: [Document]) {
-        save(documents, forKey: Self.recentKey)
+    func saveRecentDocuments(_ documents: [Document], filter: HomeFilter) {
+        save(documents, forKey: recentDocumentsCacheKey(filter))
     }
 
-    private func load(forKey key: String) -> [Document] {
+    func saveSharedWithMeDocuments(_ documents: [Document]) {
+        save(documents, forKey: Self.sharedWithMeKey)
+    }
+
+    func saveSharedByMeDocuments(_ documents: [Document]) {
+        save(documents, forKey: Self.sharedByMeKey)
+    }
+
+    private func load(forKey key: String) -> [Document]? {
         guard let data = userDefaults.data(forKey: key),
             let documents = try? decoder.decode([Document].self, from: data)
         else {
-            return []
+            return nil
         }
         return documents
     }

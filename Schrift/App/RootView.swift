@@ -33,9 +33,11 @@ struct RootView: View {
                 serverURL: serverURL,
                 onSignOut: {
                     // Full document bodies must not survive sign-out on disk. The
-                    // metadata cache (DocumentCacheStore) and unsaved drafts
-                    // (PendingDraftStore) keep their existing behavior — a
-                    // recorded decision, see the 2026-07-03 spec.
+                    // metadata caches (DocumentCacheStore's document lists and
+                    // DocumentChildrenCacheStore's sub-page lists) and unsaved
+                    // drafts (PendingDraftStore) keep their existing behavior — a
+                    // recorded decision, see the 2026-07-03 spec and the
+                    // instant-local-doc-lists plan.
                     DocumentContentCacheStore().removeAll()
                     try? sessionStore.signOut()
                 })

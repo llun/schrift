@@ -8,17 +8,20 @@ final class EditorViewModelTests: XCTestCase {
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
 
     private var cacheDirectory: URL!
+    private var childrenSuiteName: String!
 
     override func setUp() {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditorViewModelTests-\(UUID().uuidString)", isDirectory: true)
+        childrenSuiteName = "EditorViewModelTests.children.\(UUID().uuidString)"
     }
 
     override func tearDown() {
         MockURLProtocol.stubHandler = nil
         MockURLProtocol.lastRequest = nil
         try? FileManager.default.removeItem(at: cacheDirectory)
+        UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
         super.tearDown()
     }
 
@@ -33,6 +36,9 @@ final class EditorViewModelTests: XCTestCase {
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // Isolated: load()/delete/404 paths touch the children cache, which
+        // must never read from or write to UserDefaults.standard in tests.
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
         let viewModel = EditorViewModel(
@@ -41,6 +47,7 @@ final class EditorViewModelTests: XCTestCase {
             title: title,
             saveCoordinator: coordinator,
             contentCache: contentCache,
+            childrenCache: childrenCache,
             autosaveInterval: autosaveInterval
         )
         return (viewModel, coordinator, draftStore, contentCache)

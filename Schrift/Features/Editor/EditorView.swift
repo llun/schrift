@@ -120,6 +120,7 @@ struct EditorView: View {
                 rootID: viewModel.documentID,
                 currentID: viewModel.documentID,
                 isOpen: isPresentingTreePanel,
+                childrenCache: viewModel.childrenCache,
                 onOpen: { document in onOpenDocument?(document) },
                 onClose: { isPresentingTreePanel = false },
                 onNewPage: {
@@ -330,7 +331,7 @@ struct EditorView: View {
                         }
                     }
                 }
-                // nil (not fetched yet): just the eyebrow — never claim "no subpages".
+                // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
 
                 if !isOffline {
                     Button {
