@@ -334,11 +334,14 @@ them is simply the next round and counts toward the same round cap in step 4.
    top-level PR comment naming the file.
 2. **Address every comment.** Fix each finding (or explain in the thread why
    no change is needed), push the fixes, **reply to each comment** describing
-   what was done, and **mark the thread as resolved**.
+   what was done, and **mark the thread as resolved** (a top-level PR comment
+   has no resolvable thread — a reply on the PR conversation recording the
+   outcome counts as resolving it).
 3. **Re-request bot reviews.** If other review bots are installed (e.g.
    **Kilo bot** — a name given only as an example; detect which bots actually
    exist from the PR's own review/comment activity), ask them to re-review
-   whenever commits have been pushed since their last completed review — but
+   whenever commits have been pushed since their last completed review, or
+   when they have not completed any review of the current pushed state — but
    never re-request a bot that already timed out on the current pushed state.
    After re-requesting, **wait up to 20 minutes for the bot to finish and do
    not interrupt it**; if it has not completed by then — including never
