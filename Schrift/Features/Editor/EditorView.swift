@@ -63,8 +63,30 @@ struct EditorView: View {
                 trailingActions: trailingActions
             )
 
-            if isOffline {
-                OfflineBanner(note: "Editing the copy saved on this device")
+            if isOffline, viewModel.hasLocalCopy {
+                OfflineBanner(note: "Reading the copy saved on this device")
+            }
+
+            if viewModel.updateAvailable, !viewModel.isEditing {
+                Button {
+                    viewModel.applyPendingUpdate()
+                } label: {
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 13))
+                        Text("Document updated · tap to refresh")
+                            .font(DocsFont.footnote)
+                    }
+                    .foregroundStyle(DocsColor.textBrand)
+                    .padding(.horizontal, DocsSpacing.spaceSM)
+                    .padding(.vertical, DocsSpacing.space2xs)
+                    .background(Capsule().fill(DocsColor.gray050))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("Document updated. Tap to refresh.")
             }
 
             if let errorMessage = viewModel.errorMessage {
@@ -217,7 +239,7 @@ struct EditorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .refreshable {
-            await viewModel.load()
+            await viewModel.refresh()
         }
     }
 
@@ -249,9 +271,11 @@ struct EditorView: View {
 
             HStack(spacing: DocsSpacing.spaceXS) {
                 LinkReachPill(reach: reach)
-                Text(isOffline ? "Saved on this device" : "Edited just now")
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Text(syncCaptionText(now: context.date))
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -325,6 +349,25 @@ struct EditorView: View {
         // needs to add the remainder to reach the reference's 40pt gap.
         .padding(.top, DocsSpacing.spaceXL - DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Caption precedence: (1) unsaved local content → save wording (a
+    /// previously-synced doc with a stranded draft must not read "Not synced
+    /// yet"); (2) synced → "Synced X ago"; (3) neither → "Not synced yet".
+    private func syncCaptionText(now: Date) -> String {
+        if viewModel.hasUnsavedLocalContent {
+            if isOffline { return "Saved on this device" }
+            switch viewModel.saveState {
+            case .saving: return "Saving…"
+            case .saved: return "Saved"
+            case .failed: return "Couldn't save"
+            case .dirty, .idle: return "Edited just now"
+            }
+        }
+        if let lastSyncedAt = viewModel.lastSyncedAt {
+            return syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now)
+        }
+        return "Not synced yet"
     }
 
     private var trailingActions: [NavBarAction] {
