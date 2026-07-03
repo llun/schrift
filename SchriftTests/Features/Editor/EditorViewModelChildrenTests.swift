@@ -282,15 +282,19 @@ final class EditorViewModelChildrenTests: XCTestCase {
             "a stale snapshot must not resurrect the purged entry")
     }
 
-    func testStaleChildrenFetchCannotOverwriteAddedSubpage() async {
-        // A listChildren snapshot taken before a createChild must not land
-        // afterwards and durably hide the just-added child.
+    func testAddSubpageInvalidatesInFlightChildrenFetches() async {
+        // The discard mechanics for a superseded snapshot are pinned by
+        // testChildrenSnapshotLandingAfterDeletePurgeIsDiscarded (whose
+        // superseding call needs no network). A live create racing a held
+        // fetch can't be simulated — MockURLProtocol serializes requests per
+        // session — so this pins the other half directly: a successful create
+        // advances the generation those mechanics key on.
         let existing = decodeChild(id: "eeeeeeee-2222-4eee-8eee-eeeeeeeeeeee", title: "Existing child")
         childrenCache.save([existing], for: documentID)
         let viewModel = makeViewModel()
         await viewModel.load()  // seeds subpages from the cache (content fetch fails: stub not set)
+        let generationBefore = viewModel.childrenGeneration
 
-        let staleChildren = Self.childrenFixture(id: "eeeeeeee-2222-4eee-8eee-eeeeeeeeeeee", title: "Existing child")
         let createdBody = """
             {
                 "id": "ffffffff-2222-4fff-8fff-ffffffffffff",
@@ -311,29 +315,11 @@ final class EditorViewModelChildrenTests: XCTestCase {
                 "is_favorite": false
             }
             """.data(using: .utf8)!
-        let recorder = RequestRecorder()
-        let gate = DispatchSemaphore(value: 0)
-        MockURLProtocol.stubHandler = { request in
-            if request.httpMethod == "POST" {
-                return .init(statusCode: 201, headers: [:], body: createdBody, error: nil)
-            }
-            recorder.record(request)
-            gate.wait()  // hold the pre-create children snapshot until after addSubpage
-            return .init(statusCode: 200, headers: [:], body: staleChildren, error: nil)
-        }
-
-        let staleFetch = Task { await viewModel.loadChildren() }
-        await waitUntil { recorder.methods.count >= 1 }  // snapshot in flight
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: createdBody, error: nil) }
 
         let child = await viewModel.addSubpage()
+
         XCTAssertEqual(child?.title, "Untitled subpage")
-
-        gate.signal()
-        await staleFetch.value
-
-        // The superseded snapshot is discarded — in memory and in the cache.
-        XCTAssertEqual(viewModel.subpages?.map(\.title), ["Existing child", "Untitled subpage"])
-        XCTAssertEqual(
-            childrenCache.children(for: documentID)?.map(\.title), ["Existing child", "Untitled subpage"])
+        XCTAssertEqual(viewModel.childrenGeneration, generationBefore + 1)
     }
 }

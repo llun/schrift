@@ -311,42 +311,40 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.showsLoadingPlaceholder)
     }
 
-    func testStaleLoadCannotOverwriteFresherRefresh() async {
+    func testStaleLoadCannotOverwriteFresherLoad() async {
+        // MockURLProtocol serializes startLoading per session, so the
+        // superseding load must not need the network while the stale fetch is
+        // held: the work-offline branch bumps the generation and serves the
+        // cache without a request — same latest-wins arbitration as any
+        // competing load.
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "44444444-8888-4444-8444-444444444444", title: "Cached With Me")
+        ])
         let viewModel = makeViewModel()
         let staleBody = Self.paginatedFixture(id: "33333333-8888-4333-8333-333333333333", title: "Stale With Me")
-        let freshWithMeBody = Self.paginatedFixture(id: "44444444-8888-4444-8444-444444444444", title: "Fresh With Me")
-        let freshByMeBody = Self.paginatedFixture(id: "55555555-8888-4555-8555-555555555555", title: "Fresh By Me")
         let recorder = RequestRecorder()
         let gate = DispatchSemaphore(value: 0)
         MockURLProtocol.stubHandler = { request in
-            let isFirstRequest = recorder.methods.isEmpty
             recorder.record(request)
-            if isFirstRequest {
-                // The first load's with-me fetch: hold it until the refresh
-                // has fully landed, then answer with stale data.
-                gate.wait()
-                return .init(statusCode: 200, headers: [:], body: staleBody, error: nil)
-            }
-            let url = request.url?.absoluteString ?? ""
-            if url.contains("is_creator_me=true") {
-                return .init(statusCode: 200, headers: [:], body: freshByMeBody, error: nil)
-            }
-            return .init(statusCode: 200, headers: [:], body: freshWithMeBody, error: nil)
+            gate.wait()  // hold the stale fetch until the newer load has landed
+            return .init(statusCode: 200, headers: [:], body: staleBody, error: nil)
         }
 
         let staleLoad = Task { await viewModel.load() }
         await waitUntil { recorder.methods.count >= 1 }  // the stale fetch is in flight
 
-        await viewModel.refresh()
-        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Fresh With Me"])
+        preferences.set(true, forKey: "schrift.workOffline")
+        await viewModel.load()
+        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached With Me"])
 
         gate.signal()
+        gate.signal()  // covers the byMe fetch, should the guard ever let it run
         await staleLoad.value
 
         // The superseded load's late response must be discarded, in memory
         // and in the write-through cache.
-        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Fresh With Me"])
-        XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["Fresh With Me"])
+        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached With Me"])
+        XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["Cached With Me"])
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertNil(viewModel.errorMessage)
     }

@@ -80,10 +80,12 @@ final class EditorViewModel {
     /// newer load()/refresh() superseded it (latest-wins; .task refires on
     /// pop-back and .refreshable re-enters).
     private var revalidationGeneration = 0
-    /// Latest-wins guard for the children list: bumped by every loadChildren()
-    /// and by a successful addSubpage(), so a stale in-flight listChildren
-    /// snapshot can never overwrite (and durably cache) a newer mutation.
-    private var childrenGeneration = 0
+    /// Latest-wins guard for the children list: bumped by every loadChildren(),
+    /// a successful addSubpage(), and the purge paths, so a stale in-flight
+    /// listChildren snapshot can never overwrite (and durably cache) a newer
+    /// mutation. Read-only outside the type so tests can pin the bumps whose
+    /// interleaving can't be simulated (MockURLProtocol serializes requests).
+    private(set) var childrenGeneration = 0
     /// The exact raw markdown the current display was installed from — the
     /// staleness comparison basis. NEVER compare fetched markdown against
     /// serializeMarkdown(blocks)/currentMarkdown(): the serializer
