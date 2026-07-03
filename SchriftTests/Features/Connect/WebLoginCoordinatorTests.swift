@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 /// Tests the `WebLoginView.Coordinator` completion logic in isolation from
@@ -50,7 +51,8 @@ final class WebLoginCoordinatorTests: XCTestCase {
         var completed = false
         let coordinator = makeCoordinator { completed = true }
 
-        coordinator.handleNavigation(to: URL(string: "https://idp.example.com/realms/docs/login-actions/authenticate?execution=OTP"))
+        coordinator.handleNavigation(
+            to: URL(string: "https://idp.example.com/realms/docs/login-actions/authenticate?execution=OTP"))
 
         await waitUntil(timeout: 0.3) { completed }
         XCTAssertFalse(completed)

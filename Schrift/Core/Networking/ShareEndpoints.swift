@@ -54,17 +54,23 @@ extension DocsAPIClient {
     }
 
     func createAccess(documentID: UUID, userID: UUID, role: DocumentRole) async throws -> DocumentAccess {
-        let body = try JSONEncoder().encode(AccessCreateRequest(userId: userID.uuidString.lowercased(), role: role.rawValue))
-        return try await send(path: "documents/\(documentID.uuidString.lowercased())/accesses/", method: "POST", body: body)
+        let body = try JSONEncoder().encode(
+            AccessCreateRequest(userId: userID.uuidString.lowercased(), role: role.rawValue))
+        return try await send(
+            path: "documents/\(documentID.uuidString.lowercased())/accesses/", method: "POST", body: body)
     }
 
     func updateAccess(documentID: UUID, accessID: UUID, role: DocumentRole) async throws -> DocumentAccess {
         let body = try JSONEncoder().encode(RoleUpdateRequest(role: role.rawValue))
-        return try await send(path: "documents/\(documentID.uuidString.lowercased())/accesses/\(accessID.uuidString.lowercased())/", method: "PATCH", body: body)
+        return try await send(
+            path: "documents/\(documentID.uuidString.lowercased())/accesses/\(accessID.uuidString.lowercased())/",
+            method: "PATCH", body: body)
     }
 
     func deleteAccess(documentID: UUID, accessID: UUID) async throws {
-        try await sendVoid(path: "documents/\(documentID.uuidString.lowercased())/accesses/\(accessID.uuidString.lowercased())/", method: "DELETE", body: nil)
+        try await sendVoid(
+            path: "documents/\(documentID.uuidString.lowercased())/accesses/\(accessID.uuidString.lowercased())/",
+            method: "DELETE", body: nil)
     }
 
     func listInvitations(documentID: UUID) async throws -> PaginatedResponse<Invitation> {
@@ -73,16 +79,24 @@ extension DocsAPIClient {
 
     func createInvitation(documentID: UUID, email: String, role: DocumentRole) async throws -> Invitation {
         let body = try JSONEncoder().encode(InvitationCreateRequest(email: email, role: role.rawValue))
-        return try await send(path: "documents/\(documentID.uuidString.lowercased())/invitations/", method: "POST", body: body)
+        return try await send(
+            path: "documents/\(documentID.uuidString.lowercased())/invitations/", method: "POST", body: body)
     }
 
     func deleteInvitation(documentID: UUID, invitationID: UUID) async throws {
-        try await sendVoid(path: "documents/\(documentID.uuidString.lowercased())/invitations/\(invitationID.uuidString.lowercased())/", method: "DELETE", body: nil)
+        try await sendVoid(
+            path:
+                "documents/\(documentID.uuidString.lowercased())/invitations/\(invitationID.uuidString.lowercased())/",
+            method: "DELETE", body: nil)
     }
 
-    func setLinkConfiguration(documentID: UUID, linkReach: LinkReach, linkRole: LinkRole?) async throws -> LinkConfiguration {
-        let body = try JSONEncoder().encode(LinkConfigurationRequest(linkReach: linkReach.rawValue, linkRole: linkRole?.rawValue))
-        return try await send(path: "documents/\(documentID.uuidString.lowercased())/link-configuration/", method: "PUT", body: body)
+    func setLinkConfiguration(documentID: UUID, linkReach: LinkReach, linkRole: LinkRole?) async throws
+        -> LinkConfiguration
+    {
+        let body = try JSONEncoder().encode(
+            LinkConfigurationRequest(linkReach: linkReach.rawValue, linkRole: linkRole?.rawValue))
+        return try await send(
+            path: "documents/\(documentID.uuidString.lowercased())/link-configuration/", method: "PUT", body: body)
     }
 
     func searchUsers(query: String, excludingDocumentID: UUID) async throws -> [UserSearchResult] {

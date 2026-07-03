@@ -49,7 +49,8 @@ func parseEditorBlocks(_ markdown: String) -> [EditorBlock] {
             if index < lines.count {
                 index += 1
             }
-            blocks.append(EditorBlock(kind: .codeBlock(language: fence.language), text: content.joined(separator: "\n")))
+            blocks.append(
+                EditorBlock(kind: .codeBlock(language: fence.language), text: content.joined(separator: "\n")))
             continue
         }
 

@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class DocumentContentCacheStoreTests: XCTestCase {
@@ -21,14 +22,19 @@ final class DocumentContentCacheStoreTests: XCTestCase {
     }
 
     func testEvictionsReturnsOldestBeyondLimit() {
-        let index = [entry(1, minutesAgo: 10), entry(2, minutesAgo: 0), entry(3, minutesAgo: 20), entry(4, minutesAgo: 5)]
+        let index = [
+            entry(1, minutesAgo: 10), entry(2, minutesAgo: 0), entry(3, minutesAgo: 20), entry(4, minutesAgo: 5),
+        ]
         // Keep the 2 newest (2, 4); evict 1 and 3.
-        XCTAssertEqual(Set(contentCacheEvictions(index: index, limit: 2)), Set([entry(1, minutesAgo: 0).id, entry(3, minutesAgo: 0).id]))
+        XCTAssertEqual(
+            Set(contentCacheEvictions(index: index, limit: 2)),
+            Set([entry(1, minutesAgo: 0).id, entry(3, minutesAgo: 0).id]))
     }
 
     func testEvictionsKeepsNewestNBySyncedAt() {
         let index = [entry(1, minutesAgo: 3), entry(2, minutesAgo: 2), entry(3, minutesAgo: 1)]
-        XCTAssertEqual(contentCacheEvictions(index: index, limit: 1), [entry(2, minutesAgo: 0).id, entry(1, minutesAgo: 0).id])
+        XCTAssertEqual(
+            contentCacheEvictions(index: index, limit: 1), [entry(2, minutesAgo: 0).id, entry(1, minutesAgo: 0).id])
     }
 
     // MARK: - DocumentContentCacheStore
@@ -117,11 +123,13 @@ final class DocumentContentCacheStoreTests: XCTestCase {
         store.save(makeEntry(id: b))
         // Force distinct, deterministic mtimes (mtime IS the eviction index).
         let fm = FileManager.default
-        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)],
-                             ofItemAtPath: directory.appendingPathComponent("\(a.uuidString.lowercased()).json").path)
-        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)],
-                             ofItemAtPath: directory.appendingPathComponent("\(b.uuidString.lowercased()).json").path)
-        store.save(makeEntry(id: c))   // triggers eviction; c has mtime "now"
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 100)],
+            ofItemAtPath: directory.appendingPathComponent("\(a.uuidString.lowercased()).json").path)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 200)],
+            ofItemAtPath: directory.appendingPathComponent("\(b.uuidString.lowercased()).json").path)
+        store.save(makeEntry(id: c))  // triggers eviction; c has mtime "now"
         XCTAssertNil(store.content(for: a), "oldest entry is evicted")
         XCTAssertNotNil(store.content(for: b))
         XCTAssertNotNil(store.content(for: c))

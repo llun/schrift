@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 private final class RequestLog: @unchecked Sendable {
@@ -22,16 +23,16 @@ final class ShareViewModelTests: XCTestCase {
     }
 
     private static let accessesFixture = """
-    {"count": 1, "next": null, "previous": null, "results": [
-        {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "33333333-3333-4333-8333-333333333333", "email": "member@example.com", "full_name": "Member One", "short_name": "Member", "language": "en-us", "is_first_connection": false}, "team": "", "role": "editor", "abilities": {}, "max_ancestors_role": null, "max_role": "editor"}
-    ]}
-    """.data(using: .utf8)!
+        {"count": 1, "next": null, "previous": null, "results": [
+            {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "33333333-3333-4333-8333-333333333333", "email": "member@example.com", "full_name": "Member One", "short_name": "Member", "language": "en-us", "is_first_connection": false}, "team": "", "role": "editor", "abilities": {}, "max_ancestors_role": null, "max_role": "editor"}
+        ]}
+        """.data(using: .utf8)!
 
     private static let invitationsFixture = """
-    {"count": 1, "next": null, "previous": null, "results": [
-        {"id": "44444444-4444-4444-8444-444444444444", "abilities": {}, "created_at": "2026-01-15T10:30:00Z", "email": "pending@example.com", "document": "11111111-1111-4111-8111-111111111111", "role": "reader", "issuer": "33333333-3333-4333-8333-333333333333", "is_expired": false}
-    ]}
-    """.data(using: .utf8)!
+        {"count": 1, "next": null, "previous": null, "results": [
+            {"id": "44444444-4444-4444-8444-444444444444", "abilities": {}, "created_at": "2026-01-15T10:30:00Z", "email": "pending@example.com", "document": "11111111-1111-4111-8111-111111111111", "role": "reader", "issuer": "33333333-3333-4333-8333-333333333333", "is_expired": false}
+        ]}
+        """.data(using: .utf8)!
 
     func testLoadMergesAccessesAndInvitations() async {
         let viewModel = makeViewModel()
@@ -71,8 +72,8 @@ final class ShareViewModelTests: XCTestCase {
             log.requests.append(request)
             if request.httpMethod == "POST" {
                 let body = """
-                {"id": "55555555-5555-4555-8555-555555555555", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "66666666-6666-4666-8666-666666666666", "email": "new@example.com", "full_name": "New", "short_name": "New", "language": "en-us", "is_first_connection": false}, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
-                """.data(using: .utf8)!
+                    {"id": "55555555-5555-4555-8555-555555555555", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "66666666-6666-4666-8666-666666666666", "email": "new@example.com", "full_name": "New", "short_name": "New", "language": "en-us", "is_first_connection": false}, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
+                    """.data(using: .utf8)!
                 return .init(statusCode: 201, headers: [:], body: body, error: nil)
             }
             if request.url?.path.contains("invitations") == true {
@@ -80,7 +81,9 @@ final class ShareViewModelTests: XCTestCase {
             }
             return .init(statusCode: 200, headers: [:], body: accesses, error: nil)
         }
-        let user = UserSearchResult(id: UUID(uuidString: "66666666-6666-4666-8666-666666666666")!, email: "new@example.com", fullName: "New", shortName: "New")
+        let user = UserSearchResult(
+            id: UUID(uuidString: "66666666-6666-4666-8666-666666666666")!, email: "new@example.com", fullName: "New",
+            shortName: "New")
 
         await viewModel.invite(user: user, role: .reader)
 
@@ -104,7 +107,8 @@ final class ShareViewModelTests: XCTestCase {
             }
             return .init(statusCode: 200, headers: [:], body: accesses, error: nil)
         }
-        let access = DocumentAccess(id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!, user: nil, team: nil, role: .editor)
+        let access = DocumentAccess(
+            id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!, user: nil, team: nil, role: .editor)
 
         await viewModel.removeMember(.access(access))
 

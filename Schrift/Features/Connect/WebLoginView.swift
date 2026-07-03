@@ -76,8 +76,9 @@ struct WebLoginView: UIViewRepresentable {
         /// (a non-API path); ignored on the IdP host and on `/api/v1.0/*` hops.
         func handleNavigation(to url: URL?) {
             guard !didComplete,
-                  let url,
-                  isLoginNavigationComplete(url: url, serverHost: serverHost) else { return }
+                let url,
+                isLoginNavigationComplete(url: url, serverHost: serverHost)
+            else { return }
             didComplete = true
 
             captureCookies { [onLoginComplete] in

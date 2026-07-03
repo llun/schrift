@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
@@ -17,14 +18,14 @@ final class ProfileViewModelTests: XCTestCase {
     }
 
     private nonisolated static let userFixture: Data = """
-    {
-        "id": "11111111-1111-4111-8111-111111111111",
-        "email": "ada@example.org",
-        "full_name": "Ada Lovelace",
-        "short_name": "Ada",
-        "language": "en-us"
-    }
-    """.data(using: .utf8)!
+        {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "email": "ada@example.org",
+            "full_name": "Ada Lovelace",
+            "short_name": "Ada",
+            "language": "en-us"
+        }
+        """.data(using: .utf8)!
 
     func testLoadPopulatesUser() async {
         let viewModel = makeViewModel()

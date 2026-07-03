@@ -38,14 +38,15 @@ extension DocsAPIClient {
         page: Int? = nil,
         pageSize: Int? = nil
     ) async throws -> PaginatedResponse<Document> {
-        try await get(documentsListPath(
-            isFavorite: isFavorite,
-            isCreatorMe: isCreatorMe,
-            title: title,
-            ordering: ordering,
-            page: page,
-            pageSize: pageSize
-        ))
+        try await get(
+            documentsListPath(
+                isFavorite: isFavorite,
+                isCreatorMe: isCreatorMe,
+                title: title,
+                ordering: ordering,
+                page: page,
+                pageSize: pageSize
+            ))
     }
 
     func favoriteDocuments() async throws -> PaginatedResponse<Document> {

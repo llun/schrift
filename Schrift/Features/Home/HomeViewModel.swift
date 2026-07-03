@@ -16,7 +16,10 @@ final class HomeViewModel {
     let saveCoordinator: DocumentSaveCoordinator
     private let cache: DocumentCacheStore
 
-    init(client: DocsAPIClient, cache: DocumentCacheStore = DocumentCacheStore(), saveCoordinator: DocumentSaveCoordinator? = nil) {
+    init(
+        client: DocsAPIClient, cache: DocumentCacheStore = DocumentCacheStore(),
+        saveCoordinator: DocumentSaveCoordinator? = nil
+    ) {
         self.client = client
         self.cache = cache
         self.saveCoordinator = saveCoordinator ?? DocumentSaveCoordinator(client: client)

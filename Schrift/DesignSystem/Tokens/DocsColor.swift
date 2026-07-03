@@ -57,7 +57,7 @@ enum DocsColorHex {
 
     // Surfaces (semantic)
     static let surfaceRaised: UInt32 = 0xFFFFFF
-    static let surfaceScrim: UInt32 = 0x1B1B23   // rendered at 0.45 opacity
+    static let surfaceScrim: UInt32 = 0x1B1B23  // rendered at 0.45 opacity
 
     // Accent palette (avatars, emoji chips, tags)
     static let accentOrange: UInt32 = 0xB95D33

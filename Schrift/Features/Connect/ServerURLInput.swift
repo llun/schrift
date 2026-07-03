@@ -6,8 +6,9 @@ func normalizedServerURL(from input: String) -> URL? {
 
     let candidate = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
     guard var components = URLComponents(string: candidate),
-          let scheme = components.scheme, ["http", "https"].contains(scheme),
-          let host = components.host, !host.isEmpty else {
+        let scheme = components.scheme, ["http", "https"].contains(scheme),
+        let host = components.host, !host.isEmpty
+    else {
         return nil
     }
     components.path = ""

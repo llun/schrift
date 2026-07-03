@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
@@ -26,8 +27,11 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
-        return EditorViewModel(client: client, documentID: documentID, title: title, saveCoordinator: coordinator, contentCache: contentCache)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        return EditorViewModel(
+            client: client, documentID: documentID, title: title, saveCoordinator: coordinator,
+            contentCache: contentCache)
     }
 
     private static func childrenFixture(id: String, title: String) -> Data {
@@ -82,8 +86,8 @@ final class EditorViewModelChildrenTests: XCTestCase {
     func testLoadPopulatesSubpagesAndCapturesUpdatedAt() async {
         let viewModel = makeViewModel()
         let contentBody = """
-        {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Body", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
-        """.data(using: .utf8)!
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Body", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+            """.data(using: .utf8)!
         let childrenBody = Self.childrenFixture(id: "22222222-2222-4222-8222-222222222222", title: "Child page")
         MockURLProtocol.stubHandler = { request in
             let path = request.url?.path ?? ""

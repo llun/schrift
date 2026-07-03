@@ -59,7 +59,8 @@ final class PendingDraftStore {
 
     private func loadAll() -> [String: PendingDraft] {
         guard let data = userDefaults.data(forKey: Self.draftsKey),
-              let drafts = try? decoder.decode([String: PendingDraft].self, from: data) else {
+            let drafts = try? decoder.decode([String: PendingDraft].self, from: data)
+        else {
             return [:]
         }
         return drafts

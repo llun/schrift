@@ -21,7 +21,9 @@ struct IconButtonStyleHex: Equatable {
 enum IconButtonStyleResolver {
     // Disabled is driven by view-level opacity (matching the reference), so the
     // resolver keeps each variant's own colors.
-    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false) -> IconButtonStyleHex {
+    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false)
+        -> IconButtonStyleHex
+    {
         let foregroundHex: UInt32
         let softHex: UInt32
 
@@ -45,7 +47,9 @@ enum IconButtonStyleResolver {
             return IconButtonStyleHex(backgroundHex: softHex, foregroundHex: foregroundHex, borderHex: nil)
         case .outline:
             // Reference outline = raised surface fill + neutral hairline border + ink glyph.
-            return IconButtonStyleHex(backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: foregroundHex, borderHex: DocsColorHex.borderDefault)
+            return IconButtonStyleHex(
+                backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: foregroundHex,
+                borderHex: DocsColorHex.borderDefault)
         }
     }
 }
@@ -95,7 +99,9 @@ struct IconButton: View {
                 .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
                 .overlay(
                     RoundedRectangle(cornerRadius: DocsRadius.md)
-                        .strokeBorder(style.borderHex.map { Color(hex: $0) } ?? Color.clear, lineWidth: style.borderHex == nil ? 0 : 1)
+                        .strokeBorder(
+                            style.borderHex.map { Color(hex: $0) } ?? Color.clear,
+                            lineWidth: style.borderHex == nil ? 0 : 1)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         }

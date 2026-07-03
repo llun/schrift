@@ -1,5 +1,6 @@
-import XCTest
 import SwiftUI
+import XCTest
+
 @testable import Schrift
 
 final class DocsTypographySpecTests: XCTestCase {

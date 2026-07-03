@@ -11,7 +11,8 @@ struct SubpageRow: View {
 
     private var summary: String? {
         guard let excerpt = document.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !excerpt.isEmpty else { return nil }
+            !excerpt.isEmpty
+        else { return nil }
         return excerpt
     }
 

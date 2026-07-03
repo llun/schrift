@@ -23,7 +23,9 @@ struct ComponentCatalogPreview: View {
 
                 catalogSection("Icon Buttons") {
                     HStack(spacing: DocsSpacing.spaceSM) {
-                        IconButton(systemImage: "magnifyingglass", label: "Search", variant: .ghost, color: .neutral, action: {})
+                        IconButton(
+                            systemImage: "magnifyingglass", label: "Search", variant: .ghost, color: .neutral,
+                            action: {})
                         IconButton(systemImage: "plus", label: "Add", variant: .soft, color: .brand, action: {})
                         IconButton(systemImage: "trash", label: "Delete", variant: .outline, color: .danger, action: {})
                     }
@@ -51,7 +53,10 @@ struct ComponentCatalogPreview: View {
                 }
 
                 catalogSection("Avatar Group") {
-                    AvatarGroup(names: ["Camille Moreau", "Alfredo Levin", "Desirae Dokidis", "Amandine Salambo", "Charlie Saris"], max: 3)
+                    AvatarGroup(
+                        names: [
+                            "Camille Moreau", "Alfredo Levin", "Desirae Dokidis", "Amandine Salambo", "Charlie Saris",
+                        ], max: 3)
                 }
 
                 catalogSection("Doc Icons") {
@@ -71,26 +76,33 @@ struct ComponentCatalogPreview: View {
                 }
 
                 catalogSection("Text Field") {
-                    DocsTextField(label: "Docs server", text: $textFieldValue, placeholder: "docs.example.org", icon: "cloud", helper: "The app signs in with your existing session.")
+                    DocsTextField(
+                        label: "Docs server", text: $textFieldValue, placeholder: "docs.example.org", icon: "cloud",
+                        helper: "The app signs in with your existing session.")
                 }
 
                 catalogSection("Nav Bar") {
                     VStack(spacing: DocsSpacing.spaceXS) {
-                        NavBar(title: "Docs", subtitle: "docs.example.org", largeTitle: true, trailingActions: [
-                            NavBarAction(systemImage: "magnifyingglass", label: "Search", action: {}),
-                        ])
-                        NavBar(title: "Docs", backTitle: "Docs", onBack: {}, trailingActions: [
-                            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
-                        ])
+                        NavBar(
+                            title: "Docs", subtitle: "docs.example.org", largeTitle: true,
+                            trailingActions: [
+                                NavBarAction(systemImage: "magnifyingglass", label: "Search", action: {})
+                            ])
+                        NavBar(
+                            title: "Docs", backTitle: "Docs", onBack: {},
+                            trailingActions: [
+                                NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {})
+                            ])
                     }
                 }
 
                 catalogSection("Tab Bar") {
-                    TabBar(items: [
-                        TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
-                        TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
-                        TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
-                    ], selection: $catalogTab, showsSafeArea: false)
+                    TabBar(
+                        items: [
+                            TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
+                            TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
+                            TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
+                        ], selection: $catalogTab, showsSafeArea: false)
                 }
 
                 catalogSection("List Row / List Section") {
@@ -111,7 +123,9 @@ struct ComponentCatalogPreview: View {
 
                 catalogSection("Share Member Row") {
                     VStack(spacing: 0) {
-                        ShareMemberRow(name: "Camille Moreau", email: "camille.moreau@beta.gouv.fr", role: "Admin", isCurrentUser: true)
+                        ShareMemberRow(
+                            name: "Camille Moreau", email: "camille.moreau@beta.gouv.fr", role: "Admin",
+                            isCurrentUser: true)
                         ShareMemberRow(name: "Alfredo Levin", email: "alfredo.levin@test.gouv.fr", role: "Editor")
                         ShareMemberRow(name: "Desirae Dokidis", email: "desirae.dokidis@gmail.com", role: "Reader")
                     }

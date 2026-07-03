@@ -12,7 +12,8 @@ struct ContentCacheIndexEntry: Equatable {
 /// ordered most-recently-evictable first (i.e. newest of the evicted first).
 func contentCacheEvictions(index: [ContentCacheIndexEntry], limit: Int) -> [UUID] {
     guard index.count > limit else { return [] }
-    return index
+    return
+        index
         .sorted { $0.syncedAt > $1.syncedAt }
         .dropFirst(limit)
         .map(\.id)
@@ -47,7 +48,9 @@ final class DocumentContentCacheStore {
 
     init(directory: URL? = nil, fileManager: FileManager = .default, limit: Int = 50) {
         self.fileManager = fileManager
-        self.directory = directory ?? fileManager
+        self.directory =
+            directory
+            ?? fileManager
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("dev.llun.Schrift/ContentCache", isDirectory: true)
         self.limit = limit
@@ -104,13 +107,17 @@ final class DocumentContentCacheStore {
     /// mtime tracks `syncedAt` and building the index never reads or decodes
     /// file contents.
     private func evictBeyondLimit() {
-        guard let urls = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey]
-        ) else { return }
+        guard
+            let urls = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+            )
+        else { return }
         let index = urls.compactMap { url -> ContentCacheIndexEntry? in
             guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { return nil }
-            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let date =
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                ?? .distantPast
             return ContentCacheIndexEntry(id: id, syncedAt: date)
         }
         for id in contentCacheEvictions(index: index, limit: limit) {

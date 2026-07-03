@@ -70,11 +70,12 @@ struct TabBar: View {
     @Previewable @State var selection = "docs"
     VStack {
         Spacer()
-        TabBar(items: [
-            TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
-            TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
-            TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
-            TabBarItem(value: "me", label: "Profile", systemImage: "person.crop.circle"),
-        ], selection: $selection)
+        TabBar(
+            items: [
+                TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
+                TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
+                TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
+                TabBarItem(value: "me", label: "Profile", systemImage: "person.crop.circle"),
+            ], selection: $selection)
     }
 }

@@ -136,13 +136,17 @@ struct NavBar: View {
 
 #Preview {
     VStack(spacing: 0) {
-        NavBar(title: "Docs", subtitle: "docs.example.org", largeTitle: true, trailingActions: [
-            NavBarAction(systemImage: "magnifyingglass", label: "Search", action: {}),
-            NavBarAction(systemImage: "plus", label: "New", action: {}),
-        ])
-        NavBar(title: "Docs", backTitle: "Docs", onBack: {}, trailingActions: [
-            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
-        ])
+        NavBar(
+            title: "Docs", subtitle: "docs.example.org", largeTitle: true,
+            trailingActions: [
+                NavBarAction(systemImage: "magnifyingglass", label: "Search", action: {}),
+                NavBarAction(systemImage: "plus", label: "New", action: {}),
+            ])
+        NavBar(
+            title: "Docs", backTitle: "Docs", onBack: {},
+            trailingActions: [
+                NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {})
+            ])
         Spacer()
     }
 }

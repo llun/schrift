@@ -37,9 +37,35 @@ This file is the shorter, operational "how we write code here" companion.
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`, not
   by adding an Info.plist file.
-- There is **no linter** configured (no SwiftLint/SwiftFormat) and **no test/lint
-  CI** — the only workflow is the TestFlight release pipeline. Verify changes by
-  building and running the test suite in Xcode on macOS.
+- **Formatting**: Swift sources are formatted with Apple's **swift-format**
+  (the one bundled with the Xcode/Swift 6 toolchain — zero third-party tools),
+  configured by [`.swift-format`](.swift-format) at the repo root (4-space
+  indent, 120-column lines, defaults otherwise). Format before pushing:
+  ```sh
+  swift format --recursive --in-place Schrift SchriftTests
+  ```
+  The PR checks fail on any unformatted file. **CI's Xcode-bundled
+  swift-format is canonical** — if a runner toolchain bump changes its output,
+  land a standalone tree-wide reformat commit (see `docs/ci.md` "Toolchain
+  drift"). There is no other linter (no SwiftLint / nicklockwood-SwiftFormat)
+  — don't add one.
+- **PR checks**: every pull request targeting `main` builds the app and runs the
+  full test suite on an iPhone simulator via
+  [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job
+  surfaces as the status check **`Build & Test`**, which serves as the merge
+  guard (a repo admin must configure the ruleset once — see
+  [`docs/ci.md`](docs/ci.md); renaming the job breaks the guard). The workflow
+  uses **no secrets and must never gain one**,
+  and must never use `pull_request_target` — release/signing work lives only in
+  `testflight.yml`.
+- **All checks must pass before a PR is merge-ready.** Work-in-progress pushes
+  don't have to run everything locally every time, but a push that makes a PR
+  ready for review/merge must arrive with the checks already satisfied: run the
+  formatter (`swift format --recursive --in-place Schrift SchriftTests`) and the
+  full test suite locally first, then confirm the PR's **`Build & Test`** check
+  is green on the final pushed state. Never merge — and never declare a PR
+  done — while that check is red, pending, or hasn't run; if CI fails, fixing
+  it is part of the change, not follow-up work.
 - Release: **every merge to `main` auto-ships to TestFlight** via fastlane +
   GitHub Actions ([`.github/workflows/testflight.yml`](.github/workflows/testflight.yml)).
   The pipeline computes the next **Conventional-Commits** version from the latest
@@ -62,7 +88,8 @@ This file is the shorter, operational "how we write code here" companion.
   build/test-only (no archive/deploy on `main`) so the two don't double-build or
   collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not
-  committed): the fastlane `beta` lane runs `xcodegen generate`, and **Xcode
+  committed): the PR-checks workflow has an explicit `xcodegen generate` step,
+  the fastlane `beta` lane runs `xcodegen generate`, and **Xcode
   Cloud** runs it via the
   [`ci_scripts/ci_post_clone.sh`](ci_scripts/ci_post_clone.sh) post-clone hook —
   keep that file executable (`chmod +x`) or Xcode Cloud silently skips it. Any new
@@ -93,9 +120,10 @@ Schrift/
 │   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree 1:1
-fastlane/ scripts/ .github/workflows/   TestFlight release pipeline (fastlane + GitHub Actions)
+fastlane/ scripts/ .github/workflows/   CI: PR build/test checks + TestFlight release pipeline
 ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
+.swift-format            swift-format config (4-space indent, 120 cols) enforced by PR checks
 ```
 
 The test tree mirrors the source tree: a file at `Schrift/X/Y.swift` is tested by
@@ -326,8 +354,9 @@ markdown write endpoint**. Understand this before touching the save path:
   record. (Dated plans are the one exception to "keep docs current" — they are a
   historical record, not living docs.)
 - Keep the **living docs** accurate when behavior changes: this `CLAUDE.md`,
-  `README.md`, the design spec, `docs/testflight-setup.md`, and the CI/build
-  sources (`project.yml`, `.github/workflows/testflight.yml`, `ci_scripts/`).
+  `README.md`, the design spec, `docs/testflight-setup.md`, `docs/ci.md`, and the
+  CI/build sources (`project.yml`, `.github/workflows/pr-checks.yml`,
+  `.github/workflows/testflight.yml`, `ci_scripts/`).
 
 ## PR review loop — required for all agent work
 
@@ -367,6 +396,12 @@ them is simply the next round and counts toward the same round cap in step 4.
    comes first. A follow-up push outside an active loop starts a fresh cap.
    If the cap is hit with issues still open, say so explicitly on the PR
    instead of stopping silently.
+
+The loop — and the agent's work — is **not finished until the PR's `Build &
+Test` check is green on the latest pushed state**. A CI failure on the PR is
+an issue to address exactly like a review comment: diagnose it, push the fix,
+and let the check re-run. Never leave a PR as "done" with failing or unrun
+checks, and never merge around a red check.
 
 ## Safety — never add anything dangerous
 
@@ -417,7 +452,9 @@ Do **not** do any of the following without explicit human sign-off:
   never widen `upload-artifact` paths to catch keys/keychains/`.p8`, keep the CI
   deploy key read-only, and keep `match` `readonly` on CI. Never add a
   `pull_request`/`pull_request_target` trigger to `testflight.yml` (it would
-  expose signing secrets to fork PRs).
+  expose signing secrets to fork PRs), and conversely never add a secret or a
+  `pull_request_target` trigger to `pr-checks.yml` — the PR-check workflow stays
+  secret-free on the fork-safe `pull_request` trigger.
 - **Never introduce arbitrary code execution or destructive shell/git
   operations** — no `eval` of remote input, `curl | bash`, `rm -rf`,
   `git push --force` to shared branches, force-adding ignored files, or history

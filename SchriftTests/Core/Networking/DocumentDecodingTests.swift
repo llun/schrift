@@ -1,43 +1,44 @@
 import XCTest
+
 @testable import Schrift
 
 final class DocumentDecodingTests: XCTestCase {
     private let fixture = """
-    {
-        "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
-        "title": "Q3 Planning",
-        "excerpt": "Some excerpt text",
-        "abilities": {
-            "update": true,
-            "partial_update": true,
-            "destroy": false,
-            "link_configuration": true,
-            "accesses_manage": true,
-            "favorite": true,
-            "duplicate": true,
-            "children_create": true,
-            "link_select_options": {"restricted": null, "public": ["reader", "editor"]},
-            "versions_list": true
-        },
-        "ancestors_link_reach": "restricted",
-        "ancestors_link_role": null,
-        "computed_link_reach": "authenticated",
-        "computed_link_role": "reader",
-        "created_at": "2026-01-15T10:30:00.123456Z",
-        "creator": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
-        "deleted_at": null,
-        "depth": 1,
-        "link_role": "reader",
-        "link_reach": "restricted",
-        "nb_accesses_ancestors": 2,
-        "nb_accesses_direct": 3,
-        "numchild": 0,
-        "path": "0001",
-        "updated_at": "2026-01-16T11:00:00Z",
-        "user_role": "owner",
-        "is_favorite": true
-    }
-    """.data(using: .utf8)!
+        {
+            "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+            "title": "Q3 Planning",
+            "excerpt": "Some excerpt text",
+            "abilities": {
+                "update": true,
+                "partial_update": true,
+                "destroy": false,
+                "link_configuration": true,
+                "accesses_manage": true,
+                "favorite": true,
+                "duplicate": true,
+                "children_create": true,
+                "link_select_options": {"restricted": null, "public": ["reader", "editor"]},
+                "versions_list": true
+            },
+            "ancestors_link_reach": "restricted",
+            "ancestors_link_role": null,
+            "computed_link_reach": "authenticated",
+            "computed_link_role": "reader",
+            "created_at": "2026-01-15T10:30:00.123456Z",
+            "creator": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+            "deleted_at": null,
+            "depth": 1,
+            "link_role": "reader",
+            "link_reach": "restricted",
+            "nb_accesses_ancestors": 2,
+            "nb_accesses_direct": 3,
+            "numchild": 0,
+            "path": "0001",
+            "updated_at": "2026-01-16T11:00:00Z",
+            "user_role": "owner",
+            "is_favorite": true
+        }
+        """.data(using: .utf8)!
 
     func testDecodesFullFixtureIgnoringUnmodeledKeys() throws {
         let document = try JSONDecoder.docsAPI.decode(Document.self, from: fixture)
@@ -82,25 +83,25 @@ final class DocumentDecodingTests: XCTestCase {
 
     func testDecodesNullTitleAndExcerptAsNil() throws {
         let json = """
-        {
-            "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
-            "title": null,
-            "excerpt": null,
-            "abilities": {},
-            "computed_link_reach": null,
-            "computed_link_role": null,
-            "created_at": "2026-01-15T10:30:00Z",
-            "creator": null,
-            "depth": 0,
-            "link_role": "reader",
-            "link_reach": "restricted",
-            "numchild": 0,
-            "path": "0001",
-            "updated_at": "2026-01-15T10:30:00Z",
-            "user_role": null,
-            "is_favorite": false
-        }
-        """.data(using: .utf8)!
+            {
+                "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+                "title": null,
+                "excerpt": null,
+                "abilities": {},
+                "computed_link_reach": null,
+                "computed_link_role": null,
+                "created_at": "2026-01-15T10:30:00Z",
+                "creator": null,
+                "depth": 0,
+                "link_role": "reader",
+                "link_reach": "restricted",
+                "numchild": 0,
+                "path": "0001",
+                "updated_at": "2026-01-15T10:30:00Z",
+                "user_role": null,
+                "is_favorite": false
+            }
+            """.data(using: .utf8)!
 
         let document = try JSONDecoder.docsAPI.decode(Document.self, from: json)
         XCTAssertNil(document.title)

@@ -14,7 +14,8 @@ extension DocsAPIClient {
     /// Yjs and validates it, so `yjsUpdate` must be a real Yjs update.
     func setContent(documentID: UUID, yjsUpdate: Data) async throws {
         let body = try JSONEncoder().encode(["content": yjsUpdate.base64EncodedString()])
-        try await sendVoid(path: "documents/\(documentID.uuidString.lowercased())/content/", method: "PATCH", body: body)
+        try await sendVoid(
+            path: "documents/\(documentID.uuidString.lowercased())/content/", method: "PATCH", body: body)
     }
 
     /// Persists a document's title.

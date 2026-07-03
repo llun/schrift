@@ -1,0 +1,118 @@
+name: PR Checks
+
+# Build the app and run the full XCTest suite on every PR targeting `main`.
+#
+# This workflow uses NO secrets and must never gain any — it runs on the
+# fork-safe `pull_request` trigger (never `pull_request_target`). Anything
+# involving signing or releasing lives exclusively in testflight.yml.
+#
+# The job below surfaces as the status check "Build & Test", intended as the
+# required check guarding merges to `main` (a repo admin enables the ruleset
+# once — see docs/ci.md).
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One run per PR; a new push cancels the in-flight run.
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # "Build & Test" is the merge-guard status check on `main` (see docs/ci.md).
+    # Renaming this job breaks the guard until the ruleset is updated.
+    name: Build & Test
+    runs-on: macos-latest
+    # Unit tests only — normal runs finish well under this; the cap catches hangs.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Match testflight.yml so PR checks and releases build with the same Xcode.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # Formatting gate — sources are formatted with Apple's swift-format
+      # (bundled with the Xcode/Swift 6 toolchain; config in .swift-format).
+      # Runs the formatter and fails on any resulting diff, prettier-style.
+      # CI's toolchain is the canonical formatter: if a runner-image Xcode bump
+      # changes swift-format's output, land a standalone tree-wide reformat
+      # commit (see docs/ci.md "Toolchain drift").
+      - name: Check formatting
+        run: |
+          swift format --version
+          swift format --recursive --in-place Schrift SchriftTests
+          if ! git diff --exit-code -- '*.swift'; then
+            echo "::error::Swift sources are not formatted. Run: swift format --recursive --in-place Schrift SchriftTests"
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # The Xcode project is generated from project.yml and not committed —
+      # CI must regenerate it before any xcodebuild call (see CLAUDE.md).
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Runner images change their simulator lineup over time. Prefer the
+      # documented "iPhone 17", fall back to any available iPhone simulator.
+      # JSON + jq (preinstalled) so device names containing parentheses
+      # (e.g. "iPhone SE (3rd generation)") are extracted intact.
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          # `|| true`: grep exits 1 when no iPhone matches; the empty-check
+          # below owns that failure so the device-list diagnostic still prints
+          # even if this step ever runs under a pipefail shell.
+          names="$(xcrun simctl list -j devices available \
+            | jq -r '.devices[][] | select(.isAvailable) | .name' \
+            | grep '^iPhone' | sort -u || true)"
+          device="$(printf '%s\n' "$names" | grep -x 'iPhone 17' || true)"
+          [ -n "$device" ] || device="$(printf '%s\n' "$names" | head -n 1)"
+          if [ -z "$device" ]; then
+            echo "No iPhone simulator available on this runner:" >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Using simulator: $device"
+          echo "name=$device" >> "$GITHUB_OUTPUT"
+
+      - name: Build & test
+        # Passed via env (not inline ${{ }}) to keep dynamic text out of the
+        # script body, matching the repo's no-interpolation convention.
+        env:
+          SIM_NAME: ${{ steps.sim.outputs.name }}
+        run: |
+          set -o pipefail
+          # xcbeautify is preinstalled on GitHub macOS images; fall back to
+          # raw output if an image ever drops it (no extra installs).
+          formatter=cat
+          command -v xcbeautify >/dev/null && formatter=xcbeautify
+          # Simulator builds ad-hoc sign (no certificates or Team ID needed).
+          # Do NOT disable code signing: the Keychain tests need the test
+          # host's ad-hoc signature/entitlements, and SecItem calls fail with
+          # errSecMissingEntitlement (-34018) in a fully unsigned test host.
+          xcodebuild test \
+            -project Schrift.xcodeproj \
+            -scheme Schrift \
+            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -resultBundlePath TestResults.xcresult \
+            | "$formatter"
+
+      # The result bundle is only interesting when something failed.
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

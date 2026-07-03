@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
@@ -8,9 +9,10 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     private let otherDocumentID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
     private var cacheDirectory: URL!
 
-    private static let formattedBody = Data("""
-    {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Server content", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
-    """.utf8)
+    private static let formattedBody = Data(
+        """
+        {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Server content", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+        """.utf8)
 
     @MainActor
     private final class BackgroundTaskRecorder {
@@ -81,7 +83,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
                 }
                 return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
             case "PATCH":
-                return .init(statusCode: 200, headers: [:], body: Data(), error: nil) // title
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
             default:
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -205,7 +207,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
-        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Stale", updatedAt: Date(timeIntervalSince1970: 0)))
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Stale", updatedAt: Date(timeIntervalSince1970: 0)))
 
         await coordinator.recoverDrafts()
 
@@ -275,11 +279,13 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
     func testDiscardStoredDraftRemovesOnlyIfUnchanged() {
         let (coordinator, draftStore, _) = makeCoordinator(backgroundTasks: .noop)
-        let original = PendingDraft(documentID: documentID, title: "A", markdown: "a", updatedAt: Date(timeIntervalSince1970: 100))
+        let original = PendingDraft(
+            documentID: documentID, title: "A", markdown: "a", updatedAt: Date(timeIntervalSince1970: 100))
         draftStore.save(original)
 
         // Draft changed since the caller captured it: keep the newer one.
-        let newer = PendingDraft(documentID: documentID, title: "B", markdown: "b", updatedAt: Date(timeIntervalSince1970: 200))
+        let newer = PendingDraft(
+            documentID: documentID, title: "B", markdown: "b", updatedAt: Date(timeIntervalSince1970: 200))
         draftStore.save(newer)
         coordinator.discardStoredDraft(original)
         XCTAssertEqual(draftStore.draft(for: documentID), newer)

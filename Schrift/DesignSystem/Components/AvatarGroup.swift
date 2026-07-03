@@ -43,6 +43,8 @@ struct AvatarGroup: View {
 }
 
 #Preview {
-    AvatarGroup(names: ["Camille Moreau", "Alfredo Levin", "Desirae Dokidis", "Amandine Salambo", "Charlie Saris"], max: 3)
-        .padding()
+    AvatarGroup(
+        names: ["Camille Moreau", "Alfredo Levin", "Desirae Dokidis", "Amandine Salambo", "Charlie Saris"], max: 3
+    )
+    .padding()
 }

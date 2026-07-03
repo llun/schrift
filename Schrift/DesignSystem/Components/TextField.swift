@@ -102,6 +102,9 @@ struct DocsTextField: View {
 
 #Preview {
     @Previewable @State var text = ""
-    DocsTextField(label: "Docs server", text: $text, placeholder: "docs.example.org", icon: "cloud", helper: "The app signs in with your existing session.")
-        .padding()
+    DocsTextField(
+        label: "Docs server", text: $text, placeholder: "docs.example.org", icon: "cloud",
+        helper: "The app signs in with your existing session."
+    )
+    .padding()
 }

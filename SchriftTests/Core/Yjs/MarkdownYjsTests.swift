@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 /// Tests the markdown → BlockNote block mapping (`MarkdownYjs.blockNoteBlocks`).

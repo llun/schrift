@@ -90,7 +90,8 @@ struct AccountScreen: View {
     private var signInSection: some View {
         ListSection(
             header: "Sign-in",
-            footer: "You're signed in with your web session. Schrift connects using your browser cookie and never stores your password."
+            footer:
+                "You're signed in with your web session. Schrift connects using your browser cookie and never stores your password."
         ) {
             ListRow(
                 systemImage: "envelope",

@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class DocumentDuplicateTests: XCTestCase {
@@ -21,6 +22,8 @@ final class DocumentDuplicateTests: XCTestCase {
 
         XCTAssertEqual(result, newID)
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "POST")
-        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.absoluteString, "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/duplicate/")
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/duplicate/")
     }
 }

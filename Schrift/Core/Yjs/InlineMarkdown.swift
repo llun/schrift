@@ -67,7 +67,8 @@ enum InlineMarkdown {
 
             // Strong emphasis: **...**
             if c == "*", i + 1 < n, chars[i + 1] == "*",
-               let close = matchDelimiter(chars, open: i, delimiter: "**") {
+                let close = matchDelimiter(chars, open: i, delimiter: "**")
+            {
                 flushLiteral()
                 let inner = Array(chars[(i + 2)..<close])
                 runs.append(contentsOf: scan(inner, marks: marks + [("bold", boldValue)]))
@@ -77,7 +78,8 @@ enum InlineMarkdown {
 
             // Strikethrough: ~~...~~
             if c == "~", i + 1 < n, chars[i + 1] == "~",
-               let close = matchDelimiter(chars, open: i, delimiter: "~~") {
+                let close = matchDelimiter(chars, open: i, delimiter: "~~")
+            {
                 flushLiteral()
                 let inner = Array(chars[(i + 2)..<close])
                 runs.append(contentsOf: scan(inner, marks: marks + [("strike", strikeValue)]))
@@ -108,10 +110,14 @@ enum InlineMarkdown {
     /// Finds `ch` at or after `from`. When `honoringEscapes` is true a backslash
     /// escapes the following character (used for link `]`/`)` scanning); code
     /// spans pass false because their content is literal.
-    private static func indexOf(_ ch: Character, in chars: [Character], from: Int, honoringEscapes: Bool = true) -> Int? {
+    private static func indexOf(_ ch: Character, in chars: [Character], from: Int, honoringEscapes: Bool = true) -> Int?
+    {
         var i = from
         while i < chars.count {
-            if honoringEscapes, chars[i] == "\\" { i += 2; continue } // skip escaped char
+            if honoringEscapes, chars[i] == "\\" {
+                i += 2
+                continue
+            }  // skip escaped char
             if chars[i] == ch { return i }
             i += 1
         }
@@ -127,7 +133,10 @@ enum InlineMarkdown {
         var i = open + len
         let n = chars.count
         while i < n {
-            if chars[i] == "\\" { i += 2; continue }
+            if chars[i] == "\\" {
+                i += 2
+                continue
+            }
             if i + len <= n, Array(chars[i..<(i + len)]) == d {
                 let inner = chars[(open + len)..<i]
                 if inner.isEmpty || inner.allSatisfy({ $0 == " " }) { return nil }
@@ -171,7 +180,9 @@ enum InlineMarkdown {
         return result
     }
 
-    private static func sameMarks(_ a: [(key: String, valueJSON: String)], _ b: [(key: String, valueJSON: String)]) -> Bool {
+    private static func sameMarks(_ a: [(key: String, valueJSON: String)], _ b: [(key: String, valueJSON: String)])
+        -> Bool
+    {
         a.map { [$0.key, $0.valueJSON] } == b.map { [$0.key, $0.valueJSON] }
     }
 }

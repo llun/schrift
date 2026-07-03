@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class TabBarTests: XCTestCase {
@@ -11,7 +12,8 @@ final class TabBarTests: XCTestCase {
     }
 
     func testWorksWithCompoundSymbolNames() {
-        XCTAssertEqual(tabBarIconName(baseSystemImage: "person.crop.circle", isSelected: true), "person.crop.circle.fill")
+        XCTAssertEqual(
+            tabBarIconName(baseSystemImage: "person.crop.circle", isSelected: true), "person.crop.circle.fill")
     }
 
     func testSelectedIconFallsBackToBaseWhenNoFilledVariantExists() {

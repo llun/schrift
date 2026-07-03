@@ -30,14 +30,18 @@ enum DocsTracking {
 }
 
 enum DocsFont {
-    static let largeTitle = Font.system(size: DocsTypographySpec.largeTitle.size, weight: DocsTypographySpec.largeTitle.weight)
+    static let largeTitle = Font.system(
+        size: DocsTypographySpec.largeTitle.size, weight: DocsTypographySpec.largeTitle.weight)
     static let title1 = Font.system(size: DocsTypographySpec.title1.size, weight: DocsTypographySpec.title1.weight)
     static let title2 = Font.system(size: DocsTypographySpec.title2.size, weight: DocsTypographySpec.title2.weight)
-    static let headline = Font.system(size: DocsTypographySpec.headline.size, weight: DocsTypographySpec.headline.weight)
+    static let headline = Font.system(
+        size: DocsTypographySpec.headline.size, weight: DocsTypographySpec.headline.weight)
     static let body = Font.system(size: DocsTypographySpec.body.size, weight: DocsTypographySpec.body.weight)
     static let callout = Font.system(size: DocsTypographySpec.callout.size, weight: DocsTypographySpec.callout.weight)
     static let subhead = Font.system(size: DocsTypographySpec.subhead.size, weight: DocsTypographySpec.subhead.weight)
-    static let footnote = Font.system(size: DocsTypographySpec.footnote.size, weight: DocsTypographySpec.footnote.weight)
+    static let footnote = Font.system(
+        size: DocsTypographySpec.footnote.size, weight: DocsTypographySpec.footnote.weight)
     static let caption = Font.system(size: DocsTypographySpec.caption.size, weight: DocsTypographySpec.caption.weight)
-    static let code = Font.system(size: DocsTypographySpec.code.size, weight: DocsTypographySpec.code.weight, design: .monospaced)
+    static let code = Font.system(
+        size: DocsTypographySpec.code.size, weight: DocsTypographySpec.code.weight, design: .monospaced)
 }

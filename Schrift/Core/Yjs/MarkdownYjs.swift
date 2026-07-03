@@ -38,25 +38,43 @@ enum MarkdownYjs {
         let id = block.id.uuidString.lowercased()
         switch block.kind {
         case .heading(let level):
-            return [BlockNoteBlock(node: "heading",
-                                   props: baseProps + [("level", .int(level)), ("isToggleable", .bool(false))],
-                                   runs: InlineMarkdown.parse(block.text), id: id)]
+            return [
+                BlockNoteBlock(
+                    node: "heading",
+                    props: baseProps + [("level", .int(level)), ("isToggleable", .bool(false))],
+                    runs: InlineMarkdown.parse(block.text), id: id)
+            ]
         case .paragraph:
-            return [BlockNoteBlock(node: "paragraph", props: baseProps,
-                                   runs: InlineMarkdown.parse(block.text), id: id)]
+            return [
+                BlockNoteBlock(
+                    node: "paragraph", props: baseProps,
+                    runs: InlineMarkdown.parse(block.text), id: id)
+            ]
         case .bulletItem:
-            return [BlockNoteBlock(node: "bulletListItem", props: baseProps,
-                                   runs: InlineMarkdown.parse(block.text), id: id)]
+            return [
+                BlockNoteBlock(
+                    node: "bulletListItem", props: baseProps,
+                    runs: InlineMarkdown.parse(block.text), id: id)
+            ]
         case .numberedItem:
-            return [BlockNoteBlock(node: "numberedListItem", props: baseProps + [("start", .null)],
-                                   runs: InlineMarkdown.parse(block.text), id: id)]
+            return [
+                BlockNoteBlock(
+                    node: "numberedListItem", props: baseProps + [("start", .null)],
+                    runs: InlineMarkdown.parse(block.text), id: id)
+            ]
         case .checklistItem(let checked):
-            return [BlockNoteBlock(node: "checkListItem", props: baseProps + [("checked", .bool(checked))],
-                                   runs: InlineMarkdown.parse(block.text), id: id)]
+            return [
+                BlockNoteBlock(
+                    node: "checkListItem", props: baseProps + [("checked", .bool(checked))],
+                    runs: InlineMarkdown.parse(block.text), id: id)
+            ]
         case .quote:
-            return [BlockNoteBlock(node: "quote",
-                                   props: [("backgroundColor", .string("default")), ("textColor", .string("default"))],
-                                   runs: InlineMarkdown.parse(block.text), id: id)]
+            return [
+                BlockNoteBlock(
+                    node: "quote",
+                    props: [("backgroundColor", .string("default")), ("textColor", .string("default"))],
+                    runs: InlineMarkdown.parse(block.text), id: id)
+            ]
         case .codeBlock(let language):
             let lang = language.isEmpty ? "text" : language
             let runs = block.text.isEmpty ? [] : [InlineRun(block.text)]
@@ -71,7 +89,10 @@ enum MarkdownYjs {
                 .split(separator: "\n", omittingEmptySubsequences: false)
                 .map(String.init)
                 .filter { !$0.isEmpty }
-                .map { BlockNoteBlock(node: "paragraph", props: baseProps, runs: [InlineRun($0)], id: UUID().uuidString.lowercased()) }
+                .map {
+                    BlockNoteBlock(
+                        node: "paragraph", props: baseProps, runs: [InlineRun($0)], id: UUID().uuidString.lowercased())
+                }
         }
     }
 }
