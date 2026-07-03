@@ -143,6 +143,16 @@ Design decisions:
   (`.../Application Support/dev.llun.Schrift/ContentCache/<uuid>.json`).
   Application Support (not Caches) so the copy is durable and not silently
   reclaimed by the OS — "keep local" means it survives.
+- **Not SQLite or Core Data** (considered and rejected). The access pattern is a
+  pure key-value store — ≤50 entries, whole-blob reads, single `@MainActor`
+  writer — which a directory of files already is, with no schema/migration
+  machinery. Core Data/SwiftData would add a managed model artifact (touching
+  `project.yml`/XcodeGen) and context machinery that clashes with the repo's
+  plain-synchronous-store idiom; raw `SQLite3` (the only wrapper-free option
+  under the zero-dependency rule) means hand-rolled C-API boilerplate to guard
+  50 rows. Revisit as raw SQLite + FTS5 only if offline full-text search,
+  partial/structured queries, or a much larger entry count ever become goals —
+  migrating this small store later is cheap.
 - **Stateless.** The store holds **no in-memory state** — the eviction index is
   derived from disk on every operation (like the existing UserDefaults-backed
   stores re-read their backing store per call), so independently-constructed
@@ -163,7 +173,11 @@ Design decisions:
   ```
 
   The store applies it after each `save(_:)` by deleting the returned IDs'
-  files. Eviction removes content-cache entries **only** — it never touches
+  files. The index's `syncedAt` values come from the files' **modification
+  dates** (`contentModificationDateKey` resource values) — every path that bumps
+  an entry's `syncedAt` rewrites its file at that same moment, so mtime tracks
+  `syncedAt` and building the index never requires reading or decoding file
+  contents. Eviction removes content-cache entries **only** — it never touches
   `PendingDraftStore`, so a stranded draft keeps an evicted document readable
   and recoverable.
 
