@@ -17,9 +17,9 @@ struct DocumentListView: View {
 
     private var trailingActions: [NavBarAction] {
         var actions: [NavBarAction] = []
-        if let onSearchTap {
-            actions.append(NavBarAction(systemImage: "magnifyingglass", label: "Search", action: onSearchTap))
-        }
+        // The nav bar no longer carries a search action — search is reached via
+        // the in-page search field (which `onSearchTap` still drives on phone)
+        // and the Search tab.
         if let onNewDocument {
             actions.append(NavBarAction(systemImage: "plus", label: "New doc", color: .brand, action: onNewDocument))
         }
