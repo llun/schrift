@@ -17,11 +17,15 @@ Safety section in [`CLAUDE.md`](../CLAUDE.md).
 
 `pr-checks.yml` runs one job on `macos-latest`:
 
-1. `xcodegen generate` — the `.xcodeproj` is generated from `project.yml` and
+1. Formatting gate — runs Apple's `swift-format` (bundled with the Xcode
+   toolchain; config in [`.swift-format`](../.swift-format)) over `Schrift/`
+   and `SchriftTests/` and fails on any resulting diff, prettier-style. Fix
+   locally with `swift format --recursive --in-place Schrift SchriftTests`.
+2. `xcodegen generate` — the `.xcodeproj` is generated from `project.yml` and
    not committed, so CI must regenerate it before any `xcodebuild` call.
-2. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
+3. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
    to the first available iPhone on the runner image (image lineups change).
-3. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
+4. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
    simulator — the same suite as the documented local test command. No code
    signing (`CODE_SIGNING_ALLOWED=NO`); simulator tests don't need it.
 

@@ -39,8 +39,10 @@ struct SegmentedControl: View {
                     // Per-segment cell model (reference): each cell is width/n and
                     // the thumb is inset 2pt on every edge within its cell, so the
                     // pill stays centered under every label.
-                    .frame(width: geometry.size.width * layout.segmentFraction - trackPadding * 2,
-                           height: geometry.size.height - trackPadding * 2)
+                    .frame(
+                        width: geometry.size.width * layout.segmentFraction - trackPadding * 2,
+                        height: geometry.size.height - trackPadding * 2
+                    )
                     .offset(x: geometry.size.width * layout.thumbOffsetFraction + trackPadding)
                     .animation(.easeOut(duration: 0.2), value: selectedIndex)
 

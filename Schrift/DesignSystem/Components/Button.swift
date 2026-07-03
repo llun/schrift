@@ -56,7 +56,9 @@ enum ButtonStyleResolver {
             return ButtonStyleHex(backgroundHex: nil, foregroundHex: softForegroundHex, borderHex: nil)
         case .outline:
             // Reference outline = raised surface fill + neutral hairline border + ink label.
-            return ButtonStyleHex(backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: softForegroundHex, borderHex: DocsColorHex.borderDefault)
+            return ButtonStyleHex(
+                backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: softForegroundHex,
+                borderHex: DocsColorHex.borderDefault)
         }
     }
 }
@@ -138,7 +140,9 @@ struct DocsButton: View {
             .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm)
-                    .strokeBorder(style.borderHex.map { Color(hex: $0) } ?? Color.clear, lineWidth: style.borderHex == nil ? 0 : 1)
+                    .strokeBorder(
+                        style.borderHex.map { Color(hex: $0) } ?? Color.clear, lineWidth: style.borderHex == nil ? 0 : 1
+                    )
             )
             .clipShape(RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm))
         }

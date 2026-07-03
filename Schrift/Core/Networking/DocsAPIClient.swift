@@ -36,7 +36,9 @@ actor DocsAPIClient {
         try await performRequest(path: path, method: "GET", body: nil, contentType: nil)
     }
 
-    func send<T: Decodable>(path: String, method: String, body: Data?, contentType: String? = "application/json") async throws -> T {
+    func send<T: Decodable>(path: String, method: String, body: Data?, contentType: String? = "application/json")
+        async throws -> T
+    {
         let data = try await performRequest(path: path, method: method, body: body, contentType: contentType)
         do {
             return try JSONDecoder.docsAPI.decode(T.self, from: data)

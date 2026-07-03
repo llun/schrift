@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class MarkdownSerializerTests: XCTestCase {
@@ -12,65 +13,73 @@ final class MarkdownSerializerTests: XCTestCase {
     }
 
     func testSerializesChecklistItems() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .checklistItem(checked: false), text: "Todo"),
-            EditorBlock(kind: .checklistItem(checked: true), text: "Done"),
-        ]), "- [ ] Todo\n- [x] Done\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .checklistItem(checked: false), text: "Todo"),
+                EditorBlock(kind: .checklistItem(checked: true), text: "Done"),
+            ]), "- [ ] Todo\n- [x] Done\n")
     }
 
     func testAdjacentQuoteLinesJoinTightly() {
         // "> a\n> b" is one blockquote in the source; re-serializing with a
         // blank line would split it into two.
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .quote, text: "First"),
-            EditorBlock(kind: .quote, text: "Second"),
-        ]), "> First\n> Second\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .quote, text: "First"),
+                EditorBlock(kind: .quote, text: "Second"),
+            ]), "> First\n> Second\n")
     }
 
     func testIndentedUnknownStaysTightlyBoundToListItems() {
         // A nested list parses as [bullet, unknown]; a blank line between them
         // would turn the tight list loose on every save.
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .bulletItem, text: "top"),
-            EditorBlock(kind: .unknown, text: "  - inner\n    - deeper"),
-        ]), "- top\n  - inner\n    - deeper\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .bulletItem, text: "top"),
+                EditorBlock(kind: .unknown, text: "  - inner\n    - deeper"),
+            ]), "- top\n  - inner\n    - deeper\n")
     }
 
     func testNonIndentedUnknownIsSeparatedByBlankLine() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .bulletItem, text: "item"),
-            EditorBlock(kind: .unknown, text: "| a | b |"),
-        ]), "- item\n\n| a | b |\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .bulletItem, text: "item"),
+                EditorBlock(kind: .unknown, text: "| a | b |"),
+            ]), "- item\n\n| a | b |\n")
     }
 
     func testAdjacentListItemsJoinTightly() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .bulletItem, text: "One"),
-            EditorBlock(kind: .bulletItem, text: "Two"),
-        ]), "- One\n- Two\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .bulletItem, text: "One"),
+                EditorBlock(kind: .bulletItem, text: "Two"),
+            ]), "- One\n- Two\n")
     }
 
     func testParagraphsAreSeparatedByBlankLine() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .paragraph, text: "One"),
-            EditorBlock(kind: .paragraph, text: "Two"),
-        ]), "One\n\nTwo\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .paragraph, text: "One"),
+                EditorBlock(kind: .paragraph, text: "Two"),
+            ]), "One\n\nTwo\n")
     }
 
     func testNumberedItemsAreRenumberedByPosition() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .numberedItem, text: "First"),
-            EditorBlock(kind: .numberedItem, text: "Second"),
-            EditorBlock(kind: .numberedItem, text: "Third"),
-        ]), "1. First\n2. Second\n3. Third\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .numberedItem, text: "First"),
+                EditorBlock(kind: .numberedItem, text: "Second"),
+                EditorBlock(kind: .numberedItem, text: "Third"),
+            ]), "1. First\n2. Second\n3. Third\n")
     }
 
     func testNumberedRunsRestartAfterInterruption() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .numberedItem, text: "One"),
-            EditorBlock(kind: .paragraph, text: "Break"),
-            EditorBlock(kind: .numberedItem, text: "Restarts"),
-        ]), "1. One\n\nBreak\n\n1. Restarts\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .numberedItem, text: "One"),
+                EditorBlock(kind: .paragraph, text: "Break"),
+                EditorBlock(kind: .numberedItem, text: "Restarts"),
+            ]), "1. One\n\nBreak\n\n1. Restarts\n")
     }
 
     func testSerializesCodeBlockWithLanguage() {
@@ -104,11 +113,12 @@ final class MarkdownSerializerTests: XCTestCase {
     }
 
     func testEmptyParagraphsAreDropped() {
-        XCTAssertEqual(serializeMarkdown([
-            EditorBlock(kind: .paragraph, text: "One"),
-            EditorBlock(kind: .paragraph, text: ""),
-            EditorBlock(kind: .paragraph, text: "Two"),
-        ]), "One\n\nTwo\n")
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .paragraph, text: "One"),
+                EditorBlock(kind: .paragraph, text: ""),
+                EditorBlock(kind: .paragraph, text: "Two"),
+            ]), "One\n\nTwo\n")
     }
 
     func testEmptyBlocksProduceEmptyString() {

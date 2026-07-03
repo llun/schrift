@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class WebLoginTests: XCTestCase {
@@ -49,8 +50,12 @@ final class WebLoginTests: XCTestCase {
             private(set) var savedCookies: [HTTPCookie] = []
             func setCookie(_ cookie: HTTPCookie) { savedCookies.append(cookie) }
         }
-        let sessionCookie = HTTPCookie(properties: [.domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "abc"])!
-        let csrfCookie = HTTPCookie(properties: [.domain: "docs.llun.dev", .path: "/", .name: "csrftoken", .value: "xyz"])!
+        let sessionCookie = HTTPCookie(properties: [
+            .domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "abc",
+        ])!
+        let csrfCookie = HTTPCookie(properties: [
+            .domain: "docs.llun.dev", .path: "/", .name: "csrftoken", .value: "xyz",
+        ])!
         let fake = FakeCookieStoring()
 
         syncCookies([sessionCookie, csrfCookie], into: fake)

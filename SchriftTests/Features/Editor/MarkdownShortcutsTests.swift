@@ -1,13 +1,19 @@
 import XCTest
+
 @testable import Schrift
 
 final class MarkdownShortcutsTests: XCTestCase {
     // MARK: - Typing shortcuts
 
     func testHeadingShortcuts() {
-        XCTAssertEqual(detectMarkdownShortcut(text: "# "), BlockShortcutMatch(kind: .heading(level: 1), remainderText: ""))
-        XCTAssertEqual(detectMarkdownShortcut(text: "## Hello"), BlockShortcutMatch(kind: .heading(level: 2), remainderText: "Hello"))
-        XCTAssertEqual(detectMarkdownShortcut(text: "###### deep"), BlockShortcutMatch(kind: .heading(level: 6), remainderText: "deep"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "# "), BlockShortcutMatch(kind: .heading(level: 1), remainderText: ""))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "## Hello"),
+            BlockShortcutMatch(kind: .heading(level: 2), remainderText: "Hello"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "###### deep"),
+            BlockShortcutMatch(kind: .heading(level: 6), remainderText: "deep"))
     }
 
     func testHeadingShortcutRequiresSpace() {
@@ -17,23 +23,32 @@ final class MarkdownShortcutsTests: XCTestCase {
 
     func testBulletShortcuts() {
         XCTAssertEqual(detectMarkdownShortcut(text: "- "), BlockShortcutMatch(kind: .bulletItem, remainderText: ""))
-        XCTAssertEqual(detectMarkdownShortcut(text: "* item"), BlockShortcutMatch(kind: .bulletItem, remainderText: "item"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "* item"), BlockShortcutMatch(kind: .bulletItem, remainderText: "item"))
     }
 
     func testChecklistShortcuts() {
-        XCTAssertEqual(detectMarkdownShortcut(text: "[] task"), BlockShortcutMatch(kind: .checklistItem(checked: false), remainderText: "task"))
-        XCTAssertEqual(detectMarkdownShortcut(text: "[ ] task"), BlockShortcutMatch(kind: .checklistItem(checked: false), remainderText: "task"))
-        XCTAssertEqual(detectMarkdownShortcut(text: "[x] done"), BlockShortcutMatch(kind: .checklistItem(checked: true), remainderText: "done"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "[] task"),
+            BlockShortcutMatch(kind: .checklistItem(checked: false), remainderText: "task"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "[ ] task"),
+            BlockShortcutMatch(kind: .checklistItem(checked: false), remainderText: "task"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "[x] done"),
+            BlockShortcutMatch(kind: .checklistItem(checked: true), remainderText: "done"))
     }
 
     func testNumberedShortcuts() {
         XCTAssertEqual(detectMarkdownShortcut(text: "1. "), BlockShortcutMatch(kind: .numberedItem, remainderText: ""))
-        XCTAssertEqual(detectMarkdownShortcut(text: "12) go"), BlockShortcutMatch(kind: .numberedItem, remainderText: "go"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "12) go"), BlockShortcutMatch(kind: .numberedItem, remainderText: "go"))
         XCTAssertNil(detectMarkdownShortcut(text: "1.missing space"))
     }
 
     func testQuoteShortcut() {
-        XCTAssertEqual(detectMarkdownShortcut(text: "> quoted"), BlockShortcutMatch(kind: .quote, remainderText: "quoted"))
+        XCTAssertEqual(
+            detectMarkdownShortcut(text: "> quoted"), BlockShortcutMatch(kind: .quote, remainderText: "quoted"))
     }
 
     func testShortcutMustBeAtStart() {
@@ -44,8 +59,11 @@ final class MarkdownShortcutsTests: XCTestCase {
     // MARK: - Enter shortcuts
 
     func testEnterShortcutForCodeFence() {
-        XCTAssertEqual(detectEnterShortcut(text: "```"), BlockShortcutMatch(kind: .codeBlock(language: ""), remainderText: ""))
-        XCTAssertEqual(detectEnterShortcut(text: "```swift"), BlockShortcutMatch(kind: .codeBlock(language: "swift"), remainderText: ""))
+        XCTAssertEqual(
+            detectEnterShortcut(text: "```"), BlockShortcutMatch(kind: .codeBlock(language: ""), remainderText: ""))
+        XCTAssertEqual(
+            detectEnterShortcut(text: "```swift"),
+            BlockShortcutMatch(kind: .codeBlock(language: "swift"), remainderText: ""))
     }
 
     func testEnterShortcutForDivider() {

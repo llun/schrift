@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 private func bodyData(from request: URLRequest) -> Data? {
@@ -41,7 +42,8 @@ final class ShareEndpointsClientTests: XCTestCase {
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
         let client = makeClient()
 
-        let result = try await client.setLinkConfiguration(documentID: documentID, linkReach: .restricted, linkRole: nil)
+        let result = try await client.setLinkConfiguration(
+            documentID: documentID, linkReach: .restricted, linkRole: nil)
 
         XCTAssertEqual(result.linkReach, .restricted)
         XCTAssertNil(result.linkRole)
@@ -57,7 +59,8 @@ final class ShareEndpointsClientTests: XCTestCase {
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
         let client = makeClient()
 
-        let result = try await client.setLinkConfiguration(documentID: documentID, linkReach: .authenticated, linkRole: .reader)
+        let result = try await client.setLinkConfiguration(
+            documentID: documentID, linkReach: .authenticated, linkRole: .reader)
 
         XCTAssertEqual(result.linkReach, .authenticated)
         XCTAssertEqual(result.linkRole, .reader)
@@ -68,8 +71,8 @@ final class ShareEndpointsClientTests: XCTestCase {
 
     func testCreateAccessSendsUserIdAndRole() async throws {
         let responseBody = """
-        {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "33333333-3333-4333-8333-333333333333", "email": "new@example.com", "full_name": "New Member", "short_name": "New", "language": "en-us", "is_first_connection": false}, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
-        """.data(using: .utf8)!
+            {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "33333333-3333-4333-8333-333333333333", "email": "new@example.com", "full_name": "New Member", "short_name": "New", "language": "en-us", "is_first_connection": false}, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
+            """.data(using: .utf8)!
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: responseBody, error: nil) }
         let client = makeClient()
         let userID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!

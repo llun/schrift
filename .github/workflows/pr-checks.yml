@@ -38,6 +38,17 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # Formatting gate — sources are formatted with Apple's swift-format
+      # (bundled with the Xcode/Swift 6 toolchain; config in .swift-format).
+      # Runs the formatter and fails on any resulting diff, prettier-style.
+      - name: Check formatting
+        run: |
+          swift format --recursive --in-place Schrift SchriftTests
+          if ! git diff --exit-code -- '*.swift'; then
+            echo "::error::Swift sources are not formatted. Run: swift format --recursive --in-place Schrift SchriftTests"
+            exit 1
+          fi
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

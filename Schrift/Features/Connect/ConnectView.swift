@@ -39,7 +39,10 @@ struct ConnectView: View {
                     error: viewModel.errorMessage
                 )
 
-                DocsButton(title: signInTitle, size: .large, icon: "rectangle.portrait.and.arrow.right", fullWidth: true, pill: true, isDisabled: viewModel.isSigningIn) {
+                DocsButton(
+                    title: signInTitle, size: .large, icon: "rectangle.portrait.and.arrow.right", fullWidth: true,
+                    pill: true, isDisabled: viewModel.isSigningIn
+                ) {
                     viewModel.startSignIn()
                 }
 

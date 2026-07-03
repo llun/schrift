@@ -31,8 +31,9 @@ struct BlockNoteBlock: Equatable {
     var hasTextChild: Bool { node != "divider" }
 
     static func == (lhs: BlockNoteBlock, rhs: BlockNoteBlock) -> Bool {
-        lhs.node == rhs.node && lhs.id == rhs.id && lhs.runs == rhs.runs &&
-            lhs.props.map { [$0.key, String(describing: $0.value)] } == rhs.props.map { [$0.key, String(describing: $0.value)] }
+        lhs.node == rhs.node && lhs.id == rhs.id && lhs.runs == rhs.runs
+            && lhs.props.map { [$0.key, String(describing: $0.value)] }
+                == rhs.props.map { [$0.key, String(describing: $0.value)] }
     }
 }
 
@@ -48,11 +49,15 @@ enum BlockNoteYjs {
         var items: [YItem] = []
         var clock = 0
 
-        func emit(_ content: YContent, origin: Int? = nil, parentRootKey: String? = nil,
-                  parentClock: Int? = nil, parentSub: String? = nil) -> Int {
+        func emit(
+            _ content: YContent, origin: Int? = nil, parentRootKey: String? = nil,
+            parentClock: Int? = nil, parentSub: String? = nil
+        ) -> Int {
             let start = clock
-            items.append(YItem(clock: start, origin: origin, parentRootKey: parentRootKey,
-                               parentClock: parentClock, parentSub: parentSub, content: content))
+            items.append(
+                YItem(
+                    clock: start, origin: origin, parentRootKey: parentRootKey,
+                    parentClock: parentClock, parentSub: parentSub, content: content))
             clock += content.length
             return start
         }
@@ -94,7 +99,7 @@ enum BlockNoteYjs {
         parentText: Int,
         emit: (YContent, Int?, String?, Int?, String?) -> Int
     ) {
-        var lastClock: Int? = nil   // clock of the previously emitted item's last position
+        var lastClock: Int? = nil  // clock of the previously emitted item's last position
         var openMarks: [(key: String, valueJSON: String)] = []
 
         func emitItem(_ content: YContent) {
@@ -107,11 +112,13 @@ enum BlockNoteYjs {
         for run in runs {
             let newMarks = run.marks
             // Close marks that are open but not present (or changed) in this run.
-            for open in openMarks where !newMarks.contains(where: { $0.key == open.key && $0.valueJSON == open.valueJSON }) {
+            for open in openMarks
+            where !newMarks.contains(where: { $0.key == open.key && $0.valueJSON == open.valueJSON }) {
                 emitItem(.format(key: open.key, valueJSON: "null"))
             }
             // Open marks newly present in this run.
-            for mark in newMarks where !openMarks.contains(where: { $0.key == mark.key && $0.valueJSON == mark.valueJSON }) {
+            for mark in newMarks
+            where !openMarks.contains(where: { $0.key == mark.key && $0.valueJSON == mark.valueJSON }) {
                 emitItem(.format(key: mark.key, valueJSON: mark.valueJSON))
             }
             if !run.text.isEmpty {

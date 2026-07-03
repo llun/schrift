@@ -70,7 +70,9 @@ struct EditorFormattingBar: View {
     }
 
     @ViewBuilder
-    private func barButton(icon: String, label: String, brand: Bool = false, disabled: Bool? = nil, action: @escaping () -> Void) -> some View {
+    private func barButton(
+        icon: String, label: String, brand: Bool = false, disabled: Bool? = nil, action: @escaping () -> Void
+    ) -> some View {
         IconButton(
             systemImage: icon,
             label: label,

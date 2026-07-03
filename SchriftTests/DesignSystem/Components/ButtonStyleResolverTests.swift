@@ -1,15 +1,22 @@
 import XCTest
+
 @testable import Schrift
 
 final class ButtonStyleResolverTests: XCTestCase {
     func testPrimaryBrandUsesFillBackground() {
         let style = ButtonStyleResolver.style(variant: .primary, color: .brand, isDisabled: false)
-        XCTAssertEqual(style, ButtonStyleHex(backgroundHex: DocsColorHex.brandFill, foregroundHex: DocsColorHex.textOnBrand, borderHex: nil))
+        XCTAssertEqual(
+            style,
+            ButtonStyleHex(
+                backgroundHex: DocsColorHex.brandFill, foregroundHex: DocsColorHex.textOnBrand, borderHex: nil))
     }
 
     func testSecondaryBrandUsesSoftBackground() {
         let style = ButtonStyleResolver.style(variant: .secondary, color: .brand, isDisabled: false)
-        XCTAssertEqual(style, ButtonStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrand, borderHex: nil))
+        XCTAssertEqual(
+            style,
+            ButtonStyleHex(
+                backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrand, borderHex: nil))
     }
 
     func testTertiaryHasNoBackground() {
@@ -35,6 +42,9 @@ final class ButtonStyleResolverTests: XCTestCase {
 
     func testNeutralPrimaryUsesTextPrimaryAsFill() {
         let style = ButtonStyleResolver.style(variant: .primary, color: .neutral, isDisabled: false)
-        XCTAssertEqual(style, ButtonStyleHex(backgroundHex: DocsColorHex.textPrimary, foregroundHex: DocsColorHex.textOnBrand, borderHex: nil))
+        XCTAssertEqual(
+            style,
+            ButtonStyleHex(
+                backgroundHex: DocsColorHex.textPrimary, foregroundHex: DocsColorHex.textOnBrand, borderHex: nil))
     }
 }

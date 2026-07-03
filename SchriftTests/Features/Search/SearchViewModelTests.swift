@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
@@ -54,7 +55,8 @@ final class SearchViewModelTests: XCTestCase {
 
     func testLoadQuickAccessPopulatesFavorites() async {
         let viewModel = makeViewModel()
-        let body = Self.paginatedFixture(id: "11111111-1111-4111-8111-111111111111", title: "Pinned Doc", isFavorite: true)
+        let body = Self.paginatedFixture(
+            id: "11111111-1111-4111-8111-111111111111", title: "Pinned Doc", isFavorite: true)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
 
         await viewModel.loadQuickAccess()

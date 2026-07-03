@@ -79,10 +79,10 @@ enum YContent: Equatable {
     /// yjs content ref id used in the low 5 bits of an item's info byte.
     var ref: UInt8 {
         switch self {
-        case .string: return 4      // ContentString
-        case .format: return 6      // ContentFormat
-        case .xmlElement, .xmlText: return 7 // ContentType
-        case .any: return 8         // ContentAny
+        case .string: return 4  // ContentString
+        case .format: return 6  // ContentFormat
+        case .xmlElement, .xmlText: return 7  // ContentType
+        case .any: return 8  // ContentAny
         }
     }
 }
@@ -110,33 +110,33 @@ enum YjsUpdateEncoder {
     /// a Yjs v1 update — the exact bytes `Y.encodeStateAsUpdate` produces.
     static func encode(clientID: UInt32, items: [YItem]) -> Data {
         var e = Lib0Encoder()
-        e.writeVarUInt(1)                                   // number of clients
-        e.writeVarUInt(UInt(items.count))                  // structs for this client
-        e.writeVarUInt(UInt(clientID))                     // client id
-        e.writeVarUInt(UInt(items.first?.clock ?? 0))      // clock of first struct
+        e.writeVarUInt(1)  // number of clients
+        e.writeVarUInt(UInt(items.count))  // structs for this client
+        e.writeVarUInt(UInt(clientID))  // client id
+        e.writeVarUInt(UInt(items.first?.clock ?? 0))  // clock of first struct
         for item in items { writeItem(&e, clientID: clientID, item) }
-        e.writeVarUInt(0)                                  // delete set: 0 clients
+        e.writeVarUInt(0)  // delete set: 0 clients
         return e.data
     }
 
     private static func writeItem(_ e: inout Lib0Encoder, clientID: UInt32, _ item: YItem) {
         let hasOrigin = item.origin != nil
         var info = item.content.ref
-        if hasOrigin { info |= 0x80 }                       // BIT8: has left origin
-        if item.parentSub != nil { info |= 0x20 }           // BIT6: has parentSub
+        if hasOrigin { info |= 0x80 }  // BIT8: has left origin
+        if item.parentSub != nil { info |= 0x20 }  // BIT6: has parentSub
         e.writeUInt8(info)
 
         if let origin = item.origin {
-            e.writeVarUInt(UInt(clientID))                  // writeID(origin)
+            e.writeVarUInt(UInt(clientID))  // writeID(origin)
             e.writeVarUInt(UInt(origin))
         }
         // Parent info is written only when neither origin nor rightOrigin exist.
         if !hasOrigin {
             if let root = item.parentRootKey {
-                e.writeVarUInt(1)                           // parent is a root type
+                e.writeVarUInt(1)  // parent is a root type
                 e.writeVarString(root)
             } else {
-                e.writeVarUInt(0)                           // parent is a nested item
+                e.writeVarUInt(0)  // parent is a nested item
                 e.writeVarUInt(UInt(clientID))
                 e.writeVarUInt(UInt(item.parentClock ?? 0))
             }
@@ -148,10 +148,10 @@ enum YjsUpdateEncoder {
     private static func writeContent(_ e: inout Lib0Encoder, _ content: YContent) {
         switch content {
         case .xmlElement(let nodeName):
-            e.writeVarUInt(3)                               // YXmlElementRefID
+            e.writeVarUInt(3)  // YXmlElementRefID
             e.writeVarString(nodeName)
         case .xmlText:
-            e.writeVarUInt(6)                               // YXmlTextRefID
+            e.writeVarUInt(6)  // YXmlTextRefID
         case .string(let s):
             e.writeVarString(s)
         case .format(let key, let valueJSON):
@@ -165,8 +165,12 @@ enum YjsUpdateEncoder {
 
     private static func writeAny(_ e: inout Lib0Encoder, _ value: YAnyValue) {
         switch value {
-        case .string(let s): e.writeUInt8(119); e.writeVarString(s)
-        case .int(let n): e.writeUInt8(125); e.writeVarInt(n)
+        case .string(let s):
+            e.writeUInt8(119)
+            e.writeVarString(s)
+        case .int(let n):
+            e.writeUInt8(125)
+            e.writeVarInt(n)
         case .bool(let b): e.writeUInt8(b ? 120 : 121)
         case .null: e.writeUInt8(126)
         }

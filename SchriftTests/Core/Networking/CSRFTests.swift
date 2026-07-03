@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class CSRFTests: XCTestCase {
@@ -7,7 +8,9 @@ final class CSRFTests: XCTestCase {
     }
 
     func testFindsCsrfTokenAmongMultipleCookies() {
-        let cookies = [makeCookie(name: "docs_sessionid", value: "session-abc"), makeCookie(name: "csrftoken", value: "csrf-xyz")]
+        let cookies = [
+            makeCookie(name: "docs_sessionid", value: "session-abc"), makeCookie(name: "csrftoken", value: "csrf-xyz"),
+        ]
         XCTAssertEqual(csrfToken(from: cookies), "csrf-xyz")
     }
 

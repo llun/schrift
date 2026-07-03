@@ -39,12 +39,13 @@ struct HomeView: View {
                 tabContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                TabBar(items: [
-                    TabBarItem(value: "docs", label: "Schrift", systemImage: "doc.text"),
-                    TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
-                    TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
-                    TabBarItem(value: "me", label: "Profile", systemImage: "person.crop.circle"),
-                ], selection: $selectedTab)
+                TabBar(
+                    items: [
+                        TabBarItem(value: "docs", label: "Schrift", systemImage: "doc.text"),
+                        TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
+                        TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
+                        TabBarItem(value: "me", label: "Profile", systemImage: "person.crop.circle"),
+                    ], selection: $selectedTab)
             }
             .background(DocsColor.surfacePage)
             .toolbar(.hidden, for: .navigationBar)
@@ -117,5 +118,7 @@ struct HomeView: View {
 }
 
 #Preview {
-    HomeView(viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)), serverHost: "docs.llun.dev")
+    HomeView(
+        viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
+        serverHost: "docs.llun.dev")
 }

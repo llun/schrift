@@ -64,6 +64,16 @@ CI runs the same suite on every pull request to `main`
 ([`pr-checks.yml`](.github/workflows/pr-checks.yml)); the **Build & Test**
 check must pass before merging. See [`docs/ci.md`](docs/ci.md).
 
+## Formatting
+
+Sources are formatted with Apple's `swift-format` (bundled with the Xcode
+toolchain; config in [`.swift-format`](.swift-format)). CI rejects unformatted
+code, so format before pushing:
+
+```sh
+swift format --recursive --in-place Schrift SchriftTests
+```
+
 ## Distribution (TestFlight)
 
 Every merge to `main` auto-ships to TestFlight via fastlane + GitHub Actions:

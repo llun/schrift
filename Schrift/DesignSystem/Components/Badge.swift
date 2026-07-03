@@ -20,7 +20,8 @@ enum BadgeStyleResolver {
     static func style(tone: BadgeTone) -> BadgeStyleHex {
         switch tone {
         case .accent:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary)
+            return BadgeStyleHex(
+                backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary)
         case .neutral:
             return BadgeStyleHex(backgroundHex: DocsColorHex.gray100, foregroundHex: DocsColorHex.gray600)
         case .danger:

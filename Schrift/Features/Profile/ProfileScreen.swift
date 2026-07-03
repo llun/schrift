@@ -167,7 +167,9 @@ struct ProfileScreen: View {
 
     private var signOutSection: some View {
         ListSection {
-            ListRow(systemImage: "rectangle.portrait.and.arrow.right", title: "Sign out", isDestructive: true, action: onSignOut)
+            ListRow(
+                systemImage: "rectangle.portrait.and.arrow.right", title: "Sign out", isDestructive: true,
+                action: onSignOut)
         }
     }
 }

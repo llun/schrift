@@ -16,9 +16,11 @@ struct ShareSheetView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DocsTextField(text: $viewModel.searchQuery, placeholder: "Invite by name or email", icon: "person.badge.plus")
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.vertical, DocsSpacing.spaceSM)
+                DocsTextField(
+                    text: $viewModel.searchQuery, placeholder: "Invite by name or email", icon: "person.badge.plus"
+                )
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.vertical, DocsSpacing.spaceSM)
 
                 if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
@@ -85,8 +87,12 @@ struct ShareSheetView: View {
             }
             .confirmationDialog("Link Access", isPresented: $isChoosingLinkReach) {
                 Button("Restricted") { Task { await viewModel.updateLinkConfiguration(reach: .restricted, role: nil) } }
-                Button("Anyone in the organization") { Task { await viewModel.updateLinkConfiguration(reach: .authenticated, role: .reader) } }
-                Button("Anyone with the link") { Task { await viewModel.updateLinkConfiguration(reach: .public, role: .reader) } }
+                Button("Anyone in the organization") {
+                    Task { await viewModel.updateLinkConfiguration(reach: .authenticated, role: .reader) }
+                }
+                Button("Anyone with the link") {
+                    Task { await viewModel.updateLinkConfiguration(reach: .public, role: .reader) }
+                }
             }
         }
     }
@@ -112,9 +118,11 @@ struct ShareSheetView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, user in
                         if index > 0 { ProfileRowDivider() }
-                        ListRow(title: user.fullName, subtitle: user.email, action: {
-                            Task { await viewModel.invite(user: user, role: .reader) }
-                        })
+                        ListRow(
+                            title: user.fullName, subtitle: user.email,
+                            action: {
+                                Task { await viewModel.invite(user: user, role: .reader) }
+                            })
                     }
                 }
             }
@@ -124,7 +132,10 @@ struct ShareSheetView: View {
     }
 
     private var copyLinkButton: some View {
-        DocsButton(title: "Copy link", variant: .secondary, color: .brand, size: .large, icon: "link", fullWidth: true, pill: true, isDisabled: shareURL == nil) {
+        DocsButton(
+            title: "Copy link", variant: .secondary, color: .brand, size: .large, icon: "link", fullWidth: true,
+            pill: true, isDisabled: shareURL == nil
+        ) {
             guard let shareURL else { return }
             UIPasteboard.general.string = shareURL.absoluteString
             dismiss()

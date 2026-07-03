@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class ServerURLInputTests: XCTestCase {
@@ -39,6 +40,8 @@ final class ServerURLInputTests: XCTestCase {
     }
 
     func testPathQueryAndFragmentAreStripped() {
-        XCTAssertEqual(normalizedServerURL(from: "https://docs.llun.dev/some/path?x=1#frag")?.absoluteString, "https://docs.llun.dev")
+        XCTAssertEqual(
+            normalizedServerURL(from: "https://docs.llun.dev/some/path?x=1#frag")?.absoluteString,
+            "https://docs.llun.dev")
     }
 }

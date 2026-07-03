@@ -8,7 +8,8 @@ private struct AuthenticatedHomeContainer: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     init(serverURL: URL, onSignOut: @escaping () -> Void) {
-        _viewModel = State(initialValue: HomeViewModel(client: DocsAPIClient(baseURL: serverURL.appendingPathComponent("api/v1.0/"))))
+        _viewModel = State(
+            initialValue: HomeViewModel(client: DocsAPIClient(baseURL: serverURL.appendingPathComponent("api/v1.0/"))))
         serverHost = serverURL.host ?? ""
         self.onSignOut = onSignOut
     }
@@ -28,14 +29,16 @@ struct RootView: View {
 
     var body: some View {
         if sessionStore.isAuthenticated, let serverURL = sessionStore.serverURL {
-            AuthenticatedHomeContainer(serverURL: serverURL, onSignOut: {
-                // Full document bodies must not survive sign-out on disk. The
-                // metadata cache (DocumentCacheStore) and unsaved drafts
-                // (PendingDraftStore) keep their existing behavior — a
-                // recorded decision, see the 2026-07-03 spec.
-                DocumentContentCacheStore().removeAll()
-                try? sessionStore.signOut()
-            })
+            AuthenticatedHomeContainer(
+                serverURL: serverURL,
+                onSignOut: {
+                    // Full document bodies must not survive sign-out on disk. The
+                    // metadata cache (DocumentCacheStore) and unsaved drafts
+                    // (PendingDraftStore) keep their existing behavior — a
+                    // recorded decision, see the 2026-07-03 spec.
+                    DocumentContentCacheStore().removeAll()
+                    try? sessionStore.signOut()
+                })
         } else {
             ConnectView(viewModel: ConnectViewModel(sessionStore: sessionStore, recentServers: recentServers))
         }

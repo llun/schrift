@@ -9,10 +9,13 @@ struct BlockEditorView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-                    TextField("Untitled document", text: Binding(
-                        get: { viewModel.title },
-                        set: { viewModel.updateTitle($0) }
-                    ))
+                    TextField(
+                        "Untitled document",
+                        text: Binding(
+                            get: { viewModel.title },
+                            set: { viewModel.updateTitle($0) }
+                        )
+                    )
                     .font(DocsFont.title1.weight(.bold))
                     .foregroundStyle(DocsColor.textPrimary)
                     .padding(.bottom, DocsSpacing.spaceSM)

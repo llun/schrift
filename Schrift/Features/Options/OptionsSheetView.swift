@@ -36,26 +36,32 @@ struct OptionsSheetView: View {
                             ListRow(systemImage: "link", title: "Copy link", action: { copyLink() })
                             if onShare != nil {
                                 ProfileRowDivider()
-                                ListRow(systemImage: "person.2", title: "Share", showsChevron: true, action: {
-                                    onShare?()
-                                    dismiss()
-                                })
+                                ListRow(
+                                    systemImage: "person.2", title: "Share", showsChevron: true,
+                                    action: {
+                                        onShare?()
+                                        dismiss()
+                                    })
                             }
                             ProfileRowDivider()
                             ListRow(systemImage: "doc.plaintext", title: "Copy as Markdown", action: { copyMarkdown() })
                         }
 
                         ListSection {
-                            ListRow(systemImage: "doc.on.doc", title: "Duplicate", action: {
-                                Task {
-                                    await viewModel.duplicate()
-                                    dismiss()
-                                }
-                            })
+                            ListRow(
+                                systemImage: "doc.on.doc", title: "Duplicate",
+                                action: {
+                                    Task {
+                                        await viewModel.duplicate()
+                                        dismiss()
+                                    }
+                                })
                         }
 
                         ListSection {
-                            ListRow(systemImage: "trash", title: "Delete document", isDestructive: true, action: { isConfirmingDelete = true })
+                            ListRow(
+                                systemImage: "trash", title: "Delete document", isDestructive: true,
+                                action: { isConfirmingDelete = true })
                         }
                     }
                     .padding(.horizontal, DocsSpacing.gutter)

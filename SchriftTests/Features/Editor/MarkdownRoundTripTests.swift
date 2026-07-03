@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class MarkdownRoundTripTests: XCTestCase {
@@ -53,13 +54,13 @@ final class MarkdownRoundTripTests: XCTestCase {
 
     func testCodeBlockContainingFenceSurvives() {
         assertBlocksFixedPoint([
-            EditorBlock(kind: .codeBlock(language: ""), text: "```\ninner\n```"),
+            EditorBlock(kind: .codeBlock(language: ""), text: "```\ninner\n```")
         ])
     }
 
     func testCodeBlockWithBlankLinesSurvives() {
         assertBlocksFixedPoint([
-            EditorBlock(kind: .codeBlock(language: "python"), text: "a = 1\n\nb = 2"),
+            EditorBlock(kind: .codeBlock(language: "python"), text: "a = 1\n\nb = 2")
         ])
     }
 

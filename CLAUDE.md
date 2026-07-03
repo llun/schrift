@@ -37,8 +37,15 @@ This file is the shorter, operational "how we write code here" companion.
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`, not
   by adding an Info.plist file.
-- There is **no linter** configured (no SwiftLint/SwiftFormat) — that is
-  deliberate; don't add one.
+- **Formatting**: Swift sources are formatted with Apple's **swift-format**
+  (the one bundled with the Xcode/Swift 6 toolchain — zero third-party tools),
+  configured by [`.swift-format`](.swift-format) at the repo root (4-space
+  indent, 120-column lines, defaults otherwise). Format before pushing:
+  ```sh
+  swift format --recursive --in-place Schrift SchriftTests
+  ```
+  The PR checks fail on any unformatted file. There is no other linter
+  (no SwiftLint / nicklockwood-SwiftFormat) — don't add one.
 - **PR checks**: every pull request targeting `main` builds the app and runs the
   full test suite on an iPhone simulator via
   [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job

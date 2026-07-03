@@ -11,6 +11,7 @@ extension DocsAPIClient {
 
     func createChild(documentID: UUID, title: String) async throws -> Document {
         let body = try JSONEncoder().encode(CreateChildBody(title: title))
-        return try await send(path: "documents/\(documentID.uuidString.lowercased())/children/", method: "POST", body: body)
+        return try await send(
+            path: "documents/\(documentID.uuidString.lowercased())/children/", method: "POST", body: body)
     }
 }

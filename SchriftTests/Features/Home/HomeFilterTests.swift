@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class HomeFilterTests: XCTestCase {
@@ -7,11 +8,13 @@ final class HomeFilterTests: XCTestCase {
     }
 
     func testSharedFilterExcludesDocumentsCreatedByMe() {
-        XCTAssertEqual(homeFilterQueryParameters(.shared), HomeFilterQueryParameters(isFavorite: nil, isCreatorMe: false))
+        XCTAssertEqual(
+            homeFilterQueryParameters(.shared), HomeFilterQueryParameters(isFavorite: nil, isCreatorMe: false))
     }
 
     func testPinnedFilterOnlyIncludesFavorites() {
-        XCTAssertEqual(homeFilterQueryParameters(.pinned), HomeFilterQueryParameters(isFavorite: true, isCreatorMe: nil))
+        XCTAssertEqual(
+            homeFilterQueryParameters(.pinned), HomeFilterQueryParameters(isFavorite: true, isCreatorMe: nil))
     }
 
     func testPinnedSectionHiddenWhenFilterIsPinned() {

@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 private final class RequestLog: @unchecked Sendable {
@@ -89,7 +90,9 @@ final class DocumentSaveClientTests: XCTestCase {
         try await client.setContent(documentID: realDocumentID, yjsUpdate: yjs)
 
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "PATCH")
-        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.absoluteString, "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/content/")
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/content/")
         XCTAssertEqual(jsonBody(MockURLProtocol.lastRequest)?["content"], yjs.base64EncodedString())
     }
 
@@ -101,7 +104,9 @@ final class DocumentSaveClientTests: XCTestCase {
         try await client.updateTitle(documentID: realDocumentID, title: "Renamed")
 
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "PATCH")
-        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.absoluteString, "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
         XCTAssertEqual(jsonBody(MockURLProtocol.lastRequest)?["title"], "Renamed")
     }
 
@@ -112,7 +117,9 @@ final class DocumentSaveClientTests: XCTestCase {
         try await client.deleteDocument(documentID: realDocumentID)
 
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "DELETE")
-        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.absoluteString, "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
     }
 
     func testSaveDocumentContentPatchesValidYjsContentThenTitle() async throws {
@@ -123,12 +130,17 @@ final class DocumentSaveClientTests: XCTestCase {
         }
         let client = makeClient()
 
-        try await client.saveDocumentContent(documentID: realDocumentID, title: "Notes", markdown: "# Hi\n\nHello **world**")
+        try await client.saveDocumentContent(
+            documentID: realDocumentID, title: "Notes", markdown: "# Hi\n\nHello **world**")
 
         // Content is written first, then the title.
         XCTAssertEqual(log.requests.map(\.httpMethod), ["PATCH", "PATCH"])
-        XCTAssertEqual(log.requests[0].url?.absoluteString, "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/content/")
-        XCTAssertEqual(log.requests[1].url?.absoluteString, "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
+        XCTAssertEqual(
+            log.requests[0].url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/content/")
+        XCTAssertEqual(
+            log.requests[1].url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
 
         // The content field must be base64 that decodes to a real Yjs update
         // (a v1 update begins with the client count varUint, 0x01 for one client).

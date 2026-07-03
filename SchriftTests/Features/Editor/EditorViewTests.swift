@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class EditorViewTests: XCTestCase {

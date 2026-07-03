@@ -108,8 +108,9 @@ final class DocumentSaveCoordinator {
                 // while we awaited — a stale replay would clobber the newer
                 // content and its draft. Re-check before acting.
                 guard inFlight[draft.documentID] == nil,
-                      queued[draft.documentID] == nil,
-                      draftStore.draft(for: draft.documentID) == draft else { continue }
+                    queued[draft.documentID] == nil,
+                    draftStore.draft(for: draft.documentID) == draft
+                else { continue }
                 if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
                     enqueue(documentID: draft.documentID, title: draft.title, markdown: draft.markdown)
                 } else {
@@ -160,18 +161,20 @@ final class DocumentSaveCoordinator {
         if error == nil {
             states[documentID] = .saved(Date())
             if let draft = draftStore.draft(for: documentID),
-               draft.title == save.title, draft.markdown == save.markdown {
+                draft.title == save.title, draft.markdown == save.markdown
+            {
                 draftStore.remove(documentID: documentID)
             }
             // Keep the local copy consistent with what the server now holds.
             // The save PATCHes are void (no server timestamp exists here);
             // syncedAt is the client wall-clock of the confirmed save.
-            contentCache.save(CachedDocumentContent(
-                documentID: documentID,
-                title: save.title,
-                markdown: save.markdown,
-                syncedAt: Date()
-            ))
+            contentCache.save(
+                CachedDocumentContent(
+                    documentID: documentID,
+                    title: save.title,
+                    markdown: save.markdown,
+                    syncedAt: Date()
+                ))
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")
         }

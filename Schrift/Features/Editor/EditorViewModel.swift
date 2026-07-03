@@ -195,7 +195,7 @@ final class EditorViewModel {
     /// and surfaces failures instead of swallowing them.
     func refresh() async {
         guard hasLoadedContent else {
-            await load() // error-state retry: full initial flow, as today
+            await load()  // error-state retry: full initial flow, as today
             return
         }
         errorMessage = nil
@@ -227,7 +227,7 @@ final class EditorViewModel {
         rawMarkdown = ""
         displayedSourceMarkdown = ""
         displaySource = .none
-        hasLoadedContent = false // startEditing guards on this
+        hasLoadedContent = false  // startEditing guards on this
         errorMessage = "This document is no longer available."
     }
 
@@ -241,10 +241,11 @@ final class EditorViewModel {
         }
         switch displaySource {
         case .pendingSave:
-            break // in-flight content is newer than the server copy
+            break  // in-flight content is newer than the server copy
         case .draft:
             if let draft = saveCoordinator.storedDraft(documentID: documentID),
-               formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+                formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance)
+            {
                 cacheServerCopy(formatted)
             } else {
                 // Server newer beyond tolerance: today the stale draft would
@@ -266,12 +267,13 @@ final class EditorViewModel {
     /// Silent cache update while local edits own the screen — next open (or
     /// the coordinator's own conflict handling) deals with freshness.
     private func cacheServerCopy(_ formatted: FormattedDocumentContent) {
-        contentCache.save(CachedDocumentContent(
-            documentID: documentID,
-            title: formatted.title,
-            markdown: formatted.content ?? "",
-            syncedAt: Date()
-        ))
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID,
+                title: formatted.title,
+                markdown: formatted.content ?? "",
+                syncedAt: Date()
+            ))
     }
 
     /// Clean content on screen: never swap it on a passive open. Titles are
@@ -287,12 +289,13 @@ final class EditorViewModel {
             title = fetchedTitle
             savedTitle = fetchedTitle
         }
-        contentCache.save(CachedDocumentContent(
-            documentID: documentID,
-            title: title,
-            markdown: fetched,
-            syncedAt: now
-        ))
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID,
+                title: title,
+                markdown: fetched,
+                syncedAt: now
+            ))
         if serverChanged(fetched: fetched) {
             if applyDirectly {
                 install(markdown: fetched, title: nil, syncedAt: now)
@@ -345,12 +348,13 @@ final class EditorViewModel {
         install(markdown: formatted.content ?? "", title: formatted.title, syncedAt: now)
         displaySource = .clean
         hasLocalCopy = true
-        contentCache.save(CachedDocumentContent(
-            documentID: documentID,
-            title: title,
-            markdown: formatted.content ?? "",
-            syncedAt: now
-        ))
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID,
+                title: title,
+                markdown: formatted.content ?? "",
+                syncedAt: now
+            ))
     }
 
     /// Installs content as the on-screen document. Every path that puts
@@ -552,7 +556,8 @@ final class EditorViewModel {
 
     func toggleChecklist(blockID: UUID) {
         guard let index = blockIndex(blockID),
-              case .checklistItem(let checked) = blocks[index].kind else { return }
+            case .checklistItem(let checked) = blocks[index].kind
+        else { return }
         blocks[index].kind = .checklistItem(checked: !checked)
         markDirty()
     }
@@ -608,7 +613,8 @@ final class EditorViewModel {
         let range = selection ?? NSRange(location: (blocks[index].text as NSString).length, length: 0)
         let result = wrapInlineMarker(text: blocks[index].text, range: range, marker: marker)
         blocks[index].text = result.text
-        cursorRequest = CursorRequest(blockID: focusedBlockID, offset: result.selection.location, length: result.selection.length)
+        cursorRequest = CursorRequest(
+            blockID: focusedBlockID, offset: result.selection.location, length: result.selection.length)
         selection = result.selection
         markDirty()
     }

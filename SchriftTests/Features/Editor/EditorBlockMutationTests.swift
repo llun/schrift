@@ -1,10 +1,13 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
 final class EditorBlockMutationTests: XCTestCase {
     private func makeViewModel(blocks: [EditorBlock]) -> EditorViewModel {
-        let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let client = DocsAPIClient(
+            baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] })
         let suiteName = "EditorBlockMutationTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)

@@ -14,7 +14,8 @@ func detectMarkdownShortcut(text: String) -> BlockShortcutMatch? {
     }
     for (prefix, checked) in [("[] ", false), ("[ ] ", false), ("[x] ", true), ("[X] ", true)] {
         if text.hasPrefix(prefix) {
-            return BlockShortcutMatch(kind: .checklistItem(checked: checked), remainderText: String(text.dropFirst(prefix.count)))
+            return BlockShortcutMatch(
+                kind: .checklistItem(checked: checked), remainderText: String(text.dropFirst(prefix.count)))
         }
     }
     for prefix in ["- ", "* "] {
@@ -59,9 +60,10 @@ func wrapInlineMarker(text: String, range: NSRange, marker: String) -> (text: St
         let before = NSRange(location: range.location - markerLength, length: markerLength)
         let after = NSRange(location: range.location + range.length, length: markerLength)
         if before.location >= 0,
-           after.location + after.length <= source.length,
-           source.substring(with: before) == marker,
-           source.substring(with: after) == marker {
+            after.location + after.length <= source.length,
+            source.substring(with: before) == marker,
+            source.substring(with: after) == marker
+        {
             var unwrapped = source.replacingCharacters(in: after, with: "")
             unwrapped = (unwrapped as NSString).replacingCharacters(in: before, with: "")
             return (unwrapped, NSRange(location: range.location - markerLength, length: range.length))

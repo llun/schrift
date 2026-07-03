@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
@@ -58,7 +59,9 @@ final class ConnectViewModelTests: XCTestCase {
     }
 
     func testHandleLoginCompleteSuccessSignsInAndRecordsRecentServer() async throws {
-        let viewModel = makeViewModel { _ in .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil) }
+        let viewModel = makeViewModel { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
         viewModel.serverURLInput = "docs.llun.dev"
         viewModel.startSignIn()
 

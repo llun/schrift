@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class MarkdownParserTests: XCTestCase {
@@ -48,10 +49,12 @@ final class MarkdownParserTests: XCTestCase {
     }
 
     func testChecklistIsDistinguishedFromPlainBullet() {
-        assertParses("- [ ] Task\n- Not a checklist item", [
-            EditorBlock(kind: .checklistItem(checked: false), text: "Task"),
-            EditorBlock(kind: .bulletItem, text: "Not a checklist item"),
-        ])
+        assertParses(
+            "- [ ] Task\n- Not a checklist item",
+            [
+                EditorBlock(kind: .checklistItem(checked: false), text: "Task"),
+                EditorBlock(kind: .bulletItem, text: "Not a checklist item"),
+            ])
     }
 
     func testParsesQuote() {
@@ -62,36 +65,41 @@ final class MarkdownParserTests: XCTestCase {
         // ">     code" is indented code inside a blockquote — the marker eats
         // exactly one space; the rest is significant content.
         assertParses(">     let x = 1", [EditorBlock(kind: .quote, text: "    let x = 1")])
-        XCTAssertTrue(blocksContentEqual(
-            parseEditorBlocks(serializeMarkdown([EditorBlock(kind: .quote, text: "  indented")])),
-            [EditorBlock(kind: .quote, text: "  indented")]
-        ))
+        XCTAssertTrue(
+            blocksContentEqual(
+                parseEditorBlocks(serializeMarkdown([EditorBlock(kind: .quote, text: "  indented")])),
+                [EditorBlock(kind: .quote, text: "  indented")]
+            ))
     }
 
     func testParsesMultipleBlocksInOrder() {
         let markdown = """
-        # Heading
+            # Heading
 
-        A paragraph.
+            A paragraph.
 
-        - Bullet one
-        - [ ] Checklist item
-        > A quote
-        """
-        assertParses(markdown, [
-            EditorBlock(kind: .heading(level: 1), text: "Heading"),
-            EditorBlock(kind: .paragraph, text: "A paragraph."),
-            EditorBlock(kind: .bulletItem, text: "Bullet one"),
-            EditorBlock(kind: .checklistItem(checked: false), text: "Checklist item"),
-            EditorBlock(kind: .quote, text: "A quote"),
-        ])
+            - Bullet one
+            - [ ] Checklist item
+            > A quote
+            """
+        assertParses(
+            markdown,
+            [
+                EditorBlock(kind: .heading(level: 1), text: "Heading"),
+                EditorBlock(kind: .paragraph, text: "A paragraph."),
+                EditorBlock(kind: .bulletItem, text: "Bullet one"),
+                EditorBlock(kind: .checklistItem(checked: false), text: "Checklist item"),
+                EditorBlock(kind: .quote, text: "A quote"),
+            ])
     }
 
     func testEmptyLinesAreSkipped() {
-        assertParses("\n\nHello\n\n\nWorld\n", [
-            EditorBlock(kind: .paragraph, text: "Hello"),
-            EditorBlock(kind: .paragraph, text: "World"),
-        ])
+        assertParses(
+            "\n\nHello\n\n\nWorld\n",
+            [
+                EditorBlock(kind: .paragraph, text: "Hello"),
+                EditorBlock(kind: .paragraph, text: "World"),
+            ])
     }
 
     func testEmptyStringProducesNoBlocks() {
@@ -113,33 +121,43 @@ final class MarkdownParserTests: XCTestCase {
     // MARK: - Code fences
 
     func testParsesCodeFenceWithLanguage() {
-        assertParses("```swift\nlet answer = 42\n```", [
-            EditorBlock(kind: .codeBlock(language: "swift"), text: "let answer = 42"),
-        ])
+        assertParses(
+            "```swift\nlet answer = 42\n```",
+            [
+                EditorBlock(kind: .codeBlock(language: "swift"), text: "let answer = 42")
+            ])
     }
 
     func testParsesCodeFenceWithoutLanguage() {
-        assertParses("```\nplain code\n```", [
-            EditorBlock(kind: .codeBlock(language: ""), text: "plain code"),
-        ])
+        assertParses(
+            "```\nplain code\n```",
+            [
+                EditorBlock(kind: .codeBlock(language: ""), text: "plain code")
+            ])
     }
 
     func testCodeFencePreservesBlankLinesAndIndentation() {
-        assertParses("```\nline one\n\n    indented\n```", [
-            EditorBlock(kind: .codeBlock(language: ""), text: "line one\n\n    indented"),
-        ])
+        assertParses(
+            "```\nline one\n\n    indented\n```",
+            [
+                EditorBlock(kind: .codeBlock(language: ""), text: "line one\n\n    indented")
+            ])
     }
 
     func testUnclosedCodeFenceKeepsRemainingContent() {
-        assertParses("```\nno closing fence\nstill code", [
-            EditorBlock(kind: .codeBlock(language: ""), text: "no closing fence\nstill code"),
-        ])
+        assertParses(
+            "```\nno closing fence\nstill code",
+            [
+                EditorBlock(kind: .codeBlock(language: ""), text: "no closing fence\nstill code")
+            ])
     }
 
     func testLongerFenceContainsTripleBacktickContent() {
-        assertParses("````\n```\ninner fence\n```\n````", [
-            EditorBlock(kind: .codeBlock(language: ""), text: "```\ninner fence\n```"),
-        ])
+        assertParses(
+            "````\n```\ninner fence\n```\n````",
+            [
+                EditorBlock(kind: .codeBlock(language: ""), text: "```\ninner fence\n```")
+            ])
     }
 
     // MARK: - Dividers
@@ -167,9 +185,11 @@ final class MarkdownParserTests: XCTestCase {
     }
 
     func testImageLineBecomesUnknown() {
-        assertParses("![diagram](https://example.com/d.png)", [
-            EditorBlock(kind: .unknown, text: "![diagram](https://example.com/d.png)"),
-        ])
+        assertParses(
+            "![diagram](https://example.com/d.png)",
+            [
+                EditorBlock(kind: .unknown, text: "![diagram](https://example.com/d.png)")
+            ])
     }
 
     func testHTMLLineBecomesUnknown() {
@@ -181,24 +201,30 @@ final class MarkdownParserTests: XCTestCase {
     }
 
     func testUnknownRunEndsAtClassifiedLine() {
-        assertParses("  indented\n- bullet", [
-            EditorBlock(kind: .unknown, text: "  indented"),
-            EditorBlock(kind: .bulletItem, text: "bullet"),
-        ])
+        assertParses(
+            "  indented\n- bullet",
+            [
+                EditorBlock(kind: .unknown, text: "  indented"),
+                EditorBlock(kind: .bulletItem, text: "bullet"),
+            ])
     }
 
     func testNestedListUnderBulletIsPreserved() {
-        assertParses("- top\n  - nested\n  - nested two", [
-            EditorBlock(kind: .bulletItem, text: "top"),
-            EditorBlock(kind: .unknown, text: "  - nested\n  - nested two"),
-        ])
+        assertParses(
+            "- top\n  - nested\n  - nested two",
+            [
+                EditorBlock(kind: .bulletItem, text: "top"),
+                EditorBlock(kind: .unknown, text: "  - nested\n  - nested two"),
+            ])
     }
 
     func testCRLFLineEndingsParseLikeLF() {
-        assertParses("# Title\r\n\r\nBody text.", [
-            EditorBlock(kind: .heading(level: 1), text: "Title"),
-            EditorBlock(kind: .paragraph, text: "Body text."),
-        ])
+        assertParses(
+            "# Title\r\n\r\nBody text.",
+            [
+                EditorBlock(kind: .heading(level: 1), text: "Title"),
+                EditorBlock(kind: .paragraph, text: "Body text."),
+            ])
         // CRLF must not split a multi-line run apart with phantom blank lines.
         assertParses("line one\r\nline two", [EditorBlock(kind: .unknown, text: "line one\nline two")])
         XCTAssertTrue(markdownSurvivesRoundTrip("- item one\r\n- item two\r\n"))
@@ -208,35 +234,35 @@ final class MarkdownParserTests: XCTestCase {
 
     func testRealisticDocumentSurvivesRoundTrip() {
         let markdown = """
-        # Project kickoff
+            # Project kickoff
 
-        Welcome to the team documentation.
+            Welcome to the team documentation.
 
-        - First item
-        - Second item
+            - First item
+            - Second item
 
-        1. Step one
-        2. Step two
+            1. Step one
+            2. Step two
 
-        - [ ] Draft the spec
-        - [x] Review the design
+            - [ ] Draft the spec
+            - [x] Review the design
 
-        > Remember to sync with the web team.
+            > Remember to sync with the web team.
 
-        ```swift
-        let answer = 42
-        ```
+            ```swift
+            let answer = 42
+            ```
 
-        | Name | Role |
-        | --- | --- |
-        | Ana | Dev |
+            | Name | Role |
+            | --- | --- |
+            | Ana | Dev |
 
-        ![diagram](https://example.com/d.png)
+            ![diagram](https://example.com/d.png)
 
-        ---
+            ---
 
-        Done.
-        """
+            Done.
+            """
         XCTAssertTrue(markdownSurvivesRoundTrip(markdown))
     }
 
