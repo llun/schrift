@@ -1,0 +1,28 @@
+ci_scripts/ci_post_clone.sh
+  s_3756bd76216b9a::t_d4a0b5abaee29f 1-35
+AGENTS.md
+  s_3756bd76216b9a::t_604ae27475b2f1 1-19
+CLAUDE.md
+  s_3756bd76216b9a::t_c86101e344b1f3 45-51
+  s_3756bd76216b9a::t_80d56221b720f9 77-78
+  s_3756bd76216b9a::t_71ea5cc32851cd 271-281,294-298
+  s_3756bd76216b9a::t_af92fdbf18f688 282-287
+docs/testflight-setup.md
+  s_3756bd76216b9a::t_d3808ded25bee4 130-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "8c8869bde75acbe7c262dcc8cf60d74324de4f5d",
+  "prompts": {},
+  "sessions": {
+    "s_3756bd76216b9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be7cf038-0054-4efe-bf73-4d15af2d4252",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
