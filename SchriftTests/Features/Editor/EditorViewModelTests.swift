@@ -258,6 +258,141 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(viewModel.lastSyncedAt)
     }
 
+    // MARK: - Staleness comparison + "Updated" banner
+
+    func testRevalidateIdenticalContentBumpsSyncedAtWithoutBanner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        let old = Date(timeIntervalSince1970: 900_000)
+        contentCache.save(cachedEntry(markdown: "# Same", syncedAt: old))
+        stubLoad(content: "# Same")
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertNotNil(viewModel.lastSyncedAt)
+        XCTAssertNotEqual(viewModel.lastSyncedAt, old, "syncedAt advances on a confirmed sync")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Same")
+    }
+
+    func testRevalidateCanonicalizationOnlyDifferenceShowsNoBanner() async {
+        // "* bullet" and "- bullet" parse to the same blocks; the serializer
+        // canonicalizes. A cosmetic export difference must not banner.
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "- bullet"))
+        stubLoad(content: "* bullet")
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertNotNil(viewModel.lastSyncedAt)
+        // Comparisons converge on the fetched raw for future opens.
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "* bullet")
+    }
+
+    func testRevalidateChangedBodyStashesBehindBanner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "# New")
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.updateAvailable)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Old", "on-screen content untouched")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# New", "future opens get the fresh copy")
+
+        viewModel.applyPendingUpdate()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(viewModel.rawMarkdown, "# New")
+    }
+
+    func testRevalidateChangedTitleAppliesSilently() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Same"))
+        stubLoad(content: "# Same") // stubLoad's fixture title is "Doc"
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.title, "Doc")
+        XCTAssertFalse(viewModel.updateAvailable, "title alone never banners")
+        // savedTitle followed, so no spurious save is enqueued on flush.
+        viewModel.flushPendingChanges()
+        XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
+    }
+
+    func testStartEditingClearsPendingUpdate() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "# New")
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        viewModel.startEditing()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Old", "blocks unchanged")
+    }
+
+    func testApplyPendingUpdateWhileEditingIsANoOp() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "# New")
+        await viewModel.load()
+        viewModel.startEditing()
+
+        viewModel.applyPendingUpdate()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Old")
+    }
+
+    func testNonRoundTrippableCachedContentOpensInMarkdownMode() async {
+        // Destructive-save regression: the cached install must run the same
+        // round-trip check as a fetch, or editing a lone opening fence would
+        // silently rewrite it via a full-overwrite save. (A "*"-bulleted line
+        // is not a suitable fixture here — it canonicalizes to "-" and still
+        // round-trips cleanly, so it wouldn't exercise this path.)
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "```"))
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.openInMarkdownMode)
+    }
+
+    func testApplyPendingUpdateRecomputesRoundTripMode() async {
+        // The banner apply must route through install() — a bare blocks swap
+        // would skip the round-trip check.
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "```")
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        viewModel.applyPendingUpdate()
+
+        XCTAssertTrue(viewModel.openInMarkdownMode)
+        XCTAssertEqual(viewModel.rawMarkdown, "```")
+    }
+
+    func testRevalidateWhileDirtyUpdatesCacheSilently() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "# Server")
+        await viewModel.load() // banner set; now simulate editing instead
+        viewModel.startEditing()
+        viewModel.updateTitle("Edited")
+
+        stubLoad(content: "# Server 2")
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(viewModel.title, "Edited", "edits untouched")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Server 2")
+    }
+
     // MARK: - Editing session
 
     func testStartEditingEntersBlocksMode() async {

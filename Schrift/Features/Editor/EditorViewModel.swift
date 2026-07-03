@@ -54,6 +54,7 @@ final class EditorViewModel {
     var openInMarkdownMode = false
     var lastSyncedAt: Date? = nil
     var hasLocalCopy = false
+    var updateAvailable = false
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -70,6 +71,13 @@ final class EditorViewModel {
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
     private var dirtySince: Date?
+    private var pendingFreshContent: (markdown: String, syncedAt: Date)?
+    /// The exact raw markdown the current display was installed from — the
+    /// staleness comparison basis. NEVER compare fetched markdown against
+    /// serializeMarkdown(blocks)/currentMarkdown(): the serializer
+    /// canonicalizes (`*`→`-`, renumbering), which would give every
+    /// non-byte-round-tripping document a permanent do-nothing banner.
+    private var displayedSourceMarkdown = ""
 
     /// Continuous typing keeps restarting the trailing debounce; cap the total
     /// deferral so a long burst still persists periodically.
@@ -94,6 +102,13 @@ final class EditorViewModel {
 
     var isEditing: Bool { mode != .reading }
 
+    /// Caption rule 1: unsaved local content wins over "Synced X ago".
+    var hasUnsavedLocalContent: Bool {
+        isDirty
+            || saveCoordinator.pendingSave(documentID: documentID) != nil
+            || (displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil)
+    }
+
     var saveState: SaveState {
         if isDirty { return .dirty }
         switch saveCoordinator.state(for: documentID) {
@@ -113,6 +128,8 @@ final class EditorViewModel {
         // session with the cached copy. After the first install, load() is
         // revalidate-only.
         if !hasLoadedContent {
+            updateAvailable = false
+            pendingFreshContent = nil
             restoreLocalContent()
             if displaySource == .none {
                 isLoading = true
@@ -159,19 +176,83 @@ final class EditorViewModel {
     }
 
     private func apply(formatted: FormattedDocumentContent) {
+        defer { updatedAt = formatted.updatedAt }
+        // Classify against *current* state: edits may have begun while the
+        // fetch was in flight.
+        if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
+            cacheServerCopy(formatted)
+            return
+        }
         switch displaySource {
         case .pendingSave:
             break // in-flight content is newer than the server copy
         case .draft:
             if let draft = saveCoordinator.storedDraft(documentID: documentID),
                formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
-                break // draft trusted; keep it on screen
+                cacheServerCopy(formatted)
+            } else {
+                installFetched(formatted) // server wins (today's behavior)
             }
-            installFetched(formatted) // server wins (today's behavior)
-        case .clean, .none:
+        case .none:
             installFetched(formatted)
+        case .clean:
+            reconcileClean(formatted)
         }
-        updatedAt = formatted.updatedAt
+    }
+
+    /// Silent cache update while local edits own the screen — next open (or
+    /// the coordinator's own conflict handling) deals with freshness.
+    private func cacheServerCopy(_ formatted: FormattedDocumentContent) {
+        contentCache.save(CachedDocumentContent(
+            documentID: documentID,
+            title: formatted.title,
+            markdown: formatted.content ?? "",
+            syncedAt: Date()
+        ))
+    }
+
+    /// Clean content on screen: never swap it on a passive open. Titles are
+    /// non-destructive and apply silently in BOTH branches (savedTitle follows
+    /// so flushPendingChanges never enqueues a spurious save); only body
+    /// differences drive the banner.
+    private func reconcileClean(_ formatted: FormattedDocumentContent) {
+        let fetched = formatted.content ?? ""
+        let now = Date()
+        if let fetchedTitle = formatted.title, fetchedTitle != title {
+            title = fetchedTitle
+            savedTitle = fetchedTitle
+        }
+        contentCache.save(CachedDocumentContent(
+            documentID: documentID,
+            title: title,
+            markdown: fetched,
+            syncedAt: now
+        ))
+        if serverChanged(fetched: fetched) {
+            pendingFreshContent = (markdown: fetched, syncedAt: now)
+            updateAvailable = true
+        } else {
+            // Raw may differ only cosmetically — converge the comparison
+            // basis on the fetched raw so future comparisons settle.
+            displayedSourceMarkdown = fetched
+            lastSyncedAt = now
+        }
+    }
+
+    private func serverChanged(fetched: String) -> Bool {
+        guard fetched != displayedSourceMarkdown else { return false }
+        return serializeMarkdown(parseEditorBlocks(fetched))
+            != serializeMarkdown(parseEditorBlocks(displayedSourceMarkdown))
+    }
+
+    /// The "Updated" banner tap: swaps in the stashed fresh body. Guarded so a
+    /// stray tap can never replace blocks mid-edit or clobber dirty content.
+    func applyPendingUpdate() {
+        guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
+        install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
+        displaySource = .clean
+        updateAvailable = false
+        pendingFreshContent = nil
     }
 
     /// Installs the fetched server copy and records it in the content cache.
@@ -203,6 +284,7 @@ final class EditorViewModel {
         // The dirty baseline uses the same representation currentMarkdown()
         // produces, so an unchanged document never triggers a save.
         savedMarkdown = openInMarkdownMode ? markdown : serializeMarkdown(blocks)
+        displayedSourceMarkdown = markdown
         hasLoadedContent = true
         if let syncedAt {
             lastSyncedAt = syncedAt
@@ -222,6 +304,8 @@ final class EditorViewModel {
     func startEditing(focusing blockID: UUID? = nil) {
         guard hasLoadedContent else { return }
         errorMessage = nil
+        updateAvailable = false
+        pendingFreshContent = nil
         if blocks.isEmpty {
             let seed = EditorBlock(kind: .paragraph)
             blocks = [seed]
@@ -538,6 +622,7 @@ final class EditorViewModel {
         }
         savedMarkdown = markdown
         savedTitle = title
+        displayedSourceMarkdown = markdown
         saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown)
     }
 
@@ -553,6 +638,10 @@ final class EditorViewModel {
     }
 
     private func markDirty() {
+        if updateAvailable {
+            updateAvailable = false
+            pendingFreshContent = nil
+        }
         isDirty = true
         let now = Date()
         if dirtySince == nil {
