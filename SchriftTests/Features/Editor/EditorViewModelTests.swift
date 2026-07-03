@@ -759,4 +759,15 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.currentMarkdown(), "raw edited")
     }
+
+    func testHandleDidDeletePurgesCacheAndDrafts() async {
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        draftStore.save(PendingDraft(documentID: documentID, title: "D", markdown: "# D", updatedAt: Date()))
+
+        viewModel.handleDidDelete()
+
+        XCTAssertNil(contentCache.content(for: documentID))
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
 }

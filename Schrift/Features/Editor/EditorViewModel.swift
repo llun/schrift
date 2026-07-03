@@ -328,6 +328,15 @@ final class EditorViewModel {
         pendingFreshContent = nil
     }
 
+    /// A successful local delete must purge every local copy — otherwise the
+    /// document stays reachable from retained Search/Shared results and
+    /// renders its full cached content indefinitely (transient revalidation
+    /// failures are swallowed by design).
+    func handleDidDelete() {
+        contentCache.remove(documentID: documentID)
+        saveCoordinator.discardPendingWork(documentID: documentID)
+    }
+
     /// Installs the fetched server copy and records it in the content cache.
     private func installFetched(_ formatted: FormattedDocumentContent) {
         let now = Date()
