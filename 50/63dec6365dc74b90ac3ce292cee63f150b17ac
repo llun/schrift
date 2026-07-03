@@ -1,0 +1,26 @@
+docs/superpowers/plans/2026-07-03-instant-local-doc-content.md
+  s_7320e20fa0d435::t_48506190ef2e43 1511-1517
+  s_7320e20fa0d435::t_7cd767927d0232 1157-1186
+  s_7320e20fa0d435::t_33efbaa6129839 476-503
+  s_7320e20fa0d435::t_c019172b215852 1238-1243,1248-1254
+  s_7320e20fa0d435::t_b0a9ac8b3a8bef 1850-1863
+  s_7320e20fa0d435::t_e9e25b2ce8ae2d 1-475,504-743,745-746,771-777,783-785,787-915,925-1156,1187-1237,1244-1247,1255-1510,1518-1849,1864-2168
+  s_7320e20fa0d435::t_090300064cee0d 916-924
+  s_7320e20fa0d435::t_c6e3bb330086f9 744,747-770,778-782,786
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "5063dec6365dc74b90ac3ce292cee63f150b17ac",
+  "prompts": {},
+  "sessions": {
+    "s_7320e20fa0d435": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b213e15f-ea6c-44b8-b259-9aaee65d2f2c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
