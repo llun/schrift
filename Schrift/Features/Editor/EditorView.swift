@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// "Synced X ago" caption for the editor header. Pure — `now` is a parameter
+/// (note `documentRowDate` reads `Date()` internally and is untestable; this
+/// one is driven by a `TimelineView` tick so it must not).
+func syncStatusCaption(lastSyncedAt: Date, now: Date) -> String {
+    if now.timeIntervalSince(lastSyncedAt) < 60 {
+        return "Synced just now"
+    }
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return "Synced \(formatter.localizedString(for: lastSyncedAt, relativeTo: now))"
+}
+
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
