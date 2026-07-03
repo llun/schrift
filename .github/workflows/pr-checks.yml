@@ -93,12 +93,15 @@ jobs:
           # raw output if an image ever drops it (no extra installs).
           formatter=cat
           command -v xcbeautify >/dev/null && formatter=xcbeautify
+          # Simulator builds ad-hoc sign (no certificates or Team ID needed).
+          # Do NOT disable code signing: the Keychain tests need the test
+          # host's ad-hoc signature/entitlements, and SecItem calls fail with
+          # errSecMissingEntitlement (-34018) in a fully unsigned test host.
           xcodebuild test \
             -project Schrift.xcodeproj \
             -scheme Schrift \
             -destination "platform=iOS Simulator,name=${SIM_NAME}" \
             -resultBundlePath TestResults.xcresult \
-            CODE_SIGNING_ALLOWED=NO \
             | "$formatter"
 
       # The result bundle is only interesting when something failed.

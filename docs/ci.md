@@ -26,8 +26,11 @@ Safety section in [`CLAUDE.md`](../CLAUDE.md).
 3. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
    to the first available iPhone on the runner image (image lineups change).
 4. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
-   simulator — the same suite as the documented local test command. No code
-   signing (`CODE_SIGNING_ALLOWED=NO`); simulator tests don't need it.
+   simulator — the same suite as the documented local test command. Simulator
+   builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
+   don't disable code signing — the Keychain tests need the test host's
+   ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
+   fully unsigned host.
 
 On failure the `TestResults.xcresult` bundle is uploaded as a run artifact
 (7-day retention) for debugging.
