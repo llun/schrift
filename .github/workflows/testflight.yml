@@ -38,7 +38,9 @@ jobs:
   build:
     name: Build & upload to TestFlight
     runs-on: macos-latest
-    timeout-minutes: 45
+    # Generous because the upload waits for Apple to finish processing the build
+    # (so it can attach release notes + distribute to testers) before returning.
+    timeout-minutes: 90
 
     env:
       # --- App Store Connect API key (auth + signing + upload) ---
@@ -59,12 +61,25 @@ jobs:
           # latest v* tag and the commits since it.
           fetch-depth: 0
 
-      - name: Compute next version
+      - name: Compute version & release notes
         id: version
         run: |
           version="$(bash scripts/next-version.sh)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Next release version: $version (build ${BUILD_NUMBER})"
+
+          # Release notes = commit subjects since the last tag. Written to a
+          # file that fastlane reads — the (attacker-controllable) commit text
+          # is never interpolated into a shell command or a $GITHUB_OUTPUT
+          # heredoc, so it can't inject anything.
+          last_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          range="${last_tag:+$last_tag..}HEAD"
+          {
+            echo "v$version (build ${BUILD_NUMBER})"
+            echo
+            git log "$range" --no-merges --format='- %s' | head -n 50
+          } > release-notes.txt
+          echo "Release notes:"; cat release-notes.txt
 
       # Match the Xcode version to what you build with locally.
       - uses: maxim-lobanov/setup-xcode@v1
@@ -93,6 +108,10 @@ jobs:
         env:
           GIT_SSH_COMMAND: "ssh -i ~/.ssh/match_ed25519 -o IdentitiesOnly=yes"
           MARKETING_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_NOTES_FILE: ${{ github.workspace }}/release-notes.txt
+          # Optional: comma-separated TestFlight beta group names to also
+          # distribute to (internal testers already get every build).
+          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
 
       # The tag + release steps only run if the build & upload above succeeded,
       # so a failed build never burns a version number.

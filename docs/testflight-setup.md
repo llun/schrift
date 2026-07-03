@@ -81,9 +81,24 @@ which:
    Commits ([`scripts/next-version.sh`](../scripts/next-version.sh)) —
    `feat:` → minor, `feat!:` / `BREAKING CHANGE` → major, anything else → patch;
 2. builds a signed Release archive and uploads it to TestFlight (build number =
-   the workflow run number, which is monotonic);
+   the workflow run number, which is monotonic), **waits for Apple to finish
+   processing**, then attaches auto-generated **release notes** (the commit
+   subjects since the last tag) and makes the build available to testers;
 3. on a successful upload, pushes the `v<version>` tag and cuts a GitHub Release
    with auto-generated notes.
+
+**Internal testers get every build automatically, with no review** — so once
+you've added internal testers (below), merging is all it takes. External testing
+still needs Apple's Beta App Review and is never auto-submitted. To also push
+each build to specific TestFlight beta groups, set a repo **variable** (not a
+secret) `TESTFLIGHT_GROUPS` to a comma-separated list of group names
+(Settings → Secrets and variables → Actions → Variables).
+
+> Because the upload now waits for Apple's processing (needed to attach notes +
+> distribute), the job takes longer than a bare upload — the workflow timeout is
+> 90 min. Release-note text comes from commit messages and is passed to fastlane
+> via a file, never interpolated into the workflow, so a crafted commit message
+> can't inject into CI.
 
 So **write PR titles as Conventional Commits** (they become the squash-commit
 subject the bump is read from). A non-conforming title still ships — it just

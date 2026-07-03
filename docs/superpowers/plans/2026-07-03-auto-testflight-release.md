@@ -3,6 +3,14 @@
 **Date:** 2026-07-03
 **Status:** Implemented
 
+> **Amendment (2026-07-03):** after the first release (`v0.1.1`) shipped, the
+> upload was made "more auto": on CI it now waits for Apple processing to attach
+> auto-generated **release notes** (commit subjects since the last tag, passed to
+> fastlane via `release-notes.txt` — never interpolated, to avoid workflow
+> injection) and distribute to internal testers; optional `TESTFLIGHT_GROUPS`
+> repo variable targets named beta groups. Job timeout raised 45 → 90 min to
+> cover the processing wait. Original body below is unchanged.
+
 ## Problem
 
 TestFlight only shipped when someone pushed a `v*` tag by hand

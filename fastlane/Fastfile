@@ -73,11 +73,32 @@ platform :ios do
       }
     )
 
-    upload_to_testflight(
+    pilot_options = {
       api_key: api_key,
-      app_identifier: APP_IDENTIFIER,
-      skip_waiting_for_build_processing: true
-    )
+      app_identifier: APP_IDENTIFIER
+    }
+
+    if is_ci
+      # Wait for Apple to finish processing so we can attach the release notes
+      # and hand the build to testers automatically (both require a processed
+      # build). Internal testers get every build with no review; we never
+      # auto-submit to external review. Set TESTFLIGHT_GROUPS (comma-separated)
+      # to also distribute to specific beta groups.
+      notes_file = ENV["RELEASE_NOTES_FILE"]
+      pilot_options[:changelog] = File.read(notes_file) if notes_file && File.exist?(notes_file)
+      pilot_options[:distribute_external] = false
+      pilot_options[:notify_external_testers] = false
+      pilot_options[:wait_processing_timeout_duration] = 1800
+      groups = (ENV["TESTFLIGHT_GROUPS"] || "").split(",").map(&:strip).reject(&:empty?)
+      pilot_options[:groups] = groups unless groups.empty?
+      # skip_waiting_for_build_processing defaults to false -> waits, so the
+      # changelog + distribution are applied.
+    else
+      # Local runs: just upload, don't block the Mac waiting for processing.
+      pilot_options[:skip_waiting_for_build_processing] = true
+    end
+
+    upload_to_testflight(**pilot_options)
   end
 
   desc "One-time: register the App ID and generate + store signing assets"
