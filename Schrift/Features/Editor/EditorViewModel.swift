@@ -235,6 +235,9 @@ final class EditorViewModel {
         contentCache.remove(documentID: documentID)
         childrenCache.remove(parentID: documentID)
         childrenCache.removeDocument(documentID)
+        // Discard any in-flight children snapshot — landing after the purge,
+        // it would re-cache the list for a revoked document.
+        childrenGeneration += 1
         subpages = nil
         hasLocalCopy = false
         lastSyncedAt = nil
@@ -358,6 +361,9 @@ final class EditorViewModel {
         contentCache.remove(documentID: documentID)
         childrenCache.remove(parentID: documentID)
         childrenCache.removeDocument(documentID)
+        // Discard any in-flight children snapshot — landing after the purge,
+        // it would re-cache the list for a deleted document.
+        childrenGeneration += 1
         saveCoordinator.discardPendingWork(documentID: documentID)
     }
 

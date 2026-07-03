@@ -499,6 +499,33 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isOffline)
     }
 
+    func testWorkOfflineNeverCachedFilterDoesNotClaimEmpty() async {
+        // Only .all was ever cached; .shared is unknown. Under Work Offline
+        // the unknown filter must not read as a real empty result.
+        let cache = makeCache()
+        let recentBody = Self.paginatedFixture(
+            id: "23232323-2323-4232-8232-232323232323", title: "Cached Recent", isFavorite: false)
+        cache.saveRecentDocuments(
+            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: recentBody).results[0]],
+            filter: .all)
+        preferences.set(true, forKey: "schrift.workOffline")
+        let viewModel = makeViewModel(cache: cache)
+
+        await viewModel.load()
+        XCTAssertTrue(viewModel.isCurrentListKnown)
+
+        await viewModel.selectFilter(.shared)
+
+        XCTAssertFalse(viewModel.isCurrentListKnown, "a never-fetched list must not masquerade as empty")
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.isOffline)
+
+        await viewModel.selectFilter(.all)
+        XCTAssertTrue(viewModel.isCurrentListKnown)
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Recent"])
+    }
+
     func testFirstRunOfPinnedFilterShowsPlaceholderDespiteHiddenPinnedRows() async {
         // Pinned rows exist but their section is hidden under the .pinned
         // filter — they must not suppress the first-run spinner, or the

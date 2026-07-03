@@ -11,6 +11,12 @@ final class HomeViewModel {
     var isLoading = false
     var errorMessage: String?
     var isOffline = false
+    /// Whether the current filter's list is known — cached or fetched this
+    /// session. The view may render the "No documents yet" empty state only
+    /// for a known list: nil (never fetched) must not masquerade as a real
+    /// empty result, e.g. a never-visited filter under Work Offline (mirrors
+    /// Shared's showsDocumentList).
+    private(set) var isCurrentListKnown = false
 
     let client: DocsAPIClient
     let saveCoordinator: DocumentSaveCoordinator
@@ -32,7 +38,10 @@ final class HomeViewModel {
         self.saveCoordinator = saveCoordinator ?? DocumentSaveCoordinator(client: client)
         self.userDefaults = userDefaults
         pinnedDocuments = cache.loadPinnedDocuments()
-        recentDocuments = cache.loadRecentDocuments(filter: .all) ?? []
+        if let recents = cache.loadRecentDocuments(filter: .all) {
+            recentDocuments = recents
+            isCurrentListKnown = true
+        }
     }
 
     var showsPinnedSection: Bool {
@@ -49,7 +58,9 @@ final class HomeViewModel {
         // documents and never hit the network.
         if userDefaults.bool(forKey: "schrift.workOffline") {
             pinnedDocuments = cache.loadPinnedDocuments()
-            recentDocuments = cache.loadRecentDocuments(filter: filter) ?? []
+            let cachedRecents = cache.loadRecentDocuments(filter: filter)
+            recentDocuments = cachedRecents ?? []
+            isCurrentListKnown = cachedRecents != nil
             isOffline = true
             isLoading = false
             return
@@ -61,6 +72,7 @@ final class HomeViewModel {
         // render — under the .pinned filter it is hidden, and suppressing the
         // spinner for rows the user can't see would leave a blank screen.
         let hasCachedList = cache.loadRecentDocuments(filter: filter) != nil
+        isCurrentListKnown = hasCachedList
         let visiblePinnedCount =
             shouldShowPinnedSection(filter: filter, pinnedCount: pinnedDocuments.count)
             ? pinnedDocuments.count : 0
@@ -88,6 +100,7 @@ final class HomeViewModel {
             recentDocuments = recent
             cache.savePinnedDocuments(pinned)
             cache.saveRecentDocuments(recent, filter: filter)
+            isCurrentListKnown = true
             isOffline = false
         } catch {
             guard generation == loadGeneration else { return }
@@ -117,7 +130,9 @@ final class HomeViewModel {
         selectedFilter = filter
         // Instant swap: show this filter's cached rows (or empty) rather than
         // the previous filter's list while the fetch is in flight.
-        recentDocuments = cache.loadRecentDocuments(filter: filter) ?? []
+        let cachedRecents = cache.loadRecentDocuments(filter: filter)
+        recentDocuments = cachedRecents ?? []
+        isCurrentListKnown = cachedRecents != nil
         await load()
     }
 

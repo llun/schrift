@@ -132,8 +132,11 @@ struct DocumentListView: View {
         } else if !viewModel.showsPinnedSection && viewModel.recentDocuments.isEmpty {
             // Keyed to what will actually render (the pinned section is hidden
             // under the .pinned filter), so an empty filter never leaves a
-            // silent blank area below the controls.
-            if viewModel.errorMessage == nil {
+            // silent blank area below the controls. The empty state may only
+            // claim "No documents yet" for a *known* list — a never-fetched
+            // filter (e.g. first visited under Work Offline) shows nothing;
+            // the offline banner or error text above conveys the state.
+            if viewModel.errorMessage == nil && viewModel.isCurrentListKnown {
                 ContentUnavailableView(
                     "No documents yet",
                     systemImage: "doc.text",

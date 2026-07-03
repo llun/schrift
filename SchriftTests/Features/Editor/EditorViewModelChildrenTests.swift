@@ -253,6 +253,35 @@ final class EditorViewModelChildrenTests: XCTestCase {
         XCTAssertEqual(childrenCache.children(for: parentID)?.map(\.title), ["Sibling"])
     }
 
+    func testChildrenSnapshotLandingAfterDeletePurgeIsDiscarded() async {
+        // A children fetch that started before the delete must not land
+        // afterwards and re-cache the purged entry (undoing the purge).
+        let existing = decodeChild(id: "abababab-2222-4aba-8aba-abababababab", title: "Existing child")
+        childrenCache.save([existing], for: documentID)
+        let viewModel = makeViewModel()
+        let staleChildren = Self.childrenFixture(id: "abababab-2222-4aba-8aba-abababababab", title: "Existing child")
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            gate.wait()  // hold the snapshot until after the purge
+            return .init(statusCode: 200, headers: [:], body: staleChildren, error: nil)
+        }
+
+        let staleFetch = Task { await viewModel.loadChildren() }
+        await waitUntil { recorder.methods.count >= 1 }  // snapshot in flight
+
+        viewModel.handleDidDelete()
+        XCTAssertNil(childrenCache.children(for: documentID))
+
+        gate.signal()
+        await staleFetch.value
+
+        XCTAssertNil(
+            childrenCache.children(for: documentID),
+            "a stale snapshot must not resurrect the purged entry")
+    }
+
     func testStaleChildrenFetchCannotOverwriteAddedSubpage() async {
         // A listChildren snapshot taken before a createChild must not land
         // afterwards and durably hide the just-added child.

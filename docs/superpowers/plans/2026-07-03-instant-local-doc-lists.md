@@ -88,12 +88,16 @@ access was deliberately left out of scope.
   `knownScopes` (cached or fetched this session) and derives
   `showsLoadingPlaceholder`/`showsDocumentList` per *visible* scope — an
   unknown scope never renders the "0 documents" header, even offline or
-  when the segment is flipped mid-fetch.
+  when the segment is flipped mid-fetch. Home mirrors this with
+  `isCurrentListKnown`: the "No documents yet" empty state renders only for
+  a known (cached/fetched) list, so a filter first visited under Work
+  Offline shows the banner, not a fake empty result.
 - **Children fetches are latest-wins too.** `EditorViewModel` keeps a
   `childrenGeneration` counter: `loadChildren()` applies its response only
-  if no newer fetch or `addSubpage()` superseded it, so a pre-create
-  snapshot can never overwrite (and durably cache) a list missing the
-  just-added child.
+  if no newer fetch, `addSubpage()`, or purge (`becomeUnavailable()` /
+  `handleDidDelete()` bump it too) superseded it — a pre-create snapshot
+  can never overwrite (and durably cache) a list missing the just-added
+  child, and a pre-purge snapshot can never resurrect a purged entry.
 - **Mutations never fabricate cache entries.** `addSubpage` appends to the
   cached children list only when that list is actually known (`subpages !=
   nil`) — appending to an unknown list would persist a one-element
