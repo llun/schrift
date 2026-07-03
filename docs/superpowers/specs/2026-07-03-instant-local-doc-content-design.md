@@ -152,7 +152,16 @@ Design decisions:
   under the zero-dependency rule) means hand-rolled C-API boilerplate to guard
   50 rows. Revisit as raw SQLite + FTS5 only if offline full-text search,
   partial/structured queries, or a much larger entry count ever become goals —
-  migrating this small store later is cheap.
+  migrating this small store later is cheap (the store API is
+  storage-agnostic). Note the flip conditions precisely: plain **offline
+  editing** (queue full-doc drafts, retry online) does *not* change the storage
+  picture — it is policy on the existing draft/coordinator layering plus a
+  conflict UX. **Block-level/incremental CRDT sync** does: per-doc Yjs update
+  logs, state vectors, and pending-update queues need transactional multi-row
+  writes, where SQLite is the right tool — but that feature's dominant cost is
+  a bidirectional Yjs implementation (decode + merge; today's `Core/Yjs` is a
+  write-only encoder), not storage, and its schema shares nothing with this
+  cache, so adopting SQLite early would pre-build nothing.
 - **Stateless.** The store holds **no in-memory state** — the eviction index is
   derived from disk on every operation (like the existing UserDefaults-backed
   stores re-read their backing store per call), so independently-constructed
