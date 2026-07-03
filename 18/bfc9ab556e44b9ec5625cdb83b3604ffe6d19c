@@ -1,0 +1,30 @@
+Schrift/Features/Editor/EditorViewModel.swift
+  s_7320e20fa0d435::t_44ea6297b219a9 287
+  s_7320e20fa0d435::t_7d2f015a191ef3 57
+  s_7320e20fa0d435::t_590e9348f7492d 74-80
+  s_7320e20fa0d435::t_5a0e0e58f1599f 307-308
+  s_7320e20fa0d435::t_b06c399341bd80 625
+  s_7320e20fa0d435::t_120449cf57cbd6 641-644
+  s_7320e20fa0d435::t_00b3f3fb485308 105-111
+  s_7320e20fa0d435::t_3eb3a375eadc7a 131-132
+  s_7320e20fa0d435::t_cebe63eca0a302 179-185,192-194,196,198-238,240-255
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_7320e20fa0d435::t_940a769224a3c2 350-353,355,370,377
+  s_7320e20fa0d435::t_566a2b3ac796fd 261-349,354,356-369,371-376,378-395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "18bfc9ab556e44b9ec5625cdb83b3604ffe6d19c",
+  "prompts": {},
+  "sessions": {
+    "s_7320e20fa0d435": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b213e15f-ea6c-44b8-b259-9aaee65d2f2c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
