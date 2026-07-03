@@ -187,6 +187,32 @@ final class EditorViewModel {
         }
     }
 
+    /// Explicit pull-to-refresh. Unlike the passive on-open revalidation it
+    /// awaits the fetch (the refresh spinner reflects real work), applies a
+    /// changed server copy DIRECTLY when clean (the user asked — no banner),
+    /// and surfaces failures instead of swallowing them.
+    func refresh() async {
+        guard hasLoadedContent else {
+            await load() // error-state retry: full initial flow, as today
+            return
+        }
+        errorMessage = nil
+        revalidationGeneration += 1
+        let generation = revalidationGeneration
+        do {
+            let formatted = try await client.formattedContent(documentID: documentID)
+            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            apply(formatted: formatted, userInitiated: true)
+            await loadChildren()
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            guard generation == revalidationGeneration else { return }
+            becomeUnavailable()
+        } catch {
+            guard generation == revalidationGeneration else { return }
+            errorMessage = "Couldn't refresh. Please try again."
+        }
+    }
+
     /// Definitive 404/403: the document is gone or access was revoked. Purge
     /// the durable copy (privacy), disable editing, show the terminal state.
     private func becomeUnavailable() {
@@ -203,7 +229,7 @@ final class EditorViewModel {
         errorMessage = "This document is no longer available."
     }
 
-    private func apply(formatted: FormattedDocumentContent) {
+    private func apply(formatted: FormattedDocumentContent, userInitiated: Bool = false) {
         defer { updatedAt = formatted.updatedAt }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
@@ -231,7 +257,7 @@ final class EditorViewModel {
         case .none:
             installFetched(formatted)
         case .clean:
-            reconcileClean(formatted)
+            reconcileClean(formatted, applyDirectly: userInitiated)
         }
     }
 
@@ -249,8 +275,10 @@ final class EditorViewModel {
     /// Clean content on screen: never swap it on a passive open. Titles are
     /// non-destructive and apply silently in BOTH branches (savedTitle follows
     /// so flushPendingChanges never enqueues a spurious save); only body
-    /// differences drive the banner.
-    private func reconcileClean(_ formatted: FormattedDocumentContent) {
+    /// differences drive the banner — unless `applyDirectly` (explicit
+    /// refresh()), which installs the fetched body immediately instead of
+    /// stashing it behind the "Updated" banner.
+    private func reconcileClean(_ formatted: FormattedDocumentContent, applyDirectly: Bool = false) {
         let fetched = formatted.content ?? ""
         let now = Date()
         if let fetchedTitle = formatted.title, fetchedTitle != title {
@@ -264,13 +292,23 @@ final class EditorViewModel {
             syncedAt: now
         ))
         if serverChanged(fetched: fetched) {
-            pendingFreshContent = (markdown: fetched, syncedAt: now)
-            updateAvailable = true
+            if applyDirectly {
+                install(markdown: fetched, title: nil, syncedAt: now)
+                updateAvailable = false
+                pendingFreshContent = nil
+            } else {
+                pendingFreshContent = (markdown: fetched, syncedAt: now)
+                updateAvailable = true
+            }
         } else {
             // Raw may differ only cosmetically — converge the comparison
             // basis on the fetched raw so future comparisons settle.
             displayedSourceMarkdown = fetched
             lastSyncedAt = now
+            if applyDirectly {
+                updateAvailable = false
+                pendingFreshContent = nil
+            }
         }
     }
 

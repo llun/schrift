@@ -490,6 +490,69 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.rawMarkdown, "# Old")
     }
 
+    // MARK: - Explicit refresh (pull-to-refresh)
+
+    func testRefreshAppliesNewerContentDirectlyWithoutBanner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load() // instant from cache, revalidation failed silently
+
+        stubLoad(content: "# New")
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# New", "explicit refresh applies directly")
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertNotNil(viewModel.lastSyncedAt)
+    }
+
+    func testRefreshClearsAPendingBanner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "# New")
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(viewModel.rawMarkdown, "# New")
+    }
+
+    func testRefreshFailureSurfacesErrorEvenWithLocalContent() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        stubLoad(content: "# Cached")
+        await viewModel.load()
+
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't refresh. Please try again.")
+        XCTAssertFalse(viewModel.blocks.isEmpty, "content stays readable")
+    }
+
+    func testRefreshWhileDirtyLeavesEditsUntouched() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Mine"))
+        stubLoad(content: "# Mine")
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateTitle("Edited title")
+
+        stubLoad(content: "# Theirs")
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.title, "Edited title")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Mine")
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Theirs")
+    }
+
     // MARK: - Editing session
 
     func testStartEditingEntersBlocksMode() async {
