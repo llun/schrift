@@ -33,10 +33,16 @@ final class EditorViewModel {
         }
     }
 
+    enum DisplaySource: Equatable {
+        case none, pendingSave, draft, clean
+    }
+
     var title: String
     var blocks: [EditorBlock] = []
     var rawMarkdown: String = ""
-    var subpages: [Document] = []
+    /// nil = no successful fetch this session (the view must not claim "no
+    /// subpages" from the instant/offline path); [] = fetched, none exist.
+    var subpages: [Document]? = nil
     var updatedAt: Date? = nil
     var mode: Mode = .reading
     var isLoading = false
@@ -48,20 +54,36 @@ final class EditorViewModel {
     /// Set when the loaded markdown wouldn't survive block editing losslessly;
     /// editing then defaults to the markdown source view.
     var openInMarkdownMode = false
+    var lastSyncedAt: Date? = nil
+    var hasLocalCopy = false
+    var updateAvailable = false
 
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    let contentCache: DocumentContentCacheStore
     let autosaveInterval: Duration
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
     /// would overwrite the whole server document with an empty draft.
     private(set) var hasLoadedContent = false
+    private(set) var displaySource: DisplaySource = .none
     private var savedMarkdown = ""
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
     private var dirtySince: Date?
+    private var pendingFreshContent: (markdown: String, syncedAt: Date)?
+    /// Monotonic guard: a completing fetch applies its outcome only if no
+    /// newer load()/refresh() superseded it (latest-wins; .task refires on
+    /// pop-back and .refreshable re-enters).
+    private var revalidationGeneration = 0
+    /// The exact raw markdown the current display was installed from — the
+    /// staleness comparison basis. NEVER compare fetched markdown against
+    /// serializeMarkdown(blocks)/currentMarkdown(): the serializer
+    /// canonicalizes (`*`→`-`, renumbering), which would give every
+    /// non-byte-round-tripping document a permanent do-nothing banner.
+    private var displayedSourceMarkdown = ""
 
     /// Continuous typing keeps restarting the trailing debounce; cap the total
     /// deferral so a long burst still persists periodically.
@@ -72,17 +94,26 @@ final class EditorViewModel {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         autosaveInterval: Duration = .seconds(10)
     ) {
         self.client = client
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.contentCache = contentCache
         self.autosaveInterval = autosaveInterval
         self.savedTitle = title
     }
 
     var isEditing: Bool { mode != .reading }
+
+    /// Caption rule 1: unsaved local content wins over "Synced X ago".
+    var hasUnsavedLocalContent: Bool {
+        isDirty
+            || saveCoordinator.pendingSave(documentID: documentID) != nil
+            || (displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil)
+    }
 
     var saveState: SaveState {
         if isDirty { return .dirty }
@@ -97,46 +128,256 @@ final class EditorViewModel {
     // MARK: - Loading
 
     func load() async {
-        isLoading = true
         errorMessage = nil
-        do {
-            let formatted = try await client.formattedContent(documentID: documentID)
-            if let fetchedTitle = formatted.title {
-                title = fetchedTitle
+        // The local phase runs once per installed document: load() re-fires
+        // on pop-back (.task) — reinstalling would clobber a dirty editing
+        // session with the cached copy. After the first install, load() is
+        // revalidate-only.
+        if !hasLoadedContent {
+            updateAvailable = false
+            pendingFreshContent = nil
+            restoreLocalContent()
+            if displaySource == .none {
+                isLoading = true
             }
-            var content = formatted.content ?? ""
-            var contentTitle: String? = nil
-            // Content still on its way to the server (or stranded from an
-            // earlier session) is newer than what the server returned.
-            if let pending = saveCoordinator.pendingSave(documentID: documentID) {
-                content = pending.markdown
-                contentTitle = pending.title
-            } else if let draft = saveCoordinator.storedDraft(documentID: documentID),
-                      formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
-                content = draft.markdown
-                contentTitle = draft.title
-            }
-            if let contentTitle {
-                title = contentTitle
-            }
-            savedTitle = title
-            rawMarkdown = content
-            blocks = parseEditorBlocks(content)
-            openInMarkdownMode = !content.isEmpty && !markdownSurvivesRoundTrip(content)
-            // The dirty baseline uses the same representation currentMarkdown()
-            // produces, so an unchanged document never triggers a save.
-            savedMarkdown = openInMarkdownMode ? content : serializeMarkdown(blocks)
-            updatedAt = formatted.updatedAt
-            hasLoadedContent = true
-            await loadChildren()
-        } catch {
-            errorMessage = "Couldn't load this document. Pull to refresh to try again."
         }
+        revalidationGeneration += 1
+        await revalidate(generation: revalidationGeneration)
         isLoading = false
     }
 
+    /// Local phase: synchronous, no network, no spinner. Chooses the display
+    /// source by precedence — in-flight save, stored draft, cached copy.
+    private func restoreLocalContent() {
+        if let pending = saveCoordinator.pendingSave(documentID: documentID) {
+            install(markdown: pending.markdown, title: pending.title, syncedAt: nil)
+            displaySource = .pendingSave
+        } else if let draft = saveCoordinator.storedDraft(documentID: documentID) {
+            // New: shown before any fetch (fixes drafts being unreachable
+            // offline). The server-wins staleness rule runs at revalidation.
+            install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
+            displaySource = .draft
+        } else if let cached = contentCache.content(for: documentID) {
+            install(markdown: cached.markdown, title: cached.title, syncedAt: cached.syncedAt)
+            displaySource = .clean
+        } else {
+            displaySource = .none
+        }
+        hasLocalCopy = displaySource != .none
+    }
+
+    /// Revalidation: the awaited structured tail of load() — no unstructured
+    /// Task. Classification of the outcome happens when the fetch completes.
+    /// `generation` guards against a superseded fetch (an earlier load() or
+    /// refresh()) applying its outcome after a newer one has already run.
+    private func revalidate(generation: Int) async {
+        do {
+            let formatted = try await client.formattedContent(documentID: documentID)
+            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            apply(formatted: formatted)
+            await loadChildren()
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            guard generation == revalidationGeneration else { return }
+            becomeUnavailable()
+        } catch {
+            guard generation == revalidationGeneration else { return }
+            // Transient (.network, .server, .rateLimited, .sessionExpired —
+            // cookie expiry must not purge the cache): keep the local copy.
+            if displaySource == .none {
+                errorMessage = "Couldn't load this document. Pull to refresh to try again."
+            }
+        }
+    }
+
+    /// Explicit pull-to-refresh. Unlike the passive on-open revalidation it
+    /// awaits the fetch (the refresh spinner reflects real work), applies a
+    /// changed server copy DIRECTLY when clean (the user asked — no banner),
+    /// and surfaces failures instead of swallowing them.
+    func refresh() async {
+        guard hasLoadedContent else {
+            await load() // error-state retry: full initial flow, as today
+            return
+        }
+        errorMessage = nil
+        revalidationGeneration += 1
+        let generation = revalidationGeneration
+        do {
+            let formatted = try await client.formattedContent(documentID: documentID)
+            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            apply(formatted: formatted, userInitiated: true)
+            await loadChildren()
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            guard generation == revalidationGeneration else { return }
+            becomeUnavailable()
+        } catch {
+            guard generation == revalidationGeneration else { return }
+            errorMessage = "Couldn't refresh. Please try again."
+        }
+    }
+
+    /// Definitive 404/403: the document is gone or access was revoked. Purge
+    /// the durable copy (privacy), disable editing, show the terminal state.
+    private func becomeUnavailable() {
+        contentCache.remove(documentID: documentID)
+        hasLocalCopy = false
+        lastSyncedAt = nil
+        updateAvailable = false
+        pendingFreshContent = nil
+        blocks = []
+        rawMarkdown = ""
+        displayedSourceMarkdown = ""
+        displaySource = .none
+        hasLoadedContent = false // startEditing guards on this
+        errorMessage = "This document is no longer available."
+    }
+
+    private func apply(formatted: FormattedDocumentContent, userInitiated: Bool = false) {
+        defer { updatedAt = formatted.updatedAt }
+        // Classify against *current* state: edits may have begun while the
+        // fetch was in flight.
+        if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
+            cacheServerCopy(formatted)
+            return
+        }
+        switch displaySource {
+        case .pendingSave:
+            break // in-flight content is newer than the server copy
+        case .draft:
+            if let draft = saveCoordinator.storedDraft(documentID: documentID),
+               formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+                cacheServerCopy(formatted)
+            } else {
+                // Server newer beyond tolerance: today the stale draft would
+                // never have been shown — server wins, and the draft goes
+                // (re-checked inside discardStoredDraft; the user may have
+                // produced a newer one while we awaited).
+                if let draft = saveCoordinator.storedDraft(documentID: documentID) {
+                    saveCoordinator.discardStoredDraft(draft)
+                }
+                installFetched(formatted)
+            }
+        case .none:
+            installFetched(formatted)
+        case .clean:
+            reconcileClean(formatted, applyDirectly: userInitiated)
+        }
+    }
+
+    /// Silent cache update while local edits own the screen — next open (or
+    /// the coordinator's own conflict handling) deals with freshness.
+    private func cacheServerCopy(_ formatted: FormattedDocumentContent) {
+        contentCache.save(CachedDocumentContent(
+            documentID: documentID,
+            title: formatted.title,
+            markdown: formatted.content ?? "",
+            syncedAt: Date()
+        ))
+    }
+
+    /// Clean content on screen: never swap it on a passive open. Titles are
+    /// non-destructive and apply silently in BOTH branches (savedTitle follows
+    /// so flushPendingChanges never enqueues a spurious save); only body
+    /// differences drive the banner — unless `applyDirectly` (explicit
+    /// refresh()), which installs the fetched body immediately instead of
+    /// stashing it behind the "Updated" banner.
+    private func reconcileClean(_ formatted: FormattedDocumentContent, applyDirectly: Bool = false) {
+        let fetched = formatted.content ?? ""
+        let now = Date()
+        if let fetchedTitle = formatted.title, fetchedTitle != title {
+            title = fetchedTitle
+            savedTitle = fetchedTitle
+        }
+        contentCache.save(CachedDocumentContent(
+            documentID: documentID,
+            title: title,
+            markdown: fetched,
+            syncedAt: now
+        ))
+        if serverChanged(fetched: fetched) {
+            if applyDirectly {
+                install(markdown: fetched, title: nil, syncedAt: now)
+                updateAvailable = false
+                pendingFreshContent = nil
+            } else {
+                pendingFreshContent = (markdown: fetched, syncedAt: now)
+                updateAvailable = true
+            }
+        } else {
+            // Raw may differ only cosmetically — converge the comparison
+            // basis on the fetched raw so future comparisons settle.
+            displayedSourceMarkdown = fetched
+            lastSyncedAt = now
+            if applyDirectly {
+                updateAvailable = false
+                pendingFreshContent = nil
+            }
+        }
+    }
+
+    private func serverChanged(fetched: String) -> Bool {
+        guard fetched != displayedSourceMarkdown else { return false }
+        return serializeMarkdown(parseEditorBlocks(fetched))
+            != serializeMarkdown(parseEditorBlocks(displayedSourceMarkdown))
+    }
+
+    /// The "Updated" banner tap: swaps in the stashed fresh body. Guarded so a
+    /// stray tap can never replace blocks mid-edit or clobber dirty content.
+    func applyPendingUpdate() {
+        guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
+        install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
+        displaySource = .clean
+        updateAvailable = false
+        pendingFreshContent = nil
+    }
+
+    /// A successful local delete must purge every local copy — otherwise the
+    /// document stays reachable from retained Search/Shared results and
+    /// renders its full cached content indefinitely (transient revalidation
+    /// failures are swallowed by design).
+    func handleDidDelete() {
+        contentCache.remove(documentID: documentID)
+        saveCoordinator.discardPendingWork(documentID: documentID)
+    }
+
+    /// Installs the fetched server copy and records it in the content cache.
+    private func installFetched(_ formatted: FormattedDocumentContent) {
+        let now = Date()
+        install(markdown: formatted.content ?? "", title: formatted.title, syncedAt: now)
+        displaySource = .clean
+        hasLocalCopy = true
+        contentCache.save(CachedDocumentContent(
+            documentID: documentID,
+            title: title,
+            markdown: formatted.content ?? "",
+            syncedAt: now
+        ))
+    }
+
+    /// Installs content as the on-screen document. Every path that puts
+    /// content on screen routes through here so the round-trip safety check
+    /// and the dirty baseline are never bypassed — skipping them risks a
+    /// destructive full-overwrite save of non-round-trippable content.
+    private func install(markdown: String, title contentTitle: String?, syncedAt: Date?) {
+        if let contentTitle {
+            title = contentTitle
+        }
+        savedTitle = title
+        rawMarkdown = markdown
+        blocks = parseEditorBlocks(markdown)
+        openInMarkdownMode = !markdown.isEmpty && !markdownSurvivesRoundTrip(markdown)
+        // The dirty baseline uses the same representation currentMarkdown()
+        // produces, so an unchanged document never triggers a save.
+        savedMarkdown = openInMarkdownMode ? markdown : serializeMarkdown(blocks)
+        displayedSourceMarkdown = markdown
+        hasLoadedContent = true
+        if let syncedAt {
+            lastSyncedAt = syncedAt
+        }
+    }
+
     func loadChildren() async {
-        subpages = (try? await client.listChildren(documentID: documentID))?.results ?? []
+        guard let results = try? await client.listChildren(documentID: documentID) else { return }
+        subpages = results.results
     }
 
     func addSubpage() async -> Document? {
@@ -148,6 +389,8 @@ final class EditorViewModel {
     func startEditing(focusing blockID: UUID? = nil) {
         guard hasLoadedContent else { return }
         errorMessage = nil
+        updateAvailable = false
+        pendingFreshContent = nil
         if blocks.isEmpty {
             let seed = EditorBlock(kind: .paragraph)
             blocks = [seed]
@@ -464,6 +707,7 @@ final class EditorViewModel {
         }
         savedMarkdown = markdown
         savedTitle = title
+        displayedSourceMarkdown = markdown
         saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown)
     }
 
@@ -479,6 +723,10 @@ final class EditorViewModel {
     }
 
     private func markDirty() {
+        if updateAvailable {
+            updateAvailable = false
+            pendingFreshContent = nil
+        }
         isDirty = true
         let now = Date()
         if dirtySince == nil {

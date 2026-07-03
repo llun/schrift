@@ -47,6 +47,7 @@ final class DocumentSaveCoordinator {
 
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
+    private let contentCache: DocumentContentCacheStore
     private let backgroundTasks: BackgroundTaskProvider
 
     private var states: [UUID: DocSaveState] = [:]
@@ -58,10 +59,12 @@ final class DocumentSaveCoordinator {
     init(
         client: DocsAPIClient,
         draftStore: PendingDraftStore = PendingDraftStore(),
+        contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         backgroundTasks: BackgroundTaskProvider = .uiApplication
     ) {
         self.client = client
         self.draftStore = draftStore
+        self.contentCache = contentCache
         self.backgroundTasks = backgroundTasks
     }
 
@@ -120,6 +123,22 @@ final class DocumentSaveCoordinator {
         }
     }
 
+    /// Removes a stored draft only if it is still exactly the given draft —
+    /// the user may have produced a newer one while the caller awaited
+    /// (mirrors recoverDrafts' re-check).
+    func discardStoredDraft(_ draft: PendingDraft) {
+        guard draftStore.draft(for: draft.documentID) == draft else { return }
+        draftStore.remove(documentID: draft.documentID)
+    }
+
+    /// Drops all queued/stored work for a document (delete flow). An already
+    /// in-flight PATCH cannot be meaningfully cancelled; it fails harmlessly
+    /// against the deleted document.
+    func discardPendingWork(documentID: UUID) {
+        queued[documentID] = nil
+        draftStore.remove(documentID: documentID)
+    }
+
     private func start(documentID: UUID, save: PendingSave) {
         inFlightContent[documentID] = save
         states[documentID] = .saving
@@ -144,6 +163,15 @@ final class DocumentSaveCoordinator {
                draft.title == save.title, draft.markdown == save.markdown {
                 draftStore.remove(documentID: documentID)
             }
+            // Keep the local copy consistent with what the server now holds.
+            // The save PATCHes are void (no server timestamp exists here);
+            // syncedAt is the client wall-clock of the confirmed save.
+            contentCache.save(CachedDocumentContent(
+                documentID: documentID,
+                title: save.title,
+                markdown: save.markdown,
+                syncedAt: Date()
+            ))
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")
         }

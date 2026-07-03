@@ -7,6 +7,11 @@ implementation. The original design created a temporary document to reuse the
 backend's file→Yjs conversion; the app now builds the Yjs update **on-device**
 (a hand-written encoder in `Core/Yjs`) and PATCHes it directly. Everything else is
 as originally approved.
+Revised: 2026-07-03 — offline **reading** was added: previously-opened
+documents are cached on-device and render instantly with background
+revalidation (see
+`docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`).
+Offline *editing* remains out of scope.
 
 ## Summary
 
@@ -24,7 +29,8 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 ## Non-goals (v1)
 
 - Real-time collaborative editing (live cursors, multi-user simultaneous edit) — no Hocuspocus WebSocket / live-sync client. (The app *does* build Yjs CRDT updates on-device — a hand-written encoder in `Core/Yjs` — but only to save content via a single HTTP PATCH; there is no persistent collaborative connection. See "Editing & save mechanism".)
-- Offline editing/sync queue.
+- Offline editing/sync queue. (Offline *reading* of previously-opened documents
+  was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
 - AI features (proxy/transform/translate endpoints exist server-side but are out of scope).
 - Document version history browsing/restore.
@@ -162,7 +168,9 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 - `403` → permission-denied inline state; in practice this should be rare since UI affordances are gated by the `abilities` dict already.
 - `404` → "not found / no longer available" state (covers soft-deleted-past-cutoff documents, which the backend intentionally 404s rather than 403s to avoid leaking existence).
 - `429` → respect `Retry-After` if present; otherwise simple backoff with a banner ("Too many requests, try again shortly").
-- Network failure → retry affordance on the failed view; no offline queue/cache in v1.
+- Network failure → retry affordance on the failed view; no offline edit/sync
+  queue in v1 (since 2026-07-03, previously-opened documents are content-cached
+  on-device and readable offline).
 - Save conflicts are not detected (see Editing & save mechanism) — documented limitation, not silently swallowed.
 
 ## Testing

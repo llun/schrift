@@ -6,6 +6,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     private let otherDocumentID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
+    private var cacheDirectory: URL!
 
     private static let formattedBody = Data("""
     {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Server content", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
@@ -29,20 +30,34 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         }
     }
 
+    override func setUp() {
+        super.setUp()
+        cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DocumentSaveCoordinatorTests.\(UUID().uuidString)", isDirectory: true)
+    }
+
     override func tearDown() {
         MockURLProtocol.stubHandler = nil
         MockURLProtocol.lastRequest = nil
+        try? FileManager.default.removeItem(at: cacheDirectory)
+        cacheDirectory = nil
         super.tearDown()
     }
 
     private func makeCoordinator(
         backgroundTasks: BackgroundTaskProvider = .noop
-    ) -> (DocumentSaveCoordinator, PendingDraftStore) {
+    ) -> (DocumentSaveCoordinator, PendingDraftStore, DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: backgroundTasks)
-        return (coordinator, draftStore)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: draftStore,
+            contentCache: contentCache,
+            backgroundTasks: backgroundTasks
+        )
+        return (coordinator, draftStore, contentCache)
     }
 
     /// A save is now two PATCHes: content (base64 Yjs) then title. Each save is
@@ -87,7 +102,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
         let recorder = BackgroundTaskRecorder()
-        let (coordinator, draftStore) = makeCoordinator(backgroundTasks: recorder.provider)
+        let (coordinator, draftStore, _) = makeCoordinator(backgroundTasks: recorder.provider)
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
 
@@ -108,7 +123,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testEnqueueWhileInFlightCoalescesToLatestContent() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log, saveDelay: 0.2)
-        let (coordinator, draftStore) = makeCoordinator()
+        let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "v1")
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "v2")
@@ -129,7 +144,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testReenqueueingIdenticalContentWhileInFlightSkipsFollowUp() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log, saveDelay: 0.2)
-        let (coordinator, _) = makeCoordinator()
+        let (coordinator, _, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
@@ -144,7 +159,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testFailedSaveKeepsDraftAndReportsFailure() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log, contentStatus: 500)
-        let (coordinator, draftStore) = makeCoordinator()
+        let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
 
@@ -157,7 +172,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testDocumentsSaveIndependently() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
-        let (coordinator, _) = makeCoordinator()
+        let (coordinator, _, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
         coordinator.enqueue(documentID: otherDocumentID, title: "B", markdown: "b")
@@ -174,7 +189,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testRecoverDraftsReplaysDraftNewerThanServer() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
-        let (coordinator, draftStore) = makeCoordinator()
+        let (coordinator, draftStore, _) = makeCoordinator()
         // Server updated_at is 2026-01-15; a draft written "now" is newer.
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
 
@@ -189,7 +204,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testRecoverDraftsDiscardsDraftOlderThanServer() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
-        let (coordinator, draftStore) = makeCoordinator()
+        let (coordinator, draftStore, _) = makeCoordinator()
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Stale", updatedAt: Date(timeIntervalSince1970: 0)))
 
         await coordinator.recoverDrafts()
@@ -204,7 +219,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             log.record(request)
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
-        let (coordinator, draftStore) = makeCoordinator()
+        let (coordinator, draftStore, _) = makeCoordinator()
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Gone", updatedAt: Date()))
 
         await coordinator.recoverDrafts()
@@ -216,7 +231,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testRecoverDraftsRunsOnlyOnce() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
-        let (coordinator, draftStore) = makeCoordinator()
+        let (coordinator, draftStore, _) = makeCoordinator()
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
 
         await coordinator.recoverDrafts()
@@ -227,5 +242,57 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(100))
 
         XCTAssertEqual(savesInFlight(log), savesAfterFirstRecovery)
+    }
+
+    func testSaveSuccessWritesContentCacheEntry() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _, contentCache) = makeCoordinator(backgroundTasks: .noop)
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        let entry = contentCache.content(for: documentID)
+        XCTAssertEqual(entry?.title, "Doc")
+        XCTAssertEqual(entry?.markdown, "# Content")
+        XCTAssertNotNil(entry?.syncedAt)
+    }
+
+    func testSaveFailureWritesNoContentCacheEntry() async {
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, _, contentCache) = makeCoordinator(backgroundTasks: .noop)
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+
+        XCTAssertNil(contentCache.content(for: documentID))
+    }
+
+    func testDiscardStoredDraftRemovesOnlyIfUnchanged() {
+        let (coordinator, draftStore, _) = makeCoordinator(backgroundTasks: .noop)
+        let original = PendingDraft(documentID: documentID, title: "A", markdown: "a", updatedAt: Date(timeIntervalSince1970: 100))
+        draftStore.save(original)
+
+        // Draft changed since the caller captured it: keep the newer one.
+        let newer = PendingDraft(documentID: documentID, title: "B", markdown: "b", updatedAt: Date(timeIntervalSince1970: 200))
+        draftStore.save(newer)
+        coordinator.discardStoredDraft(original)
+        XCTAssertEqual(draftStore.draft(for: documentID), newer)
+
+        // Unchanged: removed.
+        coordinator.discardStoredDraft(newer)
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    func testDiscardPendingWorkDropsDraft() {
+        let (coordinator, draftStore, _) = makeCoordinator(backgroundTasks: .noop)
+        draftStore.save(PendingDraft(documentID: documentID, title: "A", markdown: "a", updatedAt: Date()))
+        coordinator.discardPendingWork(documentID: documentID)
+        XCTAssertNil(draftStore.draft(for: documentID))
     }
 }

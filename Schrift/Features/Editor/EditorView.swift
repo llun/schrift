@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// "Synced X ago" caption for the editor header. Pure — `now` is a parameter
+/// (note `documentRowDate` reads `Date()` internally and is untestable; this
+/// one is driven by a `TimelineView` tick so it must not).
+func syncStatusCaption(lastSyncedAt: Date, now: Date) -> String {
+    if now.timeIntervalSince(lastSyncedAt) < 60 {
+        return "Synced just now"
+    }
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return "Synced \(formatter.localizedString(for: lastSyncedAt, relativeTo: now))"
+}
+
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
@@ -51,8 +63,30 @@ struct EditorView: View {
                 trailingActions: trailingActions
             )
 
-            if isOffline {
-                OfflineBanner(note: "Editing the copy saved on this device")
+            if isOffline, viewModel.hasLocalCopy {
+                OfflineBanner(note: "Reading the copy saved on this device")
+            }
+
+            if viewModel.updateAvailable, !viewModel.isEditing {
+                Button {
+                    viewModel.applyPendingUpdate()
+                } label: {
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 13))
+                        Text("Document updated · tap to refresh")
+                            .font(DocsFont.footnote)
+                    }
+                    .foregroundStyle(DocsColor.textBrand)
+                    .padding(.horizontal, DocsSpacing.spaceSM)
+                    .padding(.vertical, DocsSpacing.space2xs)
+                    .background(Capsule().fill(DocsColor.gray050))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("Document updated. Tap to refresh.")
             }
 
             if let errorMessage = viewModel.errorMessage {
@@ -122,7 +156,10 @@ struct EditorView: View {
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
                 markdown: viewModel.currentMarkdown(),
                 onShare: { pendingShareAfterOptions = true },
-                onDeleted: onDeleted
+                onDeleted: {
+                    viewModel.handleDidDelete()
+                    onDeleted?()
+                }
             )
         }
     }
@@ -202,7 +239,7 @@ struct EditorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .refreshable {
-            await viewModel.load()
+            await viewModel.refresh()
         }
     }
 
@@ -234,9 +271,11 @@ struct EditorView: View {
 
             HStack(spacing: DocsSpacing.spaceXS) {
                 LinkReachPill(reach: reach)
-                Text(isOffline ? "Saved on this device" : "Edited just now")
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Text(syncCaptionText(now: context.date))
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -254,7 +293,7 @@ struct EditorView: View {
                     Image(systemName: "list.bullet.indent")
                     .font(.system(size: 16))
                     .accessibilityHidden(true)
-                Text(viewModel.subpages.isEmpty ? "Subpages" : "Subpages · \(viewModel.subpages.count)")
+                Text((viewModel.subpages?.isEmpty ?? true) ? "Subpages" : "Subpages · \(viewModel.subpages?.count ?? 0)")
                     .font(DocsFont.footnote.weight(.semibold))
                     .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
             }
@@ -264,40 +303,45 @@ struct EditorView: View {
             // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
             .padding(.bottom, DocsSpacing.space3xs)
 
-            if viewModel.subpages.isEmpty {
-                Text("Organize this document by creating subpages.")
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.spaceXS)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(viewModel.subpages) { child in
-                        SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+            if let subpages = viewModel.subpages {
+                if subpages.isEmpty {
+                    Text("Organize this document by creating subpages.")
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                        .padding(.horizontal, DocsSpacing.spaceXS)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(subpages) { child in
+                            SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+                        }
                     }
                 }
             }
+            // nil (not fetched yet): just the eyebrow — never claim "no subpages".
 
-            Button {
-                Task {
-                    if let child = await viewModel.addSubpage() {
-                        onOpenDocument?(child)
+            if !isOffline {
+                Button {
+                    Task {
+                        if let child = await viewModel.addSubpage() {
+                            onOpenDocument?(child)
+                        }
                     }
+                } label: {
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 22))
+                        Text("Add a subpage")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(DocsColor.textBrand)
+                    .padding(.horizontal, DocsSpacing.spaceXS)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-            } label: {
-                HStack(spacing: DocsSpacing.spaceXS) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 22))
-                    Text("Add a subpage")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                .foregroundStyle(DocsColor.textBrand)
-                .padding(.horizontal, DocsSpacing.spaceXS)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             }
             .padding(.top, DocsSpacing.spaceBase)
         }
@@ -305,6 +349,25 @@ struct EditorView: View {
         // needs to add the remainder to reach the reference's 40pt gap.
         .padding(.top, DocsSpacing.spaceXL - DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Caption precedence: (1) unsaved local content → save wording (a
+    /// previously-synced doc with a stranded draft must not read "Not synced
+    /// yet"); (2) synced → "Synced X ago"; (3) neither → "Not synced yet".
+    private func syncCaptionText(now: Date) -> String {
+        if viewModel.hasUnsavedLocalContent {
+            if isOffline { return "Saved on this device" }
+            switch viewModel.saveState {
+            case .saving: return "Saving…"
+            case .saved: return "Saved"
+            case .failed: return "Couldn't save"
+            case .dirty, .idle: return "Edited just now"
+            }
+        }
+        if let lastSyncedAt = viewModel.lastSyncedAt {
+            return syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now)
+        }
+        return "Not synced yet"
     }
 
     private var trailingActions: [NavBarAction] {

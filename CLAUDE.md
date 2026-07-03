@@ -90,7 +90,7 @@ Schrift/
 │   ├── Connect/         server URL entry + WKWebView OIDC login
 │   ├── Home/            document list, filters, offline cache
 │   ├── Search/ Shared/ Profile/ Options/ Share/
-│   └── Editor/          block editor, Markdown toggle, save coordinator, drafts
+│   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree 1:1
 fastlane/ scripts/ .github/workflows/   TestFlight release pipeline (fastlane + GitHub Actions)
@@ -245,6 +245,15 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; launch
   recovery). View models **enqueue** on the coordinator — they never call the
   client to persist edits themselves.
+- Content is cached on-device in **`DocumentContentCacheStore`** (one JSON per
+  document under Application Support, backup-excluded, ≤50 entries by
+  most-recent `syncedAt` via file mtime): `load()` shows a local copy
+  **synchronously** (precedence: in-flight save → stored draft → cached copy →
+  network-with-spinner) and revalidates in the background — content equality
+  (never re-serialized blocks) decides whether the "Updated" banner appears.
+  The coordinator write-throughs the cache on save success; delete and 404/403
+  revalidation purge the entry; sign-out clears the store. Offline is
+  read-only. See `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`.
 
 ### Persistence (`*Store` types)
 
@@ -256,6 +265,10 @@ markdown write endpoint**. Understand this before touching the save path:
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.
+- `DocumentContentCacheStore` is the one **file-based** store (full document
+  bodies are too large for UserDefaults): stateless over its directory,
+  `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction
+  selection is a top-level pure free function (`contentCacheEvictions`).
 
 ### Style & comments
 
