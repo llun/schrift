@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-07-03-passkey-webview-login-design.md
+  s_9e0170e5a9dd8f::t_cdae743fc50009 1-211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "641f8f37321ba55c49ecdef2ff56c6b9766cfaa1",
+  "prompts": {},
+  "sessions": {
+    "s_9e0170e5a9dd8f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b45dff74-09ec-48dc-a651-ed8c1278e317",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
