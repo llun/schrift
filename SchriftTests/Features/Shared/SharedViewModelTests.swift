@@ -121,8 +121,12 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     func testInitSeedsBothScopesFromCache() {
-        cache.saveSharedWithMeDocuments([decodeDocument(id: "55555555-5555-4555-8555-555555555555", title: "Cached With Me")])
-        cache.saveSharedByMeDocuments([decodeDocument(id: "66666666-6666-4666-8666-666666666666", title: "Cached By Me")])
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "55555555-5555-4555-8555-555555555555", title: "Cached With Me")
+        ])
+        cache.saveSharedByMeDocuments([
+            decodeDocument(id: "66666666-6666-4666-8666-666666666666", title: "Cached By Me")
+        ])
 
         let viewModel = makeViewModel()
 
@@ -151,8 +155,12 @@ final class SharedViewModelTests: XCTestCase {
     func testLoadFailureKeepsCachedDocumentsVisibleAndStaysSilent() async {
         // Both scopes cached: only then is a total failure silent — loudness
         // is per failing scope.
-        cache.saveSharedWithMeDocuments([decodeDocument(id: "99999999-9999-4999-8999-999999999999", title: "Offline With Me")])
-        cache.saveSharedByMeDocuments([decodeDocument(id: "cccccccc-9999-4ccc-8ccc-cccccccccccc", title: "Offline By Me")])
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "99999999-9999-4999-8999-999999999999", title: "Offline With Me")
+        ])
+        cache.saveSharedByMeDocuments([
+            decodeDocument(id: "cccccccc-9999-4ccc-8ccc-cccccccccccc", title: "Offline By Me")
+        ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
@@ -166,7 +174,9 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     func testPartialFailureKeepsFailingScopesCachedRowsSilently() async {
-        cache.saveSharedByMeDocuments([decodeDocument(id: "dddddddd-9999-4ddd-8ddd-dddddddddddd", title: "Cached By Me")])
+        cache.saveSharedByMeDocuments([
+            decodeDocument(id: "dddddddd-9999-4ddd-8ddd-dddddddddddd", title: "Cached By Me")
+        ])
         let viewModel = makeViewModel()
         let withMeBody = Self.paginatedFixture(id: "eeeeeeee-9999-4eee-8eee-eeeeeeeeeeee", title: "Fresh With Me")
         MockURLProtocol.stubHandler = { request in
@@ -189,7 +199,9 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     func testFailureOfNeverCachedScopeIsLoudDespiteOtherScopesCache() async {
-        cache.saveSharedWithMeDocuments([decodeDocument(id: "ffffffff-9999-4fff-8fff-ffffffffffff", title: "Cached With Me")])
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "ffffffff-9999-4fff-8fff-ffffffffffff", title: "Cached With Me")
+        ])
         let viewModel = makeViewModel()
         let withMeBody = Self.paginatedFixture(id: "11111111-8888-4111-8111-111111111111", title: "Fresh With Me")
         MockURLProtocol.stubHandler = { request in
@@ -213,22 +225,26 @@ final class SharedViewModelTests: XCTestCase {
         let viewModel = makeViewModel()
         let gate = DispatchSemaphore(value: 0)
         MockURLProtocol.stubHandler = { _ in
-            gate.wait() // hold the fetch open so the mid-flight state is observable
+            gate.wait()  // hold the fetch open so the mid-flight state is observable
             return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
         }
 
         let load = Task { await viewModel.load() }
-        await waitUntil { viewModel.isLoading }
-        XCTAssertTrue(viewModel.isLoading, "first-ever load shows the placeholder while fetching")
+        await waitUntil { viewModel.showsLoadingPlaceholder }
+        XCTAssertTrue(viewModel.showsLoadingPlaceholder, "first-ever load shows the placeholder while fetching")
+        XCTAssertFalse(viewModel.showsDocumentList, "an unknown scope must not claim a document count")
 
         gate.signal()
         gate.signal()
         await load.value
+        XCTAssertFalse(viewModel.showsLoadingPlaceholder)
         XCTAssertFalse(viewModel.isLoading)
     }
 
-    func testRevalidationBehindCachedRowsNeverShowsLoadingPlaceholder() async {
-        cache.saveSharedWithMeDocuments([decodeDocument(id: "22222222-8888-4222-8222-222222222222", title: "Cached With Me")])
+    func testScopeSwitchMidFetchShowsPlaceholderForUnknownScope() async {
+        // withMe is cached (revalidates silently); byMe was never fetched.
+        cache.saveSharedWithMeDocuments(
+            [decodeDocument(id: "66666666-8888-4666-8666-666666666666", title: "Cached With Me")])
         let viewModel = makeViewModel()
         let recorder = RequestRecorder()
         let gate = DispatchSemaphore(value: 0)
@@ -240,12 +256,59 @@ final class SharedViewModelTests: XCTestCase {
 
         let load = Task { await viewModel.load() }
         await waitUntil { recorder.methods.count >= 1 }
-        XCTAssertFalse(viewModel.isLoading, "cached rows must never be replaced by a spinner mid-revalidation")
+        XCTAssertFalse(viewModel.showsLoadingPlaceholder, "cached withMe scope revalidates silently")
+
+        // Flip the segment while the fetch is in flight: the unknown byMe
+        // scope shows the placeholder, not a "0 documents" claim.
+        viewModel.scope = .byMe
+        XCTAssertTrue(viewModel.showsLoadingPlaceholder)
+        XCTAssertFalse(viewModel.showsDocumentList)
 
         gate.signal()
         gate.signal()
         await load.value
-        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertFalse(viewModel.showsLoadingPlaceholder)
+    }
+
+    func testUnknownScopeOfflineHidesDocumentListInsteadOfClaimingEmpty() async {
+        // Only withMe is cached; Work Offline means byMe can never be fetched.
+        cache.saveSharedWithMeDocuments(
+            [decodeDocument(id: "77777777-8888-4777-8777-777777777777", title: "Cached With Me")])
+        preferences.set(true, forKey: "schrift.workOffline")
+        let viewModel = makeViewModel()
+
+        await viewModel.load()
+
+        viewModel.scope = .byMe
+        XCTAssertFalse(viewModel.showsDocumentList, "a never-fetched scope must not render '0 documents'")
+        XCTAssertFalse(viewModel.showsLoadingPlaceholder)
+        viewModel.scope = .withMe
+        XCTAssertTrue(viewModel.showsDocumentList)
+    }
+
+    func testRevalidationBehindCachedRowsNeverShowsLoadingPlaceholder() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "22222222-8888-4222-8222-222222222222", title: "Cached With Me")
+        ])
+        let viewModel = makeViewModel()
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            gate.wait()
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.methods.count >= 1 }
+        XCTAssertFalse(
+            viewModel.showsLoadingPlaceholder,
+            "cached rows must never be replaced by a spinner mid-revalidation")
+
+        gate.signal()
+        gate.signal()
+        await load.value
+        XCTAssertFalse(viewModel.showsLoadingPlaceholder)
     }
 
     func testStaleLoadCannotOverwriteFresherRefresh() async {
@@ -272,7 +335,7 @@ final class SharedViewModelTests: XCTestCase {
         }
 
         let staleLoad = Task { await viewModel.load() }
-        await waitUntil { recorder.methods.count >= 1 } // the stale fetch is in flight
+        await waitUntil { recorder.methods.count >= 1 }  // the stale fetch is in flight
 
         await viewModel.refresh()
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Fresh With Me"])
@@ -289,7 +352,9 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     func testRefreshFailureWithCachedDocumentsSetsErrorMessage() async {
-        cache.saveSharedWithMeDocuments([decodeDocument(id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Offline With Me")])
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Offline With Me")
+        ])
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
@@ -300,7 +365,9 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     func testWorkOfflinePreferenceServesCacheWithoutNetwork() async {
-        cache.saveSharedWithMeDocuments([decodeDocument(id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title: "Offline With Me")])
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title: "Offline With Me")
+        ])
         let viewModel = makeViewModel()
         preferences.set(true, forKey: "schrift.workOffline")
         let recorder = RequestRecorder()

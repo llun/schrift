@@ -57,10 +57,16 @@ final class HomeViewModel {
 
         // One read decides both halves of the silent-vs-loud policy: spinner
         // and error may only appear when this filter has no local list.
+        // Pinned rows count as visible only when their section will actually
+        // render — under the .pinned filter it is hidden, and suppressing the
+        // spinner for rows the user can't see would leave a blank screen.
         let hasCachedList = cache.loadRecentDocuments(filter: filter) != nil
+        let visiblePinnedCount =
+            shouldShowPinnedSection(filter: filter, pinnedCount: pinnedDocuments.count)
+            ? pinnedDocuments.count : 0
         isLoading = shouldShowLoadingPlaceholder(
             hasCachedList: hasCachedList,
-            visibleRowCount: pinnedDocuments.count + recentDocuments.count
+            visibleRowCount: visiblePinnedCount + recentDocuments.count
         )
 
         // Replay any drafts stranded by a previous session (runs once).

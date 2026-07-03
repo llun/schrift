@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 final class DocumentChildrenCacheStoreTests: XCTestCase {
@@ -147,10 +148,12 @@ final class DocumentChildrenCacheStoreTests: XCTestCase {
     func testSaveEvictsOldestParentsBeyondLimit() {
         // Deterministic clock: each save is one second newer than the last.
         var tick = 0.0
-        let store = makeStore(limit: 2, now: {
-            tick += 1
-            return Date(timeIntervalSince1970: tick)
-        })
+        let store = makeStore(
+            limit: 2,
+            now: {
+                tick += 1
+                return Date(timeIntervalSince1970: tick)
+            })
         let oldest = UUID(uuidString: "11111111-aaaa-4111-8111-111111111111")!
         let middle = UUID(uuidString: "22222222-aaaa-4222-8222-222222222222")!
         let newest = UUID(uuidString: "33333333-aaaa-4333-8333-333333333333")!

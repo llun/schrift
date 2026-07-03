@@ -63,14 +63,16 @@ struct SharedScreen: View {
                             .padding(.horizontal, DocsSpacing.gutter)
                     }
 
-                    // First-ever run only (isLoading is gated on nothing being
-                    // cached): never claim "0 documents" for lists that are
-                    // simply not yet known.
-                    if viewModel.isLoading {
+                    // Per-scope gates: spinner only while fetching a scope
+                    // with no local list; and never claim "0 documents" for a
+                    // scope that is simply not yet known (unknown + not
+                    // fetching renders neither — the banner/error above
+                    // conveys the state).
+                    if viewModel.showsLoadingPlaceholder {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.top, DocsSpacing.spaceBase)
-                    } else {
+                    } else if viewModel.showsDocumentList {
                         ListSection(header: "\(viewModel.documents.count) documents") {
                             ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
                                 if index > 0 {

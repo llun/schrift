@@ -83,7 +83,8 @@ final class DocumentChildrenCacheStore {
 
     private func loadEntries() -> [UUID: CachedChildrenEntry] {
         guard let data = userDefaults.data(forKey: Self.key),
-              let entries = try? decoder.decode([UUID: CachedChildrenEntry].self, from: data) else {
+            let entries = try? decoder.decode([UUID: CachedChildrenEntry].self, from: data)
+        else {
             return [:]
         }
         return entries

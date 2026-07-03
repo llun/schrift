@@ -80,6 +80,20 @@ access was deliberately left out of scope.
   the error instead of masquerading as an empty list. The Shared tab applies
   the same rule per scope: a failing scope is silenced only by *its own*
   cache, never by the other scope's.
+- **Placeholders are keyed to what will actually render.** Home counts
+  pinned rows as "visible" only when the pinned section shows for the
+  current filter (it is hidden under `.pinned`), so a first-ever Pinned
+  visit spins instead of rendering blank; the view's empty-state gate uses
+  `showsPinnedSection` for the same reason. The Shared tab tracks
+  `knownScopes` (cached or fetched this session) and derives
+  `showsLoadingPlaceholder`/`showsDocumentList` per *visible* scope — an
+  unknown scope never renders the "0 documents" header, even offline or
+  when the segment is flipped mid-fetch.
+- **Children fetches are latest-wins too.** `EditorViewModel` keeps a
+  `childrenGeneration` counter: `loadChildren()` applies its response only
+  if no newer fetch or `addSubpage()` superseded it, so a pre-create
+  snapshot can never overwrite (and durably cache) a list missing the
+  just-added child.
 - **Mutations never fabricate cache entries.** `addSubpage` appends to the
   cached children list only when that list is actually known (`subpages !=
   nil`) — appending to an unknown list would persist a one-element

@@ -69,7 +69,8 @@ final class DocumentCacheStore {
 
     private func load(forKey key: String) -> [Document]? {
         guard let data = userDefaults.data(forKey: key),
-              let documents = try? decoder.decode([Document].self, from: data) else {
+            let documents = try? decoder.decode([Document].self, from: data)
+        else {
             return nil
         }
         return documents

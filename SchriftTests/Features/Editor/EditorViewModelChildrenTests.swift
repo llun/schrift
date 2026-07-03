@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Schrift
 
 @MainActor
@@ -31,8 +32,11 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
-        return EditorViewModel(client: client, documentID: documentID, title: title, saveCoordinator: coordinator, contentCache: contentCache, childrenCache: childrenCache)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        return EditorViewModel(
+            client: client, documentID: documentID, title: title, saveCoordinator: coordinator,
+            contentCache: contentCache, childrenCache: childrenCache)
     }
 
     private static func childrenFixture(id: String, title: String) -> Data {
@@ -87,8 +91,8 @@ final class EditorViewModelChildrenTests: XCTestCase {
     func testLoadPopulatesSubpagesAndCapturesUpdatedAt() async {
         let viewModel = makeViewModel()
         let contentBody = """
-        {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Body", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
-        """.data(using: .utf8)!
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Body", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+            """.data(using: .utf8)!
         let childrenBody = Self.childrenFixture(id: "22222222-2222-4222-8222-222222222222", title: "Child page")
         MockURLProtocol.stubHandler = { request in
             let path = request.url?.path ?? ""
@@ -135,27 +139,27 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let existing = decodeChild(id: "55555555-5555-4555-8555-555555555555", title: "Existing child")
         childrenCache.save([existing], for: documentID)
         let viewModel = makeViewModel()
-        await viewModel.load() // seeds subpages from the cache (stub not set: request fails)
+        await viewModel.load()  // seeds subpages from the cache (stub not set: request fails)
         let createdBody = """
-        {
-            "id": "66666666-6666-4666-8666-666666666666",
-            "title": "Untitled subpage",
-            "excerpt": null,
-            "abilities": {},
-            "computed_link_reach": "restricted",
-            "computed_link_role": null,
-            "created_at": "2026-01-15T10:30:00Z",
-            "creator": null,
-            "depth": 2,
-            "link_role": "reader",
-            "link_reach": "restricted",
-            "numchild": 0,
-            "path": "00010002",
-            "updated_at": "2026-01-15T10:30:00Z",
-            "user_role": "owner",
-            "is_favorite": false
-        }
-        """.data(using: .utf8)!
+            {
+                "id": "66666666-6666-4666-8666-666666666666",
+                "title": "Untitled subpage",
+                "excerpt": null,
+                "abilities": {},
+                "computed_link_reach": "restricted",
+                "computed_link_role": null,
+                "created_at": "2026-01-15T10:30:00Z",
+                "creator": null,
+                "depth": 2,
+                "link_role": "reader",
+                "link_reach": "restricted",
+                "numchild": 0,
+                "path": "00010002",
+                "updated_at": "2026-01-15T10:30:00Z",
+                "user_role": "owner",
+                "is_favorite": false
+            }
+            """.data(using: .utf8)!
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: createdBody, error: nil) }
 
         let child = await viewModel.addSubpage()
@@ -170,25 +174,25 @@ final class EditorViewModelChildrenTests: XCTestCase {
         // [newChild] would durably hide the document's real children.
         let viewModel = makeViewModel()
         let createdBody = """
-        {
-            "id": "99999999-9999-4999-8999-999999999999",
-            "title": "Untitled subpage",
-            "excerpt": null,
-            "abilities": {},
-            "computed_link_reach": "restricted",
-            "computed_link_role": null,
-            "created_at": "2026-01-15T10:30:00Z",
-            "creator": null,
-            "depth": 2,
-            "link_role": "reader",
-            "link_reach": "restricted",
-            "numchild": 0,
-            "path": "00010003",
-            "updated_at": "2026-01-15T10:30:00Z",
-            "user_role": "owner",
-            "is_favorite": false
-        }
-        """.data(using: .utf8)!
+            {
+                "id": "99999999-9999-4999-8999-999999999999",
+                "title": "Untitled subpage",
+                "excerpt": null,
+                "abilities": {},
+                "computed_link_reach": "restricted",
+                "computed_link_role": null,
+                "created_at": "2026-01-15T10:30:00Z",
+                "creator": null,
+                "depth": 2,
+                "link_role": "reader",
+                "link_reach": "restricted",
+                "numchild": 0,
+                "path": "00010003",
+                "updated_at": "2026-01-15T10:30:00Z",
+                "user_role": "owner",
+                "is_favorite": false
+            }
+            """.data(using: .utf8)!
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: createdBody, error: nil) }
 
         let child = await viewModel.addSubpage()
@@ -247,5 +251,60 @@ final class EditorViewModelChildrenTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertEqual(childrenCache.children(for: parentID)?.map(\.title), ["Sibling"])
+    }
+
+    func testStaleChildrenFetchCannotOverwriteAddedSubpage() async {
+        // A listChildren snapshot taken before a createChild must not land
+        // afterwards and durably hide the just-added child.
+        let existing = decodeChild(id: "eeeeeeee-2222-4eee-8eee-eeeeeeeeeeee", title: "Existing child")
+        childrenCache.save([existing], for: documentID)
+        let viewModel = makeViewModel()
+        await viewModel.load()  // seeds subpages from the cache (content fetch fails: stub not set)
+
+        let staleChildren = Self.childrenFixture(id: "eeeeeeee-2222-4eee-8eee-eeeeeeeeeeee", title: "Existing child")
+        let createdBody = """
+            {
+                "id": "ffffffff-2222-4fff-8fff-ffffffffffff",
+                "title": "Untitled subpage",
+                "excerpt": null,
+                "abilities": {},
+                "computed_link_reach": "restricted",
+                "computed_link_role": null,
+                "created_at": "2026-01-15T10:30:00Z",
+                "creator": null,
+                "depth": 2,
+                "link_role": "reader",
+                "link_reach": "restricted",
+                "numchild": 0,
+                "path": "00010004",
+                "updated_at": "2026-01-15T10:30:00Z",
+                "user_role": "owner",
+                "is_favorite": false
+            }
+            """.data(using: .utf8)!
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            if request.httpMethod == "POST" {
+                return .init(statusCode: 201, headers: [:], body: createdBody, error: nil)
+            }
+            recorder.record(request)
+            gate.wait()  // hold the pre-create children snapshot until after addSubpage
+            return .init(statusCode: 200, headers: [:], body: staleChildren, error: nil)
+        }
+
+        let staleFetch = Task { await viewModel.loadChildren() }
+        await waitUntil { recorder.methods.count >= 1 }  // snapshot in flight
+
+        let child = await viewModel.addSubpage()
+        XCTAssertEqual(child?.title, "Untitled subpage")
+
+        gate.signal()
+        await staleFetch.value
+
+        // The superseded snapshot is discarded — in memory and in the cache.
+        XCTAssertEqual(viewModel.subpages?.map(\.title), ["Existing child", "Untitled subpage"])
+        XCTAssertEqual(
+            childrenCache.children(for: documentID)?.map(\.title), ["Existing child", "Untitled subpage"])
     }
 }

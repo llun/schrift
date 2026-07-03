@@ -80,6 +80,10 @@ final class EditorViewModel {
     /// newer load()/refresh() superseded it (latest-wins; .task refires on
     /// pop-back and .refreshable re-enters).
     private var revalidationGeneration = 0
+    /// Latest-wins guard for the children list: bumped by every loadChildren()
+    /// and by a successful addSubpage(), so a stale in-flight listChildren
+    /// snapshot can never overwrite (and durably cache) a newer mutation.
+    private var childrenGeneration = 0
     /// The exact raw markdown the current display was installed from — the
     /// staleness comparison basis. NEVER compare fetched markdown against
     /// serializeMarkdown(blocks)/currentMarkdown(): the serializer
@@ -395,7 +399,13 @@ final class EditorViewModel {
     }
 
     func loadChildren() async {
+        childrenGeneration += 1
+        let generation = childrenGeneration
         guard let results = try? await client.listChildren(documentID: documentID) else { return }
+        // Superseded by a newer fetch or a createChild while in flight: a
+        // pre-create snapshot must not overwrite (and durably cache) a list
+        // missing the just-added child.
+        guard generation == childrenGeneration else { return }
         subpages = results.results
         childrenCache.save(results.results, for: documentID)
     }
@@ -404,6 +414,8 @@ final class EditorViewModel {
         guard let child = try? await client.createChild(documentID: documentID, title: "Untitled subpage") else {
             return nil
         }
+        // Any in-flight children fetch predates this child — invalidate it.
+        childrenGeneration += 1
         // Reflect the new child immediately (and durably) so popping back —
         // possibly offline — shows it without waiting on a refetch. Only when
         // the current list is actually known (fetched or cached): appending to

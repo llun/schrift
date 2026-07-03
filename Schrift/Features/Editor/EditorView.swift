@@ -51,8 +51,12 @@ struct EditorView: View {
         self.onBack = onBack
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
-        _optionsViewModel = State(initialValue: OptionsViewModel(client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite))
-        _shareViewModel = State(initialValue: ShareViewModel(client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
+        _optionsViewModel = State(
+            initialValue: OptionsViewModel(
+                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite))
+        _shareViewModel = State(
+            initialValue: ShareViewModel(
+                client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
     }
 
     var body: some View {
@@ -146,12 +150,15 @@ struct EditorView: View {
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID)
             )
         }
-        .sheet(isPresented: $isPresentingOptionsSheet, onDismiss: {
-            if pendingShareAfterOptions {
-                pendingShareAfterOptions = false
-                isPresentingShareSheet = true
+        .sheet(
+            isPresented: $isPresentingOptionsSheet,
+            onDismiss: {
+                if pendingShareAfterOptions {
+                    pendingShareAfterOptions = false
+                    isPresentingShareSheet = true
+                }
             }
-        }) {
+        ) {
             OptionsSheetView(
                 viewModel: optionsViewModel,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
@@ -221,12 +228,14 @@ struct EditorView: View {
                 } else {
                     VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
                         ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
-                            MarkdownBlockView(block: block, numberedIndex: numberedIndex(of: index, in: viewModel.blocks))
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    guard !isOffline else { return }
-                                    viewModel.startEditing(focusing: block.id)
-                                }
+                            MarkdownBlockView(
+                                block: block, numberedIndex: numberedIndex(of: index, in: viewModel.blocks)
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                guard !isOffline else { return }
+                                viewModel.startEditing(focusing: block.id)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,57 +301,60 @@ struct EditorView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space2xs) {
                     Image(systemName: "list.bullet.indent")
-                    .font(.system(size: 16))
-                    .accessibilityHidden(true)
-                Text((viewModel.subpages?.isEmpty ?? true) ? "Subpages" : "Subpages · \(viewModel.subpages?.count ?? 0)")
+                        .font(.system(size: 16))
+                        .accessibilityHidden(true)
+                    Text(
+                        (viewModel.subpages?.isEmpty ?? true)
+                            ? "Subpages" : "Subpages · \(viewModel.subpages?.count ?? 0)"
+                    )
                     .font(DocsFont.footnote.weight(.semibold))
                     .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
-            }
-            .textCase(.uppercase)
-            .foregroundStyle(DocsColor.textTertiary)
-            .padding(.horizontal, DocsSpacing.spaceXS)
-            // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
-            .padding(.bottom, DocsSpacing.space3xs)
+                }
+                .textCase(.uppercase)
+                .foregroundStyle(DocsColor.textTertiary)
+                .padding(.horizontal, DocsSpacing.spaceXS)
+                // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
+                .padding(.bottom, DocsSpacing.space3xs)
 
-            if let subpages = viewModel.subpages {
-                if subpages.isEmpty {
-                    Text("Organize this document by creating subpages.")
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                if let subpages = viewModel.subpages {
+                    if subpages.isEmpty {
+                        Text("Organize this document by creating subpages.")
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(DocsColor.textTertiary)
+                            .padding(.horizontal, DocsSpacing.spaceXS)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(subpages) { child in
+                                SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+                            }
+                        }
+                    }
+                }
+                // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
+
+                if !isOffline {
+                    Button {
+                        Task {
+                            if let child = await viewModel.addSubpage() {
+                                onOpenDocument?(child)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: DocsSpacing.spaceXS) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 22))
+                            Text("Add a subpage")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
+                        .foregroundStyle(DocsColor.textBrand)
                         .padding(.horizontal, DocsSpacing.spaceXS)
+                        .padding(.vertical, 10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(subpages) { child in
-                            SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
-                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
-            }
-            // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
-
-            if !isOffline {
-                Button {
-                    Task {
-                        if let child = await viewModel.addSubpage() {
-                            onOpenDocument?(child)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: DocsSpacing.spaceXS) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 22))
-                        Text("Add a subpage")
-                            .font(.system(size: 15, weight: .semibold))
-                    }
-                    .foregroundStyle(DocsColor.textBrand)
-                    .padding(.horizontal, DocsSpacing.spaceXS)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
             }
             .padding(.top, DocsSpacing.spaceBase)
         }
@@ -374,15 +386,17 @@ struct EditorView: View {
     private var trailingActions: [NavBarAction] {
         if viewModel.isEditing {
             return [
-                NavBarAction(systemImage: "checkmark", label: "Done", action: { viewModel.finishEditing() }),
+                NavBarAction(systemImage: "checkmark", label: "Done", action: { viewModel.finishEditing() })
             ]
         }
         return [
             NavBarAction(systemImage: "list.bullet.indent", label: "Pages", action: { isPresentingTreePanel = true }),
             NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: { isPresentingShareSheet = true }),
-            NavBarAction(systemImage: "ellipsis", label: "Options", action: {
-                isPresentingOptionsSheet = true
-            }),
+            NavBarAction(
+                systemImage: "ellipsis", label: "Options",
+                action: {
+                    isPresentingOptionsSheet = true
+                }),
         ]
     }
 }

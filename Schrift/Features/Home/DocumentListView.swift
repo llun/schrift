@@ -129,7 +129,10 @@ struct DocumentListView: View {
             } else {
                 documentSection(title: "Results", documents: viewModel.searchResults)
             }
-        } else if viewModel.pinnedDocuments.isEmpty && viewModel.recentDocuments.isEmpty {
+        } else if !viewModel.showsPinnedSection && viewModel.recentDocuments.isEmpty {
+            // Keyed to what will actually render (the pinned section is hidden
+            // under the .pinned filter), so an empty filter never leaves a
+            // silent blank area below the controls.
             if viewModel.errorMessage == nil {
                 ContentUnavailableView(
                     "No documents yet",

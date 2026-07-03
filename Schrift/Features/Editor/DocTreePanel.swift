@@ -55,7 +55,7 @@ final class DocTreeModel {
     func loadChildren(of id: UUID) async {
         seed(id)
         guard !revalidated.contains(id) else { return }
-        revalidated.insert(id) // marks in-flight too, so concurrent callers don't double-fetch
+        revalidated.insert(id)  // marks in-flight too, so concurrent callers don't double-fetch
         guard let results = try? await client.listChildren(documentID: id) else {
             revalidated.remove(id)
             return
