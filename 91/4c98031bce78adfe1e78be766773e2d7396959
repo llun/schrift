@@ -1,0 +1,27 @@
+.github/workflows/testflight.yml
+  s_1111f017938c48::t_db01860c6115ff 41-43,64,71-83,111-114
+CLAUDE.md
+  s_1111f017938c48::t_05a9db5bbd29ae 55-61
+docs/superpowers/plans/2026-07-03-auto-testflight-release.md
+  s_1111f017938c48::t_795e25ab34b813 6-13
+docs/testflight-setup.md
+  s_1111f017938c48::t_2b1bc8aba7be73 84-86,90-102
+fastlane/Fastfile
+  s_1111f017938c48::t_d90530ba72867a 76,78-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "914c98031bce78adfe1e78be766773e2d7396959",
+  "prompts": {},
+  "sessions": {
+    "s_1111f017938c48": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9e64132-5786-4976-bf8d-0c4dc754805a",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
