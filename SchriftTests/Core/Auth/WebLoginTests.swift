@@ -37,6 +37,13 @@ final class WebLoginTests: XCTestCase {
         XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
     }
 
+    func testLandingOnBareServerRootWithoutTrailingSlashIsComplete() {
+        // The docs backend's default LOGIN_REDIRECT_URL is the bare host
+        // (`https://${DOCS_HOST}`) with no trailing slash, whose `path` is "".
+        let url = URL(string: "https://docs.llun.dev")!
+        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
+    }
+
     func testSyncCookiesForwardsEachCookieToStorage() {
         final class FakeCookieStoring: CookieStoring {
             private(set) var savedCookies: [HTTPCookie] = []
