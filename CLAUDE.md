@@ -52,7 +52,13 @@ This file is the shorter, operational "how we write code here" companion.
   there is no release loop. Ship manually via **Actions → TestFlight → Run
   workflow**; add `[skip ci]` to a commit to skip a build. Build number =
   `github.run_number` (monotonic — do **not** rename/move the workflow file or it
-  resets). TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
+  resets). On CI the upload **waits for Apple to finish processing** so it can
+  attach auto-generated **release notes** (commit subjects since the last tag,
+  written to `release-notes.txt` and read by the `beta` lane — never interpolated,
+  to avoid workflow injection from commit text) and distribute; that's why the job
+  timeout is 90 min. Internal testers get every build automatically (no review);
+  set the repo variable `TESTFLIGHT_GROUPS` (comma-separated) to also target named
+  beta groups. TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
   build/test-only (no archive/deploy on `main`) so the two don't double-build or
   collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not
