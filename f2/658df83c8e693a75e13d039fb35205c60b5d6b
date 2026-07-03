@@ -1,0 +1,21 @@
+Schrift/DesignSystem/Components/TabBar.swift
+  s_7881eb05632d17::t_ed3e5a23afcf19 2,4-12,14-16
+SchriftTests/DesignSystem/Components/TabBarTests.swift
+  s_7881eb05632d17::t_fa924b04a4ea7d 16-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "f2658df83c8e693a75e13d039fb35205c60b5d6b",
+  "prompts": {},
+  "sessions": {
+    "s_7881eb05632d17": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43d87196-89dd-49e0-b4df-5141bdfc5947",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
