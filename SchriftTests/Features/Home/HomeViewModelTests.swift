@@ -473,9 +473,12 @@ final class HomeViewModelTests: XCTestCase {
             try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: sentinelBody).results[0]
         ]
         let recorder = RequestRecorder()
+        // Captured locally: the class is @MainActor, so its statics can't be
+        // referenced from the @Sendable stub closure.
+        let empty = Self.emptyFixture
         MockURLProtocol.stubHandler = { request in
             recorder.record(request)
-            return .init(statusCode: 200, headers: [:], body: Self.emptyFixture, error: nil)
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
         }
 
         // Re-tapping the active filter must neither reseed from (possibly
