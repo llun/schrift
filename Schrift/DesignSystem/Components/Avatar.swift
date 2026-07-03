@@ -1,19 +1,29 @@
 import SwiftUI
 
+/// The exact `ACCENTS` order the design system's `Avatar` hashes into, so a
+/// given name maps to the same accent color as the reference prototype.
 let avatarColorPalette: [UInt32] = [
-    0xDA3B49, 0xB95D33, 0x8F7158, 0x9D6E00, 0x008948,
-    0x4279B9, 0x00848F, 0x9961AF, 0xAA5F80, 0x75758A,
+    DocsColorHex.accentBlue1, DocsColorHex.accentGreen, DocsColorHex.accentOrange,
+    DocsColorHex.accentPurple, DocsColorHex.accentPink, DocsColorHex.accentBlue2,
+    DocsColorHex.brandFill, DocsColorHex.accentBrown,
 ]
 
 func avatarInitials(for name: String) -> String {
-    let words = name.split(separator: " ").prefix(2)
-    return words.compactMap { $0.first }.map { String($0).uppercased() }.joined()
+    let parts = name.split(separator: " ").filter { !$0.isEmpty }
+    guard let first = parts.first?.first else { return "?" }
+    if parts.count > 1, let last = parts[parts.count - 1].first {
+        return (String(first) + String(last)).uppercased()
+    }
+    return String(first).uppercased()
 }
 
 func avatarColorHex(for name: String) -> UInt32 {
-    guard !name.isEmpty else { return avatarColorPalette[0] }
-    let sum = name.unicodeScalars.reduce(0) { $0 + Int($1.value) }
-    return avatarColorPalette[sum % avatarColorPalette.count]
+    // Mirror the prototype: h = (h * 31 + charCode) >>> 0, index = h % count.
+    var hash: UInt32 = 0
+    for scalar in name.unicodeScalars {
+        hash = hash &* 31 &+ scalar.value
+    }
+    return avatarColorPalette[Int(hash % UInt32(avatarColorPalette.count))]
 }
 
 struct Avatar: View {
@@ -35,6 +45,8 @@ struct Avatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        // Decorative: an adjacent name label carries the identity in every use.
+        .accessibilityHidden(true)
     }
 
     private var initialsView: some View {

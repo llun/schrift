@@ -5,6 +5,8 @@ struct SearchScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @AppStorage("schrift.workOffline") private var workOffline = false
+
     private var trimmedQuery: String {
         viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -13,9 +15,11 @@ struct SearchScreen: View {
         VStack(spacing: 0) {
             NavBar(title: "Search", subtitle: serverHost, largeTitle: true)
 
+            if workOffline { OfflineBanner() }
+
             ScrollView {
-                VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
-                    SearchField(text: $viewModel.query, placeholder: "Search all documents")
+                VStack(alignment: .leading, spacing: 18) {
+                    SearchField(text: $viewModel.query, placeholder: "Search all documents", autoFocus: true)
                         .onSubmit {
                             viewModel.recordSearch()
                         }
@@ -27,7 +31,8 @@ struct SearchScreen: View {
                     }
                 }
                 .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.vertical, DocsSpacing.spaceBase)
+                .padding(.top, DocsSpacing.space3xs)
+                .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
         .background(DocsColor.surfacePage)
@@ -44,16 +49,17 @@ struct SearchScreen: View {
     @ViewBuilder
     private var emptyQueryContent: some View {
         if !viewModel.recentSearches.isEmpty {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                sectionLabel("Recent searches", icon: "clock")
+            VStack(alignment: .leading, spacing: 0) {
+                sectionLabel("Recent searches", icon: "clock.arrow.circlepath")
                 RecentSearchesFlow(terms: viewModel.recentSearches) { term in
                     viewModel.selectRecent(term)
                 }
+                .padding(.horizontal, DocsSpacing.spaceXS)
             }
         }
 
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            sectionLabel("Quick access", icon: "pin")
+        VStack(alignment: .leading, spacing: 0) {
+            sectionLabel("Quick access", icon: "pin.fill")
             if viewModel.quickAccess.isEmpty {
                 Text("Pinned documents will appear here.")
                     .font(DocsFont.subhead)
@@ -75,10 +81,18 @@ struct SearchScreen: View {
                 Spacer()
             }
             .padding(.vertical, DocsSpacing.spaceLG)
+        } else if let errorMessage = viewModel.errorMessage {
+            // A failed request isn't "no matches" — surface the error instead.
+            Text(errorMessage)
+                .font(DocsFont.subhead)
+                .foregroundStyle(DocsColor.danger)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DocsSpacing.spaceLG)
         } else if viewModel.results.isEmpty {
             emptyState
         } else {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+            VStack(alignment: .leading, spacing: 0) {
                 sectionLabel(resultsCountLabel, icon: nil)
                 documentList(viewModel.results)
             }
@@ -91,20 +105,21 @@ struct SearchScreen: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: DocsSpacing.spaceSM) {
+        VStack(spacing: DocsSpacing.space2xs) {
             Image(systemName: "exclamationmark.magnifyingglass")
                 .font(.system(size: 44))
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(DocsColor.gray300)
             Text("No documents found")
                 .font(DocsFont.headline)
                 .foregroundStyle(DocsColor.textPrimary)
-            Text("Nothing matches \"\(trimmedQuery)\". Try another title or keyword.")
+            Text("Nothing matches \u{201C}\(trimmedQuery)\u{201D}. Try another title or keyword.")
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.textTertiary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, DocsSpacing.spaceXL)
+        .padding(.vertical, DocsSpacing.space2XL)
+        .padding(.horizontal, DocsSpacing.spaceMD)
     }
 
     // MARK: - Helpers
@@ -125,16 +140,20 @@ struct SearchScreen: View {
     }
 
     private func sectionLabel(_ text: String, icon: String?) -> some View {
-        HStack(spacing: DocsSpacing.space2xs) {
+        HStack(spacing: DocsSpacing.space3xs + 1) {
             if let icon {
                 Image(systemName: icon)
-                    .font(DocsFont.footnote)
+                    .font(.system(size: 15))
             }
             Text(text.uppercased())
-                .font(DocsFont.footnote)
-                .tracking(0.05 * 13)
+                .font(DocsFont.footnote.weight(.semibold))
+                .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
         }
         .foregroundStyle(DocsColor.textTertiary)
+        .padding(.horizontal, DocsSpacing.spaceXS)
+        // Carry a ~4pt gap to the rows below, matching Home's documentSection
+        // and the reference (the wrapping VStacks use spacing 0).
+        .padding(.bottom, DocsSpacing.space3xs)
     }
 }
 
@@ -150,16 +169,17 @@ private struct RecentSearchesFlow: View {
                 Button {
                     onSelect(term)
                 } label: {
-                    HStack(spacing: DocsSpacing.space3xs) {
-                        Image(systemName: "clock")
-                            .font(DocsFont.subhead)
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 16))
+                            .foregroundStyle(DocsColor.textTertiary)
                         Text(term)
                             .font(DocsFont.subhead)
+                            .foregroundStyle(DocsColor.textSecondary)
                             .lineLimit(1)
                     }
-                    .foregroundStyle(DocsColor.textSecondary)
                     .padding(.horizontal, DocsSpacing.spaceSM)
-                    .padding(.vertical, DocsSpacing.spaceXS)
+                    .padding(.vertical, 7)
                     .background(DocsColor.surfaceSunken)
                     .overlay(
                         RoundedRectangle(cornerRadius: DocsRadius.pill)
@@ -180,7 +200,6 @@ private struct FlowLayout: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
-        var rows: [CGFloat] = [0]
         var rowWidth: CGFloat = 0
         var totalHeight: CGFloat = 0
         var rowHeight: CGFloat = 0
@@ -191,7 +210,6 @@ private struct FlowLayout: Layout {
                 totalHeight += rowHeight + spacing
                 rowWidth = size.width
                 rowHeight = size.height
-                rows.append(0)
             } else {
                 rowWidth += (rowWidth > 0 ? spacing : 0) + size.width
                 rowHeight = max(rowHeight, size.height)

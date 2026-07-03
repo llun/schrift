@@ -14,13 +14,17 @@ struct TextFieldStyleHex: Equatable {
 
 enum TextFieldStyleResolver {
     static func style(state: TextFieldState) -> TextFieldStyleHex {
+        // The label stays a constant neutral gray in every state (reference);
+        // only the border (and the focus ring) convey focus/error. Disabled
+        // dims the label to preserve the sunk look.
         switch state {
         case .normal:
             return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textSecondary)
         case .focused:
-            return TextFieldStyleHex(borderHex: DocsColorHex.borderFocus, labelHex: DocsColorHex.textBrandSecondary)
+            // Reference focused border is --border-brand (#5E5CD0 == brandFill); --border-focus is the soft ring.
+            return TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textSecondary)
         case .error:
-            return TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.danger)
+            return TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.textSecondary)
         case .disabled:
             return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textDisabled)
         }
@@ -28,7 +32,7 @@ enum TextFieldStyleResolver {
 }
 
 struct DocsTextField: View {
-    let label: String
+    var label: String? = nil
     @Binding var text: String
     var placeholder: String = ""
     var icon: String? = nil
@@ -47,28 +51,41 @@ struct DocsTextField: View {
 
     var body: some View {
         let style = TextFieldStyleResolver.style(state: state)
-        VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-            Text(label)
-                .font(DocsFont.footnote)
-                .foregroundStyle(Color(hex: style.labelHex))
+        VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
+            if let label, !label.isEmpty {
+                Text(label)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color(hex: style.labelHex))
+            }
 
             HStack(spacing: DocsSpacing.spaceXS) {
                 if let icon {
                     Image(systemName: icon)
+                        .font(.system(size: 20))
                         .foregroundStyle(DocsColor.textTertiary)
                 }
                 TextField(placeholder, text: $text)
-                    .font(DocsFont.body)
+                    .font(DocsFont.callout)
                     .focused($isFocused)
                     .disabled(isDisabled)
             }
-            .padding(DocsSpacing.spaceSM)
-            .background(DocsColor.surfacePage)
+            .padding(.horizontal, DocsSpacing.spaceSM)
+            .frame(height: 40)
+            // Disabled fields sink to the sunken surface (reference); enabled stay white.
+            .background(isDisabled ? DocsColor.surfaceSunken : DocsColor.surfacePage)
+            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: DocsRadius.sm)
-                    .strokeBorder(Color(hex: style.borderHex), lineWidth: state == .focused ? 2 : 1)
+                    .strokeBorder(Color(hex: style.borderHex), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
+            // Soft brand-400 focus ring sitting just outside the field, matching
+            // the reference's 3px glow.
+            .overlay(
+                RoundedRectangle(cornerRadius: DocsRadius.sm)
+                    .inset(by: -1.5)
+                    .stroke(DocsColor.borderFocus.opacity(0.25), lineWidth: state == .focused ? 3 : 0)
+            )
+            .opacity(isDisabled ? 0.6 : 1)
 
             if let error {
                 Text(error)

@@ -37,6 +37,36 @@ enum DocsColorHex {
     static let successSoft: UInt32 = 0xCFE4D4
     static let warningSoft: UInt32 = 0xF1E0D3
     static let dangerSoft: UInt32 = 0xF4DFD9
+
+    // Feedback (strong / -650 foregrounds — used by Badge & LinkReachPill)
+    static let dangerStrong: UInt32 = 0xC00100
+    static let info650: UInt32 = 0x0D4EAA
+    static let success650: UInt32 = 0x006024
+    static let warning650: UInt32 = 0x9E2300
+
+    // Brand logo / app-icon field
+    static let brandLogo: UInt32 = 0x4F46E5
+
+    // Neutral gray ramp (cool-tinted; a subset of the Cunningham grey scale)
+    static let gray050: UInt32 = 0xF0F0F3
+    static let gray100: UInt32 = 0xE2E2EA
+    static let gray300: UInt32 = 0xA9A9BF
+    static let gray350: UInt32 = 0x9C9CB2
+    static let gray450: UInt32 = 0x828297
+    static let gray600: UInt32 = 0x5D5D70
+
+    // Surfaces (semantic)
+    static let surfaceRaised: UInt32 = 0xFFFFFF
+    static let surfaceScrim: UInt32 = 0x1B1B23   // rendered at 0.45 opacity
+
+    // Accent palette (avatars, emoji chips, tags)
+    static let accentOrange: UInt32 = 0xB95D33
+    static let accentBrown: UInt32 = 0x8F7158
+    static let accentGreen: UInt32 = 0x008948
+    static let accentBlue1: UInt32 = 0x4279B9
+    static let accentBlue2: UInt32 = 0x00848F
+    static let accentPurple: UInt32 = 0x9961AF
+    static let accentPink: UInt32 = 0xAA5F80
 }
 
 enum DocsColor {
@@ -70,4 +100,14 @@ enum DocsColor {
     static let successSoft = Color(hex: DocsColorHex.successSoft)
     static let warningSoft = Color(hex: DocsColorHex.warningSoft)
     static let dangerSoft = Color(hex: DocsColorHex.dangerSoft)
+
+    static let brandLogo = Color(hex: DocsColorHex.brandLogo)
+
+    static let gray050 = Color(hex: DocsColorHex.gray050)
+    static let gray300 = Color(hex: DocsColorHex.gray300)
+    static let gray350 = Color(hex: DocsColorHex.gray350)
+    static let gray450 = Color(hex: DocsColorHex.gray450)
+
+    static let surfaceRaised = Color(hex: DocsColorHex.surfaceRaised)
+    static let surfaceScrim = Color(hex: DocsColorHex.surfaceScrim, opacity: 0.45)
 }

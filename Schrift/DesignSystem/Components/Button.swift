@@ -20,11 +20,9 @@ struct ButtonStyleHex: Equatable {
 }
 
 enum ButtonStyleResolver {
-    static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool) -> ButtonStyleHex {
-        if isDisabled {
-            return ButtonStyleHex(backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textDisabled, borderHex: nil)
-        }
-
+    // The disabled look is driven purely by lowering opacity at the view level
+    // (matching the reference), so the resolver keeps each variant's own colors.
+    static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool = false) -> ButtonStyleHex {
         let fillHex: UInt32
         let softHex: UInt32
         let onFillHex: UInt32
@@ -35,7 +33,8 @@ enum ButtonStyleResolver {
             fillHex = DocsColorHex.brandFill
             softHex = DocsColorHex.brandFillSoft
             onFillHex = DocsColorHex.textOnBrand
-            softForegroundHex = DocsColorHex.textBrandSecondary
+            // Reference Button hues use --text-brand as the ink for soft/ghost/outline.
+            softForegroundHex = DocsColorHex.textBrand
         case .neutral:
             fillHex = DocsColorHex.textPrimary
             softHex = DocsColorHex.surfaceMuted
@@ -56,7 +55,56 @@ enum ButtonStyleResolver {
         case .tertiary:
             return ButtonStyleHex(backgroundHex: nil, foregroundHex: softForegroundHex, borderHex: nil)
         case .outline:
-            return ButtonStyleHex(backgroundHex: nil, foregroundHex: softForegroundHex, borderHex: softForegroundHex)
+            // Reference outline = raised surface fill + neutral hairline border + ink label.
+            return ButtonStyleHex(backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: softForegroundHex, borderHex: DocsColorHex.borderDefault)
+        }
+    }
+}
+
+enum ButtonSize {
+    case small
+    case medium
+    case large
+
+    var height: CGFloat {
+        switch self {
+        case .small: return 32
+        case .medium: return 40
+        case .large: return 52
+        }
+    }
+
+    var horizontalPadding: CGFloat {
+        switch self {
+        case .small: return 12
+        case .medium: return 16
+        case .large: return 22
+        }
+    }
+
+    var fontSize: CGFloat {
+        switch self {
+        case .small: return 13
+        case .medium: return 14
+        case .large: return 16
+        }
+    }
+
+    /// Leading-glyph point size — distinct from (and larger than) the label,
+    /// matching the reference `iconSize` per size at weight 500.
+    var iconSize: CGFloat {
+        switch self {
+        case .small: return 18
+        case .medium: return 20
+        case .large: return 22
+        }
+    }
+
+    /// Icon-to-label gap (reference `gap` per size).
+    var iconGap: CGFloat {
+        switch self {
+        case .small: return DocsSpacing.space2xs
+        case .medium, .large: return DocsSpacing.spaceXS
         }
     }
 }
@@ -65,6 +113,7 @@ struct DocsButton: View {
     let title: String
     var variant: ButtonVariant = .primary
     var color: ButtonColor = .brand
+    var size: ButtonSize = .medium
     var icon: String? = nil
     var fullWidth: Bool = false
     var pill: Bool = false
@@ -74,15 +123,16 @@ struct DocsButton: View {
     var body: some View {
         let style = ButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
         Button(action: action) {
-            HStack(spacing: DocsSpacing.spaceXS) {
+            HStack(spacing: size.iconGap) {
                 if let icon {
                     Image(systemName: icon)
+                        .font(.system(size: size.iconSize, weight: .medium))
                 }
                 Text(title)
-                    .font(DocsFont.headline)
+                    .font(.system(size: size.fontSize, weight: .semibold))
             }
-            .padding(.horizontal, DocsSpacing.spaceBase)
-            .padding(.vertical, DocsSpacing.spaceSM)
+            .padding(.horizontal, size.horizontalPadding)
+            .frame(height: size.height)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .foregroundStyle(Color(hex: style.foregroundHex))
             .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
@@ -92,6 +142,7 @@ struct DocsButton: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm))
         }
+        .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
     }
 }

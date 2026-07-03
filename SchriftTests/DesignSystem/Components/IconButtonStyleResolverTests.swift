@@ -11,18 +11,21 @@ final class IconButtonStyleResolverTests: XCTestCase {
     func testSoftBrandUsesBrandSoftBackground() {
         let style = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: false)
         XCTAssertEqual(style.backgroundHex, DocsColorHex.brandFillSoft)
-        XCTAssertEqual(style.foregroundHex, DocsColorHex.textBrandSecondary)
+        XCTAssertEqual(style.foregroundHex, DocsColorHex.textBrand)
     }
 
-    func testOutlineDangerHasMatchingBorder() {
+    func testOutlineDangerUsesRaisedSurfaceAndHairlineBorder() {
         let style = IconButtonStyleResolver.style(variant: .outline, color: .danger, isDisabled: false)
-        XCTAssertNil(style.backgroundHex)
+        XCTAssertEqual(style.backgroundHex, DocsColorHex.surfaceRaised)
         XCTAssertEqual(style.foregroundHex, DocsColorHex.danger)
-        XCTAssertEqual(style.borderHex, DocsColorHex.danger)
+        XCTAssertEqual(style.borderHex, DocsColorHex.borderDefault)
     }
 
-    func testDisabledIgnoresVariantAndColor() {
-        let style = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: true)
-        XCTAssertEqual(style, IconButtonStyleHex(backgroundHex: nil, foregroundHex: DocsColorHex.textDisabled, borderHex: nil))
+    func testDisabledKeepsVariantColors() {
+        // Disabled is rendered by lowering opacity at the view level, so the
+        // resolved colors stay identical to the enabled state.
+        let enabled = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: false)
+        let disabled = IconButtonStyleResolver.style(variant: .soft, color: .brand, isDisabled: true)
+        XCTAssertEqual(disabled, enabled)
     }
 }

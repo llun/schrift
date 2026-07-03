@@ -18,6 +18,17 @@ enum DocsTypographySpec {
     static let code = TypographySpec(size: 15, weight: .regular)
 }
 
+/// Letter-spacing scale (`--tracking-*`), expressed as an em fraction.
+/// Apply with `.tracking(size * DocsTracking.tight)` at a call site.
+enum DocsTracking {
+    static let tight: CGFloat = -0.02
+    static let wide: CGFloat = 0.01
+    /// Uppercase screen "eyebrow" section labels (`letter-spacing: 0.05em`).
+    static let eyebrow: CGFloat = 0.05
+    /// Grouped-list card headers (`letter-spacing: 0.04em`).
+    static let groupedHeader: CGFloat = 0.04
+}
+
 enum DocsFont {
     static let largeTitle = Font.system(size: DocsTypographySpec.largeTitle.size, weight: DocsTypographySpec.largeTitle.weight)
     static let title1 = Font.system(size: DocsTypographySpec.title1.size, weight: DocsTypographySpec.title1.weight)

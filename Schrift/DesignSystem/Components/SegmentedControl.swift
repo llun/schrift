@@ -16,23 +16,38 @@ struct SegmentedControl: View {
     let segments: [String]
     @Binding var selectedIndex: Int
 
+    private let trackPadding: CGFloat = 2
+
     var body: some View {
         GeometryReader { geometry in
             let layout = segmentedControlLayout(segmentCount: segments.count, selectedIndex: selectedIndex)
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(DocsColor.surfaceMuted)
+                // Sunken rounded-rect track (not a full pill).
+                RoundedRectangle(cornerRadius: DocsRadius.md)
+                    .fill(DocsColor.surfaceSunken)
 
-                Capsule()
-                    .fill(DocsColor.surfacePage)
-                    .frame(width: geometry.size.width * layout.segmentFraction)
-                    .offset(x: geometry.size.width * layout.thumbOffsetFraction)
+                // White sliding thumb, one radius step tighter than the track.
+                // A hairline border plus a soft shadow give it the crisp edge
+                // the reference thumb reads with over the sunken track.
+                RoundedRectangle(cornerRadius: DocsRadius.sm)
+                    .fill(DocsColor.surfaceRaised)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DocsRadius.sm)
+                            .strokeBorder(DocsColor.borderDefault, lineWidth: 0.5)
+                    )
+                    .shadow(color: DocsColor.textPrimary.opacity(0.08), radius: 2, x: 0, y: 1)
+                    // Per-segment cell model (reference): each cell is width/n and
+                    // the thumb is inset 2pt on every edge within its cell, so the
+                    // pill stays centered under every label.
+                    .frame(width: geometry.size.width * layout.segmentFraction - trackPadding * 2,
+                           height: geometry.size.height - trackPadding * 2)
+                    .offset(x: geometry.size.width * layout.thumbOffsetFraction + trackPadding)
                     .animation(.easeOut(duration: 0.2), value: selectedIndex)
 
                 HStack(spacing: 0) {
                     ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                         Text(segment)
-                            .font(DocsFont.subhead)
+                            .font(.system(size: 13, weight: index == selectedIndex ? .semibold : .medium))
                             .foregroundStyle(index == selectedIndex ? DocsColor.textPrimary : DocsColor.textSecondary)
                             .frame(maxWidth: .infinity)
                             .contentShape(Rectangle())
@@ -42,7 +57,7 @@ struct SegmentedControl: View {
                 }
             }
         }
-        .frame(height: DocsSpacing.rowMinHeight)
+        .frame(height: 34)
     }
 }
 

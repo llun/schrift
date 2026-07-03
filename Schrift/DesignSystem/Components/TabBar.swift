@@ -22,20 +22,30 @@ struct TabBar: View {
                 Button(action: { selection = item.value }) {
                     VStack(spacing: DocsSpacing.space4xs) {
                         Image(systemName: tabBarIconName(baseSystemImage: item.systemImage, isSelected: isSelected))
+                            .font(.system(size: 25, weight: isSelected ? .medium : .regular))
                         Text(item.label)
-                            .font(DocsFont.caption)
+                            .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                     }
-                    .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.textTertiary)
+                    .padding(.vertical, DocsSpacing.space4xs)
+                    .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.gray450)
                     .frame(maxWidth: .infinity)
                 }
                 .accessibilityLabel(item.label)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .padding(.top, DocsSpacing.space3xs)
-        .padding(.bottom, showsSafeArea ? DocsSpacing.homeIndicatorHeight : DocsSpacing.space3xs)
-        .frame(height: DocsSpacing.tabBarHeight + (showsSafeArea ? DocsSpacing.homeIndicatorHeight : 0))
-        .background(DocsColor.surfacePage.opacity(0.94))
+        .padding(.top, DocsSpacing.space2xs)
+        .padding(.bottom, DocsSpacing.space2xs)
+        .frame(maxWidth: .infinity)
+        // The translucent bar fills the home-indicator safe area itself; the
+        // content sits just above it. Padding the content by the full safe-area
+        // inset (as before) double-counted it against the device inset and left
+        // a large empty gap below the labels.
+        .background(
+            DocsColor.surfacePage.opacity(0.9)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea(edges: showsSafeArea ? .bottom : [])
+        )
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(DocsColor.borderDefault)

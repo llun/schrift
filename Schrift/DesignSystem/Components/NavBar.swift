@@ -7,11 +7,27 @@ func navBarHeight(largeTitle: Bool) -> CGFloat {
 struct NavBarAction {
     let systemImage: String
     let label: String
+    var color: IconButtonColor = .neutral
+    var filled: Bool = false
     let action: () -> Void
 }
 
+/// The bar's fill: white for standard chrome, sunken for screens whose page
+/// background is `--surface-sunken` (Profile, Account).
+enum NavBarTint {
+    case page
+    case sunken
+
+    var color: Color {
+        switch self {
+        case .page: return DocsColor.surfacePage
+        case .sunken: return DocsColor.surfaceSunken
+        }
+    }
+}
+
 struct NavBar: View {
-    let title: String
+    var title: String = ""
     var subtitle: String? = nil
     var largeTitle: Bool = false
     var titleBadge: Badge? = nil
@@ -19,6 +35,7 @@ struct NavBar: View {
     var onBack: (() -> Void)? = nil
     var trailingActions: [NavBarAction] = []
     var translucent: Bool = true
+    var surfaceTint: NavBarTint = .page
     var showsBorder: Bool = true
 
     var body: some View {
@@ -28,16 +45,35 @@ struct NavBar: View {
                     Button(action: onBack) {
                         HStack(spacing: DocsSpacing.space4xs) {
                             Image(systemName: "chevron.left")
+                                // Reference back glyph is larger than its 17pt label
+                                // (26px arrow_back_ios_new).
+                                .font(.system(size: 20, weight: .semibold))
                             Text(backTitle)
+                                .font(DocsFont.body)
                         }
-                        .font(DocsFont.body)
-                        .foregroundStyle(DocsColor.textBrand)
+                        .foregroundStyle(DocsColor.brandFill)
                     }
                 }
 
                 Spacer()
 
-                if !largeTitle {
+                HStack(spacing: DocsSpacing.space4xs) {
+                    ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
+                        IconButton(
+                            systemImage: action.systemImage,
+                            label: action.label,
+                            color: action.color,
+                            filled: action.filled,
+                            action: action.action
+                        )
+                    }
+                }
+            }
+            // Center the standard-mode title across the FULL bar (matching the
+            // reference's absolutely-centered title) so it stays optically
+            // centered regardless of the leading/trailing control widths.
+            .overlay {
+                if !largeTitle, !title.isEmpty {
                     VStack(spacing: 0) {
                         Text(title)
                             .font(DocsFont.headline)
@@ -48,14 +84,7 @@ struct NavBar: View {
                                 .foregroundStyle(DocsColor.textTertiary)
                         }
                     }
-                }
-
-                Spacer()
-
-                HStack(spacing: DocsSpacing.spaceXS) {
-                    ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
-                        IconButton(systemImage: action.systemImage, label: action.label, action: action.action)
-                    }
+                    .allowsHitTesting(false)
                 }
             }
             .padding(.horizontal, DocsSpacing.gutter)
@@ -66,6 +95,7 @@ struct NavBar: View {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         Text(title)
                             .font(DocsFont.largeTitle)
+                            .tracking(DocsTypographySpec.largeTitle.size * DocsTracking.tight)
                             .foregroundStyle(DocsColor.textPrimary)
                         if let titleBadge {
                             titleBadge
@@ -73,17 +103,27 @@ struct NavBar: View {
                     }
                     if let subtitle {
                         Text(subtitle)
-                            .font(DocsFont.footnote)
+                            .font(DocsFont.subhead)
                             .foregroundStyle(DocsColor.textTertiary)
+                            .padding(.top, DocsSpacing.space4xs)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.bottom, DocsSpacing.spaceXS)
+                .padding(.top, DocsSpacing.space4xs)
+                .padding(.bottom, DocsSpacing.spaceSM - DocsSpacing.space4xs)
             }
         }
         .frame(minHeight: navBarHeight(largeTitle: largeTitle))
-        .background(translucent ? DocsColor.surfacePage.opacity(0.82) : DocsColor.surfacePage)
+        // Translucent bars are frosted glass: a system material blur under a
+        // ~0.82 tint, matching the reference `backdrop-filter: blur(20px)`.
+        .background {
+            if translucent {
+                surfaceTint.color.opacity(0.82).background(.ultraThinMaterial)
+            } else {
+                surfaceTint.color
+            }
+        }
         .overlay(alignment: .bottom) {
             if showsBorder {
                 Rectangle()

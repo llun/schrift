@@ -7,14 +7,14 @@ final class TextFieldStyleResolverTests: XCTestCase {
         XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textSecondary))
     }
 
-    func testFocusedStateUsesBrandBorder() {
+    func testFocusedStateUsesBrandBorderAndNeutralLabel() {
         let style = TextFieldStyleResolver.style(state: .focused)
-        XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.borderFocus, labelHex: DocsColorHex.textBrandSecondary))
+        XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textSecondary))
     }
 
-    func testErrorStateUsesDangerBorder() {
+    func testErrorStateUsesDangerBorderAndNeutralLabel() {
         let style = TextFieldStyleResolver.style(state: .error)
-        XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.danger))
+        XCTAssertEqual(style, TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.textSecondary))
     }
 
     func testDisabledStateUsesDefaultBorderWithDisabledLabel() {

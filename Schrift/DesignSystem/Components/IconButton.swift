@@ -19,11 +19,9 @@ struct IconButtonStyleHex: Equatable {
 }
 
 enum IconButtonStyleResolver {
-    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool) -> IconButtonStyleHex {
-        if isDisabled {
-            return IconButtonStyleHex(backgroundHex: nil, foregroundHex: DocsColorHex.textDisabled, borderHex: nil)
-        }
-
+    // Disabled is driven by view-level opacity (matching the reference), so the
+    // resolver keeps each variant's own colors.
+    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false) -> IconButtonStyleHex {
         let foregroundHex: UInt32
         let softHex: UInt32
 
@@ -32,7 +30,8 @@ enum IconButtonStyleResolver {
             foregroundHex = DocsColorHex.textSecondary
             softHex = DocsColorHex.surfaceMuted
         case .brand:
-            foregroundHex = DocsColorHex.textBrandSecondary
+            // Reference IconButton brand hue is --text-brand.
+            foregroundHex = DocsColorHex.textBrand
             softHex = DocsColorHex.brandFillSoft
         case .danger:
             foregroundHex = DocsColorHex.danger
@@ -45,7 +44,32 @@ enum IconButtonStyleResolver {
         case .soft:
             return IconButtonStyleHex(backgroundHex: softHex, foregroundHex: foregroundHex, borderHex: nil)
         case .outline:
-            return IconButtonStyleHex(backgroundHex: nil, foregroundHex: foregroundHex, borderHex: foregroundHex)
+            // Reference outline = raised surface fill + neutral hairline border + ink glyph.
+            return IconButtonStyleHex(backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: foregroundHex, borderHex: DocsColorHex.borderDefault)
+        }
+    }
+}
+
+enum IconButtonSize {
+    case small
+    case medium
+    case large
+
+    /// Tap-target box size (pt).
+    var box: CGFloat {
+        switch self {
+        case .small: return 32
+        case .medium: return 40
+        case .large: return 44
+        }
+    }
+
+    /// Glyph point size.
+    var glyph: CGFloat {
+        switch self {
+        case .small: return 20
+        case .medium: return 24
+        case .large: return 26
         }
     }
 }
@@ -55,6 +79,8 @@ struct IconButton: View {
     let label: String
     var variant: IconButtonVariant = .ghost
     var color: IconButtonColor = .neutral
+    var size: IconButtonSize = .medium
+    var filled: Bool = false
     var isDisabled: Bool = false
     var action: () -> Void
 
@@ -62,15 +88,22 @@ struct IconButton: View {
         let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
         Button(action: action) {
             Image(systemName: systemImage)
-                .frame(width: DocsSpacing.rowMinHeight, height: DocsSpacing.rowMinHeight)
+                .font(.system(size: size.glyph))
+                .symbolVariant(filled ? .fill : .none)
+                .frame(width: size.box, height: size.box)
                 .foregroundStyle(Color(hex: style.foregroundHex))
                 .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
                 .overlay(
-                    Circle()
+                    RoundedRectangle(cornerRadius: DocsRadius.md)
                         .strokeBorder(style.borderHex.map { Color(hex: $0) } ?? Color.clear, lineWidth: style.borderHex == nil ? 0 : 1)
                 )
-                .clipShape(Circle())
+                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         }
+        // Keep the reference's smaller visual box, but never let the tap target
+        // fall below the 44pt iOS minimum (the reference documents this too).
+        .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
+        .contentShape(Rectangle())
+        .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
         .accessibilityLabel(label)
     }

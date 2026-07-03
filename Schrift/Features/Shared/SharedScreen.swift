@@ -13,6 +13,8 @@ struct SharedScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @AppStorage("schrift.workOffline") private var workOffline = false
+
     private var scopeIndex: Binding<Int> {
         Binding(
             get: { viewModel.scope == .withMe ? 0 : 1 },
@@ -42,6 +44,8 @@ struct SharedScreen: View {
         VStack(spacing: 0) {
             NavBar(title: "Shared", subtitle: serverHost, largeTitle: true)
 
+            if workOffline { OfflineBanner() }
+
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
                     SegmentedControl(
@@ -49,12 +53,13 @@ struct SharedScreen: View {
                         selectedIndex: scopeIndex
                     )
                     .padding(.horizontal, DocsSpacing.gutter)
+                    // 18pt gap below the control, matching Home/Search and the reference.
+                    .padding(.bottom, DocsSpacing.space4xs)
 
                     ListSection(header: "\(viewModel.documents.count) documents") {
                         ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
                             if index > 0 {
-                                Divider()
-                                    .padding(.leading, DocsSpacing.spaceBase)
+                                ProfileRowDivider()
                             }
                             SharedRow(
                                 title: document.title ?? "Untitled document",
@@ -70,7 +75,8 @@ struct SharedScreen: View {
                         .foregroundStyle(DocsColor.textTertiary)
                         .padding(.horizontal, DocsSpacing.gutterGrouped)
                 }
-                .padding(.vertical, DocsSpacing.spaceBase)
+                .padding(.top, DocsSpacing.space3xs)
+                .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
         .background(DocsColor.surfacePage)

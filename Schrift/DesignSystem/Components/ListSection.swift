@@ -12,25 +12,30 @@ struct ListSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+        VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             if let header {
                 Text(header.uppercased())
                     .font(DocsFont.footnote)
+                    .tracking(DocsTypographySpec.footnote.size * DocsTracking.groupedHeader)
                     .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.gutterGrouped)
+                    .padding(.horizontal, DocsSpacing.gutter)
             }
 
             VStack(spacing: 0) {
                 content
             }
-            .background(DocsColor.surfacePage)
+            .background(DocsColor.surfaceRaised)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
+            .overlay(
+                RoundedRectangle(cornerRadius: DocsRadius.lg)
+                    .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
+            )
 
             if let footer {
                 Text(footer)
                     .font(DocsFont.footnote)
                     .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.gutterGrouped)
+                    .padding(.horizontal, DocsSpacing.gutter)
             }
         }
     }

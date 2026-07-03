@@ -20,7 +20,8 @@ enum LinkReachPillStyleResolver {
         case .restricted:
             return LinkReachPillStyleHex(backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textSecondary, systemImage: "lock.fill", label: "Restricted", hint: "Only invited people")
         case .authenticated:
-            return LinkReachPillStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info, systemImage: "network", label: "Connected", hint: "Anyone in the org")
+            // Reference uses `vpn_lock` (a lock over a globe) for the org-gated state.
+            return LinkReachPillStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650, systemImage: "network.badge.shield.half.filled", label: "Connected", hint: "Anyone in the org")
         case .public:
             return LinkReachPillStyleHex(backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary, systemImage: "globe", label: "Public", hint: "Anyone with the link")
         }
@@ -33,21 +34,24 @@ struct LinkReachPill: View {
 
     var body: some View {
         let style = LinkReachPillStyleResolver.style(reach: reach)
-        HStack(spacing: DocsSpacing.space4xs) {
+        HStack(spacing: DocsSpacing.space2xs) {
             Image(systemName: style.systemImage)
-                .font(.system(size: 11))
+                .font(.system(size: 18))
             VStack(alignment: .leading, spacing: 0) {
                 Text(style.label)
-                    .font(DocsFont.caption)
+                    .font(.system(size: 14, weight: .semibold))
                 if showsHint {
                     Text(style.hint)
-                        .font(.system(size: 10))
+                        .font(DocsFont.caption)
                         .opacity(0.8)
                 }
             }
         }
-        .padding(.horizontal, DocsSpacing.spaceXS)
-        .padding(.vertical, DocsSpacing.space4xs)
+        // Reference uses a fuller asymmetric pad with the hint (6/8-left/12-right)
+        // and a compact symmetric pad without it (5/10).
+        .padding(.leading, showsHint ? DocsSpacing.spaceXS : 10)
+        .padding(.trailing, showsHint ? DocsSpacing.spaceSM : 10)
+        .padding(.vertical, showsHint ? DocsSpacing.space2xs : 5)
         .foregroundStyle(Color(hex: style.foregroundHex))
         .background(Color(hex: style.backgroundHex))
         .clipShape(Capsule())

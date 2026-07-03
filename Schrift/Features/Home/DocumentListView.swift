@@ -13,77 +13,61 @@ struct DocumentListView: View {
     @AppStorage("schrift.workOffline") private var workOffline = false
     @State private var documentPendingFavoriteChoice: Document?
 
+    private var isOffline: Bool { viewModel.isOffline || workOffline }
+
+    private var trailingActions: [NavBarAction] {
+        var actions: [NavBarAction] = []
+        if let onSearchTap {
+            actions.append(NavBarAction(systemImage: "magnifyingglass", label: "Search", action: onSearchTap))
+        }
+        if let onNewDocument {
+            actions.append(NavBarAction(systemImage: "plus", label: "New doc", color: .brand, action: onNewDocument))
+        }
+        return actions
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             NavBar(
                 title: "Schrift",
                 subtitle: serverHost,
                 largeTitle: true,
-                titleBadge: (viewModel.isOffline || workOffline) ? Badge(text: "Offline", tone: .warning, icon: "wifi.slash") : nil,
-                trailingActions: onNewDocument.map { [NavBarAction(systemImage: "square.and.pencil", label: "New doc", action: $0)] } ?? []
+                trailingActions: trailingActions
             )
 
-            VStack(spacing: DocsSpacing.spaceSM) {
-                if let onSearchTap {
-                    Button(action: onSearchTap) {
-                        SearchField(text: .constant(""), placeholder: "Search \(serverHost)")
-                            .allowsHitTesting(false)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
-                }
-
-                SegmentedControl(
-                    segments: HomeFilter.allCases.map(\.title),
-                    selectedIndex: Binding(
-                        get: { viewModel.selectedFilter.rawValue },
-                        set: { newValue in
-                            let filter = HomeFilter(rawValue: newValue) ?? .all
-                            Task { await viewModel.selectFilter(filter) }
-                        }
-                    )
-                )
-            }
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.vertical, DocsSpacing.spaceSM)
-
-            if let errorMessage = viewModel.errorMessage {
-                Text(errorMessage)
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.danger)
-                    .padding(.horizontal, DocsSpacing.gutter)
+            if isOffline {
+                OfflineBanner()
             }
 
             ScrollView {
-                if viewModel.isLoading {
-                    ProgressView()
-                        .padding(DocsSpacing.spaceBase)
-                } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    if viewModel.searchResults.isEmpty {
-                        if viewModel.errorMessage == nil {
-                            ContentUnavailableView.search(text: viewModel.searchQuery)
-                        }
-                    } else {
-                        documentSection(title: "Search Results", documents: viewModel.searchResults)
-                    }
-                } else if viewModel.pinnedDocuments.isEmpty && viewModel.recentDocuments.isEmpty {
-                    if viewModel.errorMessage == nil {
-                        ContentUnavailableView(
-                            "No Documents",
-                            systemImage: "doc.text",
-                            description: Text("Documents you create or that are shared with you will appear here.")
+                VStack(alignment: .leading, spacing: 0) {
+                    searchField
+                        .padding(.bottom, DocsSpacing.spaceSM)
+
+                    SegmentedControl(
+                        segments: HomeFilter.allCases.map(\.title),
+                        selectedIndex: Binding(
+                            get: { viewModel.selectedFilter.rawValue },
+                            set: { newValue in
+                                let filter = HomeFilter(rawValue: newValue) ?? .all
+                                Task { await viewModel.selectFilter(filter) }
+                            }
                         )
-                    }
-                } else {
-                    if viewModel.showsPinnedSection {
-                        documentSection(title: "Pinned", documents: viewModel.pinnedDocuments)
-                    }
-                    documentSection(
-                        title: viewModel.selectedFilter == .shared ? "Shared with me" : "Recent",
-                        documents: viewModel.recentDocuments
                     )
+                    .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
+
+                    if let errorMessage = viewModel.errorMessage {
+                        Text(errorMessage)
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(DocsColor.danger)
+                            .padding(.bottom, DocsSpacing.spaceXS)
+                    }
+
+                    content
                 }
+                .padding(.top, DocsSpacing.space3xs)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.bottom, DocsSpacing.spaceBase)
             }
             .refreshable {
                 await viewModel.load()
@@ -111,23 +95,101 @@ struct DocumentListView: View {
     }
 
     @ViewBuilder
-    private func documentSection(title: String, documents: [Document]) -> some View {
+    private var searchField: some View {
+        if let onSearchTap {
+            Button(action: onSearchTap) {
+                SearchField(text: .constant(""), placeholder: "Search \(serverHost)")
+                    .allowsHitTesting(false)
+            }
+            .buttonStyle(.plain)
+            // Announce one actionable button, not the inert editable field inside.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Search \(serverHost)")
+            .accessibilityAddTraits(.isButton)
+        } else {
+            SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if viewModel.isLoading {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.top, DocsSpacing.spaceBase)
+        } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if viewModel.searchResults.isEmpty {
+                if viewModel.errorMessage == nil {
+                    ContentUnavailableView.search(text: viewModel.searchQuery)
+                }
+            } else {
+                documentSection(title: "Results", documents: viewModel.searchResults)
+            }
+        } else if viewModel.pinnedDocuments.isEmpty && viewModel.recentDocuments.isEmpty {
+            if viewModel.errorMessage == nil {
+                ContentUnavailableView(
+                    "No documents yet",
+                    systemImage: "doc.text",
+                    description: Text("Documents you create or that are shared with you will appear here.")
+                )
+            }
+        } else {
+            if viewModel.showsPinnedSection {
+                documentSection(title: "Pinned", icon: "pin.fill", documents: viewModel.pinnedDocuments)
+            }
+            documentSection(
+                title: mainSectionTitle,
+                icon: viewModel.selectedFilter == .pinned ? "pin.fill" : nil,
+                documents: viewModel.recentDocuments
+            )
+        }
+    }
+
+    /// Header for the main (non-pinned) section, which reflects the active
+    /// filter: the Pinned filter loads favorites here, so it must read "Pinned"
+    /// rather than the default "Recent".
+    private var mainSectionTitle: String {
+        switch viewModel.selectedFilter {
+        case .shared: return "Shared with me"
+        case .pinned: return "Pinned"
+        default: return "Recent"
+        }
+    }
+
+    /// A flat document section — an icon+label header over hover-highlighted
+    /// rows, with no grouped-card border (matches the reference doc list).
+    @ViewBuilder
+    private func documentSection(title: String, icon: String? = nil, documents: [Document]) -> some View {
         if !documents.isEmpty {
-            ListSection(header: title) {
-                VStack(spacing: 0) {
-                    ForEach(documents) { document in
-                        DocRow(
-                            emoji: nil,
-                            title: document.title ?? "Untitled document",
-                            pinned: document.isFavorite,
-                            reach: document.linkReach,
-                            date: documentRowDate(document),
-                            onOpen: { onSelect(document) },
-                            onMore: { documentPendingFavoriteChoice = document }
-                        )
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: DocsSpacing.space3xs + 1) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .font(.system(size: 15))
+                            .foregroundStyle(DocsColor.textTertiary)
                     }
+                    Text(title.uppercased())
+                        .font(DocsFont.footnote.weight(.semibold))
+                        .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
+                        .foregroundStyle(DocsColor.textTertiary)
+                }
+                .padding(.horizontal, DocsSpacing.spaceXS)
+                .padding(.bottom, DocsSpacing.space3xs)
+
+                ForEach(documents) { document in
+                    DocRow(
+                        emoji: nil,
+                        title: document.title ?? "Untitled document",
+                        pinned: document.isFavorite,
+                        reach: document.linkReach,
+                        date: documentRowDate(document),
+                        offlineAvailable: isOffline,
+                        onOpen: { onSelect(document) },
+                        onMore: { documentPendingFavoriteChoice = document }
+                    )
                 }
             }
+            .padding(.bottom, DocsSpacing.spaceSM)
         }
     }
 }

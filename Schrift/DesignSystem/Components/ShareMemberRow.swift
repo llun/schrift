@@ -16,39 +16,45 @@ struct ShareMemberRow: View {
             Avatar(name: name, size: 40)
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: DocsSpacing.space4xs) {
+                HStack(spacing: DocsSpacing.space2xs) {
                     Text(name)
-                        .font(DocsFont.body)
-                        .fontWeight(.semibold)
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(DocsColor.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser) {
                         Text(suffix)
-                            .font(DocsFont.footnote)
+                            .font(DocsFont.caption)
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                 }
-                Text(email)
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
+                if !email.isEmpty {
+                    Text(email)
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: { onTapRole?() }) {
                 HStack(spacing: DocsSpacing.space4xs) {
                     Text(role)
-                        .font(DocsFont.body)
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(DocsColor.textSecondary)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(DocsColor.textSecondary)
                 }
+                .frame(minHeight: DocsSpacing.rowMinHeight)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Role: \(role)")
             .accessibilityHint("Double tap to change role")
         }
-        .padding(.horizontal, DocsSpacing.gutterGrouped)
-        .frame(minHeight: DocsSpacing.rowMinHeight)
+        .padding(.horizontal, DocsSpacing.space3xs)
+        .padding(.vertical, DocsSpacing.spaceXS)
     }
 }
 
