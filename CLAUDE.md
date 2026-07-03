@@ -37,9 +37,17 @@ This file is the shorter, operational "how we write code here" companion.
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`, not
   by adding an Info.plist file.
-- There is **no linter** configured (no SwiftLint/SwiftFormat) and **no test/lint
-  CI** — the only workflow is the TestFlight release pipeline. Verify changes by
-  building and running the test suite in Xcode on macOS.
+- There is **no linter** configured (no SwiftLint/SwiftFormat) — that is
+  deliberate; don't add one.
+- **PR checks**: every pull request targeting `main` builds the app and runs the
+  full test suite on an iPhone simulator via
+  [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job
+  surfaces as the status check **`Build & Test`**, which is required for merging
+  (enforced by a repo ruleset — see [`docs/ci.md`](docs/ci.md); renaming the job
+  breaks the guard). The workflow uses **no secrets and must never gain one**,
+  and must never use `pull_request_target` — release/signing work lives only in
+  `testflight.yml`. Still verify changes locally by building and running the
+  test suite in Xcode on macOS before pushing.
 - Release: **every merge to `main` auto-ships to TestFlight** via fastlane +
   GitHub Actions ([`.github/workflows/testflight.yml`](.github/workflows/testflight.yml)).
   The pipeline computes the next **Conventional-Commits** version from the latest
@@ -62,7 +70,8 @@ This file is the shorter, operational "how we write code here" companion.
   build/test-only (no archive/deploy on `main`) so the two don't double-build or
   collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not
-  committed): the fastlane `beta` lane runs `xcodegen generate`, and **Xcode
+  committed): the PR-checks workflow has an explicit `xcodegen generate` step,
+  the fastlane `beta` lane runs `xcodegen generate`, and **Xcode
   Cloud** runs it via the
   [`ci_scripts/ci_post_clone.sh`](ci_scripts/ci_post_clone.sh) post-clone hook —
   keep that file executable (`chmod +x`) or Xcode Cloud silently skips it. Any new
@@ -93,7 +102,7 @@ Schrift/
 │   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree 1:1
-fastlane/ scripts/ .github/workflows/   TestFlight release pipeline (fastlane + GitHub Actions)
+fastlane/ scripts/ .github/workflows/   CI: PR build/test checks + TestFlight release pipeline
 ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
 ```
@@ -326,8 +335,9 @@ markdown write endpoint**. Understand this before touching the save path:
   record. (Dated plans are the one exception to "keep docs current" — they are a
   historical record, not living docs.)
 - Keep the **living docs** accurate when behavior changes: this `CLAUDE.md`,
-  `README.md`, the design spec, `docs/testflight-setup.md`, and the CI/build
-  sources (`project.yml`, `.github/workflows/testflight.yml`, `ci_scripts/`).
+  `README.md`, the design spec, `docs/testflight-setup.md`, `docs/ci.md`, and the
+  CI/build sources (`project.yml`, `.github/workflows/pr-checks.yml`,
+  `.github/workflows/testflight.yml`, `ci_scripts/`).
 
 ## PR review loop — required for all agent work
 
@@ -417,7 +427,9 @@ Do **not** do any of the following without explicit human sign-off:
   never widen `upload-artifact` paths to catch keys/keychains/`.p8`, keep the CI
   deploy key read-only, and keep `match` `readonly` on CI. Never add a
   `pull_request`/`pull_request_target` trigger to `testflight.yml` (it would
-  expose signing secrets to fork PRs).
+  expose signing secrets to fork PRs), and conversely never add a secret or a
+  `pull_request_target` trigger to `pr-checks.yml` — the PR-check workflow stays
+  secret-free on the fork-safe `pull_request` trigger.
 - **Never introduce arbitrary code execution or destructive shell/git
   operations** — no `eval` of remote input, `curl | bash`, `rm -rf`,
   `git push --force` to shared branches, force-adding ignored files, or history

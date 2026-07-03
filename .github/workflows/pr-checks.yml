@@ -1,0 +1,89 @@
+name: PR Checks
+
+# Build the app and run the full XCTest suite on every PR targeting `main`.
+#
+# This workflow uses NO secrets and must never gain any — it runs on the
+# fork-safe `pull_request` trigger (never `pull_request_target`). Anything
+# involving signing or releasing lives exclusively in testflight.yml.
+#
+# The job below surfaces as the status check "Build & Test", which is the
+# required check that guards merges to `main` (see docs/ci.md).
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One run per PR; a new push cancels the in-flight run.
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # "Build & Test" is the required status check on `main` (see docs/ci.md).
+    # Renaming this job breaks the merge guard until the ruleset is updated.
+    name: Build & Test
+    runs-on: macos-latest
+    # Unit tests only — normal runs finish well under this; the cap catches hangs.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Match testflight.yml so PR checks and releases build with the same Xcode.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # The Xcode project is generated from project.yml and not committed —
+      # CI must regenerate it before any xcodebuild call (see CLAUDE.md).
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Runner images change their simulator lineup over time. Prefer the
+      # documented "iPhone 17", fall back to any available iPhone simulator.
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          names="$(xcrun simctl list devices available \
+            | sed -nE 's/^ *(iPhone [^(]*[^( ]) \(.*/\1/p' | sort -u)"
+          device="$(printf '%s\n' "$names" | grep -x 'iPhone 17' || true)"
+          [ -n "$device" ] || device="$(printf '%s\n' "$names" | head -n 1)"
+          if [ -z "$device" ]; then
+            echo "No iPhone simulator available on this runner:" >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Using simulator: $device"
+          echo "name=$device" >> "$GITHUB_OUTPUT"
+
+      - name: Build & test
+        run: |
+          set -o pipefail
+          # xcbeautify is preinstalled on GitHub macOS images; fall back to
+          # raw output if an image ever drops it (no extra installs).
+          formatter=cat
+          command -v xcbeautify >/dev/null && formatter=xcbeautify
+          xcodebuild test \
+            -project Schrift.xcodeproj \
+            -scheme Schrift \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | "$formatter"
+
+      # The result bundle is only interesting when something failed.
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

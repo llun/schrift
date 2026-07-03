@@ -1,5 +1,7 @@
 # Schrift
 
+[![PR Checks](https://github.com/llun/schrift/actions/workflows/pr-checks.yml/badge.svg)](https://github.com/llun/schrift/actions/workflows/pr-checks.yml)
+
 Schrift is a native iOS/iPadOS client for [La Suite Numérique Docs](https://github.com/suitenumerique/docs), built against a self-hosted instance.
 
 ## Design spec
@@ -57,6 +59,10 @@ CI/TestFlight signing is independent of this — see the fastlane `beta` lane.
 ```sh
 xcodebuild test -project Schrift.xcodeproj -scheme Schrift -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
+
+CI runs the same suite on every pull request to `main`
+([`pr-checks.yml`](.github/workflows/pr-checks.yml)); the **Build & Test**
+check must pass before merging. See [`docs/ci.md`](docs/ci.md).
 
 ## Distribution (TestFlight)
 
