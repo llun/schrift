@@ -393,6 +393,103 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Server 2")
     }
 
+    // MARK: - Revalidation failure classes + stale-draft server-wins + re-entrancy
+
+    private func stubStatus(_ code: Int) {
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: code, headers: [:], body: Data(), error: nil)
+        }
+    }
+
+    func testRevalidate404PurgesCacheAndShowsUnavailable() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        stubStatus(404)
+
+        await viewModel.load()
+
+        XCTAssertNil(contentCache.content(for: documentID))
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertFalse(viewModel.hasLocalCopy)
+        XCTAssertNil(viewModel.lastSyncedAt)
+        viewModel.startEditing()
+        XCTAssertFalse(viewModel.isEditing, "editing disabled in the terminal state")
+    }
+
+    func testRevalidate403PurgesCacheToo() async {
+        // Privacy: revoked-access content must not stay readable on disk.
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        stubStatus(403)
+
+        await viewModel.load()
+
+        XCTAssertNil(contentCache.content(for: documentID))
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+    }
+
+    func testRevalidate401KeepsCacheReadable() async {
+        // Cookie expiry must not purge the cache or offline reading dies on
+        // every re-login.
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        stubStatus(401)
+
+        await viewModel.load()
+
+        XCTAssertNotNil(contentCache.content(for: documentID))
+        XCTAssertFalse(viewModel.blocks.isEmpty)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testStaleDraftLosesToNewerServerCopy() async {
+        // Server updated_at beyond draft.updatedAt + 120s tolerance → server
+        // wins, draft removed (preserves today's server-wins rule).
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        draftStore.save(PendingDraft(
+            documentID: documentID, title: "Old draft", markdown: "# Stale",
+            updatedAt: Date(timeIntervalSince1970: 1_000_000)
+        ))
+        // stubLoad's fixture updated_at is 2026-01-15T10:30:00Z — far beyond
+        // 1970-epoch + tolerance.
+        stubLoad(content: "# Server")
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Server")
+        XCTAssertNil(draftStore.draft(for: documentID), "stale draft removed")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Server")
+        XCTAssertEqual(viewModel.displaySource, .clean)
+    }
+
+    func testDraftWithinToleranceIsKeptOnScreen() async {
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        // Fixture updated_at is 2026-01-15T10:30:00Z; a draft stamped now is
+        // far newer → within tolerance, draft stays.
+        draftStore.save(PendingDraft(documentID: documentID, title: "Draft", markdown: "# Draft", updatedAt: Date()))
+        stubLoad(content: "# Server")
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Draft")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+    }
+
+    func testSecondLoadSupersedesFirstRevalidation() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubLoad(content: "# New")
+
+        async let first: Void = viewModel.load()
+        async let second: Void = viewModel.load()
+        _ = await (first, second)
+
+        // Whatever interleaving occurred, exactly one coherent outcome:
+        // banner set with old content displayed, and no stale stash.
+        XCTAssertTrue(viewModel.updateAvailable)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Old")
+    }
+
     // MARK: - Editing session
 
     func testStartEditingEntersBlocksMode() async {

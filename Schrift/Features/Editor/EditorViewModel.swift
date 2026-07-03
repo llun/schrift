@@ -72,6 +72,10 @@ final class EditorViewModel {
     private var autosaveTask: Task<Void, Never>?
     private var dirtySince: Date?
     private var pendingFreshContent: (markdown: String, syncedAt: Date)?
+    /// Monotonic guard: a completing fetch applies its outcome only if no
+    /// newer load()/refresh() superseded it (latest-wins; .task refires on
+    /// pop-back and .refreshable re-enters).
+    private var revalidationGeneration = 0
     /// The exact raw markdown the current display was installed from — the
     /// staleness comparison basis. NEVER compare fetched markdown against
     /// serializeMarkdown(blocks)/currentMarkdown(): the serializer
@@ -135,7 +139,8 @@ final class EditorViewModel {
                 isLoading = true
             }
         }
-        await revalidate()
+        revalidationGeneration += 1
+        await revalidate(generation: revalidationGeneration)
         isLoading = false
     }
 
@@ -161,18 +166,41 @@ final class EditorViewModel {
 
     /// Revalidation: the awaited structured tail of load() — no unstructured
     /// Task. Classification of the outcome happens when the fetch completes.
-    private func revalidate() async {
+    /// `generation` guards against a superseded fetch (an earlier load() or
+    /// refresh()) applying its outcome after a newer one has already run.
+    private func revalidate(generation: Int) async {
         do {
             let formatted = try await client.formattedContent(documentID: documentID)
+            guard generation == revalidationGeneration, !Task.isCancelled else { return }
             apply(formatted: formatted)
             await loadChildren()
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            guard generation == revalidationGeneration else { return }
+            becomeUnavailable()
         } catch {
-            // With a local copy on screen a passive revalidation failure is
-            // swallowed — the stale copy stays readable (offline reading).
+            guard generation == revalidationGeneration else { return }
+            // Transient (.network, .server, .rateLimited, .sessionExpired —
+            // cookie expiry must not purge the cache): keep the local copy.
             if displaySource == .none {
                 errorMessage = "Couldn't load this document. Pull to refresh to try again."
             }
         }
+    }
+
+    /// Definitive 404/403: the document is gone or access was revoked. Purge
+    /// the durable copy (privacy), disable editing, show the terminal state.
+    private func becomeUnavailable() {
+        contentCache.remove(documentID: documentID)
+        hasLocalCopy = false
+        lastSyncedAt = nil
+        updateAvailable = false
+        pendingFreshContent = nil
+        blocks = []
+        rawMarkdown = ""
+        displayedSourceMarkdown = ""
+        displaySource = .none
+        hasLoadedContent = false // startEditing guards on this
+        errorMessage = "This document is no longer available."
     }
 
     private func apply(formatted: FormattedDocumentContent) {
@@ -191,7 +219,14 @@ final class EditorViewModel {
                formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
                 cacheServerCopy(formatted)
             } else {
-                installFetched(formatted) // server wins (today's behavior)
+                // Server newer beyond tolerance: today the stale draft would
+                // never have been shown — server wins, and the draft goes
+                // (re-checked inside discardStoredDraft; the user may have
+                // produced a newer one while we awaited).
+                if let draft = saveCoordinator.storedDraft(documentID: documentID) {
+                    saveCoordinator.discardStoredDraft(draft)
+                }
+                installFetched(formatted)
             }
         case .none:
             installFetched(formatted)
