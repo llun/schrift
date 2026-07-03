@@ -32,6 +32,26 @@ Requires a recent Xcode with an **iOS 18 simulator** and the Swift 6 toolchain.
 
 The `.xcodeproj` is generated from `project.yml` and is not committed — regenerate it any time `project.yml` changes.
 
+### Running on a physical device
+
+On-device builds need a signing team, but a Team ID must never be committed
+(and would be wiped on every `xcodegen generate` anyway). So:
+
+1. Sign into your Apple ID in **Xcode ▸ Settings ▸ Accounts**.
+2. Copy your git-ignored local signing file into place and set your Team ID:
+   ```sh
+   cp Local.xcconfig.example Local.xcconfig   # if a template exists; otherwise create Local.xcconfig
+   # edit Local.xcconfig → DEVELOPMENT_TEAM = <your 10-char Team ID>
+   xcodegen generate
+   ```
+   `Local.xcconfig` is git-ignored; the committed `Signing.xcconfig` optionally
+   includes it, so your Team ID stays local and survives regeneration.
+3. Connect your iPhone (trust the Mac), select it as the run destination, and
+   press **Run** (⌘R). On first launch, trust the developer profile on the phone
+   under **Settings ▸ General ▸ VPN & Device Management**.
+
+CI/TestFlight signing is independent of this — see the fastlane `beta` lane.
+
 ## Tests
 
 ```sh

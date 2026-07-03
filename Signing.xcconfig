@@ -1,0 +1,14 @@
+// Local development code signing (Debug/Release).
+//
+// This COMMITTED file intentionally contains nothing sensitive. It optionally
+// pulls in a git-ignored `Local.xcconfig`, where your personal
+// DEVELOPMENT_TEAM lives — so a Team ID is never committed to this repo.
+//
+// If `Local.xcconfig` is absent (fresh clone, CI), the optional include below
+// is silently skipped and the build behaves exactly as before (no team set).
+//
+// CI / TestFlight does NOT depend on this: the fastlane `beta` lane runs
+// `update_code_signing_settings` after `xcodegen generate`, which overrides
+// these values with manual signing + the `match` distribution profile. So the
+// settings here only ever affect on-device development builds from Xcode.
+#include? "Local.xcconfig"
