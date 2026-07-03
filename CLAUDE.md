@@ -44,14 +44,18 @@ This file is the shorter, operational "how we write code here" companion.
   ```sh
   swift format --recursive --in-place Schrift SchriftTests
   ```
-  The PR checks fail on any unformatted file. There is no other linter
-  (no SwiftLint / nicklockwood-SwiftFormat) — don't add one.
+  The PR checks fail on any unformatted file. **CI's Xcode-bundled
+  swift-format is canonical** — if a runner toolchain bump changes its output,
+  land a standalone tree-wide reformat commit (see `docs/ci.md` "Toolchain
+  drift"). There is no other linter (no SwiftLint / nicklockwood-SwiftFormat)
+  — don't add one.
 - **PR checks**: every pull request targeting `main` builds the app and runs the
   full test suite on an iPhone simulator via
   [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job
-  surfaces as the status check **`Build & Test`**, which is required for merging
-  (enforced by a repo ruleset — see [`docs/ci.md`](docs/ci.md); renaming the job
-  breaks the guard). The workflow uses **no secrets and must never gain one**,
+  surfaces as the status check **`Build & Test`**, which serves as the merge
+  guard (a repo admin must configure the ruleset once — see
+  [`docs/ci.md`](docs/ci.md); renaming the job breaks the guard). The workflow
+  uses **no secrets and must never gain one**,
   and must never use `pull_request_target` — release/signing work lives only in
   `testflight.yml`.
 - **All checks must pass before a PR is merge-ready.** Work-in-progress pushes
@@ -119,6 +123,7 @@ SchriftTests/            XCTest suite; mirrors the source tree 1:1
 fastlane/ scripts/ .github/workflows/   CI: PR build/test checks + TestFlight release pipeline
 ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
+.swift-format            swift-format config (4-space indent, 120 cols) enforced by PR checks
 ```
 
 The test tree mirrors the source tree: a file at `Schrift/X/Y.swift` is tested by

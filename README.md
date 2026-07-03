@@ -1,6 +1,6 @@
 # Schrift
 
-[![PR Checks](https://github.com/llun/schrift/actions/workflows/pr-checks.yml/badge.svg)](https://github.com/llun/schrift/actions/workflows/pr-checks.yml)
+[![PR Checks](https://github.com/llun/schrift/actions/workflows/pr-checks.yml/badge.svg?event=pull_request)](https://github.com/llun/schrift/actions/workflows/pr-checks.yml)
 
 Schrift is a native iOS/iPadOS client for [La Suite Numérique Docs](https://github.com/suitenumerique/docs), built against a self-hosted instance.
 

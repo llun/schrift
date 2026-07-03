@@ -6,8 +6,9 @@ name: PR Checks
 # fork-safe `pull_request` trigger (never `pull_request_target`). Anything
 # involving signing or releasing lives exclusively in testflight.yml.
 #
-# The job below surfaces as the status check "Build & Test", which is the
-# required check that guards merges to `main` (see docs/ci.md).
+# The job below surfaces as the status check "Build & Test", intended as the
+# required check guarding merges to `main` (a repo admin enables the ruleset
+# once — see docs/ci.md).
 on:
   pull_request:
     branches: [main]
@@ -23,8 +24,8 @@ permissions:
 
 jobs:
   test:
-    # "Build & Test" is the required status check on `main` (see docs/ci.md).
-    # Renaming this job breaks the merge guard until the ruleset is updated.
+    # "Build & Test" is the merge-guard status check on `main` (see docs/ci.md).
+    # Renaming this job breaks the guard until the ruleset is updated.
     name: Build & Test
     runs-on: macos-latest
     # Unit tests only — normal runs finish well under this; the cap catches hangs.
@@ -41,8 +42,12 @@ jobs:
       # Formatting gate — sources are formatted with Apple's swift-format
       # (bundled with the Xcode/Swift 6 toolchain; config in .swift-format).
       # Runs the formatter and fails on any resulting diff, prettier-style.
+      # CI's toolchain is the canonical formatter: if a runner-image Xcode bump
+      # changes swift-format's output, land a standalone tree-wide reformat
+      # commit (see docs/ci.md "Toolchain drift").
       - name: Check formatting
         run: |
+          swift format --version
           swift format --recursive --in-place Schrift SchriftTests
           if ! git diff --exit-code -- '*.swift'; then
             echo "::error::Swift sources are not formatted. Run: swift format --recursive --in-place Schrift SchriftTests"
@@ -59,11 +64,14 @@ jobs:
 
       # Runner images change their simulator lineup over time. Prefer the
       # documented "iPhone 17", fall back to any available iPhone simulator.
+      # JSON + jq (preinstalled) so device names containing parentheses
+      # (e.g. "iPhone SE (3rd generation)") are extracted intact.
       - name: Pick an iPhone simulator
         id: sim
         run: |
-          names="$(xcrun simctl list devices available \
-            | sed -nE 's/^ *(iPhone [^(]*[^( ]) \(.*/\1/p' | sort -u)"
+          names="$(xcrun simctl list -j devices available \
+            | jq -r '.devices[][] | select(.isAvailable) | .name' \
+            | grep '^iPhone' | sort -u)"
           device="$(printf '%s\n' "$names" | grep -x 'iPhone 17' || true)"
           [ -n "$device" ] || device="$(printf '%s\n' "$names" | head -n 1)"
           if [ -z "$device" ]; then
@@ -75,6 +83,10 @@ jobs:
           echo "name=$device" >> "$GITHUB_OUTPUT"
 
       - name: Build & test
+        # Passed via env (not inline ${{ }}) to keep dynamic text out of the
+        # script body, matching the repo's no-interpolation convention.
+        env:
+          SIM_NAME: ${{ steps.sim.outputs.name }}
         run: |
           set -o pipefail
           # xcbeautify is preinstalled on GitHub macOS images; fall back to
@@ -84,7 +96,7 @@ jobs:
           xcodebuild test \
             -project Schrift.xcodeproj \
             -scheme Schrift \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             | "$formatter"

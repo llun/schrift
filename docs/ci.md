@@ -32,6 +32,19 @@ Safety section in [`CLAUDE.md`](../CLAUDE.md).
 On failure the `TestResults.xcresult` bundle is uploaded as a run artifact
 (7-day retention) for debugging.
 
+### Toolchain drift
+
+The formatting gate uses whatever swift-format ships with the runner's
+`latest-stable` Xcode, and **CI's toolchain is the canonical formatter** — the
+tree was last formatted with swift-format 6.3.3. swift-format output can
+change between toolchain releases, so a runner-image Xcode bump can make the
+gate fail on files a PR never touched. The remedy is a standalone tree-wide
+reformat commit (`ci: reformat for swift-format X.Y`): run
+`swift format --recursive --in-place Schrift SchriftTests` with the same
+toolchain CI uses (the gate logs `swift format --version` at the top of the
+step) and land it on its own. Local formatting with a different toolchain
+version may disagree with CI — trust the gate's diff output.
+
 The job surfaces as the status check **`Build & Test`**. That exact name is
 what the merge guard requires — renaming the job in `pr-checks.yml` breaks the
 guard until the ruleset below is updated to match.
@@ -84,9 +97,13 @@ Notes:
   check to Actions so nothing else can satisfy it.
 - `strict_required_status_checks_policy: false` = no "branch up to date"
   requirement (matching the UI advice above).
-- GitHub's check picker only lists check names it has already seen, so create
-  the ruleset **after** the first `Build & Test` run has completed on a PR.
-- The check only runs on PRs targeting `main`, which is exactly where the
-  ruleset requires it — direct pushes to `main` are not blocked by this rule
-  (add a "Restrict pushes"/PR-required rule to the same ruleset if you want
-  that too).
+- The **UI** check picker only lists check names it has already seen, so use
+  the UI path **after** the first `Build & Test` run has completed on a PR.
+  The `gh api` call above accepts an arbitrary context string and works
+  before any run.
+- The required check effectively blocks **direct pushes to `main` too**: a
+  ruleset `required_status_checks` rule rejects any ref update unless the
+  check has passed on the pushed commit, and `Build & Test` only runs on
+  `pull_request` events — so a directly pushed commit essentially never
+  carries a passing check. All changes must land via a PR (worth knowing
+  before hotfixing `main`).
