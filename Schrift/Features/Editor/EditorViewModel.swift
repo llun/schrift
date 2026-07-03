@@ -33,6 +33,10 @@ final class EditorViewModel {
         }
     }
 
+    enum DisplaySource: Equatable {
+        case none, pendingSave, draft, clean
+    }
+
     var title: String
     var blocks: [EditorBlock] = []
     var rawMarkdown: String = ""
@@ -48,16 +52,20 @@ final class EditorViewModel {
     /// Set when the loaded markdown wouldn't survive block editing losslessly;
     /// editing then defaults to the markdown source view.
     var openInMarkdownMode = false
+    var lastSyncedAt: Date? = nil
+    var hasLocalCopy = false
 
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    let contentCache: DocumentContentCacheStore
     let autosaveInterval: Duration
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
     /// would overwrite the whole server document with an empty draft.
     private(set) var hasLoadedContent = false
+    private(set) var displaySource: DisplaySource = .none
     private var savedMarkdown = ""
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
@@ -72,12 +80,14 @@ final class EditorViewModel {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         autosaveInterval: Duration = .seconds(10)
     ) {
         self.client = client
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.contentCache = contentCache
         self.autosaveInterval = autosaveInterval
         self.savedTitle = title
     }
@@ -97,39 +107,92 @@ final class EditorViewModel {
     // MARK: - Loading
 
     func load() async {
-        isLoading = true
         errorMessage = nil
+        // The local phase runs once per installed document: load() re-fires
+        // on pop-back (.task) — reinstalling would clobber a dirty editing
+        // session with the cached copy. After the first install, load() is
+        // revalidate-only.
+        if !hasLoadedContent {
+            restoreLocalContent()
+            if displaySource == .none {
+                isLoading = true
+            }
+        }
+        await revalidate()
+        isLoading = false
+    }
+
+    /// Local phase: synchronous, no network, no spinner. Chooses the display
+    /// source by precedence — in-flight save, stored draft, cached copy.
+    private func restoreLocalContent() {
+        if let pending = saveCoordinator.pendingSave(documentID: documentID) {
+            install(markdown: pending.markdown, title: pending.title, syncedAt: nil)
+            displaySource = .pendingSave
+        } else if let draft = saveCoordinator.storedDraft(documentID: documentID) {
+            // New: shown before any fetch (fixes drafts being unreachable
+            // offline). The server-wins staleness rule runs at revalidation.
+            install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
+            displaySource = .draft
+        } else if let cached = contentCache.content(for: documentID) {
+            install(markdown: cached.markdown, title: cached.title, syncedAt: cached.syncedAt)
+            displaySource = .clean
+        } else {
+            displaySource = .none
+        }
+        hasLocalCopy = displaySource != .none
+    }
+
+    /// Revalidation: the awaited structured tail of load() — no unstructured
+    /// Task. Classification of the outcome happens when the fetch completes.
+    private func revalidate() async {
         do {
             let formatted = try await client.formattedContent(documentID: documentID)
-            if let fetchedTitle = formatted.title {
-                title = fetchedTitle
-            }
-            var content = formatted.content ?? ""
-            var contentTitle: String? = nil
-            // Content still on its way to the server (or stranded from an
-            // earlier session) is newer than what the server returned.
-            if let pending = saveCoordinator.pendingSave(documentID: documentID) {
-                content = pending.markdown
-                contentTitle = pending.title
-            } else if let draft = saveCoordinator.storedDraft(documentID: documentID),
-                      formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
-                content = draft.markdown
-                contentTitle = draft.title
-            }
-            install(markdown: content, title: contentTitle)
-            updatedAt = formatted.updatedAt
+            apply(formatted: formatted)
             await loadChildren()
         } catch {
-            errorMessage = "Couldn't load this document. Pull to refresh to try again."
+            // With a local copy on screen a passive revalidation failure is
+            // swallowed — the stale copy stays readable (offline reading).
+            if displaySource == .none {
+                errorMessage = "Couldn't load this document. Pull to refresh to try again."
+            }
         }
-        isLoading = false
+    }
+
+    private func apply(formatted: FormattedDocumentContent) {
+        switch displaySource {
+        case .pendingSave:
+            break // in-flight content is newer than the server copy
+        case .draft:
+            if let draft = saveCoordinator.storedDraft(documentID: documentID),
+               formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+                break // draft trusted; keep it on screen
+            }
+            installFetched(formatted) // server wins (today's behavior)
+        case .clean, .none:
+            installFetched(formatted)
+        }
+        updatedAt = formatted.updatedAt
+    }
+
+    /// Installs the fetched server copy and records it in the content cache.
+    private func installFetched(_ formatted: FormattedDocumentContent) {
+        let now = Date()
+        install(markdown: formatted.content ?? "", title: formatted.title, syncedAt: now)
+        displaySource = .clean
+        hasLocalCopy = true
+        contentCache.save(CachedDocumentContent(
+            documentID: documentID,
+            title: title,
+            markdown: formatted.content ?? "",
+            syncedAt: now
+        ))
     }
 
     /// Installs content as the on-screen document. Every path that puts
     /// content on screen routes through here so the round-trip safety check
     /// and the dirty baseline are never bypassed — skipping them risks a
     /// destructive full-overwrite save of non-round-trippable content.
-    private func install(markdown: String, title contentTitle: String?) {
+    private func install(markdown: String, title contentTitle: String?, syncedAt: Date?) {
         if let contentTitle {
             title = contentTitle
         }
@@ -141,6 +204,9 @@ final class EditorViewModel {
         // produces, so an unchanged document never triggers a save.
         savedMarkdown = openInMarkdownMode ? markdown : serializeMarkdown(blocks)
         hasLoadedContent = true
+        if let syncedAt {
+            lastSyncedAt = syncedAt
+        }
     }
 
     func loadChildren() async {

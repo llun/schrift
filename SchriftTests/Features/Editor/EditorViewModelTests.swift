@@ -6,28 +6,43 @@ final class EditorViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
 
+    private var cacheDirectory: URL!
+
+    override func setUp() {
+        super.setUp()
+        cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EditorViewModelTests-\(UUID().uuidString)", isDirectory: true)
+    }
+
     override func tearDown() {
         MockURLProtocol.stubHandler = nil
         MockURLProtocol.lastRequest = nil
+        try? FileManager.default.removeItem(at: cacheDirectory)
         super.tearDown()
     }
 
     private func makeEnvironment(
         title: String = "Untitled document",
         autosaveInterval: Duration = .seconds(10)
-    ) -> (viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, draftStore: PendingDraftStore) {
+    ) -> (viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, draftStore: PendingDraftStore, contentCache: DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,
             title: title,
             saveCoordinator: coordinator,
+            contentCache: contentCache,
             autosaveInterval: autosaveInterval
         )
-        return (viewModel, coordinator, draftStore)
+        return (viewModel, coordinator, draftStore, contentCache)
+    }
+
+    private func cachedEntry(markdown: String = "# Cached", syncedAt: Date = Date(timeIntervalSince1970: 1_000_000)) -> CachedDocumentContent {
+        CachedDocumentContent(documentID: documentID, title: "Cached Doc", markdown: markdown, syncedAt: syncedAt)
     }
 
     private func formattedBody(content: String?) -> Data {
@@ -72,7 +87,7 @@ final class EditorViewModelTests: XCTestCase {
     // MARK: - Loading
 
     func testLoadParsesMarkdownContentIntoBlocks() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "# Heading\\n\\nA paragraph.")
 
         await viewModel.load()
@@ -88,7 +103,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testLoadWithNullContentProducesNoBlocks() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: nil)
 
         await viewModel.load()
@@ -98,7 +113,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testLoadKeepsOriginalTitleWhenServerTitleIsNull() async {
-        let (viewModel, _, _) = makeEnvironment(title: "Original Title")
+        let (viewModel, _, _, _) = makeEnvironment(title: "Original Title")
         let body = Data("""
         {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": null, "content": "Text", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
         """.utf8)
@@ -110,7 +125,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testLoadFailureSetsErrorMessage() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
         await viewModel.load()
@@ -121,7 +136,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testLoadPrefersStoredDraftNewerThanServer() async {
-        let (viewModel, _, draftStore) = makeEnvironment()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
         stubLoad(content: "Server content")
         draftStore.save(PendingDraft(documentID: documentID, title: "Draft Title", markdown: "Draft content", updatedAt: Date()))
 
@@ -133,7 +148,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testLoadIgnoresStoredDraftOlderThanServer() async {
-        let (viewModel, _, draftStore) = makeEnvironment()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
         stubLoad(content: "Server content")
         draftStore.save(PendingDraft(documentID: documentID, title: "Old", markdown: "Stale draft", updatedAt: Date(timeIntervalSince1970: 0)))
 
@@ -143,7 +158,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testLoadDefaultsToMarkdownModeWhenRoundTripUnsafe() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         // A lone opening fence can't round-trip through block editing.
         stubLoad(content: "```")
 
@@ -154,10 +169,99 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.mode, .markdown)
     }
 
+    // MARK: - Instant local phase + revalidation
+
+    func testCachedDocumentRendersWithoutLoadingSpinner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        // Failing network keeps the outcome deterministic: only the local
+        // phase can have produced the content, and isLoading never flips.
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let task = Task { await viewModel.load() }
+        // The local phase is synchronous — content is visible after the first
+        // suspension, before the fetch resolves.
+        await waitUntil { !viewModel.blocks.isEmpty }
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertEqual(viewModel.displaySource, .clean)
+        XCTAssertTrue(viewModel.hasLocalCopy)
+        XCTAssertEqual(viewModel.title, "Cached Doc")
+        await task.value
+    }
+
+    func testCachedDocumentSetsLastSyncedAtFromEntry() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        let syncedAt = Date(timeIntervalSince1970: 999_000)
+        contentCache.save(cachedEntry(syncedAt: syncedAt))
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.lastSyncedAt, syncedAt)
+    }
+
+    func testOfflineWithCacheKeepsContentAndShowsNoError() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.blocks.isEmpty)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.hasLocalCopy)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testOfflineWithNoCacheShowsError() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't load this document. Pull to refresh to try again.")
+        XCTAssertFalse(viewModel.hasLocalCopy)
+    }
+
+    func testStoredDraftRendersOfflineWithoutCache() async {
+        // Regression for the current gap: drafts were unreachable offline.
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(PendingDraft(documentID: documentID, title: "Draft Doc", markdown: "# Draft", updatedAt: Date()))
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.displaySource, .draft)
+        XCTAssertEqual(viewModel.title, "Draft Doc")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testFirstFetchWritesCacheSoNextOpenIsInstant() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        stubLoad(content: "# Fresh")
+
+        await viewModel.load()
+
+        let entry = contentCache.content(for: documentID)
+        XCTAssertEqual(entry?.markdown, "# Fresh")
+        XCTAssertEqual(viewModel.displaySource, .clean)
+        XCTAssertNotNil(viewModel.lastSyncedAt)
+    }
+
     // MARK: - Editing session
 
     func testStartEditingEntersBlocksMode() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "Original text")
         await viewModel.load()
 
@@ -169,7 +273,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testStartEditingOnEmptyDocumentSeedsAParagraph() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: nil)
         await viewModel.load()
 
@@ -182,7 +286,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testStartEditingIsBlockedUntilContentLoads() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         await viewModel.load()
 
@@ -195,7 +299,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testEditingMarksDirty() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "Original text")
         await viewModel.load()
         viewModel.startEditing()
@@ -208,7 +312,7 @@ final class EditorViewModelTests: XCTestCase {
 
     func testAutosaveFlushesAfterInterval() async {
         let log = RequestRecorder()
-        let (viewModel, _, _) = makeEnvironment(autosaveInterval: .milliseconds(80))
+        let (viewModel, _, _, _) = makeEnvironment(autosaveInterval: .milliseconds(80))
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
         viewModel.startEditing()
@@ -224,7 +328,7 @@ final class EditorViewModelTests: XCTestCase {
 
     func testTypingRestartsTheDebounce() async {
         let log = RequestRecorder()
-        let (viewModel, _, _) = makeEnvironment(autosaveInterval: .milliseconds(400))
+        let (viewModel, _, _, _) = makeEnvironment(autosaveInterval: .milliseconds(400))
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
         viewModel.startEditing()
@@ -242,7 +346,7 @@ final class EditorViewModelTests: XCTestCase {
 
     func testFlushSkipsWhenContentUnchanged() async {
         let log = RequestRecorder()
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
         viewModel.startEditing()
@@ -259,7 +363,7 @@ final class EditorViewModelTests: XCTestCase {
 
     func testDoneFlushesPendingChangesAndExits() async {
         let log = RequestRecorder()
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
         viewModel.startEditing()
@@ -276,7 +380,7 @@ final class EditorViewModelTests: XCTestCase {
 
     func testFailedSaveSurfacesFailedStateAndKeepsDraft() async {
         let log = RequestRecorder()
-        let (viewModel, _, draftStore) = makeEnvironment()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
         await viewModel.load()
         viewModel.startEditing()
@@ -297,7 +401,7 @@ final class EditorViewModelTests: XCTestCase {
 
     func testSaveNowRetriesAfterFailure() async {
         let log = RequestRecorder()
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
         await viewModel.load()
         viewModel.startEditing()
@@ -318,7 +422,7 @@ final class EditorViewModelTests: XCTestCase {
     // MARK: - Mode toggle
 
     func testSwitchingToMarkdownSerializesBlocks() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "# Title\\n\\nBody")
         await viewModel.load()
         viewModel.startEditing()
@@ -330,7 +434,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testSwitchingBackToBlocksReparsesMarkdown() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "# Title")
         await viewModel.load()
         viewModel.startEditing()
@@ -348,7 +452,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testCurrentMarkdownFollowsTheActiveMode() async {
-        let (viewModel, _, _) = makeEnvironment()
+        let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "# Title")
         await viewModel.load()
         viewModel.startEditing()
