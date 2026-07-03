@@ -22,6 +22,7 @@ struct EditorScreen: View {
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         reach: LinkReach,
         serverHost: String,
         linkRole: LinkRole? = nil,
@@ -31,14 +32,14 @@ struct EditorScreen: View {
         onDeleted: (() -> Void)? = nil,
         onOpenDocument: ((Document) -> Void)? = nil
     ) {
-        _viewModel = State(
-            initialValue: EditorViewModel(
-                client: client,
-                documentID: documentID,
-                title: title,
-                saveCoordinator: saveCoordinator,
-                contentCache: contentCache
-            ))
+        _viewModel = State(initialValue: EditorViewModel(
+            client: client,
+            documentID: documentID,
+            title: title,
+            saveCoordinator: saveCoordinator,
+            contentCache: contentCache,
+            childrenCache: childrenCache
+        ))
         self.reach = reach
         self.serverHost = serverHost
         self.linkRole = linkRole

@@ -70,7 +70,7 @@ struct DocumentListView: View {
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
             .refreshable {
-                await viewModel.load()
+                await viewModel.refresh()
             }
         }
         .background(DocsColor.surfacePage)
@@ -113,6 +113,10 @@ struct DocumentListView: View {
 
     @ViewBuilder
     private var content: some View {
+        // isLoading is set only via shouldShowLoadingPlaceholder (true first
+        // run of a filter) — cached rows are never replaced by a spinner while
+        // a background revalidation is in flight. The view trusts the VM's
+        // single, unit-tested gate rather than re-deriving it here.
         if viewModel.isLoading {
             ProgressView()
                 .frame(maxWidth: .infinity)

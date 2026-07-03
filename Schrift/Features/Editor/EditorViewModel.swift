@@ -40,8 +40,9 @@ final class EditorViewModel {
     var title: String
     var blocks: [EditorBlock] = []
     var rawMarkdown: String = ""
-    /// nil = no successful fetch this session (the view must not claim "no
-    /// subpages" from the instant/offline path); [] = fetched, none exist.
+    /// nil = no fetched *or cached* knowledge (the view must not claim "no
+    /// subpages"); [] = a real result — fetched this session or restored from
+    /// the children cache — with none existing.
     var subpages: [Document]? = nil
     var updatedAt: Date? = nil
     var mode: Mode = .reading
@@ -62,6 +63,7 @@ final class EditorViewModel {
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
     let contentCache: DocumentContentCacheStore
+    let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration
 
     private(set) var isDirty = false
@@ -95,6 +97,7 @@ final class EditorViewModel {
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         autosaveInterval: Duration = .seconds(10)
     ) {
         self.client = client
@@ -102,6 +105,7 @@ final class EditorViewModel {
         self.title = title
         self.saveCoordinator = saveCoordinator
         self.contentCache = contentCache
+        self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
         self.savedTitle = title
     }
@@ -136,6 +140,12 @@ final class EditorViewModel {
         if !hasLoadedContent {
             updateAvailable = false
             pendingFreshContent = nil
+            // Sub pages restore alongside the content so the Subpages section
+            // renders instantly (and offline); loadChildren revalidates after
+            // each successful content fetch.
+            if let cachedChildren = childrenCache.children(for: documentID) {
+                subpages = cachedChildren
+            }
             restoreLocalContent()
             if displaySource == .none {
                 isLoading = true
@@ -219,6 +229,9 @@ final class EditorViewModel {
     /// the durable copy (privacy), disable editing, show the terminal state.
     private func becomeUnavailable() {
         contentCache.remove(documentID: documentID)
+        childrenCache.remove(parentID: documentID)
+        childrenCache.removeDocument(documentID)
+        subpages = nil
         hasLocalCopy = false
         lastSyncedAt = nil
         updateAvailable = false
@@ -339,6 +352,8 @@ final class EditorViewModel {
     /// failures are swallowed by design).
     func handleDidDelete() {
         contentCache.remove(documentID: documentID)
+        childrenCache.remove(parentID: documentID)
+        childrenCache.removeDocument(documentID)
         saveCoordinator.discardPendingWork(documentID: documentID)
     }
 
@@ -382,10 +397,24 @@ final class EditorViewModel {
     func loadChildren() async {
         guard let results = try? await client.listChildren(documentID: documentID) else { return }
         subpages = results.results
+        childrenCache.save(results.results, for: documentID)
     }
 
     func addSubpage() async -> Document? {
-        try? await client.createChild(documentID: documentID, title: "Untitled subpage")
+        guard let child = try? await client.createChild(documentID: documentID, title: "Untitled subpage") else {
+            return nil
+        }
+        // Reflect the new child immediately (and durably) so popping back —
+        // possibly offline — shows it without waiting on a refetch. Only when
+        // the current list is actually known (fetched or cached): appending to
+        // a nil (unknown) list would persist a fabricated one-element "complete"
+        // result that hides the document's real children.
+        if var updated = subpages {
+            updated.append(child)
+            subpages = updated
+            childrenCache.save(updated, for: documentID)
+        }
+        return child
     }
 
     // MARK: - Editing session

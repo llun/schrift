@@ -15,42 +15,59 @@ final class HomeViewModel {
     let client: DocsAPIClient
     let saveCoordinator: DocumentSaveCoordinator
     private let cache: DocumentCacheStore
+    private let userDefaults: UserDefaults
+    /// Monotonic guard: a completing fetch applies its outcome only if no
+    /// newer load() superseded it (latest-wins; .task refires on pop-back and
+    /// races .refreshable and rapid filter switches).
+    private var loadGeneration = 0
 
     init(
-        client: DocsAPIClient, cache: DocumentCacheStore = DocumentCacheStore(),
-        saveCoordinator: DocumentSaveCoordinator? = nil
+        client: DocsAPIClient,
+        cache: DocumentCacheStore = DocumentCacheStore(),
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.client = client
         self.cache = cache
         self.saveCoordinator = saveCoordinator ?? DocumentSaveCoordinator(client: client)
+        self.userDefaults = userDefaults
         pinnedDocuments = cache.loadPinnedDocuments()
-        recentDocuments = cache.loadRecentDocuments()
+        recentDocuments = cache.loadRecentDocuments(filter: .all) ?? []
     }
 
     var showsPinnedSection: Bool {
         shouldShowPinnedSection(filter: selectedFilter, pinnedCount: pinnedDocuments.count)
     }
 
-    func load() async {
-        isLoading = true
+    func load(userInitiated: Bool = false) async {
         errorMessage = nil
+        loadGeneration += 1
+        let generation = loadGeneration
+        let filter = selectedFilter
 
         // "Work offline" preference (Profile > Preferences): serve cached
         // documents and never hit the network.
-        if UserDefaults.standard.bool(forKey: "schrift.workOffline") {
+        if userDefaults.bool(forKey: "schrift.workOffline") {
             pinnedDocuments = cache.loadPinnedDocuments()
-            recentDocuments = cache.loadRecentDocuments()
+            recentDocuments = cache.loadRecentDocuments(filter: filter) ?? []
             isOffline = true
             isLoading = false
             return
         }
-        isOffline = false
+
+        // One read decides both halves of the silent-vs-loud policy: spinner
+        // and error may only appear when this filter has no local list.
+        let hasCachedList = cache.loadRecentDocuments(filter: filter) != nil
+        isLoading = shouldShowLoadingPlaceholder(
+            hasCachedList: hasCachedList,
+            visibleRowCount: pinnedDocuments.count + recentDocuments.count
+        )
 
         // Replay any drafts stranded by a previous session (runs once).
         let coordinator = saveCoordinator
         Task { await coordinator.recoverDrafts() }
 
-        let params = homeFilterQueryParameters(selectedFilter)
+        let params = homeFilterQueryParameters(filter)
         do {
             async let pinnedPage = client.favoriteDocuments()
             async let recentPage = client.listDocuments(
@@ -58,22 +75,43 @@ final class HomeViewModel {
                 isCreatorMe: params.isCreatorMe,
                 ordering: "-updated_at"
             )
-            pinnedDocuments = try await pinnedPage.results
-            recentDocuments = try await recentPage.results
-            cache.savePinnedDocuments(pinnedDocuments)
-            if selectedFilter == .all {
-                cache.saveRecentDocuments(recentDocuments)
-            }
+            let pinned = try await pinnedPage.results
+            let recent = try await recentPage.results
+            guard generation == loadGeneration else { return }
+            pinnedDocuments = pinned
+            recentDocuments = recent
+            cache.savePinnedDocuments(pinned)
+            cache.saveRecentDocuments(recent, filter: filter)
+            isOffline = false
         } catch {
-            errorMessage = "Couldn't load documents. Pull to refresh to try again."
+            guard generation == loadGeneration else { return }
             isOffline = true
+            // Silent when this filter has a cached list to fall back on
+            // (offline reading); loud on a true first run of the filter —
+            // pinned rows are no evidence for it — or an explicit
+            // pull-to-refresh.
+            if userInitiated || !hasCachedList {
+                errorMessage = "Couldn't load documents. Pull to refresh to try again."
+            }
         }
 
-        isLoading = false
+        if generation == loadGeneration {
+            isLoading = false
+        }
+    }
+
+    /// Explicit pull-to-refresh: unlike the passive on-appear revalidation it
+    /// surfaces failures instead of swallowing them behind cached rows.
+    func refresh() async {
+        await load(userInitiated: true)
     }
 
     func selectFilter(_ filter: HomeFilter) async {
+        guard filter != selectedFilter else { return }
         selectedFilter = filter
+        // Instant swap: show this filter's cached rows (or empty) rather than
+        // the previous filter's list while the fetch is in flight.
+        recentDocuments = cache.loadRecentDocuments(filter: filter) ?? []
         await load()
     }
 
@@ -94,11 +132,19 @@ final class HomeViewModel {
     func createDocument() async -> Document? {
         do {
             let document = try await client.createDocument(title: "Untitled document")
-            if UserDefaults.standard.bool(forKey: "schrift.workOffline") {
-                // load() skips the network in work-offline mode, so reflect the
-                // new document directly rather than serving stale cache.
-                recentDocuments.insert(document, at: 0)
-                cache.saveRecentDocuments(recentDocuments)
+            if userDefaults.bool(forKey: "schrift.workOffline") {
+                // load() skips the network in work-offline mode, so reflect
+                // the new document directly rather than serving stale cache.
+                // Screen and durable copy both go to the .all list only: a
+                // brand-new document is neither a favorite nor shared-with-me,
+                // so showing it under another filter would contradict that
+                // filter's cache and vanish on the next cache-served load.
+                if selectedFilter == .all {
+                    recentDocuments.insert(document, at: 0)
+                }
+                var allDocuments = cache.loadRecentDocuments(filter: .all) ?? []
+                allDocuments.insert(document, at: 0)
+                cache.saveRecentDocuments(allDocuments, filter: .all)
             } else {
                 await load()
             }

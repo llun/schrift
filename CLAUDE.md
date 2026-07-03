@@ -115,7 +115,7 @@ Schrift/
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
 │   ├── Connect/         server URL entry + WKWebView OIDC login
-│   ├── Home/            document list, filters, offline cache
+│   ├── Home/            document list, filters, offline metadata cache
 │   ├── Search/ Shared/ Profile/ Options/ Share/
 │   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache
 └── Assets.xcassets/
@@ -290,6 +290,26 @@ markdown write endpoint**. Understand this before touching the save path:
   first init parameter, and use `try?` returning a safe empty default — they
   never throw to callers. Extract dedup/recency/limit logic into a top-level free
   function so it is testable without UserDefaults.
+- **List-metadata caches** (`DocumentCacheStore`: pinned + per-filter recent +
+  shared lists; `DocumentChildrenCacheStore`: sub-page lists keyed by parent
+  document) make every document list instant and offline-readable, following
+  the content cache's pattern: the VM seeds **synchronously** (init or the
+  pre-await phase of `load()`), a loading placeholder may show only when there
+  is **no local entry** — list loads return Optional (`loadPinnedDocuments()`
+  is the `[]` exception), and nil (never cached) is distinct from a cached
+  empty list — revalidation is silent and latest-wins (generation counter),
+  transient failures keep cached rows with no error — loudness is keyed to
+  **cache existence for the exact list being loaded** (pull-to-refresh is the
+  always-loud path) — and successful fetches write through. Delete/404/403
+  purge the **children** store only (the document's own entry *and* its ghost
+  in other parents' cached lists); the Home/Shared list caches have no purge
+  path — a deleted document drops out of them on the next successful fetch.
+  The children store caps entries by reusing the pure `contentCacheEvictions`
+  selection. The `schrift.workOffline` read goes through the VM's injected
+  `userDefaults`, never the singleton. Metadata
+  caches are **not** cleared on sign-out — a recorded decision; only the full
+  bodies in `DocumentContentCacheStore` are. See
+  `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.

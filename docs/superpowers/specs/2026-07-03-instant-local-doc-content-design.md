@@ -1,5 +1,11 @@
 # Instant Local Document Content + Background Sync — Design Spec
 
+> **Amendment (2026-07-03):** the document **lists** (Home, the editor's
+> Subpages section and Pages tree, and the Shared tab) now follow this same
+> seed-synchronously / revalidate-silently pattern via `DocumentCacheStore`
+> and the new `DocumentChildrenCacheStore`. See
+> [`../plans/2026-07-03-instant-local-doc-lists.md`](../plans/2026-07-03-instant-local-doc-lists.md).
+
 Date: 2026-07-03
 Status: Proposed (rev 2 — revised the same day after a multi-agent review of the
 draft against the codebase; 24 confirmed findings folded in)

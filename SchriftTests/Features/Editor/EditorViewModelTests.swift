@@ -1,5 +1,4 @@
 import XCTest
-
 @testable import Schrift
 
 @MainActor
@@ -8,56 +7,56 @@ final class EditorViewModelTests: XCTestCase {
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
 
     private var cacheDirectory: URL!
+    private var childrenSuiteName: String!
 
     override func setUp() {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditorViewModelTests-\(UUID().uuidString)", isDirectory: true)
+        childrenSuiteName = "EditorViewModelTests.children.\(UUID().uuidString)"
     }
 
     override func tearDown() {
         MockURLProtocol.stubHandler = nil
         MockURLProtocol.lastRequest = nil
         try? FileManager.default.removeItem(at: cacheDirectory)
+        UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
         super.tearDown()
     }
 
     private func makeEnvironment(
         title: String = "Untitled document",
         autosaveInterval: Duration = .seconds(10)
-    ) -> (
-        viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, draftStore: PendingDraftStore,
-        contentCache: DocumentContentCacheStore
-    ) {
+    ) -> (viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, draftStore: PendingDraftStore, contentCache: DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
-        let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        // Isolated: load()/delete/404 paths touch the children cache, which
+        // must never read from or write to UserDefaults.standard in tests.
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,
             title: title,
             saveCoordinator: coordinator,
             contentCache: contentCache,
+            childrenCache: childrenCache,
             autosaveInterval: autosaveInterval
         )
         return (viewModel, coordinator, draftStore, contentCache)
     }
 
-    private func cachedEntry(markdown: String = "# Cached", syncedAt: Date = Date(timeIntervalSince1970: 1_000_000))
-        -> CachedDocumentContent
-    {
+    private func cachedEntry(markdown: String = "# Cached", syncedAt: Date = Date(timeIntervalSince1970: 1_000_000)) -> CachedDocumentContent {
         CachedDocumentContent(documentID: documentID, title: "Cached Doc", markdown: markdown, syncedAt: syncedAt)
     }
 
     private func formattedBody(content: String?) -> Data {
         let contentJSON = content.map { "\"\($0)\"" } ?? "null"
-        return Data(
-            """
-            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": \(contentJSON), "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
-            """.utf8)
+        return Data("""
+        {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": \(contentJSON), "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+        """.utf8)
     }
 
     private func stubLoad(content: String?, log: RequestRecorder? = nil) {
@@ -85,7 +84,7 @@ final class EditorViewModelTests: XCTestCase {
             case "PATCH" where url.hasSuffix("/content/"):
                 return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
             case "PATCH":
-                return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil) // title
             default:
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -100,13 +99,10 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertTrue(
-            blocksContentEqual(
-                viewModel.blocks,
-                [
-                    EditorBlock(kind: .heading(level: 1), text: "Heading"),
-                    EditorBlock(kind: .paragraph, text: "A paragraph."),
-                ]))
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, [
+            EditorBlock(kind: .heading(level: 1), text: "Heading"),
+            EditorBlock(kind: .paragraph, text: "A paragraph."),
+        ]))
         XCTAssertEqual(viewModel.title, "Doc")
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertNil(viewModel.errorMessage)
@@ -125,10 +121,9 @@ final class EditorViewModelTests: XCTestCase {
 
     func testLoadKeepsOriginalTitleWhenServerTitleIsNull() async {
         let (viewModel, _, _, _) = makeEnvironment(title: "Original Title")
-        let body = Data(
-            """
-            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": null, "content": "Text", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
-            """.utf8)
+        let body = Data("""
+        {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": null, "content": "Text", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+        """.utf8)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
 
         await viewModel.load()
@@ -150,8 +145,7 @@ final class EditorViewModelTests: XCTestCase {
     func testLoadPrefersStoredDraftNewerThanServer() async {
         let (viewModel, _, draftStore, _) = makeEnvironment()
         stubLoad(content: "Server content")
-        draftStore.save(
-            PendingDraft(documentID: documentID, title: "Draft Title", markdown: "Draft content", updatedAt: Date()))
+        draftStore.save(PendingDraft(documentID: documentID, title: "Draft Title", markdown: "Draft content", updatedAt: Date()))
 
         await viewModel.load()
 
@@ -163,10 +157,7 @@ final class EditorViewModelTests: XCTestCase {
     func testLoadIgnoresStoredDraftOlderThanServer() async {
         let (viewModel, _, draftStore, _) = makeEnvironment()
         stubLoad(content: "Server content")
-        draftStore.save(
-            PendingDraft(
-                documentID: documentID, title: "Old", markdown: "Stale draft", updatedAt: Date(timeIntervalSince1970: 0)
-            ))
+        draftStore.save(PendingDraft(documentID: documentID, title: "Old", markdown: "Stale draft", updatedAt: Date(timeIntervalSince1970: 0)))
 
         await viewModel.load()
 
@@ -250,8 +241,7 @@ final class EditorViewModelTests: XCTestCase {
     func testStoredDraftRendersOfflineWithoutCache() async {
         // Regression for the current gap: drafts were unreachable offline.
         let (viewModel, _, draftStore, _) = makeEnvironment()
-        draftStore.save(
-            PendingDraft(documentID: documentID, title: "Draft Doc", markdown: "# Draft", updatedAt: Date()))
+        draftStore.save(PendingDraft(documentID: documentID, title: "Draft Doc", markdown: "# Draft", updatedAt: Date()))
         MockURLProtocol.stubHandler = { _ in
             MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
         }
@@ -326,7 +316,7 @@ final class EditorViewModelTests: XCTestCase {
     func testRevalidateChangedTitleAppliesSilently() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Same"))
-        stubLoad(content: "# Same")  // stubLoad's fixture title is "Doc"
+        stubLoad(content: "# Same") // stubLoad's fixture title is "Doc"
 
         await viewModel.load()
 
@@ -398,7 +388,7 @@ final class EditorViewModelTests: XCTestCase {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
         stubLoad(content: "# Server")
-        await viewModel.load()  // banner set; now simulate editing instead
+        await viewModel.load() // banner set; now simulate editing instead
         viewModel.startEditing()
         viewModel.updateTitle("Edited")
 
@@ -463,11 +453,10 @@ final class EditorViewModelTests: XCTestCase {
         // Server updated_at beyond draft.updatedAt + 120s tolerance → server
         // wins, draft removed (preserves today's server-wins rule).
         let (viewModel, _, draftStore, contentCache) = makeEnvironment()
-        draftStore.save(
-            PendingDraft(
-                documentID: documentID, title: "Old draft", markdown: "# Stale",
-                updatedAt: Date(timeIntervalSince1970: 1_000_000)
-            ))
+        draftStore.save(PendingDraft(
+            documentID: documentID, title: "Old draft", markdown: "# Stale",
+            updatedAt: Date(timeIntervalSince1970: 1_000_000)
+        ))
         // stubLoad's fixture updated_at is 2026-01-15T10:30:00Z — far beyond
         // 1970-epoch + tolerance.
         stubLoad(content: "# Server")
@@ -516,7 +505,7 @@ final class EditorViewModelTests: XCTestCase {
         MockURLProtocol.stubHandler = { _ in
             MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
         }
-        await viewModel.load()  // instant from cache, revalidation failed silently
+        await viewModel.load() // instant from cache, revalidation failed silently
 
         stubLoad(content: "# New")
         await viewModel.refresh()
@@ -757,13 +746,10 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.setMode(.blocks)
 
         XCTAssertEqual(viewModel.mode, .blocks)
-        XCTAssertTrue(
-            blocksContentEqual(
-                viewModel.blocks,
-                [
-                    EditorBlock(kind: .heading(level: 1), text: "Title"),
-                    EditorBlock(kind: .bulletItem, text: "New item"),
-                ]))
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, [
+            EditorBlock(kind: .heading(level: 1), text: "Title"),
+            EditorBlock(kind: .bulletItem, text: "New item"),
+        ]))
         XCTAssertTrue(viewModel.isDirty)
     }
 
