@@ -319,27 +319,34 @@ markdown write endpoint**. Understand this before touching the save path:
 ## PR review loop — required for all agent work
 
 Whenever an AI agent works on this repository, the resulting pull request must
-go through the following review loop. Run it **every time** an agent pushes
-work to a PR that is ready for review — on the initial push and again after
-every follow-up push, not just once:
+go through the following review loop. Run it **every time** new work is pushed
+to a PR that is ready for review — on the initial push and after every
+follow-up push made outside an active loop. Pushes made while addressing
+comments (steps 2–3) do **not** start a new loop: the re-review that follows
+them is simply the next round, and the cap in step 4 counts **all** rounds run
+on the PR.
 
 1. **Review with sub agents.** Spawn sub agents to review **all** the code in
    the PR (the full diff, not just the latest commit) — correctness, the
    conventions in this file, test coverage, and the
    [Safety](#safety--never-add-anything-dangerous) rules. Post **everything
-   they find as review comments on the PR**, anchored to the relevant file and
-   line.
+   they find as review comments on the PR** — anchored to the relevant file
+   and line when the finding maps to a line in the diff, otherwise as a
+   top-level PR comment naming the file.
 2. **Address every comment.** Fix each finding (or explain in the thread why
    no change is needed), push the fixes, **reply to each comment** describing
    what was done, and **mark the thread as resolved**.
-3. **Re-request bot reviews.** If other review bots are active on the PR
-   (e.g. **Kilo bot**), explicitly ask them to review again after each round
-   of addressed comments. When a bot is working, **wait for it to finish — up
-   to 20 minutes — and do not interrupt it** or start the next round before it
-   completes (or the 20 minutes elapse). Address, reply to, and resolve its
+3. **Re-request bot reviews.** If other review bots are installed (e.g.
+   **Kilo bot** — a name given only as an example; detect which bots actually
+   exist from the PR's own review/comment activity), ask them to re-review
+   whenever commits have been pushed since their last completed review. After
+   re-requesting, **wait up to 20 minutes for the bot to finish and do not
+   interrupt it**; if it has not completed by then — including never having
+   started — proceed to the next round. Address, reply to, and resolve its
    comments exactly as in step 2.
 4. **Repeat** steps 1–3 until a full round surfaces **no new issues to
-   address**, or **20 rounds** have run — whichever comes first. If the
+   address** *and* every active bot has reviewed (or timed out on) the latest
+   pushed state, or **20 rounds** have run — whichever comes first. If the
    20-round cap is hit with issues still open, say so explicitly on the PR
    instead of stopping silently.
 
