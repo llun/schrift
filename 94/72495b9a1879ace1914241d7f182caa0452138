@@ -1,0 +1,31 @@
+SchriftTests/Core/Auth/WebLoginTests.swift
+  s_e2dfd1d3edc361::t_7284f6f0e93fa8 40-46
+SchriftTests/Features/Connect/WebLoginCoordinatorTests.swift
+  s_e2dfd1d3edc361::t_5142696b90081b 22-23
+  s_e2dfd1d3edc361::t_c453cdfc0d631d 1-21,24-92
+Schrift/Features/Connect/WebLoginView.swift
+  s_e2dfd1d3edc361::t_71cd93a6aaa15d 4-18
+  s_e2dfd1d3edc361::t_af2a3343e5ca38 40-45,47-48
+  s_e2dfd1d3edc361::t_0e67c3541c4778 46,54,56-57,63
+  s_e2dfd1d3edc361::t_dea7ecb6ad0ce2 51-53,55,58-60,64-67,71-73,77
+  s_e2dfd1d3edc361::t_f12c005ef89a81 79,83-84
+  s_e2dfd1d3edc361::t_8d2efc8061401b 74-76
+docs/superpowers/plans/2026-07-03-fix-2fa-weblogin-detection.md
+  s_e2dfd1d3edc361::t_cdf33519e51f92 1-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "9472495b9a1879ace1914241d7f182caa0452138",
+  "prompts": {},
+  "sessions": {
+    "s_e2dfd1d3edc361": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5bdc0b00-a144-4fe4-bd1c-7a0ec67e174d",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
