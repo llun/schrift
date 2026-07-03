@@ -116,23 +116,31 @@ final class EditorViewModel {
                 content = draft.markdown
                 contentTitle = draft.title
             }
-            if let contentTitle {
-                title = contentTitle
-            }
-            savedTitle = title
-            rawMarkdown = content
-            blocks = parseEditorBlocks(content)
-            openInMarkdownMode = !content.isEmpty && !markdownSurvivesRoundTrip(content)
-            // The dirty baseline uses the same representation currentMarkdown()
-            // produces, so an unchanged document never triggers a save.
-            savedMarkdown = openInMarkdownMode ? content : serializeMarkdown(blocks)
+            install(markdown: content, title: contentTitle)
             updatedAt = formatted.updatedAt
-            hasLoadedContent = true
             await loadChildren()
         } catch {
             errorMessage = "Couldn't load this document. Pull to refresh to try again."
         }
         isLoading = false
+    }
+
+    /// Installs content as the on-screen document. Every path that puts
+    /// content on screen routes through here so the round-trip safety check
+    /// and the dirty baseline are never bypassed — skipping them risks a
+    /// destructive full-overwrite save of non-round-trippable content.
+    private func install(markdown: String, title contentTitle: String?) {
+        if let contentTitle {
+            title = contentTitle
+        }
+        savedTitle = title
+        rawMarkdown = markdown
+        blocks = parseEditorBlocks(markdown)
+        openInMarkdownMode = !markdown.isEmpty && !markdownSurvivesRoundTrip(markdown)
+        // The dirty baseline uses the same representation currentMarkdown()
+        // produces, so an unchanged document never triggers a save.
+        savedMarkdown = openInMarkdownMode ? markdown : serializeMarkdown(blocks)
+        hasLoadedContent = true
     }
 
     func loadChildren() async {
