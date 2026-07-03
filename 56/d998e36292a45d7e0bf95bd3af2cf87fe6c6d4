@@ -1,0 +1,27 @@
+Signing.xcconfig
+  s_b183c958a2a3bc::t_f384ce16eba4ce 1-14
+Local.xcconfig.example
+  s_b183c958a2a3bc::t_1497e46d6d282b 1-14
+.gitignore
+  s_b183c958a2a3bc::t_89c4c1e322f45f 32-35
+project.yml
+  s_b183c958a2a3bc::t_bae6979e923c2b 16-21
+README.md
+  s_b183c958a2a3bc::t_e4b8532f13433b 35-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "56d998e36292a45d7e0bf95bd3af2cf87fe6c6d4",
+  "prompts": {},
+  "sessions": {
+    "s_b183c958a2a3bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bd233449-0d5f-4944-9db7-4d9da0c1601c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
