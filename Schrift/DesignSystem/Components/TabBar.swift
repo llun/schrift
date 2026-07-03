@@ -1,7 +1,19 @@
 import SwiftUI
+import UIKit
 
+/// The symbol name a tab-bar item should render for the given selection state.
+///
+/// Selected tabs use the filled variant of the symbol for emphasis. A few SF
+/// Symbols — notably `magnifyingglass` (the Search tab) — have **no** `.fill`
+/// variant, and asking `Image(systemName:)` for a symbol that doesn't exist
+/// renders an *empty* image. That made the Search tab's magnifying glass vanish
+/// the moment it was selected. Fall back to the base symbol whenever the filled
+/// variant isn't a real SF Symbol so selecting a tab never blanks its icon;
+/// selection stays legible via the brand tint and heavier weight.
 func tabBarIconName(baseSystemImage: String, isSelected: Bool) -> String {
-    isSelected ? "\(baseSystemImage).fill" : baseSystemImage
+    guard isSelected else { return baseSystemImage }
+    let filled = "\(baseSystemImage).fill"
+    return UIImage(systemName: filled) != nil ? filled : baseSystemImage
 }
 
 struct TabBarItem {
