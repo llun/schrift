@@ -6,9 +6,18 @@ final class EditorViewModelChildrenTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
 
+    private var cacheDirectory: URL!
+
+    override func setUp() {
+        super.setUp()
+        cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EditorViewModelChildrenTests.\(UUID().uuidString)", isDirectory: true)
+    }
+
     override func tearDown() {
         MockURLProtocol.stubHandler = nil
         MockURLProtocol.lastRequest = nil
+        try? FileManager.default.removeItem(at: cacheDirectory)
         super.tearDown()
     }
 
@@ -16,8 +25,9 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
-        return EditorViewModel(client: client, documentID: documentID, title: title, saveCoordinator: coordinator)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        return EditorViewModel(client: client, documentID: documentID, title: title, saveCoordinator: coordinator, contentCache: contentCache)
     }
 
     private static func childrenFixture(id: String, title: String) -> Data {
@@ -57,16 +67,16 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
         await viewModel.loadChildren()
 
-        XCTAssertEqual(viewModel.subpages.map(\.title), ["Meeting notes"])
+        XCTAssertEqual(viewModel.subpages?.map(\.title), ["Meeting notes"])
     }
 
-    func testLoadChildrenFailureLeavesSubpagesEmpty() async {
+    func testLoadChildrenFailureLeavesSubpagesNil() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
         await viewModel.loadChildren()
 
-        XCTAssertTrue(viewModel.subpages.isEmpty)
+        XCTAssertNil(viewModel.subpages, "failed fetch: not fetched, not 'none'")
     }
 
     func testLoadPopulatesSubpagesAndCapturesUpdatedAt() async {
@@ -85,7 +95,7 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.subpages.map(\.title), ["Child page"])
+        XCTAssertEqual(viewModel.subpages?.map(\.title), ["Child page"])
         XCTAssertNotNil(viewModel.updatedAt)
     }
 }

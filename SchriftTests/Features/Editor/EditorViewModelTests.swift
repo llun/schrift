@@ -760,6 +760,43 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentMarkdown(), "raw edited")
     }
 
+    // MARK: - Subpages fetch-awareness
+
+    func testSubpagesAreNilBeforeAnySuccessfulFetch() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertNil(viewModel.subpages, "offline: unknown, not 'none'")
+    }
+
+    func testSubpagesBecomeEmptyArrayAfterSuccessfulFetch() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        // Stub both endpoints explicitly: formatted-content, and an empty
+        // paginated children list (do not rely on stubLoad's handling of the
+        // children URL — a decode failure must now read as "not fetched").
+        let docBody = formattedBody(content: "# Doc")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("children") {
+                return MockURLProtocol.Stub(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"count": 0, "next": null, "previous": null, "results": []}"#.utf8),
+                    error: nil
+                )
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: docBody, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.subpages, [])
+    }
+
     func testHandleDidDeletePurgesCacheAndDrafts() async {
         let (viewModel, _, draftStore, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry())

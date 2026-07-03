@@ -269,7 +269,7 @@ struct EditorView: View {
                     Image(systemName: "list.bullet.indent")
                     .font(.system(size: 16))
                     .accessibilityHidden(true)
-                Text(viewModel.subpages.isEmpty ? "Subpages" : "Subpages · \(viewModel.subpages.count)")
+                Text((viewModel.subpages?.isEmpty ?? true) ? "Subpages" : "Subpages · \(viewModel.subpages?.count ?? 0)")
                     .font(DocsFont.footnote.weight(.semibold))
                     .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
             }
@@ -279,40 +279,45 @@ struct EditorView: View {
             // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
             .padding(.bottom, DocsSpacing.space3xs)
 
-            if viewModel.subpages.isEmpty {
-                Text("Organize this document by creating subpages.")
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.spaceXS)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(viewModel.subpages) { child in
-                        SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+            if let subpages = viewModel.subpages {
+                if subpages.isEmpty {
+                    Text("Organize this document by creating subpages.")
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                        .padding(.horizontal, DocsSpacing.spaceXS)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(subpages) { child in
+                            SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+                        }
                     }
                 }
             }
+            // nil (not fetched yet): just the eyebrow — never claim "no subpages".
 
-            Button {
-                Task {
-                    if let child = await viewModel.addSubpage() {
-                        onOpenDocument?(child)
+            if !isOffline {
+                Button {
+                    Task {
+                        if let child = await viewModel.addSubpage() {
+                            onOpenDocument?(child)
+                        }
                     }
+                } label: {
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 22))
+                        Text("Add a subpage")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(DocsColor.textBrand)
+                    .padding(.horizontal, DocsSpacing.spaceXS)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-            } label: {
-                HStack(spacing: DocsSpacing.spaceXS) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 22))
-                    Text("Add a subpage")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                .foregroundStyle(DocsColor.textBrand)
-                .padding(.horizontal, DocsSpacing.spaceXS)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             }
             .padding(.top, DocsSpacing.spaceBase)
         }

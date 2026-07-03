@@ -40,7 +40,9 @@ final class EditorViewModel {
     var title: String
     var blocks: [EditorBlock] = []
     var rawMarkdown: String = ""
-    var subpages: [Document] = []
+    /// nil = no successful fetch this session (the view must not claim "no
+    /// subpages" from the instant/offline path); [] = fetched, none exist.
+    var subpages: [Document]? = nil
     var updatedAt: Date? = nil
     var mode: Mode = .reading
     var isLoading = false
@@ -374,7 +376,8 @@ final class EditorViewModel {
     }
 
     func loadChildren() async {
-        subpages = (try? await client.listChildren(documentID: documentID))?.results ?? []
+        guard let results = try? await client.listChildren(documentID: documentID) else { return }
+        subpages = results.results
     }
 
     func addSubpage() async -> Document? {
