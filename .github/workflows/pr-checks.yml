@@ -69,9 +69,12 @@ jobs:
       - name: Pick an iPhone simulator
         id: sim
         run: |
+          # `|| true`: grep exits 1 when no iPhone matches; the empty-check
+          # below owns that failure so the device-list diagnostic still prints
+          # even if this step ever runs under a pipefail shell.
           names="$(xcrun simctl list -j devices available \
             | jq -r '.devices[][] | select(.isAvailable) | .name' \
-            | grep '^iPhone' | sort -u)"
+            | grep '^iPhone' | sort -u || true)"
           device="$(printf '%s\n' "$names" | grep -x 'iPhone 17' || true)"
           [ -n "$device" ] || device="$(printf '%s\n' "$names" | head -n 1)"
           if [ -z "$device" ]; then
