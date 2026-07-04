@@ -1,0 +1,23 @@
+Schrift/App/RootView.swift
+  s_48981e48a2f00a::t_e80fb9dd1cdcf3 44-45
+Schrift/Features/Connect/ReauthenticationSheetView.swift
+  s_48981e48a2f00a::t_843d62a228fcd8 73-74
+  s_48981e48a2f00a::t_4d3cfbba22d76a 9-14,18-27
+  s_48981e48a2f00a::t_26b2c41152ecd2 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "eb3f55be21fddf9753babe906fcddfece42af30d",
+  "prompts": {},
+  "sessions": {
+    "s_48981e48a2f00a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae6c2fe8-c354-45db-9444-8e1a3f7e2970",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
