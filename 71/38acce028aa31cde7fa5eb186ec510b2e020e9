@@ -1,0 +1,21 @@
+SchriftTests/Features/Editor/MarkdownBlockViewTests.swift
+  s_af41c4c668c22b::t_202e8d78cfcb7e 101-106
+  s_af41c4c668c22b::t_bfd262dfa9b76e 33-46
+  s_af41c4c668c22b::t_ac2edcffa0d18f 70-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7138acce028aa31cde7fa5eb186ec510b2e020e9",
+  "prompts": {},
+  "sessions": {
+    "s_af41c4c668c22b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26285f03-d26f-4b03-925c-dabd0cad03c9",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
