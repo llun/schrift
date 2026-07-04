@@ -9,7 +9,9 @@ final class SessionCookiesTests: XCTestCase {
         name: String = "docs_sessionid",
         value: String = "fake-session-value",
         expiresDate: Date? = nil,
-        isSecure: Bool = false
+        isSecure: Bool = false,
+        isHTTPOnly: Bool = false,
+        sameSitePolicy: HTTPCookieStringPolicy? = nil
     ) -> HTTPCookie {
         var properties: [HTTPCookiePropertyKey: Any] = [
             .domain: "docs.example.org",
@@ -19,6 +21,8 @@ final class SessionCookiesTests: XCTestCase {
         ]
         if let expiresDate { properties[.expires] = expiresDate }
         if isSecure { properties[.secure] = "TRUE" }
+        if isHTTPOnly { properties[HTTPCookiePropertyKey("HttpOnly")] = "TRUE" }
+        if let sameSitePolicy { properties[.sameSitePolicy] = sameSitePolicy.rawValue }
         return HTTPCookie(properties: properties)!
     }
 
@@ -94,6 +98,36 @@ final class SessionCookiesTests: XCTestCase {
         XCTAssertNotNil(rebuilt)
         XCTAssertNil(rebuilt?.expiresDate)
         XCTAssertEqual(rebuilt?.isSessionOnly, true)
+    }
+
+    // The production `sessionid` is HttpOnly + SameSite. Both ride undocumented
+    // seams — the raw `HTTPCookiePropertyKey("HttpOnly")` key and the
+    // `.sameSitePolicy` rawValue round-trip — that an OS update or refactor
+    // could break with no compile error, restoring a *weaker* cookie than the
+    // server set. Guard-assert the fixture first so a simulator that silently
+    // drops the property fails loudly there (telling us to drop the field per
+    // the plan), not misleadingly on the round trip.
+    func testStoredCookieCapturesHTTPOnlyAndSameSitePolicy() {
+        let cookie = makeCookie(isHTTPOnly: true, sameSitePolicy: .sameSiteStrict)
+        XCTAssertTrue(cookie.isHTTPOnly, "fixture precondition: the simulator honors HttpOnly")
+        XCTAssertEqual(cookie.sameSitePolicy, .sameSiteStrict, "fixture precondition: the simulator honors SameSite")
+
+        let stored = StoredCookie(cookie)
+
+        XCTAssertTrue(stored.isHTTPOnly)
+        XCTAssertEqual(stored.sameSitePolicy, HTTPCookieStringPolicy.sameSiteStrict.rawValue)
+    }
+
+    func testHTTPCookieReconstructionRoundTripsHTTPOnlyAndSameSitePolicy() {
+        let original = makeCookie(isHTTPOnly: true, sameSitePolicy: .sameSiteLax)
+        XCTAssertTrue(original.isHTTPOnly, "fixture precondition: the simulator honors HttpOnly")
+        XCTAssertEqual(original.sameSitePolicy, .sameSiteLax, "fixture precondition: the simulator honors SameSite")
+
+        let rebuilt = StoredCookie(original).httpCookie
+
+        XCTAssertNotNil(rebuilt)
+        XCTAssertEqual(rebuilt?.isHTTPOnly, true)
+        XCTAssertEqual(rebuilt?.sameSitePolicy, .sameSiteLax)
     }
 
     // MARK: - validStoredCookies

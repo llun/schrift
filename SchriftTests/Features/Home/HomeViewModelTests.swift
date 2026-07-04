@@ -365,6 +365,21 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Doc"])
     }
 
+    func testSessionExpiredLoadClearsStaleOfflineFromEarlierFailure() async {
+        // Device offline → back online but the server session has since died:
+        // the 401 must clear the stale offline flag, not leave it stuck true
+        // while the user waits on the re-login sheet.
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.isOffline)
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+    }
+
     func testSessionExpiredLoadShowsNoErrorEvenWhenUserInitiated() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }

@@ -27,6 +27,12 @@ final class SessionStoreTests: XCTestCase {
         ])!
     }
 
+    private func makeIdPCookie(name: String = "idp_session", value: String = "fake-idp-value") -> HTTPCookie {
+        HTTPCookie(properties: [
+            .domain: "idp.example.org", .path: "/", .name: name, .value: value,
+        ])!
+    }
+
     func testStartsUnauthenticatedWithNoServerURLWhenStorageEmpty() {
         let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
         XCTAssertNil(store.serverURL)
@@ -72,6 +78,40 @@ final class SessionStoreTests: XCTestCase {
         let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
         let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
         XCTAssertEqual(Set(stored.map(\.name)), Set(["docs_sessionid", "csrftoken"]))
+    }
+
+    func testSignInSnapshotsOnlyServerCookiesNotIdPCookies() throws {
+        // The snapshot must stay scoped to the chosen server: an IdP-host
+        // cookie that happens to sit in the shared storage is a third-party
+        // credential and must never enter the Keychain. A regression to
+        // "persist all cookies" would leak it and pass every other test.
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie())
+        cookieStorage.setCookie(makeIdPCookie())
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+
+        try store.signIn(serverURL: serverURL)
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.name), ["docs_sessionid"])
+        XCTAssertFalse(stored.contains { $0.domain.contains("idp.example.org") })
+    }
+
+    func testSignOutDeletesOnlyServerCookiesNotIdPCookies() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie())
+        cookieStorage.setCookie(makeIdPCookie())
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+
+        try store.signOut()
+
+        // Only the server's cookie is cleared; the IdP-host cookie is left for
+        // WebKit's own store to manage.
+        XCTAssertEqual(cookieStorage.storedCookies.map(\.name), ["idp_session"])
     }
 
     func testInitRestoresPersistedCookiesWhenAuthenticated() throws {
