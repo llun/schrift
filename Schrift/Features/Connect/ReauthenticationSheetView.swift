@@ -6,9 +6,25 @@ import SwiftUI
 /// cookies, so this often completes without any typing — then confirms and
 /// re-persists the session via `ReauthenticationViewModel`.
 struct ReauthenticationSheetView: View {
-    @Bindable var viewModel: ReauthenticationViewModel
+    // Built once in init and held in @State so a parent body re-evaluation
+    // while the sheet is open (e.g. an iPad size-class change mid-login) can't
+    // rebuild the VM and reset its transient isConfirming/errorMessage or the
+    // embedded WebLoginView's progress. Dismiss removes the view, so the next
+    // 401 re-presents with a fresh VM.
+    @State private var viewModel: ReauthenticationViewModel
     let onAuthenticated: () -> Void
     let onCancel: () -> Void
+
+    init(
+        serverURL: URL,
+        sessionStore: SessionStore,
+        onAuthenticated: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        _viewModel = State(initialValue: ReauthenticationViewModel(serverURL: serverURL, sessionStore: sessionStore))
+        self.onAuthenticated = onAuthenticated
+        self.onCancel = onCancel
+    }
 
     var body: some View {
         NavigationStack {
@@ -54,10 +70,8 @@ struct ReauthenticationSheetView: View {
 
 #Preview {
     ReauthenticationSheetView(
-        viewModel: ReauthenticationViewModel(
-            serverURL: URL(string: "https://docs.example.org")!,
-            sessionStore: SessionStore()
-        ),
+        serverURL: URL(string: "https://docs.example.org")!,
+        sessionStore: SessionStore(),
         onAuthenticated: {},
         onCancel: {}
     )

@@ -41,7 +41,8 @@ private struct AuthenticatedHomeContainer: View {
             )
         ) {
             ReauthenticationSheetView(
-                viewModel: ReauthenticationViewModel(serverURL: serverURL, sessionStore: sessionStore),
+                serverURL: serverURL,
+                sessionStore: sessionStore,
                 onAuthenticated: {
                     let homeViewModel = viewModel
                     Task { await homeViewModel.load() }
