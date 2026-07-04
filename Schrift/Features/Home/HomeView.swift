@@ -49,6 +49,7 @@ struct HomeView: View {
             }
             .background(DocsColor.surfacePage)
             .toolbar(.hidden, for: .navigationBar)
+            .restoresInteractivePopGesture()
             .navigationDestination(for: Document.self) { document in
                 EditorScreen(
                     client: viewModel.client,
