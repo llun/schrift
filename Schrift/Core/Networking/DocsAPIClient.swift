@@ -4,15 +4,21 @@ actor DocsAPIClient {
     private let baseURL: URL
     private let session: URLSession
     private let cookieProvider: @Sendable () -> [HTTPCookie]
+    /// Fired on every real 401 (before `.sessionExpired` is thrown) so the app
+    /// can raise its re-login flow. Consumers must be idempotent — concurrent
+    /// requests can all 401 at once. Production default is a no-op.
+    private let onSessionExpired: @Sendable () -> Void
 
     init(
         baseURL: URL,
         session: URLSession = .shared,
-        cookieProvider: (@Sendable () -> [HTTPCookie])? = nil
+        cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
+        onSessionExpired: @escaping @Sendable () -> Void = {}
     ) {
         self.baseURL = baseURL
         self.session = session
         self.cookieProvider = cookieProvider ?? { HTTPCookieStorage.shared.cookies(for: baseURL) ?? [] }
+        self.onSessionExpired = onSessionExpired
     }
 
     /// The bare site origin (scheme + host [+ port]) derived from `baseURL`, used
@@ -100,7 +106,11 @@ actor DocsAPIClient {
                     headers[key] = value
                 }
             }
-            throw DocsAPIErrorMapper.map(statusCode: httpResponse.statusCode, headers: headers)
+            let error = DocsAPIErrorMapper.map(statusCode: httpResponse.statusCode, headers: headers)
+            if error == .sessionExpired {
+                onSessionExpired()
+            }
+            throw error
         }
 
         return data

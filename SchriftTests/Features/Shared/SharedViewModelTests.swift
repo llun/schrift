@@ -120,6 +120,78 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
+    func testSessionExpiredLoadIsNotOfflineAndKeepsCachedRows() async {
+        // A real 401 raises the app-level re-login sheet (via the client's
+        // onSessionExpired hook) — it must not masquerade as offline.
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "18181818-1818-4181-8181-181818181818", title: "Cached Shared Doc")
+        ])
+        cache.saveSharedByMeDocuments([])
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached Shared Doc"])
+    }
+
+    func testMixedSessionExpiredAndNetworkFailureIsOffline() async {
+        // withMe 401s (session dead → re-login sheet, not offline) while byMe
+        // hits a real network failure: the per-scope check must still flag the
+        // load offline for the genuinely-failing scope. A regression that
+        // collapses the per-scope checks into one whole-load "was it 401?"
+        // check would wrongly report not-offline here.
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("is_creator_me=true") {
+                return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 401, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.isOffline)
+    }
+
+    func testMixedSessionExpiredAndSuccessIsNotOfflineAndKeepsCachedWithMe() async {
+        // withMe 401s (keeps its cached rows silently) while byMe succeeds: the
+        // whole load is not offline, byMe's fresh rows apply, and withMe falls
+        // back to its cache rather than being wiped.
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "12121212-1212-4121-8121-121212121212", title: "Cached With Me")
+        ])
+        let viewModel = makeViewModel()
+        let byMeBody = Self.paginatedFixture(id: "13131313-1313-4131-8131-131313131313", title: "Fresh By Me")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("is_creator_me=true") {
+                return .init(statusCode: 200, headers: [:], body: byMeBody, error: nil)
+            }
+            return .init(statusCode: 401, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.sharedByMe.map(\.title), ["Fresh By Me"])
+        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached With Me"])
+    }
+
+    func testSessionExpiredLoadShowsNoErrorEvenWhenUserInitiated() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testInitSeedsBothScopesFromCache() {
         cache.saveSharedWithMeDocuments([
             decodeDocument(id: "55555555-5555-4555-8555-555555555555", title: "Cached With Me")

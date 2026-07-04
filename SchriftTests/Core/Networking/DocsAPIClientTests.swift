@@ -47,6 +47,65 @@ final class DocsAPIClientTests: XCTestCase {
         }
     }
 
+    func testUnauthorizedResponseFiresOnSessionExpiredAndStillThrows() async {
+        struct Config: Decodable {}
+        final class Flag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = false
+            func set() { lock.withLock { value = true } }
+            var isSet: Bool { lock.withLock { value } }
+        }
+        let fired = Flag()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 401, headers: [:], body: Data(), error: nil)
+        }
+
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onSessionExpired: { fired.set() }
+        )
+        do {
+            let _: Config = try await client.get("users/me/")
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .sessionExpired)
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+        XCTAssertTrue(fired.isSet)
+    }
+
+    func testSuccessAndServerErrorDoNotFireOnSessionExpired() async {
+        struct Config: Decodable { let theme: String }
+        final class Flag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = false
+            func set() { lock.withLock { value = true } }
+            var isSet: Bool { lock.withLock { value } }
+        }
+        let fired = Flag()
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onSessionExpired: { fired.set() }
+        )
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: #"{"theme": "indigo"}"#.data(using: .utf8)!, error: nil)
+        }
+        let _: Config? = try? await client.get("config/")
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        let _: Config? = try? await client.get("config/")
+
+        XCTAssertFalse(fired.isSet)
+    }
+
     func testRateLimitedResponseCarriesRetryAfter() async {
         struct Config: Decodable {}
         MockURLProtocol.stubHandler = { _ in

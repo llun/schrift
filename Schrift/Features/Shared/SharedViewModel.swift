@@ -98,7 +98,10 @@ final class SharedViewModel {
 
         // Load each scope independently so a failure in one doesn't discard the
         // other's results (partial success is kept; the failing scope keeps its
-        // cached rows).
+        // cached rows). A real 401 is not "offline" — the client's
+        // onSessionExpired hook has already raised the app-level re-login
+        // sheet, so an expired session keeps cached rows silently instead of
+        // flagging the scope as failed.
         var withMeFailed = false
         var byMeFailed = false
         do {
@@ -109,7 +112,7 @@ final class SharedViewModel {
             knownScopes.insert(.withMe)
         } catch {
             guard generation == loadGeneration else { return }
-            withMeFailed = true
+            withMeFailed = (error as? DocsAPIError) != .sessionExpired
         }
         do {
             let byMe = try await client.listDocuments(isCreatorMe: true, ordering: "-updated_at").results
@@ -119,7 +122,7 @@ final class SharedViewModel {
             knownScopes.insert(.byMe)
         } catch {
             guard generation == loadGeneration else { return }
-            byMeFailed = true
+            byMeFailed = (error as? DocsAPIError) != .sessionExpired
         }
         isOffline = withMeFailed || byMeFailed
         // Loud when a *failing* scope has no cached list to fall back on

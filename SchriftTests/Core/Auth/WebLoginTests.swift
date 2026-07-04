@@ -46,31 +46,23 @@ final class WebLoginTests: XCTestCase {
     }
 
     func testSyncCookiesForwardsEachCookieToStorage() {
-        final class FakeCookieStoring: CookieStoring {
-            private(set) var savedCookies: [HTTPCookie] = []
-            func setCookie(_ cookie: HTTPCookie) { savedCookies.append(cookie) }
-        }
         let sessionCookie = HTTPCookie(properties: [
             .domain: "docs.llun.dev", .path: "/", .name: "docs_sessionid", .value: "abc",
         ])!
         let csrfCookie = HTTPCookie(properties: [
             .domain: "docs.llun.dev", .path: "/", .name: "csrftoken", .value: "xyz",
         ])!
-        let fake = FakeCookieStoring()
+        let fake = FakeCookieStorage()
 
         syncCookies([sessionCookie, csrfCookie], into: fake)
 
-        XCTAssertEqual(fake.savedCookies.count, 2)
-        XCTAssertEqual(Set(fake.savedCookies.map(\.name)), Set(["docs_sessionid", "csrftoken"]))
+        XCTAssertEqual(fake.storedCookies.count, 2)
+        XCTAssertEqual(Set(fake.storedCookies.map(\.name)), Set(["docs_sessionid", "csrftoken"]))
     }
 
     func testSyncCookiesWithEmptyArrayDoesNothing() {
-        final class FakeCookieStoring: CookieStoring {
-            private(set) var savedCookies: [HTTPCookie] = []
-            func setCookie(_ cookie: HTTPCookie) { savedCookies.append(cookie) }
-        }
-        let fake = FakeCookieStoring()
+        let fake = FakeCookieStorage()
         syncCookies([], into: fake)
-        XCTAssertTrue(fake.savedCookies.isEmpty)
+        XCTAssertTrue(fake.storedCookies.isEmpty)
     }
 }
