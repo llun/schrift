@@ -346,6 +346,35 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
+    func testSessionExpiredLoadIsNotOfflineAndKeepsCachedRows() async {
+        // A real 401 raises the app-level re-login sheet (via the client's
+        // onSessionExpired hook) — it must not masquerade as offline.
+        let cache = makeCache()
+        let cachedBody = Self.paginatedFixture(
+            id: "17171717-1717-4171-8171-171717171717", title: "Cached Doc", isFavorite: false)
+        let cachedDocument = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: cachedBody)
+            .results[0]
+        cache.saveRecentDocuments([cachedDocument], filter: .all)
+        let viewModel = makeViewModel(cache: cache)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Doc"])
+    }
+
+    func testSessionExpiredLoadShowsNoErrorEvenWhenUserInitiated() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testLoadSuccessKeepsIsOfflineFalse() async {
         let viewModel = makeViewModel()
         let pinnedBody = Self.paginatedFixture(

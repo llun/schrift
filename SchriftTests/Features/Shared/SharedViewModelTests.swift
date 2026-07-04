@@ -120,6 +120,33 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
+    func testSessionExpiredLoadIsNotOfflineAndKeepsCachedRows() async {
+        // A real 401 raises the app-level re-login sheet (via the client's
+        // onSessionExpired hook) — it must not masquerade as offline.
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "18181818-1818-4181-8181-181818181818", title: "Cached Shared Doc")
+        ])
+        cache.saveSharedByMeDocuments([])
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached Shared Doc"])
+    }
+
+    func testSessionExpiredLoadShowsNoErrorEvenWhenUserInitiated() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testInitSeedsBothScopesFromCache() {
         cache.saveSharedWithMeDocuments([
             decodeDocument(id: "55555555-5555-4555-8555-555555555555", title: "Cached With Me")

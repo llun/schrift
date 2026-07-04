@@ -102,7 +102,10 @@ This file is the shorter, operational "how we write code here" companion.
 Schrift/
 ├── App/                 app entry (SchriftApp) + root navigation (RootView)
 ├── Core/
-│   ├── Auth/            SessionStore, WebLogin (WKWebView cookie login), KeychainStore
+│   ├── Auth/            SessionStore (persists session cookies in the Keychain and
+│   │                    exposes needsReauthentication), SessionCookies (Codable
+│   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
+│   │                    KeychainStore
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions,
 │   │                    Codable models, DocsAPIError, CSRF
 │   └── Yjs/             on-device Markdown→BlockNote→Yjs encoder that builds the
@@ -216,6 +219,12 @@ new code reads like the surrounding code.
   `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound`,
   429→`rateLimited(retryAfter:)`, else `server`). Wrap `URLSession`/decoder
   failures into `.network`/`.decoding`; never rethrow raw errors.
+- A real 401 additionally fires the client's injected `onSessionExpired` hook
+  (wired to `SessionStore.noteSessionExpired()` by the one shared client built
+  in RootView), which presents the app-level re-login sheet. View models must
+  therefore **never treat `.sessionExpired` as offline** — keep cached rows
+  silently and let the sheet handle recovery; only `.network`/`.server`/etc.
+  get the offline treatment.
 - Models conform to `Codable, Equatable, Hashable` (+`Identifiable` when they
   carry `id: UUID`, +`Sendable` when they cross async). Server-immutable fields
   are `let`, client-editable fields `var`, absent fields Optional. Decode server
@@ -313,6 +322,13 @@ markdown write endpoint**. Understand this before touching the save path:
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.
+- **Session cookies persist in the Keychain** (`dev.llun.Schrift.sessionCookies`):
+  `SessionStore.signIn` snapshots the server's cookies (as Codable
+  `StoredCookie`s — the Django `sessionid` is session-only, so
+  `HTTPCookieStorage` alone drops it when iOS kills the process) and
+  `SessionStore.init` restores them into `HTTPCookieStorage.shared`
+  synchronously, before RootView builds the API client. Deleted on sign-out.
+  Never log cookie values; never add `kSecAttrSynchronizable`.
 - `DocumentContentCacheStore` is the one **file-based** store (full document
   bodies are too large for UserDefaults): stateless over its directory,
   `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction

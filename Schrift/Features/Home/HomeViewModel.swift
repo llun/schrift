@@ -104,13 +104,19 @@ final class HomeViewModel {
             isOffline = false
         } catch {
             guard generation == loadGeneration else { return }
-            isOffline = true
-            // Silent when this filter has a cached list to fall back on
-            // (offline reading); loud on a true first run of the filter —
-            // pinned rows are no evidence for it — or an explicit
-            // pull-to-refresh.
-            if userInitiated || !hasCachedList {
-                errorMessage = "Couldn't load documents. Pull to refresh to try again."
+            // A real 401 is not "offline": the client's onSessionExpired hook
+            // has already raised the app-level re-login sheet, so keep serving
+            // cached rows silently. Everything else keeps the offline
+            // treatment.
+            if (error as? DocsAPIError) != .sessionExpired {
+                isOffline = true
+                // Silent when this filter has a cached list to fall back on
+                // (offline reading); loud on a true first run of the filter —
+                // pinned rows are no evidence for it — or an explicit
+                // pull-to-refresh.
+                if userInitiated || !hasCachedList {
+                    errorMessage = "Couldn't load documents. Pull to refresh to try again."
+                }
             }
         }
 

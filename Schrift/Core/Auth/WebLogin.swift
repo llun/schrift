@@ -10,6 +10,8 @@ func isLoginNavigationComplete(url: URL, serverHost: String, apiPathPrefix: Stri
 
 protocol CookieStoring {
     func setCookie(_ cookie: HTTPCookie)
+    func cookies(for url: URL) -> [HTTPCookie]?
+    func deleteCookie(_ cookie: HTTPCookie)
 }
 
 extension HTTPCookieStorage: CookieStoring {}

@@ -199,6 +199,9 @@ final class EditorViewModel {
             guard generation == revalidationGeneration else { return }
             // Transient (.network, .server, .rateLimited, .sessionExpired —
             // cookie expiry must not purge the cache): keep the local copy.
+            // For .sessionExpired specifically, the shared client's
+            // onSessionExpired hook has already raised the app-level re-login
+            // sheet; the editor recovers on its next refresh or save.
             if displaySource == .none {
                 errorMessage = "Couldn't load this document. Pull to refresh to try again."
             }
