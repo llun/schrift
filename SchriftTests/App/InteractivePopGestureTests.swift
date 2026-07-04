@@ -9,13 +9,18 @@ final class InteractivePopGestureTests: XCTestCase {
     // MARK: - shouldAllowInteractivePop
 
     func testShouldAllowInteractivePopRefusesEmptyAndRootOnlyStacks() {
-        XCTAssertFalse(shouldAllowInteractivePop(stackDepth: 0))
-        XCTAssertFalse(shouldAllowInteractivePop(stackDepth: 1))
+        XCTAssertFalse(shouldAllowInteractivePop(stackDepth: 0, isTransitioning: false))
+        XCTAssertFalse(shouldAllowInteractivePop(stackDepth: 1, isTransitioning: false))
     }
 
     func testShouldAllowInteractivePopAllowsStacksWithPushedScreens() {
-        XCTAssertTrue(shouldAllowInteractivePop(stackDepth: 2))
-        XCTAssertTrue(shouldAllowInteractivePop(stackDepth: 5))
+        XCTAssertTrue(shouldAllowInteractivePop(stackDepth: 2, isTransitioning: false))
+        XCTAssertTrue(shouldAllowInteractivePop(stackDepth: 5, isTransitioning: false))
+    }
+
+    func testShouldAllowInteractivePopRefusesWhileTransitionIsInFlight() {
+        XCTAssertFalse(shouldAllowInteractivePop(stackDepth: 2, isTransitioning: true))
+        XCTAssertFalse(shouldAllowInteractivePop(stackDepth: 5, isTransitioning: true))
     }
 
     // MARK: - InteractivePopGestureDelegate

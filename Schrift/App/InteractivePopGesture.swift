@@ -3,10 +3,11 @@ import UIKit
 
 /// Whether the edge-swipe back gesture may begin on a navigation stack that is
 /// `stackDepth` view controllers deep. Kept as a pure free function so the rule
-/// is unit-testable: the gesture must stay disabled on the root screen, where a
-/// pop would corrupt the navigation controller's transition state.
-func shouldAllowInteractivePop(stackDepth: Int) -> Bool {
-    stackDepth > 1
+/// is unit-testable: the gesture must stay disabled on the root screen and while
+/// a push/pop transition is in flight — beginning a pop in either state corrupts
+/// the navigation controller's transition state.
+func shouldAllowInteractivePop(stackDepth: Int, isTransitioning: Bool) -> Bool {
+    !isTransitioning && stackDepth > 1
 }
 
 /// Replacement delegate for `UINavigationController.interactivePopGestureRecognizer`.
@@ -21,8 +22,10 @@ final class InteractivePopGestureDelegate: NSObject, UIGestureRecognizerDelegate
     weak var navigationController: UINavigationController?
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let navigationController, navigationController.transitionCoordinator == nil else { return false }
-        return shouldAllowInteractivePop(stackDepth: navigationController.viewControllers.count)
+        guard let navigationController else { return false }
+        return shouldAllowInteractivePop(
+            stackDepth: navigationController.viewControllers.count,
+            isTransitioning: navigationController.transitionCoordinator != nil)
     }
 }
 
