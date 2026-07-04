@@ -177,6 +177,12 @@ new code reads like the surrounding code.
 - **Navigation lives in the view**, not the VM: `NavigationStack(path:)` + a typed
   route enum + closure callbacks (`onOpenDocument`, `onSignOut`, …). VMs signal
   outcomes via state flags (`didDelete`), they don't navigate.
+- Screens hide the system navigation bar (`.toolbar(.hidden, for: .navigationBar)`)
+  and draw their own `NavBar` — which makes UIKit disable the edge-swipe back
+  gesture. Any `NavigationStack` that pushes such screens must apply
+  `.restoresInteractivePopGesture()` (`Schrift/App/InteractivePopGesture.swift`)
+  once to its root content to bring swipe-back back; the swapped delegate keeps
+  the gesture disabled at the stack root and during transitions.
 - Async VM methods **catch errors internally** and set a user-facing
   `var errorMessage: String?` with friendly copy of the form
   `"Couldn't <do X>. Please try again."` — they don't rethrow or surface raw
