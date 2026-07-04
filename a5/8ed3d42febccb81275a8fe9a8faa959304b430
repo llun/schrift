@@ -1,0 +1,22 @@
+Schrift/App/InteractivePopGesture.swift
+  s_ff46b51b318c5c::t_f36e46f8003686 25-28
+  s_ff46b51b318c5c::t_59fcacb81db5f2 6-10
+SchriftTests/App/InteractivePopGestureTests.swift
+  s_ff46b51b318c5c::t_8980165500df8a 12-13,17-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a58ed3d42febccb81275a8fe9a8faa959304b430",
+  "prompts": {},
+  "sessions": {
+    "s_ff46b51b318c5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f477ad23-1f18-4286-bfcb-5ae3180f1ba2",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
