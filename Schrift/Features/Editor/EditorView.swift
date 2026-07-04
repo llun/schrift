@@ -61,9 +61,13 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // In reading mode the document title is the large-title header
+            // (uniform 96pt bar, matching every other screen). While editing,
+            // the title is edited inline in the canvas, so the bar collapses to
+            // the compact form and drops its title to avoid showing it twice.
             NavBar(
-                title: viewModel.title,
-                largeTitle: true,
+                title: viewModel.isEditing ? "" : viewModel.title,
+                largeTitle: !viewModel.isEditing,
                 backTitle: "Schrift",
                 onBack: onBack,
                 trailingActions: trailingActions
