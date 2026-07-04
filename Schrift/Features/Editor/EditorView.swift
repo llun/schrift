@@ -61,7 +61,13 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // In reading mode the document title is the large-title header
+            // (uniform 96pt bar, matching every other screen). While editing,
+            // the title is edited inline in the canvas, so the bar collapses to
+            // the compact form and drops its title to avoid showing it twice.
             NavBar(
+                title: viewModel.isEditing ? "" : viewModel.title,
+                largeTitle: !viewModel.isEditing,
                 backTitle: "Schrift",
                 onBack: onBack,
                 trailingActions: trailingActions
@@ -270,22 +276,16 @@ struct EditorView: View {
         .padding(.top, DocsSpacing.spaceLG)
     }
 
+    /// The document title now lives in the large-title nav bar (uniform 96pt
+    /// header across the app), so the in-content header only carries the
+    /// reach/sync metadata that has no place in the bar.
     private var headerBlock: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            DocIcon(size: 40)
-
-            Text(viewModel.title)
-                .font(DocsFont.title1.weight(.bold))
-                .tracking(DocsTypographySpec.title1.size * DocsTracking.tight)
-                .foregroundStyle(DocsColor.textPrimary)
-
-            HStack(spacing: DocsSpacing.spaceXS) {
-                LinkReachPill(reach: reach)
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    Text(syncCaptionText(now: context.date))
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
-                }
+        HStack(spacing: DocsSpacing.spaceXS) {
+            LinkReachPill(reach: reach)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(syncCaptionText(now: context.date))
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textTertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

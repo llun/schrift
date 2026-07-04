@@ -12,20 +12,6 @@ struct NavBarAction {
     let action: () -> Void
 }
 
-/// The bar's fill: white for standard chrome, sunken for screens whose page
-/// background is `--surface-sunken` (Profile, Account).
-enum NavBarTint {
-    case page
-    case sunken
-
-    var color: Color {
-        switch self {
-        case .page: return DocsColor.surfacePage
-        case .sunken: return DocsColor.surfaceSunken
-        }
-    }
-}
-
 struct NavBar: View {
     var title: String = ""
     var subtitle: String? = nil
@@ -34,8 +20,6 @@ struct NavBar: View {
     var backTitle: String? = nil
     var onBack: (() -> Void)? = nil
     var trailingActions: [NavBarAction] = []
-    var translucent: Bool = true
-    var surfaceTint: NavBarTint = .page
     var showsBorder: Bool = true
 
     var body: some View {
@@ -115,15 +99,12 @@ struct NavBar: View {
             }
         }
         .frame(minHeight: navBarHeight(largeTitle: largeTitle))
-        // Translucent bars are frosted glass: a system material blur under a
-        // ~0.82 tint, matching the reference `backdrop-filter: blur(20px)`.
-        .background {
-            if translucent {
-                surfaceTint.color.opacity(0.82).background(.ultraThinMaterial)
-            } else {
-                surfaceTint.color
-            }
-        }
+        // Solid, opaque white fill — no frosted-glass blur. `ignoresSafeArea`
+        // extends the fill up through the status-bar strip (the bar itself sits
+        // below the safe-area inset), so the status area reads as the same clean
+        // white as the bar even on screens whose page background is sunken gray
+        // (Profile, Account) — no gray/white seam above the header.
+        .background(DocsColor.surfacePage.ignoresSafeArea(edges: .top))
         .overlay(alignment: .bottom) {
             if showsBorder {
                 Rectangle()

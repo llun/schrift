@@ -11,7 +11,7 @@ struct AccountScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Account", backTitle: "Profile", onBack: onBack, surfaceTint: .sunken)
+            NavBar(title: "Account", largeTitle: true, backTitle: "Profile", onBack: onBack)
 
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {

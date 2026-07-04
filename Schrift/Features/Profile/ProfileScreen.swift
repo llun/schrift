@@ -18,7 +18,7 @@ struct ProfileScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Profile", largeTitle: true, surfaceTint: .sunken)
+            NavBar(title: "Profile", largeTitle: true)
 
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
