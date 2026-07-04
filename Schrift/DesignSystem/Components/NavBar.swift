@@ -34,7 +34,6 @@ struct NavBar: View {
     var backTitle: String? = nil
     var onBack: (() -> Void)? = nil
     var trailingActions: [NavBarAction] = []
-    var translucent: Bool = true
     var surfaceTint: NavBarTint = .page
     var showsBorder: Bool = true
 
@@ -115,15 +114,11 @@ struct NavBar: View {
             }
         }
         .frame(minHeight: navBarHeight(largeTitle: largeTitle))
-        // Translucent bars are frosted glass: a system material blur under a
-        // ~0.82 tint, matching the reference `backdrop-filter: blur(20px)`.
-        .background {
-            if translucent {
-                surfaceTint.color.opacity(0.82).background(.ultraThinMaterial)
-            } else {
-                surfaceTint.color
-            }
-        }
+        // Solid, opaque fill — no frosted-glass blur. The opaque `Color`
+        // background bleeds into the top safe area, so the status-bar strip
+        // reads as the same clean surface color as the bar (white for `.page`)
+        // instead of a translucent gray tint.
+        .background(surfaceTint.color)
         .overlay(alignment: .bottom) {
             if showsBorder {
                 Rectangle()
