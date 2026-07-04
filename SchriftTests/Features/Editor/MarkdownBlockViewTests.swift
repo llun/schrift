@@ -30,6 +30,20 @@ final class MarkdownBlockViewTests: XCTestCase {
         XCTAssertEqual(result.runs.compactMap { $0.link }, [URL(string: "https://api.example.com/v1/mcp")!])
     }
 
+    func testBareURLAndMarkdownLinkCoexist() {
+        let result = markdownInlineText("[site](https://a.dev/x) and https://b.dev")
+        XCTAssertEqual(
+            result.runs.compactMap { $0.link },
+            [URL(string: "https://a.dev/x")!, URL(string: "https://b.dev")!])
+        XCTAssertFalse(String(result.characters).contains("]("))
+    }
+
+    func testPreservesLineBreaks() {
+        // The `.inlineOnlyPreservingWhitespace` option keeps hard line breaks so
+        // multi-line `.unknown` prose still renders across lines.
+        XCTAssertTrue(String(markdownInlineText("Line one\nLine two").characters).contains("\n"))
+    }
+
     // MARK: - Standalone image parsing
 
     func testParsesImage() {
@@ -53,6 +67,14 @@ final class MarkdownBlockViewTests: XCTestCase {
         XCTAssertNil(parseStandaloneImage("![x](/relative/path.png)"))
     }
 
+    func testRejectsImageWithEmptyURL() {
+        XCTAssertNil(parseStandaloneImage("![alt]()"))
+    }
+
+    func testRejectsImageWithBracketInAlt() {
+        XCTAssertNil(parseStandaloneImage("![a]b](https://a.dev/x.png)"))
+    }
+
     func testRejectsImageWithTrailingText() {
         XCTAssertNil(parseStandaloneImage("![x](https://a.dev/b.png) caption"))
     }
@@ -74,6 +96,12 @@ final class MarkdownBlockViewTests: XCTestCase {
 
     func testTableIsNotProse() {
         XCTAssertFalse(unknownRendersAsProse("| a | b |\n| - | - |"))
+    }
+
+    func testStructuralMarkerOnLaterLineIsNotProse() {
+        // Every line is scanned, not just the first: a prose opener followed by
+        // a table row must still bail out to verbatim rendering.
+        XCTAssertFalse(unknownRendersAsProse("Intro text\n| a | b |"))
     }
 
     func testHTMLIsNotProse() {
