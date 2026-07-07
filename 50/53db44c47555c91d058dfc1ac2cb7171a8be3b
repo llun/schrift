@@ -1,0 +1,21 @@
+.github/PULL_REQUEST_TEMPLATE.md
+  s_b46701715e2532::t_dbebcbfb7cc017 1-17
+CLAUDE.md
+  s_b46701715e2532::t_fc9e8b149bb4d8 23-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5053db44c47555c91d058dfc1ac2cb7171a8be3b",
+  "prompts": {},
+  "sessions": {
+    "s_b46701715e2532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82eab32c-39d7-44f3-94de-04ee2d6f932b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
