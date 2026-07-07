@@ -86,17 +86,17 @@ This file is the shorter, operational "how we write code here" companion.
   is right (PRs are squash-merged, so the PR title becomes the commit subject on
   `main` that `next-version.sh` parses); a non-conforming title still ships a
   patch. Nothing is committed back to `main` (version is tag-derived) and the
-  tag is pushed with `GITHUB_TOKEN`, so
-  there is no release loop. Ship manually via **Actions → TestFlight → Run
-  workflow**; add `[skip ci]` to a commit to skip a build. Build number =
-  `github.run_number` (monotonic — do **not** rename/move the workflow file or it
-  resets). On CI the upload **waits for Apple to finish processing** so it can
-  attach auto-generated **release notes** (commit subjects since the last tag,
-  written to `release-notes.txt` and read by the `beta` lane — never interpolated,
-  to avoid workflow injection from commit text) and distribute; that's why the job
-  timeout is 90 min. Internal testers get every build automatically (no review);
-  set the repo variable `TESTFLIGHT_GROUPS` (comma-separated) to also target named
-  beta groups. TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
+  tag is pushed with `GITHUB_TOKEN`, so there is no release loop. Ship manually
+  via **Actions → TestFlight → Run workflow**; add `[skip ci]` to a commit to
+  skip a build. Build number = `github.run_number` (monotonic — do **not**
+  rename/move the workflow file or it resets). On CI the upload **waits for
+  Apple to finish processing** so it can attach auto-generated **release
+  notes** (commit subjects since the last tag, written to `release-notes.txt`
+  and read by the `beta` lane — never interpolated, to avoid workflow injection
+  from commit text) and distribute; that's why the job timeout is 90 min.
+  Internal testers get every build automatically (no review); set the repo
+  variable `TESTFLIGHT_GROUPS` (comma-separated) to also target named beta
+  groups. TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
   build/test-only (no archive/deploy on `main`) so the two don't double-build or
   collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not
@@ -285,9 +285,8 @@ new code reads like the surrounding code.
   `ConnectViewModel` and `ReauthenticationViewModel` (no session exists / re-auth
   is already in progress, so a 401 there must not re-raise the sheet). View
   models must therefore **never treat `.sessionExpired` as offline** — keep
-  cached rows
-  silently and let the sheet handle recovery; only `.network`/`.server`/etc.
-  get the offline treatment.
+  cached rows silently and let the sheet handle recovery; only
+  `.network`/`.server`/etc. get the offline treatment.
 - Models conform to `Codable, Equatable` (add `Hashable` when they're used in
   collections or as navigation values, `Identifiable` when they carry an `id`,
   and `Sendable` explicitly when they cross async — several existing structs
@@ -306,12 +305,13 @@ new code reads like the surrounding code.
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.tracking(size * DocsTracking.tight)`),
-  `DocsSpacing`, `DocsRadius`). Adding a color means adding it to `DocsColorHex` (raw `UInt32`);
-  add a matching `DocsColor` entry only when views use it directly as a SwiftUI
-  `Color` — hues consumed only by style resolvers (the accent palette, the
-  `-650` feedback foregrounds, parts of the gray ramp) stay hex-only. Add a
-  value assertion in `DocsColorHexTests` (tokens added after the original spec
-  currently lack assertions — extend the tests when you touch them).
+  `DocsSpacing`, `DocsRadius`). Adding a color means adding it to
+  `DocsColorHex` (raw `UInt32`); add a matching `DocsColor` entry only when
+  views use it directly as a SwiftUI `Color` — hues consumed only by style
+  resolvers (the accent palette, the `-650` feedback foregrounds, parts of the
+  gray ramp) stay hex-only. Add a value assertion in `DocsColorHexTests`
+  (tokens added after the original spec currently lack assertions — extend the
+  tests when you touch them).
 - Views **never** use raw color/hex/font literals — always tokens. (One-off
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
@@ -402,19 +402,18 @@ markdown write endpoint**. Understand this before touching the save path:
   always-loud path — except `.sessionExpired`, which stays silent because the
   client's `onSessionExpired` hook already raised the re-login sheet) — and
   successful fetches write through. Delete/404/403 purge the **children**
-  store only (the document's own entry *and* its ghost
-  in other parents' cached lists); the Home/Shared list caches have no purge
-  path — a deleted document drops out of them on the next successful fetch.
-  The children store caps entries by reusing the pure `contentCacheEvictions`
-  selection. The `schrift.workOffline` read goes through the VM's injected
-  `userDefaults`, never the singleton. Metadata caches are **not** cleared on
-  sign-out — a recorded decision; neither are
-  unsaved drafts in `PendingDraftStore` (full document text, deliberately
-  backup-included so unsaved work survives); only the full bodies in
-  `DocumentContentCacheStore` are. That clearing lives in RootView's
-  `onSignOut` closure (`DocumentContentCacheStore().removeAll()`), **not**
-  inside `SessionStore.signOut()` — a new sign-out path must call it explicitly.
-  See `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`.
+  store only (the document's own entry *and* its ghost in other parents'
+  cached lists); the Home/Shared list caches have no purge path — a deleted
+  document drops out of them on the next successful fetch. The children store
+  caps entries by reusing the pure `contentCacheEvictions` selection. The
+  `schrift.workOffline` read goes through the VM's injected `userDefaults`,
+  never the singleton. Metadata caches are **not** cleared on sign-out — a
+  recorded decision; neither are unsaved drafts in `PendingDraftStore` (full
+  document text, deliberately backup-included so unsaved work survives); only
+  the full bodies in `DocumentContentCacheStore` are. That clearing lives in
+  RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
+  **not** inside `SessionStore.signOut()` — a new sign-out path must call it
+  explicitly. See `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.
