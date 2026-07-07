@@ -400,6 +400,22 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Parse markdown conservatively** so a full-overwrite save never destroys
   content: anything the editor can't model is preserved verbatim as `.unknown`
   blocks; ambiguous inline spans stay literal.
+- A standalone `![alt](url)` line with an **absolute http(s) URL** is a
+  first-class `BlockKind.image(alt:url:)` block (classified in the parser's
+  `parseClassifiedLine` chain via `parseImageLine`, so classification and
+  `canonicalizeLine` stay consistent). `alt`/`url` are raw `String`s — **never**
+  round-trip the url through `URL`; the backend's `extract_attachments()` matches
+  it byte-for-byte. It maps to a real BlockNote `image` **leaf** node (the markdown
+  alt becomes `name`, since BlockNote renders the `<img>` alt from `name`). The
+  encoder supports leaf blocks that carry props: `hasTextChild` excludes `divider`
+  **and** `image`, and props are emitted for every block. The image byte layout is
+  locked by a golden fixture (`YjsEncoderTests.testImageBlockIsLeafWithProps`)
+  captured from `@blocknote/core@0.51.4` (the version the docs frontend pins) —
+  the image block has **no `textColor`**, and `previewWidth` is emitted as
+  `undefined` (`YAnyValue.undefined` → lib0 `writeAny` 127), not omitted. In the
+  editor an image renders as a **non-editable leaf** (like a divider): it deletes
+  as a unit, is never converted, and never receives inline markers. Relative or
+  ambiguous image lines stay `.unknown` verbatim.
 - Two view-model invariants protect the full-overwrite save: editing may only
   begin once `hasLoadedContent` is true (`startEditing` guards on it —
   otherwise autosave would overwrite the whole server document with an empty
