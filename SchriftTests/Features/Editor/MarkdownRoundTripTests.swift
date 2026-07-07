@@ -31,6 +31,7 @@ final class MarkdownRoundTripTests: XCTestCase {
             EditorBlock(kind: .quote, text: "Quote"),
             EditorBlock(kind: .codeBlock(language: "swift"), text: "let x = 1\nlet y = 2"),
             EditorBlock(kind: .divider),
+            EditorBlock(kind: .image(alt: "photo", url: "https://example.com/p.jpg")),
             EditorBlock(kind: .unknown, text: "| a | b |\n| - | - |"),
             EditorBlock(kind: .paragraph, text: "The end."),
         ])
@@ -92,7 +93,9 @@ final class MarkdownRoundTripTests: XCTestCase {
         "#  Extra   spaces  \n",
         "| a | b |\n| - | - |\n| 1 | 2 |\n",
         "Nested:\n- top\n  - inner\n    - deeper\n",
+        // Relative image stays `.unknown` verbatim; absolute image is a first-class block.
         "![img](x.png)\n\n<hr>\n",
+        "![photo](https://docs.example.com/media/11111111-1111-4111-8111-111111111111/attachments/22222222-2222-4222-8222-222222222222.jpg)\n",
         "```js\nconsole.log('hi')\n```\n",
         "Line one\nline two\nline three\n",
         "*****\n",

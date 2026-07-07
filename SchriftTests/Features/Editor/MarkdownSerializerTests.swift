@@ -107,6 +107,12 @@ final class MarkdownSerializerTests: XCTestCase {
         XCTAssertEqual(serializeMarkdown([EditorBlock(kind: .divider)]), "---\n")
     }
 
+    func testSerializesImageBlock() {
+        XCTAssertEqual(
+            serializeMarkdown([EditorBlock(kind: .image(alt: "diagram", url: "https://example.com/d.png"))]),
+            "![diagram](https://example.com/d.png)\n")
+    }
+
     func testUnknownBlockIsEmittedVerbatim() {
         let table = "| a | b |\n| - | - |"
         XCTAssertEqual(serializeMarkdown([EditorBlock(kind: .unknown, text: table)]), table + "\n")

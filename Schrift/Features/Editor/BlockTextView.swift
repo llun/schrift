@@ -51,7 +51,9 @@ func blockTextStyling(for kind: BlockKind) -> BlockTextStyling {
             isCodeLike: true,
             allowsNewlines: true
         )
-    case .paragraph, .bulletItem, .numberedItem, .checklistItem, .divider:
+    case .paragraph, .bulletItem, .numberedItem, .checklistItem, .divider, .image:
+        // `.divider`/`.image` never host a text view (they render as leaves);
+        // grouped here only to keep the switch exhaustive with a sane default.
         return BlockTextStyling(
             font: .systemFont(ofSize: DocsTypographySpec.body.size),
             textColor: UIColor(DocsColor.textPrimary),

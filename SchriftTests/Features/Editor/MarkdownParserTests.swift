@@ -184,12 +184,46 @@ final class MarkdownParserTests: XCTestCase {
         assertParses(table, [EditorBlock(kind: .unknown, text: table)])
     }
 
-    func testImageLineBecomesUnknown() {
+    // MARK: - Standalone images
+
+    func testStandaloneImageLineBecomesImageBlock() {
         assertParses(
             "![diagram](https://example.com/d.png)",
-            [
-                EditorBlock(kind: .unknown, text: "![diagram](https://example.com/d.png)")
-            ])
+            [EditorBlock(kind: .image(alt: "diagram", url: "https://example.com/d.png"))])
+    }
+
+    func testImageWithEmptyAltBecomesImageBlock() {
+        assertParses(
+            "![](https://example.com/d.png)",
+            [EditorBlock(kind: .image(alt: "", url: "https://example.com/d.png"))])
+    }
+
+    func testImageWithRelativeURLStaysUnknown() {
+        assertParses("![x](/media/a.png)", [EditorBlock(kind: .unknown, text: "![x](/media/a.png)")])
+    }
+
+    func testImageWithNonHTTPSchemeStaysUnknown() {
+        assertParses(
+            "![x](javascript:alert(1))",
+            [EditorBlock(kind: .unknown, text: "![x](javascript:alert(1))")])
+    }
+
+    func testImageWithTrailingTextStaysUnknown() {
+        assertParses(
+            "![x](https://e.com/a.png) tail",
+            [EditorBlock(kind: .unknown, text: "![x](https://e.com/a.png) tail")])
+    }
+
+    func testIndentedImageStaysUnknown() {
+        assertParses(
+            "  ![x](https://e.com/a.png)",
+            [EditorBlock(kind: .unknown, text: "  ![x](https://e.com/a.png)")])
+    }
+
+    func testImageAltWithBracketStaysUnknown() {
+        assertParses(
+            "![a]b](https://e.com/a.png)",
+            [EditorBlock(kind: .unknown, text: "![a]b](https://e.com/a.png)")])
     }
 
     func testHTMLLineBecomesUnknown() {
