@@ -1,0 +1,53 @@
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_8c866bdb7fcfb2::t_1cf8c488a777da 140-148,150
+  s_8c866bdb7fcfb2::t_b644b3af1b8d42 228
+Schrift/Features/Editor/MarkdownSerializer.swift
+  s_8c866bdb7fcfb2::t_f537279fa4bfd1 87-88
+SchriftTests/Features/Editor/MarkdownParserTests.swift
+  s_8c866bdb7fcfb2::t_dec41e0b698958 187-189,192-226
+Schrift/Features/Editor/BlockEditorView.swift
+  s_8c866bdb7fcfb2::t_0085f3bb62a1ea 148-160
+  s_8c866bdb7fcfb2::t_efe1e9af78b9be 67-71
+SchriftTests/Features/Editor/MarkdownSerializerTests.swift
+  s_8c866bdb7fcfb2::t_a92527c1fd6ac8 110-115
+SchriftTests/Features/Editor/EditorBlockMutationTests.swift
+  s_8c866bdb7fcfb2::t_820fa43860facd 134-145
+  s_8c866bdb7fcfb2::t_63e3bfbb9f7e90 186-194
+  s_8c866bdb7fcfb2::t_4cdfd2f34c8239 343-353
+Schrift/Features/Editor/BlockTextView.swift
+  s_8c866bdb7fcfb2::t_4492ead7e34129 54-56
+Schrift/Features/Editor/MarkdownParser.swift
+  s_8c866bdb7fcfb2::t_d2ae566bdd97e1 155-157,161-180
+  s_8c866bdb7fcfb2::t_ec864e21c1df95 181-182
+Schrift/Features/Editor/EditorViewModel.swift
+  s_8c866bdb7fcfb2::t_554af93ac4241d 588-590
+  s_8c866bdb7fcfb2::t_ad3899dc69c03c 665
+  s_8c866bdb7fcfb2::t_63bcc0eca10bb6 621-623
+Schrift/Core/Yjs/MarkdownYjs.swift
+  s_8c866bdb7fcfb2::t_6ddc990570f471 84-103
+Schrift/Features/Editor/EditorBlock.swift
+  s_8c866bdb7fcfb2::t_ffdd58363724c8 12-19
+SchriftTests/Features/Editor/MarkdownRoundTripTests.swift
+  s_8c866bdb7fcfb2::t_25abed0b539be5 96,98
+  s_8c866bdb7fcfb2::t_958da3084fcdcc 34
+SchriftTests/Core/Yjs/MarkdownYjsTests.swift
+  s_8c866bdb7fcfb2::t_8b9f3df8e61c5a 36-50
+SchriftTests/Features/Editor/MarkdownBlockViewTests.swift
+  s_8c866bdb7fcfb2::t_4fc5e3e114fbdb 47-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "04209ca5cf729f4839df9e6f5c91635c69f6286e",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
