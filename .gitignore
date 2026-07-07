@@ -33,3 +33,7 @@ build/
 # Local, machine-specific signing config (holds your DEVELOPMENT_TEAM).
 # Signing.xcconfig (committed) optionally includes this; see it for details.
 Local.xcconfig
+
+# Session-local scratch written by the superpowers agent workflow (task
+# briefs/reports, progress notes) — never current state, never committed.
+.superpowers/

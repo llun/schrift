@@ -35,6 +35,11 @@ Safety section in [`CLAUDE.md`](../CLAUDE.md).
 On failure the `TestResults.xcresult` bundle is uploaded as a run artifact
 (7-day retention) for debugging.
 
+Runs are per-PR concurrency-cancelled: a new push cancels the in-flight run
+for that PR, so a "cancelled" Build & Test run right after a push is normal —
+the new run supersedes it. The job also has a 30-minute timeout to convert
+hangs into failures; normal runs finish well under it.
+
 ### Toolchain drift
 
 The formatting gate uses whatever swift-format ships with the runner's

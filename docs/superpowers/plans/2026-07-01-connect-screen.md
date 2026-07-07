@@ -2,6 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** Two parts of the login flow built here were later
+> superseded. (1) Login-complete detection is no longer `didFinish`-only: commit
+> `ca0f951` (PR #32, 2026-07-03) routes **both** `didCommit` and `didFinish`
+> through a shared `Coordinator.handleNavigation(to:)` (with an injectable
+> `captureCookies` seam), because a 2FA sign-in plus the docs SPA's client-side
+> redirect can drop the final `didFinish`, leaving the sheet stuck open — see
+> `docs/superpowers/plans/2026-07-03-fix-2fa-weblogin-detection.md` and
+> `Schrift/Features/Connect/WebLoginView.swift`. (2) `WebLoginView` is now also
+> reused by the re-login sheet (`ReauthenticationSheetView`/`ReauthenticationViewModel`)
+> added by `2026-07-04-persist-session-cookies-and-reauth.md`, and the cookies
+> synced at login are additionally persisted to the Keychain by
+> `SessionStore.signIn`. Retained as a dated record.
+
 **Goal:** Build the Connect screen (design spec Phase 4): server URL entry, recent servers list, and a "Sign in to {host}" flow that presents a real `WKWebView` login sheet, detects completion via the prior plan's `isLoginNavigationComplete`, syncs cookies, positively confirms via a native `GET /api/v1.0/users/me/` call through `DocsAPIClient`, then calls `SessionStore.signIn`. Wires `RootView` to show this screen whenever `SessionStore.isAuthenticated` is false. This is the first plan with actual screen UI (`Features/` did not exist before this plan) and the first to combine `Core/Networking` (Plan 7) and `Core/Auth` (Plan 8).
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan — including a real build+run+screenshot in the iOS Simulator, not just `xcodebuild test`, since this plan (unlike the prior two) ships actual SwiftUI/UIKit UI. Key decisions:

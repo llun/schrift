@@ -105,4 +105,4 @@ if [ -n "$GENERATED_PW" ]; then
   echo "    Store it in your password manager, then delete that file."
 fi
 echo
-echo "    Ship a build with:  git tag v0.1.0 && git push origin v0.1.0"
+echo "    Ship a build with:  merge a PR to main (or Actions -> TestFlight -> Run workflow)"

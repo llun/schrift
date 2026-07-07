@@ -2,6 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** The session-persistence model below was superseded
+> on 2026-07-04 by commit `291aa48` (PR #41, "persist session cookies across app
+> kills and re-login on real 401"). `SessionStore` no longer persists "exactly
+> two things": it is now `@MainActor @Observable`, snapshots the server's cookies
+> into the Keychain (`dev.llun.Schrift.sessionCookies`) on every `signIn`,
+> restores them into `HTTPCookieStorage.shared` synchronously in `init`, and
+> exposes a `needsReauthentication` flag that drives an app-level re-login sheet
+> on a real 401 — the claim below that the `docs_sessionid` cookie lives *only*
+> in the OS cookie store is exactly the bug that work fixed (session-only cookies
+> are dropped when iOS kills the process). `CookieStoring` also gained
+> `cookies(for:)` / `deleteCookie(_:)`. See
+> `docs/superpowers/plans/2026-07-04-persist-session-cookies-and-reauth.md` and
+> `Schrift/Core/Auth/SessionStore.swift` / `SessionCookies.swift`. Retained as a
+> dated record.
+
 **Goal:** Build the `Core/Auth` layer's testable foundation — `KeychainStore`/`SessionStore` (server URL + authenticated-flag persistence) and the pure decision logic a WKWebView-driven OIDC login flow needs (`authenticationURL`, `isLoginNavigationComplete`, cookie-sync). This is the second plan outside the DesignSystem layer, building on `Core/Networking` from the prior plan. Deliberately excludes the actual WKWebView `UIViewRepresentable`/SwiftUI sheet and the Connect screen itself — per the design spec's build sequence, those are Phase 4 ("Connect screen, wired to real auth"), consumed and visually verified together in the next plan, not built speculatively ahead of a screen that uses them.
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan. The trickiest part — how a `WKWebView` navigation delegate can reliably detect "OIDC login just succeeded" using only observable navigation events — was **not guessed**: the actual `suitenumerique/docs` backend source was researched (it uses `django-lasuite`'s `oidc_login` module wrapping `mozilla-django-oidc`, not django-allauth) to confirm the real redirect chain: `GET /api/v1.0/authenticate/` → 302 to the external IdP's authorization endpoint → IdP 302s back to `/api/v1.0/callback/` → 302 to the site root (or `next`, rarely used by the reference frontend). Key decisions:

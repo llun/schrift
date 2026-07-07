@@ -5,10 +5,22 @@
 > seed-synchronously / revalidate-silently pattern via `DocumentCacheStore`
 > and the new `DocumentChildrenCacheStore`. See
 > [`../plans/2026-07-03-instant-local-doc-lists.md`](../plans/2026-07-03-instant-local-doc-lists.md).
+> This supersedes the "No caching of the subpage list" non-goal and the
+> §Subpages deferral below: sub-page lists are cached in
+> `DocumentChildrenCacheStore` (restored synchronously in `load()`, written
+> through on every successful fetch/create, purged on delete/404/403), and
+> `subpages == nil` now means "no fetched *or cached* knowledge".
+>
+> **Amendment (2026-07-04):** a `.sessionExpired` revalidation failure is still
+> transient for the cache (kept, readable), but the shared API client's
+> `onSessionExpired` hook now also presents the app-level re-login sheet; the
+> editor itself is unchanged and recovers on its next refresh or save (see
+> [`../plans/2026-07-04-persist-session-cookies-and-reauth.md`](../plans/2026-07-04-persist-session-cookies-and-reauth.md)).
 
 Date: 2026-07-03
-Status: Proposed (rev 2 — revised the same day after a multi-agent review of the
-draft against the codebase; 24 confirmed findings folded in)
+Status: Implemented (shipped 2026-07-03, PR #36; rev 2 — revised the same day
+after a multi-agent review of the draft against the codebase; 24 confirmed
+findings folded in)
 
 ## Summary
 
@@ -288,6 +300,13 @@ On `load()` entry, always reset `updateAvailable = false` and
 `pendingFreshContent = nil` — the local phase re-reads the cache (which may
 already contain a previously stashed fresh copy), so banner state must never
 outlive the display it was computed against.
+
+*Implementation note (2026-07-03, as shipped):* the local phase and this
+banner-state reset run **once per installed document** — `load()` guards them
+on `!hasLoadedContent`, because a `.task` re-fire on pop-back would otherwise
+clobber a dirty editing session with the cached copy. After the first install,
+`load()` is revalidate-only; banner state is instead cleared by
+`startEditing()`/the first dirtying edit and by the 404/403 terminal path.
 
 #### Staleness comparison basis
 

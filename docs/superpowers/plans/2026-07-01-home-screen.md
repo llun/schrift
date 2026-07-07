@@ -2,6 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** The loading/error UI below (an unconditional
+> `ProgressView` while `isLoading`, an error banner on every failed load) was
+> superseded by the instant-local document lists work (commit `0e55f32`, PR #37
+> — see `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`): the
+> Home list now seeds synchronously from `DocumentCacheStore`, shows a loading
+> placeholder only when the exact list has never been cached, and keeps cached
+> rows silently on transient failures (pull-to-refresh is the always-loud path).
+> Smaller deltas since: the nav bar carries no search action (PR #29) and the
+> large title is "Schrift", not "Docs" (the rebrand + PR #27 alignment). The
+> endpoint contracts, query-parameter mapping, and
+> `homeFilterQueryParameters`/`shouldShowPinnedSection` below are still current.
+> Retained as a dated record.
+
 **Goal:** Build the Home screen (design spec Phase 5): document list wired to real list/search/favorite APIs, with a NavBar (large title "Docs", subtitle = server host), SearchField, SegmentedControl (All/Shared/Pinned), Pinned + Recent sections of `DocRow`, and a TabBar. Adds the Document-list endpoint methods `DocsAPIClient` has never had, fixes a real URL-construction bug found while adding them, and resolves the accessibility-traits item carried forward from Plan 6's final review (DocRow becomes this screen's primary interactive element). Wires `RootView` to show this screen whenever `SessionStore.isAuthenticated` is true, replacing the placeholder that has stood in since Plan 1.
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan — including a real build+run+screenshot in the iOS Simulator with both a successful-looking and a failed-network-call state, and cross-checking the exact endpoint contract against the real `suitenumerique/docs` backend source (`viewsets.py`, `filters.py`) rather than trusting the design spec's endpoint table alone. Key decisions:

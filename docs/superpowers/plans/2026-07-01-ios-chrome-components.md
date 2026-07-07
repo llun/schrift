@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** Two behaviors below were superseded. (1) `NavBar`'s
+> `translucent: Bool = true` frosted-glass background was removed by commit
+> `cc1144e` (PR #40, 2026-07-04, "unify app header to a solid-white large-title
+> bar everywhere") — the bar is now always a solid `DocsColor.surfacePage` fill
+> extended up through the status bar, with no translucency or tint parameter.
+> (2) `tabBarIconName` no longer appends `.fill` unconditionally when selected:
+> commit `355523f` (PR #29) added a fallback to the base symbol when the filled
+> variant is not a real SF Symbol (`magnifyingglass.fill` doesn't exist, which
+> made the Search tab icon vanish on selection). See
+> `Schrift/DesignSystem/Components/NavBar.swift` and `TabBar.swift`. Retained as
+> a dated record.
+
 **Goal:** Add the four "ios" (native chrome) DesignSystem components — NavBar, TabBar, ListRow, ListSection — completing every component group in the design spec except "docs" (DocRow, LinkReachPill, ShareMemberRow, deferred to the next plan), and extend the component catalog.
 
 **Architecture:** Continues the established pattern. `NavBar` and `TabBar` each have one small, genuinely testable decision extracted as a pure function (nav bar height by mode; tab icon SF Symbol name by selection state) rather than a full resolver, since neither has the kind of multi-axis variant/color branching Button/IconButton/Badge have. `ListRow` gets a minimal destructive-color resolver function (not a struct — there's only one color to resolve, a bare function is proportionate). `ListSection` is a generic container with no testable logic (matches the `Switch`/`SearchField`/`ListSection`-has-no-branching precedent) — it uses an explicit `init(@ViewBuilder content:)` rather than a `@ViewBuilder` stored property, which is the safe, standard SwiftUI pattern for generic view containers (a `@ViewBuilder` attribute on a stored property does not reliably propagate to a synthesized memberwise initializer).

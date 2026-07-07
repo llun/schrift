@@ -16,6 +16,12 @@ Already done in this repo:
 - fastlane lanes `beta` (ship) and `bootstrap` (one-time setup) ready.
 - CI reads signing assets from a private repo over SSH (a read-only deploy key,
   created for you by the bootstrap script — no manual GitHub token needed).
+- Local on-device dev signing is separate from all of this: `project.yml` points
+  both configurations at the committed `Signing.xcconfig`, which optionally
+  includes a git-ignored `Local.xcconfig` holding your personal
+  `DEVELOPMENT_TEAM` (copy `Local.xcconfig.example`, fill in your Team ID,
+  re-run `xcodegen generate`). CI ignores this — the `beta` lane overrides
+  signing with `match`.
 
 ## Manual step 1: create an App Store Connect API key
 
@@ -135,10 +141,19 @@ bundle exec fastlane beta
 
 ## Versioning
 
-- **Marketing version** (`0.1.0`) lives in `project.yml` → `MARKETING_VERSION`.
-  Bump it there for a new user-visible version.
+- **Marketing version** is computed on CI from the latest `v*` tag via
+  Conventional Commits (`scripts/next-version.sh`) and injected into the build
+  as a `MARKETING_VERSION` xcarg — `project.yml`'s `MARKETING_VERSION: 0.1.0`
+  is only the fallback for local `bundle exec fastlane beta` runs and Xcode
+  builds. To ship a new user-visible version, land a `feat:` (minor) or
+  `feat!:`/`BREAKING CHANGE` (major) commit; editing `project.yml` does **not**
+  change the released version.
 - **Build number** is set to the GitHub Actions run number automatically, so
-  every upload is unique and monotonic (Apple requires this).
+  every upload is unique and monotonic (Apple requires this). Do **not** rename
+  or move `.github/workflows/testflight.yml`: `github.run_number` is scoped to
+  the workflow file's identity and resets to 1, after which Apple rejects the
+  upload (lower build number than an existing build). Local `fastlane beta`
+  runs instead use the latest TestFlight build number + 1.
 
 ## The GitHub Actions secrets (set for you by bootstrap)
 
@@ -157,9 +172,15 @@ bundle exec fastlane beta
   certs repo.
 - **Xcode drift**: CI uses `latest-stable` Xcode. If a build compiles locally
   but not on CI, pin the runner's Xcode in the `setup-xcode` step to match yours.
-- **Certificate renewal (~yearly)**: re-run
-  `bundle exec fastlane match appstore` locally (with the env vars above) to
-  refresh the certs repo; CI picks it up automatically.
+- **Certificate renewal (~yearly)**: re-run the `bootstrap` lane locally —
+  `bundle exec fastlane bootstrap` with `ASC_KEY_ID`, `ASC_ISSUER_ID`,
+  `ASC_KEY_CONTENT="$(base64 < AuthKey_XXXX.p8)"`, `ASC_KEY_P8` (path to the
+  `.p8`), `DEVELOPER_TEAM_ID`, `MATCH_GIT_URL`, and the existing
+  `MATCH_PASSWORD` exported — it runs `match` with the API key in a throwaway
+  keychain (`readonly: false`) and pushes the refreshed assets to the certs
+  repo; CI picks them up automatically. (The bare `fastlane match` CLI does
+  **not** read the `ASC_*` variables — they are consumed only inside the
+  Fastfile lanes — so it would fall back to interactive Apple ID login.)
 
 ## Xcode Cloud (alternative CI)
 

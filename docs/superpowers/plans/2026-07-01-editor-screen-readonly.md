@@ -2,6 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** Several parts of this plan were later superseded.
+> (1) The `MarkdownBlock` enum and `parseMarkdownBlocks` were replaced by the
+> block-editing work (`2026-07-02-editor-block-editing-markdown-toggle.md`,
+> commit `febd26c`) with `EditorBlock`/`BlockKind` plus the round-trip
+> `MarkdownParser`/`MarkdownSerializer` — neither original symbol exists anymore.
+> (2) The claim that `NavigationStack` "still provides ... the swipe-back gesture
+> with the system bar hidden" proved wrong: hiding the bar silently disables the
+> interactive pop, and commit `19c8096` (PR #39) added
+> `Schrift/App/InteractivePopGesture.swift` to restore it. (3) `EditorViewModel`'s
+> load is no longer network-first: it shows a local copy synchronously and
+> revalidates in the background (`DocumentContentCacheStore`, PR #36 — see
+> `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`).
+> (4) The read view now also renders links, images, and visually distinct quotes
+> (commit `7f82a31`, PR #42, `MarkdownBlockView.swift`). Retained as a dated
+> record.
+
 **Goal:** Build the Editor screen's read-only rendering path (design spec Phase 6 — editing + save is explicitly Phase 7, a later plan): a `GET /documents/{id}/formatted-content/?content_format=markdown` endpoint method, a pure Markdown-to-blocks parser, a `MarkdownBlockView` that renders each block type (paragraph, heading, bullet list, checklist, quote) using Apple's native `AttributedString(markdown:)` for inline styling, and an `EditorView` (NavBar with back, emoji + title + `LinkReachPill`, Share/Options placeholder buttons) wired into `HomeView` via a `NavigationStack` pushed from tapping a `DocRow`.
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan — including three separate Simulator screenshots (the Editor screen's chrome and error state, and a standalone rendering of all five Markdown block types with real sample content) — and the exact `formatted-content` response shape was read directly from the real `suitenumerique/docs` backend source rather than assumed. Key decisions:
