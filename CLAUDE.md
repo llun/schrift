@@ -38,7 +38,8 @@ This file is the shorter, operational "how we write code here" companion.
   ```
   If `iPhone 17` isn't in `xcrun simctl list devices available`, substitute any
   listed iPhone — CI does the same fallback (the name also appears in
-  `README.md` and `docs/ci.md`; change all of them together). While iterating,
+  `README.md`, `docs/ci.md`, and the device-selection step in
+  `.github/workflows/pr-checks.yml`; change all of them together). While iterating,
   run a single class or method by appending
   `-only-testing:SchriftTests/<ClassName>` (or `…/<ClassName>/<testMethod>`)
   to the same command; run the full suite before declaring work done.
@@ -149,7 +150,7 @@ project.yml              XcodeGen spec — the source of truth for the Xcode pro
 Signing.xcconfig         committed signing config; optionally #include?s the git-ignored
                          Local.xcconfig (copy Local.xcconfig.example) holding your
                          DEVELOPMENT_TEAM — never put a team id in project.yml
-Gemfile / .ruby-version  fastlane Ruby deps (`bundle install`)
+Gemfile / .ruby-version  fastlane Ruby deps (bundle install)
 .swift-format            swift-format config (4-space indent, 120 cols) enforced by PR checks
 ```
 
@@ -501,10 +502,11 @@ markdown write endpoint**. Understand this before touching the save path:
   record. (Dated plans are the one exception to "keep docs current" — they are a
   historical record, not living docs.)
 - Files under `docs/superpowers/specs/` are **living** design specs despite
-  their dated names: when behavior changes, update the spec in place and add a
-  dated `Revised:` line at the top (as `2026-06-30-docs-ios-design.md` already
-  does). Only `docs/superpowers/plans/` are immutable dated records
-  (amendment blockquote only).
+  their dated names: when behavior changes, update the spec in place and record
+  the change at the top with a dated `Revised:` line or a dated amendment
+  blockquote (both existing specs show the two forms). What makes
+  `docs/superpowers/plans/` different is that their **bodies are immutable**
+  dated records — a top amendment blockquote is the only allowed change.
 - `.superpowers/` at the repo root is session-local scratch produced by the
   superpowers subagent-driven-development workflow (task briefs/reports,
   progress notes), git-ignored via the repo `.gitignore`. Never commit it, and
@@ -593,11 +595,11 @@ Do **not** do any of the following without explicit human sign-off:
 - **Never hardcode credentials, API keys, team ids, passphrases, or server URLs**
   in source, tests, CI, or the Fastfile. Secrets come from env / Actions secrets;
   the server URL is always user-supplied at runtime (`normalizedServerURL`) — do
-  not bake in a default host or token in shipped behavior. (Deterministic host
-  literals in test fixtures and `#Preview` blocks — `docs.llun.dev`,
-  `example.com` — are fine and are the existing convention; the rule is about
-  runtime defaults and secrets.) This file and any doc you write must use
-  placeholders, never real secret values.
+  not bake in a default host or token in app code, in **any** build
+  configuration. (Deterministic host literals in test fixtures and `#Preview`
+  blocks — `docs.llun.dev`, `example.com` — are fine and are the existing
+  convention; that carve-out is the sole exception.) This file and any doc you
+  write must use placeholders, never real secret values.
 - **Never weaken or disable TLS validation.** Do not add a `URLSession` or
   `WKWebView` auth-challenge handler that trusts arbitrary `serverTrust`, and
   never add an `NSAppTransportSecurity` / `NSAllowsArbitraryLoads` exception in
