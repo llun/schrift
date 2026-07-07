@@ -1,0 +1,28 @@
+CLAUDE.md
+  s_b46701715e2532::t_0d99a143889f4f 506
+  s_b46701715e2532::t_e68720e4dbeb89 410-411
+  s_b46701715e2532::t_4687a20ecc76bf 308-309
+  s_b46701715e2532::t_9697fb997c54ec 287-288
+  s_b46701715e2532::t_9876f919d81475 416-417
+  s_b46701715e2532::t_429c2fde80c281 294-295
+  s_b46701715e2532::t_94909522432e83 404-405
+  s_b46701715e2532::t_bb62b68a5bed6b 88-89
+docs/testflight-setup.md
+  s_b46701715e2532::t_d0c377e4318df3 146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b9c9414600cb9ef3d2be52b90424b81066d94184",
+  "prompts": {},
+  "sessions": {
+    "s_b46701715e2532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82eab32c-39d7-44f3-94de-04ee2d6f932b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
