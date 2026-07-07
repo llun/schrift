@@ -1,7 +1,9 @@
 # fastlane match stores your signing certificate + provisioning profile,
 # encrypted, in a SEPARATE private git repo (not this one).
 # git_url and the decryption password are supplied via environment variables:
-#   MATCH_GIT_URL   - https URL of the private certificates repo
+#   MATCH_GIT_URL   - SSH URL of the private certificates repo
+#                     (git@github.com:<owner>/<repo>.git — CI authenticates
+#                     with a read-only deploy key)
 #   MATCH_PASSWORD  - the passphrase used to encrypt/decrypt the repo contents
 # See docs/testflight-setup.md.
 

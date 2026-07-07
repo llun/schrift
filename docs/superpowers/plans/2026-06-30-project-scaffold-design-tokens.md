@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** The project was renamed from `DocsIOS` to `Schrift`
+> on 2026-07-01 (commit `bb8d5a4`; recorded in
+> `2026-07-01-schrift-design-alignment.md`, Phase 0): the target/scheme/module
+> are `Schrift`/`SchriftTests`, the bundle id is `dev.llun.Schrift`, source dirs
+> are `Schrift/` + `SchriftTests/`, persistence keys use the `dev.llun.Schrift.`
+> prefix, and the display name is "Schrift". Read every `DocsIOS` path, key, and
+> `xcodebuild` command below through that rename — the same applies to all plans
+> dated before the rebrand. The token-layer design itself is unchanged. Retained
+> as a dated record.
+
 **Goal:** Stand up the DocsIOS Xcode project (via XcodeGen) and the design-token layer (colors, typography, spacing, radius) ported from the `Docs iOS Design System` handoff, with full TDD coverage of every token value.
 
 **Architecture:** A single XcodeGen-managed Xcode project (`project.yml` is the source of truth; `.xcodeproj` is generated and gitignored) with an app target `DocsIOS` and a unit test target `DocsIOSTests`. Design tokens are plain Swift value types/enums with zero SwiftUI-resolution ambiguity in their tests: raw hex constants and pure hex→RGB math are tested directly; the thin `Color`/`Font` wrappers built on top are exercised only by the app compiling and running.

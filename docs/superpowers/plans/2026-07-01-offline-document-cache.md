@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** Superseded by the instant-local document lists work
+> (commit `0e55f32`, PR #37, 2026-07-03). `DocumentCacheStore` no longer caches
+> recents only for the `.all` filter: it caches **per-filter** recent lists
+> (`recentDocumentsCacheKey(_:)`) plus Shared with-me/by-me lists, list loads
+> return `[Document]?` (nil = never cached, distinct from a cached empty list),
+> and `HomeViewModel` applies a silent-vs-loud revalidation policy keyed to cache
+> existence instead of the unconditional error banner described below. The
+> "document content stays out of scope" note is also out of date — full bodies
+> are cached by `DocumentContentCacheStore` (PR #36). See
+> `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md` and
+> `Schrift/Features/Home/DocumentCacheStore.swift`. Retained as a dated record.
+
 **Goal:** User-requested feature — the Home screen's document list must still show the documents that were already synced before the app was closed, even with no internet connection, across a full app close/reopen cycle (not just within the same in-memory session).
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan — including a Simulator screenshot with a real network failure and a pre-seeded cache, run on a separate Simulator device so as not to disturb the user's own signed-in session on their primary Simulator.

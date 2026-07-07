@@ -12,6 +12,19 @@ documents are cached on-device and render instantly with background
 revalidation (see
 `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`).
 Offline *editing* remains out of scope.
+Revised: 2026-07-03 (later the same day) — document **lists** (Home
+pinned/recent per-filter, the Shared tab, and editor sub-page lists) are also
+cached on-device and readable offline with silent background revalidation (see
+`docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`). A user-facing
+**Work Offline** toggle (`schrift.workOffline`, Profile screen) forces
+read-only offline mode.
+Revised: 2026-07-04 — session cookies now persist in the Keychain across app
+kills, and a real 401 presents an in-place re-login sheet instead of returning
+to the Connect screen (see
+`docs/superpowers/plans/2026-07-04-persist-session-cookies-and-reauth.md`).
+Revised: 2026-07-07 — realigned with the shipped implementation: directory
+tree, Screens section (all four tabs are real features; the shipped Editor
+header), and the endpoint table (`GET /config/` was never implemented).
 
 ## Summary
 
@@ -53,19 +66,24 @@ Full detail lives in this conversation's research; key facts that drove the desi
 Native SwiftUI app, iOS 18+ minimum deployment target, universal (iPhone + iPad). MVVM-ish: SwiftUI views + `@Observable` view models + an async/await networking layer. No third-party dependencies planned for v1 beyond what's needed for Markdown parsing/rendering (evaluate Apple's `AttributedString(markdown:)` first before reaching for a package).
 
 ```
-DocsIOS/
-├── App/                  — app entry point, root navigation (NavigationStack on iPhone-width, NavigationSplitView on iPad/regular-width)
-├── DesignSystem/         — Color/Font assets + spacing/radius constants ported from tokens/*.css (indigo theme), and components: Button, IconButton, Avatar, AvatarGroup, Badge, DocIcon, SearchField, SegmentedControl, Switch, TextField, NavBar, TabBar, ListRow, ListSection, DocRow, LinkReachPill, ShareMemberRow
+Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
+├── App/                  — app entry point, root navigation (NavigationStack on iPhone-width, NavigationSplitView on iPad/regular-width), swipe-back restorer
+├── DesignSystem/         — tokens ported from tokens/*.css (indigo theme), and components: Button, IconButton, Avatar, AvatarGroup, Badge, DocIcon, SearchField, SegmentedControl, Switch, TextField, NavBar, TabBar, ListRow, ListSection, DocRow, LinkReachPill, ShareMemberRow, OfflineBanner
+├── DesignSystemCatalog/  — visual QA catalog of every component
 ├── Core/
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
-│   ├── Auth/             — SessionStore (Keychain-backed cookie + server URL persistence), WebLoginController (WKWebView-driven OIDC login)
+│   ├── Auth/             — SessionStore (Keychain-backed session-cookie + server URL persistence, re-auth flag), SessionCookies (Codable HTTPCookie snapshot), WebLogin free functions (login-URL/completion detection, cookie sync), KeychainStore
 │   └── Yjs/              — on-device Markdown→BlockNote→Yjs encoder (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves
 ├── Features/
-│   ├── Connect/          — server URL entry, recent servers, sign-in
-│   ├── Home/             — document list: pinned/recent, search, segmented filter (All/Shared/Pinned), favorite toggle
-│   ├── Editor/           — read rendering + edit + save
-│   └── Sharing/          — Share sheet (members, invite, link reach), Options sheet (pin, copy link, duplicate, delete, etc.)
-└── DocsIOSTests/         — unit tests for Networking, Auth, and the edit-save conversion flow
+│   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
+│   ├── Home/             — document list: pinned/recent, segmented filter (All/Shared/Pinned), favorite toggle, offline list cache
+│   ├── Search/ Shared/ Profile/ — the other three tabs (all real features)
+│   ├── Editor/           — read rendering + edit + save, drafts, content cache
+│   ├── Share/            — Share sheet (members, invite, link reach)
+│   └── Options/          — Options sheet (pin, copy link, duplicate, delete, etc.)
+└── Assets.xcassets/
+SchriftTests/             — XCTest suite mirroring the source tree by directory
+                            (sibling of Schrift/ at the repo root)
 ```
 
 ### Why no third-party CRDT/networking dependencies
@@ -85,12 +103,12 @@ Flow:
 2. App presents a `WKWebView` (in a sheet) loading `https://{server}/api/v1.0/authenticate/?next=...`.
 3. `WKNavigationDelegate` watches for navigation back to a recognized "logged in" location (e.g. a successful `GET /api/v1.0/users/me/` no longer returning 401, or landing back on the SPA root) and dismisses the sheet.
 4. The Django session cookie (`docs_sessionid`) is read from `WKWebsiteDataStore.default().httpCookieStore` and synced into `HTTPCookieStorage.shared` so the app's `URLSession` (default configuration) automatically attaches it on subsequent same-host requests.
-5. Server URL + a flag that we're authenticated is persisted (Keychain for anything sensitive; server URL can be UserDefaults).
-6. On `401` from any API call, drop back to the Connect screen and re-trigger login.
+5. `SessionStore.signIn` additionally snapshots the server's cookies into the Keychain (`dev.llun.Schrift.sessionCookies`, as Codable `StoredCookie`s) and `SessionStore.init` restores them synchronously on launch, before the API client is built — session-only cookies (nil `expiresDate`, e.g. Django's `sessionid`) are otherwise dropped from `HTTPCookieStorage` when iOS kills the process. Server URL + auth flag are persisted too; sign-out deletes both the snapshot and the live cookies.
+6. On a real `401` from any API call, the shared `DocsAPIClient`'s `onSessionExpired` hook sets `SessionStore.needsReauthentication`, which presents a re-login sheet (the same WKWebView OIDC flow) over the current UI. Cached data keeps showing; dismissing the sheet cancels non-destructively and the next failing request re-presents it. The app never drops back to the Connect screen on 401 — Connect is reached only via explicit sign-out.
 
 Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF token (`X-CSRFToken` header, value read from the `csrftoken` cookie), matching the web frontend's own `fetchApi.ts` behavior.
 
-**Known limitation:** session cookie expiry means periodic re-login; exact interval depends on the server's `SESSION_COOKIE_AGE`. No silent refresh token in this flow.
+**Known limitation:** session lifetime is still bounded by the server (`SESSION_COOKIE_AGE` / server-side invalidation) — the app persists the cookie across process death but cannot outlive the server's session; expiry surfaces as the re-login sheet, not a return to Connect. No silent refresh token in this flow.
 
 ## Networking & data model
 
@@ -98,7 +116,7 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 
 | Purpose | Endpoint |
 |---|---|
-| Bootstrap config | `GET /config/` |
+| Bootstrap config | `GET /config/` *(planned; never implemented — the app bootstraps from `GET /users/me/` alone)* |
 | Current user | `GET /users/me/` |
 | Document list | `GET /documents/?is_favorite=&is_creator_me=&title=&ordering=&page=&page_size=` |
 | Document detail | `GET /documents/{id}/` |
@@ -140,8 +158,8 @@ This is the part with no direct backend support, so it's called out explicitly:
 From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views using the DesignSystem components, not copied HTML/JS:
 
 - **Connect** — logo, "Welcome to Docs", server URL `TextField`, recent servers list, "Sign in to {host}" button → WebView login.
-- **Home** — `NavBar` (large title "Docs", subtitle = server host, search + new-doc actions), `SearchField`, `SegmentedControl` (All/Shared/Pinned), Pinned + Recent sections of `DocRow`s, `TabBar` (Docs/Search/Shared/Profile — Search/Shared/Profile tabs are presentational placeholders in v1 beyond Docs).
-- **Editor** — `NavBar` with back, `AvatarGroup` (collaborators — static list from accesses, not live presence), Share + Options `IconButton`s; emoji + title + `LinkReachPill` + rendered/editable blocks; floating formatting toolbar (bold/italic/bullet list/checklist/image/code — subset implemented based on what the native editor supports).
+- **Home** — `NavBar` (large title, subtitle = server host, new-doc action), `SearchField`, `SegmentedControl` (All/Shared/Pinned), Pinned + Recent sections of `DocRow`s, `TabBar` (Docs/Search/Shared/Profile — all four tabs are fully implemented: Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared with/by me with an offline metadata cache, Profile shows the current user via `GET /users/me/` with an Account screen, sign-out, and the Work Offline toggle).
+- **Editor** — large-title `NavBar` (document title, back, Pages/Share/Options actions); `LinkReachPill` + a live "Synced X ago" caption above the rendered/editable blocks; a Subpages section; floating formatting toolbar (add block/bold/italic/bulleted list/checklist/quote/code block). The mock's collaborator `AvatarGroup` and emoji were not implemented (the component exists in the DesignSystem but is unused by features).
 - **Share sheet** — invite by name/email (`GET /users/?q=`), member list (`ShareMemberRow` with role picker: Reader/Commenter/Editor/Administrator/Owner — Commenter included even though the mock only shows Admin/Editor/Reader, since it's a real backend role), link reach picker (Restricted/Authenticated/Public via `LinkReachPill`), Copy link.
 - **Options sheet** — Pin/Unpin, Copy link, Share, Copy as Markdown, Duplicate, Delete. *Deferred to a later iteration*: Download (PDF/Word/ODT — no mobile-appropriate endpoint investigated yet), Version history, Present.
 
@@ -164,13 +182,15 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 
 ## Error handling
 
-- `401` → treat session as expired, return to Connect screen, re-trigger WebView login.
+- `401` → mapped to `.sessionExpired`; the shared client's `onSessionExpired` hook raises `SessionStore.needsReauthentication` and a re-login sheet is presented over the current screen. List/editor view models keep showing cached/local content (401 is never rendered as "offline"); an already-open editor recovers on its next refresh or save. The Connect screen is not shown for 401 — only explicit sign-out returns there.
 - `403` → permission-denied inline state; in practice this should be rare since UI affordances are gated by the `abilities` dict already.
 - `404` → "not found / no longer available" state (covers soft-deleted-past-cutoff documents, which the backend intentionally 404s rather than 403s to avoid leaking existence).
 - `429` → respect `Retry-After` if present; otherwise simple backoff with a banner ("Too many requests, try again shortly").
 - Network failure → retry affordance on the failed view; no offline edit/sync
   queue in v1 (since 2026-07-03, previously-opened documents are content-cached
-  on-device and readable offline).
+  on-device and readable offline, and document lists — Home per-filter, Shared,
+  editor sub-pages — are metadata-cached and shown instantly with silent
+  background revalidation).
 - Save conflicts are not detected (see Editing & save mechanism) — documented limitation, not silently swallowed.
 
 ## Testing

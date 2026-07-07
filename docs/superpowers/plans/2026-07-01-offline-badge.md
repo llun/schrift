@@ -2,6 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-07):** The header badge this plan added was replaced by
+> the `OfflineBanner` component during the design-system alignment (commit
+> `2451d82`, PR #27): `DocumentListView` now shows `OfflineBanner()` below the
+> `NavBar` and no longer passes `titleBadge` (the parameter still exists on
+> `NavBar` but has no call sites). The `isOffline` rules below are also out of
+> date: the Work-offline preference path sets it too, transient failures stay
+> silent whenever the current list has a cache entry (PR #37,
+> `2026-07-03-instant-local-doc-lists.md`), and a real 401 is *not* offline — it
+> raises the app-level re-login sheet instead (PR #41,
+> `2026-07-04-persist-session-cookies-and-reauth.md`). See
+> `Schrift/Features/Home/DocumentListView.swift` and `HomeViewModel.swift`.
+> Retained as a dated record.
+
 **Goal:** User-requested follow-up to the Offline Document Cache plan — instead of relying solely on the existing red error-banner text to signal that the Home screen is showing previously-synced (stale) documents, show a visible "Offline" tag/chip in the header next to the "Docs" title.
 
 **Architecture:** Every design decision here was validated end-to-end against this machine's Xcode 26.6/iOS 26.5 toolchain in a scratch project before being written into this plan — including a Simulator screenshot with a real simulated network failure and a pre-seeded cache, run on an isolated Simulator device so as not to disturb the user's own signed-in session.

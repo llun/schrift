@@ -42,7 +42,7 @@ On-device builds need a signing team, but a Team ID must never be committed
 1. Sign into your Apple ID in **Xcode ▸ Settings ▸ Accounts**.
 2. Copy your git-ignored local signing file into place and set your Team ID:
    ```sh
-   cp Local.xcconfig.example Local.xcconfig   # if a template exists; otherwise create Local.xcconfig
+   cp Local.xcconfig.example Local.xcconfig
    # edit Local.xcconfig → DEVELOPMENT_TEAM = <your 10-char Team ID>
    xcodegen generate
    ```
@@ -59,6 +59,10 @@ CI/TestFlight signing is independent of this — see the fastlane `beta` lane.
 ```sh
 xcodebuild test -project Schrift.xcodeproj -scheme Schrift -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
+
+(Fresh checkout: run `xcodegen generate` first — the `.xcodeproj` is not
+committed. If `iPhone 17` isn't in `xcrun simctl list devices available`,
+substitute any listed iPhone — CI does the same fallback.)
 
 CI runs the same suite on every pull request to `main`
 ([`pr-checks.yml`](.github/workflows/pr-checks.yml)); the **Build & Test**
