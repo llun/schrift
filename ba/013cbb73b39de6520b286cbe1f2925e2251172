@@ -1,0 +1,22 @@
+CLAUDE.md
+  s_b46701715e2532::t_bcf69f074abf95 308-314
+  s_b46701715e2532::t_b21fa9e0c76f20 89-99
+  s_b46701715e2532::t_ed679ebbaf8424 288-289
+  s_b46701715e2532::t_5a8e732b2b4547 405-416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ba013cbb73b39de6520b286cbe1f2925e2251172",
+  "prompts": {},
+  "sessions": {
+    "s_b46701715e2532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82eab32c-39d7-44f3-94de-04ee2d6f932b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
