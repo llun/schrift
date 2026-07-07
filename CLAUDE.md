@@ -85,8 +85,8 @@ This file is the shorter, operational "how we write code here" companion.
   an output, not a trigger** — write PR titles as Conventional Commits so the bump
   is right (PRs are squash-merged, so the PR title becomes the commit subject on
   `main` that `next-version.sh` parses); a non-conforming title still ships a
-  patch. Nothing is committed back
-  to `main` (version is tag-derived) and the tag is pushed with `GITHUB_TOKEN`, so
+  patch. Nothing is committed back to `main` (version is tag-derived) and the
+  tag is pushed with `GITHUB_TOKEN`, so
   there is no release loop. Ship manually via **Actions → TestFlight → Run
   workflow**; add `[skip ci]` to a commit to skip a build. Build number =
   `github.run_number` (monotonic — do **not** rename/move the workflow file or it
@@ -284,15 +284,15 @@ new code reads like the surrounding code.
   hook-less clients are the pre-auth sign-in confirmation clients in
   `ConnectViewModel` and `ReauthenticationViewModel` (no session exists / re-auth
   is already in progress, so a 401 there must not re-raise the sheet). View
-  models must
-  therefore **never treat `.sessionExpired` as offline** — keep cached rows
+  models must therefore **never treat `.sessionExpired` as offline** — keep
+  cached rows
   silently and let the sheet handle recovery; only `.network`/`.server`/etc.
   get the offline treatment.
 - Models conform to `Codable, Equatable` (add `Hashable` when they're used in
   collections or as navigation values, `Identifiable` when they carry an `id`,
   and `Sendable` explicitly when they cross async — several existing structs
-  rely on implicit `Sendable` inference). Server-immutable fields
-  are `let`, client-editable fields `var`, absent fields Optional. Decode server
+  rely on implicit `Sendable` inference). Server-immutable fields are `let`,
+  client-editable fields `var`, absent fields Optional. Decode server
   "abilities"/flag dictionaries **defensively** (`decodeIfPresent(...) ?? false`)
   so added keys don't break decoding.
 - **Permission logic is driven by the server `abilities` dict** — never hardcode
@@ -305,8 +305,8 @@ new code reads like the surrounding code.
 
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
-  (letter-spacing, applied as `.tracking(size * DocsTracking.x)`), `DocsSpacing`,
-  `DocsRadius`). Adding a color means adding it to `DocsColorHex` (raw `UInt32`);
+  (letter-spacing, applied as `.tracking(size * DocsTracking.tight)`),
+  `DocsSpacing`, `DocsRadius`). Adding a color means adding it to `DocsColorHex` (raw `UInt32`);
   add a matching `DocsColor` entry only when views use it directly as a SwiftUI
   `Color` — hues consumed only by style resolvers (the accent palette, the
   `-650` feedback foregrounds, parts of the gray ramp) stay hex-only. Add a
@@ -401,21 +401,20 @@ markdown write endpoint**. Understand this before touching the save path:
   **cache existence for the exact list being loaded** (pull-to-refresh is the
   always-loud path — except `.sessionExpired`, which stays silent because the
   client's `onSessionExpired` hook already raised the re-login sheet) — and
-  successful fetches write through. Delete/404/403
-  purge the **children** store only (the document's own entry *and* its ghost
+  successful fetches write through. Delete/404/403 purge the **children**
+  store only (the document's own entry *and* its ghost
   in other parents' cached lists); the Home/Shared list caches have no purge
   path — a deleted document drops out of them on the next successful fetch.
   The children store caps entries by reusing the pure `contentCacheEvictions`
   selection. The `schrift.workOffline` read goes through the VM's injected
-  `userDefaults`, never the singleton. Metadata
-  caches are **not** cleared on sign-out — a recorded decision; neither are
+  `userDefaults`, never the singleton. Metadata caches are **not** cleared on
+  sign-out — a recorded decision; neither are
   unsaved drafts in `PendingDraftStore` (full document text, deliberately
   backup-included so unsaved work survives); only the full bodies in
   `DocumentContentCacheStore` are. That clearing lives in RootView's
   `onSignOut` closure (`DocumentContentCacheStore().removeAll()`), **not**
-  inside `SessionStore.signOut()` — a new sign-out path must call it
-  explicitly. See
-  `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`.
+  inside `SessionStore.signOut()` — a new sign-out path must call it explicitly.
+  See `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.
@@ -504,7 +503,7 @@ markdown write endpoint**. Understand this before touching the save path:
 - Files under `docs/superpowers/specs/` are **living** design specs despite
   their dated names: when behavior changes, update the spec in place and record
   the change at the top with a dated `Revised:` line or a dated amendment
-  blockquote (both existing specs show the two forms). What makes
+  blockquote (the two existing specs demonstrate one form each). What makes
   `docs/superpowers/plans/` different is that their **bodies are immutable**
   dated records — a top amendment blockquote is the only allowed change.
 - `.superpowers/` at the repo root is session-local scratch produced by the

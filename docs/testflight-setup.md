@@ -143,7 +143,7 @@ bundle exec fastlane beta
 
 - **Marketing version** is computed on CI from the latest `v*` tag via
   Conventional Commits (`scripts/next-version.sh`) and injected into the build
-  as an `MARKETING_VERSION` xcarg — `project.yml`'s `MARKETING_VERSION: 0.1.0`
+  as a `MARKETING_VERSION` xcarg — `project.yml`'s `MARKETING_VERSION: 0.1.0`
   is only the fallback for local `bundle exec fastlane beta` runs and Xcode
   builds. To ship a new user-visible version, land a `feat:` (minor) or
   `feat!:`/`BREAKING CHANGE` (major) commit; editing `project.yml` does **not**
