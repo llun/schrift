@@ -1,0 +1,45 @@
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_8c866bdb7fcfb2::t_2004b8e86c9ba2 40-45,47-50
+SchriftTests/Core/Networking/AttachmentEndpointsClientTests.swift
+  s_8c866bdb7fcfb2::t_0becefce084bbb 141-144
+  s_8c866bdb7fcfb2::t_3417981bb5fd19 191-194,197-206
+  s_8c866bdb7fcfb2::t_a4e19cea097089 126-140,145-160,163-167,174,178-181,188-190,195-196,207-237
+  s_8c866bdb7fcfb2::t_23b4de0ef53a89 238
+CLAUDE.md
+  s_8c866bdb7fcfb2::t_981009788db468 329-336
+Schrift/Core/Networking/AttachmentEndpoints.swift
+  s_8c866bdb7fcfb2::t_5bd081ea33dfc6 62-69
+  s_8c866bdb7fcfb2::t_2cf0409a8f3313 25-28,30
+  s_8c866bdb7fcfb2::t_fc11dbc193b2a8 80-83,95-99,101-102
+  s_8c866bdb7fcfb2::t_c501cfc7461dec 23-24,29,31-32,34-40,43-46
+Schrift/Features/Editor/ImagePreparation.swift
+  s_8c866bdb7fcfb2::t_d560435a6497f3 16-20
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_8c866bdb7fcfb2::t_e9896a560682a1 60-61,64
+Schrift/Features/Editor/EditorViewModel.swift
+  s_8c866bdb7fcfb2::t_a67d80bf193895 739-742,766-769,772
+  s_8c866bdb7fcfb2::t_3c9be3746e17ec 781
+Schrift/Features/Editor/EditorView.swift
+  s_8c866bdb7fcfb2::t_8be8e4aedaeb8a 226-228
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_8c866bdb7fcfb2::t_2652e8dbea0651 209-223,225-279
+  s_8c866bdb7fcfb2::t_b7e3914574cc35 385-415
+SchriftTests/Core/Networking/DocsAPIClientTests.swift
+  s_8c866bdb7fcfb2::t_ad19ec4100c6d1 253-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fbd5698b4a498b209b34ea4a2c152b46e0e657c9",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
