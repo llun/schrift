@@ -217,6 +217,28 @@ final class MarkdownParserTests: XCTestCase {
         assertParses("![alt]()", [EditorBlock(kind: .unknown, text: "![alt]()")])
     }
 
+    func testImageURLContainingBracketStaysUnknown() {
+        // The alt/url split takes the *first* "](", so a "]" inside the url means
+        // the split was ambiguous. Same corruption class as an unbalanced ")".
+        assertParses(
+            "![a](https://e.com/x](y)",
+            [EditorBlock(kind: .unknown, text: "![a](https://e.com/x](y)")])
+    }
+
+    func testLegitimateAttachmentURLsAreNotRejectedByTheGuards() {
+        // Guard against false negatives: percent-encoding, a query with balanced
+        // parens, and the Django backend's real attachment url shape.
+        assertParses(
+            "![a](https://e.com/a%20b.png)",
+            [EditorBlock(kind: .image(alt: "a", url: "https://e.com/a%20b.png"))])
+        assertParses(
+            "![a](https://e.com/a.png?x=(1))",
+            [EditorBlock(kind: .image(alt: "a", url: "https://e.com/a.png?x=(1)"))])
+        assertParses(
+            "![a](HTTPS://e.com/a.png)",
+            [EditorBlock(kind: .image(alt: "a", url: "HTTPS://e.com/a.png"))])
+    }
+
     func testImageWithTrailingTextStaysUnknown() {
         assertParses(
             "![x](https://e.com/a.png) tail",
