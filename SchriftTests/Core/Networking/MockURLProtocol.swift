@@ -72,6 +72,9 @@ final class MockURLProtocol: URLProtocol {
         }
     }
 
+    /// Best-effort: a delivery already past its cancellation check still runs.
+    /// Tests must therefore await every delayed request they start rather than
+    /// let one outlive the test — otherwise it reports to a torn-down client.
     override func stopLoading() {
         cancelLock.lock()
         isCancelled = true

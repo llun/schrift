@@ -513,9 +513,15 @@ markdown write endpoint**. Understand this before touching the save path:
   1. **A stored draft is unsaved work regardless of `displaySource`.** A save
      failing mid-session leaves `.clean` on screen with the user's only copy in
      `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`
-     *before* it switches on `displaySource`; only the clock-tolerance rule in
-     `reconcileDraft` may replace a draft. `hasUnsavedLocalContent` follows the
-     same rule.
+     *before* it switches on `displaySource`, and `hasUnsavedLocalContent`
+     follows the same rule (gated on `hasLoadedContent`, since
+     `becomeUnavailable` deliberately keeps the draft). **`pendingDraftClockTolerance`
+     may only discard a draft *stranded by an earlier session*** — that is
+     `recoverDrafts`' job. A draft whose save failed *this* session is a retry
+     candidate the user is looking at, so `reconcileDraft` returns early on
+     `saveState == .failed`. Applying the tolerance rule there deletes visible
+     content, and needs no remote edit to fire: a device clock two minutes slow
+     already puts every server `updated_at` beyond `draft.updatedAt + tolerance`.
   2. **Never install or cache a response that may predate one of our own saves.**
      A revalidation issued while a save was in flight can be answered from the
      server's pre-save state; installing it resurrects exactly what the save
@@ -623,11 +629,13 @@ markdown write endpoint**. Understand this before touching the save path:
 - Async tests are `func test...() async`; `await` the subject directly and assert
   on its published state. Poll eventual state with the shared `waitUntil { }`
   helper — **no `XCTestExpectation`, and never a sleep to wait for expected
-  state**. A short `Task.sleep` is allowed only for the two cases `waitUntil`
-  can't express: advancing real time inside a debounce window, and a grace
-  period before a *negative* assertion (asserting nothing more happened).
-  Simulate a slow response with `Thread.sleep` inside the `stubHandler`, not in
-  the test body.
+  state**. `waitUntil` means "this must become true": it **fails the test on
+  timeout**, so a stalled wait reports where it stalled rather than as a
+  confusing assertion failure further down. For "assert nothing more happened",
+  use its counterpart `waitAndConfirmNever { }`, which fails if the condition
+  ever becomes true. A short `Task.sleep` is allowed only for the one case
+  neither expresses: advancing real time inside a debounce window. Simulate a
+  slow response with `Stub(delay:)`, not in the test body.
 - Assert thrown errors with a **typed do/catch** (`XCTFail` on the success path,
   match the concrete `DocsAPIError` case) — not `XCTAssertThrowsError`.
 - Fixtures are **inline** JSON string literals; use deterministic repeating-digit

@@ -754,11 +754,13 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasUnsavedLocalContent)
     }
 
-    /// The other half of the reclassification: a draft the server has moved
-    /// meaningfully past is stale, so the server wins and the draft is dropped.
-    /// This is the branch that legitimately destroys local content, so it needs
-    /// to be pinned down exactly.
-    func testRefreshAfterAFailedSaveDiscardsAStaleDraftAndInstallsTheServerCopy() async {
+    /// The clock-tolerance rule exists for drafts *stranded by an earlier
+    /// session* (`recoverDrafts`' job). A save that failed **this** session is a
+    /// retry candidate the user is looking at, with the "Couldn't save" retry on
+    /// screen — the server must never silently delete it. Note the trigger needs
+    /// no remote edit at all: a device clock two minutes slow puts every server
+    /// `updated_at` beyond `draft.updatedAt + tolerance`.
+    func testRevalidationAfterAFailedSaveKeepsTheDraftEvenWhenTheServerLooksNewer() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500, saveDelay: 0.2)
@@ -770,8 +772,8 @@ final class EditorViewModelTests: XCTestCase {
             if case .failed = viewModel.saveState { return true }
             return false
         }
-        // Age the surviving draft far past the fixture's updated_at (2026-01-15),
-        // which `enqueue`'s `Date()` stamp could never be.
+        // Age the surviving draft far past the fixture's updated_at (2026-01-15):
+        // the tolerance comparison now says "server wins".
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: "Doc", markdown: "# Mine",
@@ -780,9 +782,42 @@ final class EditorViewModelTests: XCTestCase {
         stubLoad(content: "# Remote")
         await viewModel.refresh()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "# Remote", "server wins beyond the clock tolerance")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "a failed save's content is never silently deleted")
+        XCTAssertEqual(viewModel.displaySource, .draft)
+        XCTAssertNotNil(draftStore.draft(for: documentID), "the retry still has something to send")
+        XCTAssertTrue(viewModel.hasUnsavedLocalContent)
+    }
+
+    /// A draft stranded by an *earlier* session still loses to a meaningfully
+    /// newer server copy — that rule is unchanged, and `saveState` is `.idle`
+    /// because no save was attempted this session.
+    func testStrandedDraftStillLosesToANewerServerCopyOnRefresh() async {
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Old draft", markdown: "# Stale",
+                updatedAt: Date(timeIntervalSince1970: 1_000_000)))
+        stubLoad(content: "# Server")
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Server", "server wins beyond the clock tolerance")
         XCTAssertEqual(viewModel.displaySource, .clean)
         XCTAssertNil(draftStore.draft(for: documentID), "stale draft discarded")
+    }
+
+    /// `becomeUnavailable` tears the screen down but deliberately keeps the draft
+    /// (a 403 is revoked access, not a deleted document — purging would destroy
+    /// unsaved work with no recovery). The caption must not then claim unsaved
+    /// local content for a document that is no longer on screen.
+    func testUnavailableDocumentReportsNoUnsavedLocalContent() async {
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(PendingDraft(documentID: documentID, title: "Draft", markdown: "# Draft", updatedAt: Date()))
+        stubStatus(404)
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertFalse(viewModel.hasUnsavedLocalContent, "nothing is on screen to be unsaved")
     }
 
     /// The unchanged branch drops a stash unconditionally: if the server has

@@ -144,8 +144,12 @@ final class EditorViewModel {
     /// Caption rule 1: unsaved local content wins over "Synced X ago". A stored
     /// draft counts whatever `displaySource` says — a save failing mid-session
     /// leaves `.clean` on screen with the draft (the user's only copy) behind it.
+    /// Nothing counts once the document is off screen: `becomeUnavailable` keeps
+    /// the draft on purpose (a 403 is revoked access, not a deletion) and the
+    /// caption must not claim unsaved content for a document that isn't there.
     var hasUnsavedLocalContent: Bool {
-        isDirty
+        guard hasLoadedContent else { return false }
+        return isDirty
             || saveCoordinator.pendingSave(documentID: documentID) != nil
             || saveCoordinator.storedDraft(documentID: documentID) != nil
     }
@@ -295,15 +299,16 @@ final class EditorViewModel {
     /// was *issued*, on whether this response could have been served from the
     /// server's pre-save state (see `DocumentSaveCoordinator.mayPredateSave`).
     private func apply(formatted: FormattedDocumentContent, mayPredateLocalSave: Bool) {
-        defer { updatedAt = formatted.updatedAt }
         // This fetch raced one of our own saves, so its body may be the one that
-        // save just replaced. Neither install nor cache it — a later
-        // full-overwrite save would push the resurrected body to the server.
-        // Only the display source is settled, so the next fetch isn't stranded.
+        // save just replaced. Take nothing from it — not the body, not the cache
+        // entry, and not `updatedAt` — since a later full-overwrite save would
+        // push the resurrected body to the server. Only the display source is
+        // settled, so the next fetch isn't stranded.
         if mayPredateLocalSave {
             unpinSettledPendingSave()
             return
         }
+        defer { updatedAt = formatted.updatedAt }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
         if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
@@ -312,24 +317,25 @@ final class EditorViewModel {
         }
         // A draft outliving its save (the save failed) is unsaved work no matter
         // which source installed the screen — a save failing mid-session leaves
-        // `.clean` on screen with the draft behind it. The clock-tolerance rule,
-        // never `displaySource`, decides whether the server may replace it.
-        if saveCoordinator.storedDraft(documentID: documentID) != nil {
+        // `.clean` on screen with the draft behind it. The rules in
+        // `reconcileDraft`, never `displaySource`, decide whether the server may
+        // replace it.
+        if let draft = saveCoordinator.storedDraft(documentID: documentID) {
             displaySource = .draft
-            reconcileDraft(formatted)
+            reconcileDraft(formatted, draft: draft)
             return
         }
         switch displaySource {
-        case .pendingSave, .clean:
+        case .pendingSave, .clean, .draft:
             // `.pendingSave` reaching here means the save that owned the screen
             // landed (a failed one leaves the draft caught above) and this fetch
-            // postdates it, so the screen holds an ordinary clean copy. Leaving
-            // the source pinned would strand the screen forever: every later
-            // revalidation *and* every pull-to-refresh would no-op in silence.
+            // postdates it. `.draft` means the draft was saved and cleared while
+            // we awaited. Either way nothing local is left to protect, so the
+            // screen holds an ordinary clean copy. Leaving the source pinned
+            // would strand it forever: every later revalidation *and* every
+            // pull-to-refresh would no-op in silence.
             displaySource = .clean
             reconcileClean(formatted)
-        case .draft:
-            reconcileDraft(formatted)  // draft saved and cleared while we awaited
         case .none:
             installFetched(formatted)
         }
@@ -338,18 +344,27 @@ final class EditorViewModel {
     /// The save that owned the screen has settled, so `.pendingSave` no longer
     /// describes it. Reclassify without touching content — the response that
     /// triggered this is untrustworthy — so the next fetch reconciles normally.
+    /// A dirty screen is left alone: no source describes it, and the dirty rule
+    /// short-circuits every later `apply` until it flushes anyway.
     private func unpinSettledPendingSave() {
-        guard displaySource == .pendingSave, saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
+        guard displaySource == .pendingSave, !isDirty,
+            saveCoordinator.pendingSave(documentID: documentID) == nil
+        else { return }
         displaySource = saveCoordinator.storedDraft(documentID: documentID) != nil ? .draft : .clean
     }
 
     /// An unsaved draft owns the screen. It only loses to a server copy written
     /// meaningfully later than the draft itself — never to the user's own
     /// refresh, because the draft is work that hasn't reached the server yet.
-    private func reconcileDraft(_ formatted: FormattedDocumentContent) {
-        guard let draft = saveCoordinator.storedDraft(documentID: documentID) else {
-            // Saved (and cleared) while we awaited: nothing local to protect.
-            installFetched(formatted)
+    private func reconcileDraft(_ formatted: FormattedDocumentContent, draft: PendingDraft) {
+        // A save that failed *this session* leaves a draft the user is looking at,
+        // with the "Couldn't save" retry on screen. The clock-tolerance rule below
+        // is for drafts stranded by an *earlier* session (`recoverDrafts`' job);
+        // applying it here would silently delete visible content — and it needs no
+        // remote edit to fire, since a device clock two minutes slow already puts
+        // every server `updated_at` beyond `draft.updatedAt + tolerance`.
+        if case .failed = saveCoordinator.state(for: documentID) {
+            cacheServerCopy(formatted)
             return
         }
         if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
