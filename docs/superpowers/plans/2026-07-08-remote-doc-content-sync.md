@@ -268,6 +268,28 @@ Round 7 also caught that `isLoading` would swap `readingSurface` — the sole ow
 `.refreshable` — for a `ProgressView` during the very refresh the terminal message
 invites. No spinner is shown while `isUnavailable`.
 
+**I. Round 8, and a self-catch, corrected H twice more.** "A 200 discharges the
+terminal state, called before `apply`" is **wrong** — that is H's own phrasing, and it
+lasted four minutes. `apply` frequently declines a response: `mayPredateLocalSave` is
+true whenever a save was in flight when the fetch was issued, and this teardown's own
+write-ahead flush starts one. Discharging first therefore cleared the message and
+installed nothing — a blank body, no error, no spinner, and `readingSurface` offering
+"Start writing" on a document `startEditing` refuses to open. `markAvailableAgain()`
+now runs *after* `apply` and gates on `hasLoadedContent`: **only a response whose body
+reached the screen** proves the document is back.
+
+Round 8 then found that the draft H put back on screen could never be saved.
+`becomeUnavailable` pulls it out of the pipeline — `suppressLocalWriteThrough` drops
+the queued save, and `finish`'s discarded branch resets the state to `.idle`, not
+`.failed`. That is a state nothing else in the process produces, and every gate misses
+it: `flushPendingChanges` needs `isDirty` (the teardown cleared it), `saveNow` and the
+retry caption need `.failed`, `recoverDrafts` already ran. The edit sat on screen
+labelled "Edited just now", never sent, until a co-author's write pushed the server
+past the clock tolerance — at which point `reconcileDraft`'s server-wins exit deleted
+it, silently. H turned "obviously broken, user restarts, edit survives" into "looks
+fine, user does nothing, edit rots then dies". `reconcileDraft` now re-enqueues the
+draft on the draft-wins exit when it recovered the screen.
+
 Round 4 also showed the `.failed` pin had no reachable escape: `saveNow()` is wired
 only to the editing surface, and tap-to-edit is blocked offline — which is when
 saves fail. The reading caption is now "Couldn't save · tap to retry", extracted as

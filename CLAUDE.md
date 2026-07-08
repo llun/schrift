@@ -533,16 +533,24 @@ markdown write endpoint**. Understand this before touching the save path:
      `.notFound` — including a proxy hiccup — so `isUnavailable` must **not** gate
      them. Gating a save on it made every funnel silently return on a recovered
      document while the caption still read "Edited just now".
-     **Any 200 discharges it** (`markAvailableAgain`, before `apply`): that is the
-     server saying the document is back. Discharging it inside `install(...)` looks
-     equivalent and is not — `becomeUnavailable`'s own write-ahead flush leaves a
-     draft, so `apply` diverts into `reconcileDraft`, which never installs, and the
-     screen stays dead forever with pull-to-refresh no-oping. For the same reason
-     `reconcileDraft` re-installs the draft when `!hasLoadedContent`: every branch
-     below it assumes the content it protects is actually on screen. While
-     `isUnavailable` holds, `load()` skips the local phase (or the purged body — or
-     the draft the teardown just wrote — is re-rendered with the warning cleared)
-     and shows **no spinner**: `readingSurface` owns the only `.refreshable`.
+     **It is discharged by a fetch whose body actually reached the screen** —
+     `markAvailableAgain()`, called *after* `apply` and gated on `hasLoadedContent`.
+     Both weaker rules stranded a real screen: discharging inside `install(...)`
+     misses `reconcileDraft`'s draft-wins exits (which never install), leaving the
+     document dead with pull-to-refresh no-oping; discharging *before* `apply` clears
+     the terminal message for a response `apply` declines (`mayPredateLocalSave` is
+     true whenever a save was in flight when the fetch was issued — and this
+     teardown's own flush starts one), leaving a blank body, no error and no spinner.
+     For the same reason `reconcileDraft` re-installs the draft when
+     `!hasLoadedContent`, and **hands it back to the save pipeline**: the teardown
+     pulled it out (`suppressLocalWriteThrough` drops the queued save; `finish`'s
+     discarded branch resets to `.idle`, not `.failed`), so otherwise no funnel would
+     ever push it — `flushPendingChanges` needs `isDirty`, `saveNow`/the retry caption
+     need `.failed`, `recoverDrafts` already ran — and the tolerance rule would
+     eventually delete it. While `isUnavailable` holds, `load()` skips the local phase
+     (or the purged body — or the draft the teardown just wrote — is re-rendered with
+     the warning cleared) and shows **no spinner**: `readingSurface` owns the only
+     `.refreshable`.
   1. **A stored draft is unsaved work regardless of `displaySource`.** A save
      failing mid-session leaves `.clean` on screen with the user's only copy in
      `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`

@@ -86,11 +86,10 @@ final class EditorViewModel {
     private(set) var displaySource: DisplaySource = .none
     /// A 404/403 declared the document gone. Unlike a delete this is **recoverable**
     /// — the screen stays mounted with its pull-to-refresh, and every 404 maps to
-    /// `.notFound`, including a proxy hiccup. So this is not a latch: any **200
-    /// response** discharges it (`markAvailableAgain`), because that is the server
-    /// saying the document is back. Discharging it in `install(...)` instead looks
-    /// equivalent and is not: with a stored draft, `apply` diverts into
-    /// `reconcileDraft`, which never installs, and the screen stays dead forever.
+    /// `.notFound`, including a proxy hiccup. So this is not a latch: it is
+    /// discharged by a fetch whose body `apply` actually put on screen
+    /// (`markAvailableAgain`, *after* `apply`, gated on `hasLoadedContent`).
+    /// Neither weaker rule works — see that method for the two screens they stranded.
     /// While it holds, the local phase must not re-render the purged copy (or the
     /// draft the teardown just wrote) with the terminal message cleared.
     private(set) var isUnavailable = false
@@ -190,9 +189,9 @@ final class EditorViewModel {
     // MARK: - Loading
 
     func load() async {
-        // The terminal 404/403 message survives until the server says otherwise:
-        // only a successful fetch (`install`) clears it. Clearing it here would
-        // leave the user staring at revoked content with no warning.
+        // The terminal 404/403 message survives until a fetch actually puts content
+        // back on screen (`markAvailableAgain`). Clearing it here would leave the
+        // user staring at revoked content — or at nothing — with no warning.
         if !isUnavailable { errorMessage = nil }
         // The local phase runs once per installed document: load() re-fires
         // on pop-back (.task) — reinstalling would clobber a dirty editing
@@ -302,6 +301,11 @@ final class EditorViewModel {
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
+            // Unreachable while `isUnavailable` — that implies `!hasLoadedContent`, so
+            // `refresh()`'s guard already diverted into `load()`. Kept because nothing
+            // enforces that invariant and an undischarged terminal state is a dead
+            // screen; the invariant itself is pinned by
+            // `testUnavailableAlwaysImpliesNoLoadedContent`.
             markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
@@ -450,7 +454,8 @@ final class EditorViewModel {
         // write-ahead flush is what wrote this draft. The draft is the user's only
         // copy, so put it back — every branch below then reasons about content that
         // is actually displayed, as they all assume.
-        if !hasLoadedContent {
+        let recovered = !hasLoadedContent
+        if recovered {
             install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
             displaySource = .draft
             hasLocalCopy = true
@@ -469,6 +474,18 @@ final class EditorViewModel {
         }
         if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
             cacheServerCopy(formatted)
+            // `becomeUnavailable` pulled this draft out of the save pipeline —
+            // `suppressLocalWriteThrough` dropped its queued save and `finish`'s
+            // discarded branch reset the state to `.idle`, not `.failed`. So no
+            // funnel will ever push it: `flushPendingChanges` needs `isDirty` (the
+            // teardown cleared it), `saveNow`/the retry caption need `.failed`, and
+            // `recoverDrafts` already ran this process. Left alone the edit sits on
+            // screen labelled "Edited just now" until a co-author's write pushes the
+            // server past the tolerance — and then the branch below deletes it.
+            // The document is back, so hand the draft back.
+            if recovered, saveCoordinator.pendingSave(documentID: documentID) == nil {
+                saveCoordinator.enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown)
+            }
             return
         }
         // Server newer beyond tolerance: this stranded draft would never have been

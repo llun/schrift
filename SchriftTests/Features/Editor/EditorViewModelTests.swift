@@ -923,6 +923,57 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasLocalCopy)
     }
 
+    /// `becomeUnavailable`'s flush pulls the draft *out* of the save pipeline
+    /// (`suppressLocalWriteThrough` drops the queued save, and `finish`'s discarded
+    /// branch resets the state to `.idle` — not `.failed`). Re-installing that draft
+    /// on recovery therefore put a healthy-looking, unsaveable document on screen:
+    /// `flushPendingChanges` needs `isDirty`, `saveNow` needs `.failed`, the retry
+    /// caption needs `.failed`, and `recoverDrafts` already ran. The edit would sit
+    /// there labelled "Edited just now" until a co-author's write pushed the server
+    /// past the clock tolerance — and then `reconcileDraft` would silently delete it.
+    /// The document is back, so the draft goes back into the pipeline.
+    func testRecoveredDraftIsHandedBackToTheSavePipeline() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Mine"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine edited")
+
+        stubStatus(404)
+        await viewModel.load()  // teardown flushes; its PATCH 404s
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertEqual(coordinator.state(for: documentID), .idle, "the discarded branch resets the state")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        stubLoadAndSavePipeline(content: "# Mine", log: log)  // the hiccup is over
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.blocks.first?.text, "Mine edited", "the draft is back on screen")
+        await waitUntil { viewModel.saveState == .saved }
+        XCTAssertNil(draftStore.draft(for: documentID), "and it reached the server")
+        XCTAssertEqual(savesInFlight(log), 1)
+    }
+
+    /// The invariant `refresh()`'s `markAvailableAgain()` call relies on: a document
+    /// declared gone has no loaded content, so `refresh()` always diverts to `load()`.
+    /// Break it and the terminal state can outlive the fetch that revived it.
+    func testUnavailableAlwaysImpliesNoLoadedContent() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        stubStatus(404)
+
+        await viewModel.load()
+        XCTAssertTrue(viewModel.isUnavailable)
+        XCTAssertFalse(viewModel.hasLoadedContent)
+
+        stubOffline()
+        await viewModel.refresh()  // diverts into load(); still gone
+        XCTAssertTrue(viewModel.isUnavailable)
+        XCTAssertFalse(viewModel.hasLoadedContent)
+    }
+
     /// `markAvailableAgain()` must not clear the terminal state for a response
     /// `apply` then declines to use. The teardown's own write-ahead flush starts a
     /// save, so a refresh issued while that PATCH is in flight has
