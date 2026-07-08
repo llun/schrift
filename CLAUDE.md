@@ -631,6 +631,18 @@ markdown write endpoint**. Understand this before touching the save path:
   simulator builds ad-hoc sign for free, and the Keychain tests require the test
   host's ad-hoc signature/entitlements — an unsigned host fails with
   `errSecMissingEntitlement (-34018)` (see `docs/ci.md`).
+- **Two `xcodebuild test` runs on the same simulator kill each other.** With
+  several worktrees checked out (the usual state here), a concurrent run in
+  another one aborts yours with `Test crashed with signal kill`/`signal term` and
+  "Restarting after unexpected exit, crash, or test timeout" — blaming whichever
+  slow test happened to be running, a different one each time. Suspect the
+  environment before the code; the giveaway is a test name in your `.xcresult`
+  that doesn't exist on your branch. Before concluding *anything* from a
+  repeated-run soak, give it a dedicated device (`xcrun simctl create SchriftSoak
+  com.apple.CoreSimulator.SimDeviceType.iPhone-17 <runtime>`, then
+  `-destination "platform=iOS Simulator,id=<udid>"`) and a private
+  `-derivedDataPath`, and soak the **base commit** the same way as a control. A
+  red run proves causation no more than a green run proves correctness.
 - Async tests are `func test...() async`; `await` the subject directly and assert
   on its published state. Poll eventual state with the shared `waitUntil { }`
   helper — **no `XCTestExpectation`, and never a sleep to wait for expected

@@ -154,26 +154,32 @@ store out of UserDefaults on every render of a 60 s `TimelineView`.
 
 ## The test mock took three attempts
 
-Reproducing B required fixing `MockURLProtocol` first, and the first two fixes
-were both wrong:
+Reproducing B required fixing `MockURLProtocol` first:
 
 1. **Original.** Every stub was delivered on URLSession's single protocol thread,
    so a `Thread.sleep` meant to hold one request open silently serialized every
    other in-flight request. The B test passed against knowingly-buggy code — the
    stalled GET was blocking the PATCH it was supposed to race.
-2. **`Stub.delay` on a private background queue.** The B test now went red as it
-   should. But delivering into a `URLSession` from an arbitrary background thread
-   hung the *test process* roughly one run in twenty, and the abort was blamed on
-   whichever unrelated slow test happened to be running (`signal kill`). Draining
-   the queue in `tearDown` didn't fix it.
-3. **`Stub.delay` on the main queue.** Main is the thread the tests already run
-   on, is certainly alive, and is serial — so `reset()` cancelling a scheduled work
-   item is sufficient, with no drain and no lock. `delay: 0` keeps the original
-   synchronous path byte-for-byte, so the other ~600 tests are untouched.
+2. **`Stub.delay`**, deferring delivery off that thread onto the main queue — the
+   thread the tests already run on, certainly alive and serial, so `reset()`
+   cancelling a scheduled work item suffices (no drain, no lock). `delay: 0` keeps
+   the original synchronous path byte-for-byte, so the other ~600 tests are
+   untouched. `MockURLProtocol.reset()` (not `stubHandler = nil`) is now the
+   tearDown contract, and it cancels anything still scheduled.
 
-The lesson: a mock that defers work has to defer it somewhere the test owns.
-`MockURLProtocol.reset()` (not `stubHandler = nil`) is now the tearDown contract,
-and it cancels anything still scheduled.
+Along the way I twice blamed this mechanism for a full-suite abort (~1 run in 24,
+`signal kill`, blaming a different random test each time) and rewrote the mock on
+that basis. Neither rewrite moved the rate, because the cause was never in the
+code: **a concurrent `xcodebuild` from another worktree was driving the same
+simulator**, and two runs on one simulator kill each other. The giveaway sat in my
+own result bundle — its failure list named `testInsertPhoto…`, a test that does
+not exist on this branch.
+
+Re-measured on a dedicated simulator with a private `derivedDataPath`: `main`, 0
+aborts in 20 runs; this branch, 1 in 45; this branch with the three delay-using
+tests skipped, 0 in 25. One event in 45 is indistinguishable from the control, so
+the mechanism stands. A red run proves causation no more than a green run proves
+correctness — control for the environment *first*. Recorded in `CLAUDE.md`.
 
 `waitUntil` also now fails the test on timeout rather than returning silently — a
 stalled wait was surfacing as a confusing assertion failure further down. That
