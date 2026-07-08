@@ -58,6 +58,13 @@ final class EditorViewModel {
     var lastSyncedAt: Date? = nil
     var hasLocalCopy = false
     var updateAvailable = false
+    /// Drives the system photo picker. Set by the slash-menu photo item and the
+    /// formatting-bar button; cleared by SwiftUI when the picker dismisses.
+    var isPhotoPickerPresented = false
+    /// True while a picked photo is being prepared, uploaded and confirmed. No
+    /// placeholder block exists during this window — the `.image` block is only
+    /// inserted on success.
+    var isUploadingPhoto = false
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -65,6 +72,8 @@ final class EditorViewModel {
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration
+    /// Delay between media-check readiness polls. Tests pass `.zero`.
+    let mediaCheckRetryInterval: Duration
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
@@ -97,6 +106,14 @@ final class EditorViewModel {
     /// deferral so a long burst still persists periodically.
     private static let maxAutosaveDeferral: TimeInterval = 30
 
+    /// How many times to poll media-check before falling back to the URL derived
+    /// from the upload key. The default deployment's scanner is the dummy
+    /// backend, so readiness is near-immediate.
+    private static let mediaCheckMaxAttempts = 5
+
+    /// Friendly copy for every failure in the photo-insert pipeline.
+    private static let photoErrorMessage = "Couldn't add the photo. Please try again."
+
     init(
         client: DocsAPIClient,
         documentID: UUID,
@@ -104,7 +121,8 @@ final class EditorViewModel {
         saveCoordinator: DocumentSaveCoordinator,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
-        autosaveInterval: Duration = .seconds(10)
+        autosaveInterval: Duration = .seconds(10),
+        mediaCheckRetryInterval: Duration = .seconds(1)
     ) {
         self.client = client
         self.documentID = documentID
@@ -113,6 +131,7 @@ final class EditorViewModel {
         self.contentCache = contentCache
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
+        self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.savedTitle = title
     }
 
@@ -719,15 +738,102 @@ final class EditorViewModel {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         blocks[index].text = ""
         slashQueryText = nil
-        if item.kind == .divider {
+        switch item.action {
+        case .convert(.divider):
             blocks[index].kind = .divider
             let newBlock = EditorBlock(kind: .paragraph)
             blocks.insert(newBlock, at: index + 1)
             focusBlock(newBlock.id, cursorAt: 0)
-        } else {
-            blocks[index].kind = item.kind
+        case .convert(let kind):
+            blocks[index].kind = kind
             focusBlock(focusedBlockID, cursorAt: 0)
+        case .insertPhoto:
+            // The block stays an empty paragraph; `insertImageBlock` replaces it
+            // in place once the upload succeeds (and leaves it alone if it
+            // doesn't, so a failed pick never strands a placeholder).
+            focusBlock(focusedBlockID, cursorAt: 0)
+            requestPhotoInsertion()
         }
+        markDirty()
+    }
+
+    // MARK: - Photo insertion
+
+    /// Entry point for both the formatting-bar button and the slash-menu item.
+    func requestPhotoInsertion() {
+        guard hasLoadedContent, !isUploadingPhoto else { return }
+        isPhotoPickerPresented = true
+    }
+
+    /// Runs the picked photo through prepare → upload → readiness poll and
+    /// inserts the resulting `.image` block. A cancelled pick (`nil` data) is a
+    /// silent no-op; any failure sets friendly copy and inserts nothing, so a
+    /// broken upload can never leave a placeholder in the document.
+    func insertPhoto(loadingData: @Sendable () async throws -> Data?) async {
+        guard hasLoadedContent, !isUploadingPhoto else { return }
+        isUploadingPhoto = true
+        defer { isUploadingPhoto = false }
+        do {
+            guard let originalData = try await loadingData() else { return }
+            guard let jpegData = preparedJPEGData(from: originalData) else {
+                errorMessage = Self.photoErrorMessage
+                return
+            }
+            let mediaCheckPath = try await client.uploadAttachment(
+                documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: jpegData)
+            guard let urlString = await readyMediaURLString(fromMediaCheckPath: mediaCheckPath) else {
+                errorMessage = Self.photoErrorMessage
+                return
+            }
+            insertImageBlock(url: urlString)
+        } catch {
+            errorMessage = Self.photoErrorMessage
+        }
+    }
+
+    /// Polls media-check until the attachment is ready and returns the absolute
+    /// media URL to embed (matching what the web client persists). Falls back to
+    /// the URL derived from the upload key if readiness can't be confirmed in
+    /// time — the upload already succeeded, so the URL must never be lost.
+    private func readyMediaURLString(fromMediaCheckPath path: String) async -> String? {
+        for attempt in 0..<Self.mediaCheckMaxAttempts {
+            if attempt > 0 { try? await Task.sleep(for: mediaCheckRetryInterval) }
+            if let response = try? await client.checkMedia(path: path),
+                response.status == MediaCheckResponse.readyStatus, let file = response.file,
+                let absolute = await client.absoluteServerURL(for: file)
+            {
+                return absolute.absoluteString
+            }
+        }
+        guard let key = attachmentKey(fromMediaCheckPath: path),
+            let absolute = await client.absoluteServerURL(for: "/media/" + key)
+        else { return nil }
+        return absolute.absoluteString
+    }
+
+    /// Mirrors the divider slash behavior: replace a focused empty paragraph in
+    /// place, otherwise insert below the focused block, and always leave an
+    /// editable paragraph after the image (an image is a non-editable leaf).
+    private func insertImageBlock(url: String) {
+        if mode == .markdown {
+            insertAtCursor("![](\(url))")
+            return
+        }
+        let image = EditorBlock(kind: .image(alt: "", url: url))
+        let trailing = EditorBlock(kind: .paragraph)
+        if let focusedBlockID, let index = blockIndex(focusedBlockID) {
+            if blocks[index].kind == .paragraph, blocks[index].text.isEmpty {
+                blocks[index] = image
+                blocks.insert(trailing, at: index + 1)
+            } else {
+                blocks.insert(image, at: index + 1)
+                blocks.insert(trailing, at: index + 2)
+            }
+        } else {
+            blocks.append(image)
+            blocks.append(trailing)
+        }
+        focusBlock(trailing.id, cursorAt: 0)
         markDirty()
     }
 

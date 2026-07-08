@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// "Synced X ago" caption for the editor header. Pure — `now` is a parameter
@@ -30,6 +31,7 @@ struct EditorView: View {
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
+    @State private var selectedPhotoItem: PhotosPickerItem?
 
     init(
         viewModel: EditorViewModel,
@@ -209,6 +211,9 @@ struct EditorView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: DocsSpacing.spaceXS) {
+                    if viewModel.isUploadingPhoto {
+                        uploadingPhotoBanner
+                    }
                     if viewModel.mode == .blocks, let query = viewModel.slashQueryText {
                         SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
                     }
@@ -218,6 +223,32 @@ struct EditorView: View {
                 .padding(.bottom, DocsSpacing.spaceXS)
             }
         }
+        // The out-of-process system picker: no photo-library usage description
+        // and no project.yml change are needed.
+        .photosPicker(isPresented: $viewModel.isPhotoPickerPresented, selection: $selectedPhotoItem, matching: .images)
+        .onChange(of: selectedPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            // Clear immediately so re-picking the same asset fires onChange again.
+            selectedPhotoItem = nil
+            Task {
+                await viewModel.insertPhoto(loadingData: { try await newItem.loadTransferable(type: Data.self) })
+            }
+        }
+    }
+
+    private var uploadingPhotoBanner: some View {
+        HStack(spacing: DocsSpacing.spaceXS) {
+            ProgressView()
+            Text("Uploading photo…")
+                .font(DocsFont.footnote)
+                .foregroundStyle(DocsColor.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DocsSpacing.spaceSM)
+        .padding(.vertical, DocsSpacing.spaceXS)
+        .background(DocsColor.surfaceSunken, in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Uploading photo")
     }
 
     // MARK: - Reading
