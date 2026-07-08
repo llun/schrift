@@ -865,6 +865,56 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.hasUnsavedLocalContent, "nothing is on screen to be unsaved")
     }
 
+    /// A 404 can be transient (proxy hiccup, brief permission flap). The screen
+    /// stays mounted and keeps its pull-to-refresh, so the document can come back —
+    /// and once it is back on screen, editing it must save. A permanent
+    /// "discarded" latch made every save funnel silently return while the caption
+    /// still read "Edited just now".
+    func testDocumentRecoveredFromATransient404SavesAgain() async {
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubStatus(404)
+        await viewModel.load()
+        XCTAssertFalse(viewModel.hasLoadedContent)
+
+        stubLoad(content: "# Back")  // the 404 was transient
+        await viewModel.refresh()
+        XCTAssertTrue(viewModel.hasLoadedContent, "the document is back on screen")
+        XCTAssertNil(viewModel.errorMessage)
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Back edited")
+        viewModel.flushPendingChanges()
+
+        XCTAssertNotNil(
+            coordinator.pendingSave(documentID: documentID),
+            "a recovered document must still save — every funnel routes through flushPendingChanges")
+        XCTAssertFalse(viewModel.isDirty)
+        // Let the PATCH settle rather than leaving it to land inside a later test.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// The terminal state must be sticky against the *local* phase: a document
+    /// declared gone must not be re-rendered from a cached copy or the draft the
+    /// 403 teardown just wrote, with its "no longer available" message cleared.
+    func testUnavailableDocumentIsNotResurrectedFromLocalCopies() async {
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Secret"))
+        draftStore.save(PendingDraft(documentID: documentID, title: "D", markdown: "# Secret", updatedAt: Date()))
+        stubStatus(403)
+        await viewModel.load()
+        XCTAssertTrue(viewModel.blocks.isEmpty)
+
+        // Pull to refresh, and the revalidation fails transiently this time.
+        stubOffline()
+        await viewModel.refresh()
+
+        XCTAssertTrue(viewModel.blocks.isEmpty, "revoked content is never re-rendered from disk")
+        XCTAssertFalse(viewModel.hasLoadedContent)
+        XCTAssertTrue(
+            viewModel.errorMessage?.contains("no longer available") ?? false,
+            "the terminal message survives a transient failure")
+    }
+
     /// No draft: the terminal message must not promise changes that don't exist.
     func testUnavailableDocumentWithNoDraftSaysNothingAboutUnsavedChanges() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()

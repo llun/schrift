@@ -222,6 +222,28 @@ so the draft lands on disk before any PATCH, and `recoverDrafts()` replays it if
 404/403 was transient (every 404 maps to `.notFound`, including a proxy hiccup). The
 terminal message says so instead of letting the work vanish silently.
 
+**G. Round 6 found round 5's fix silently swallowing every save.** Round 5 added an
+`isDiscarded` latch and gated `flushPendingChanges`/`saveNow` on it. But a 404/403 is
+**not** terminal: the screen stays mounted with its pull-to-refresh, and a transient
+404 (the very case round 5 invoked to justify keeping the draft) brings the document
+straight back through `load()` → `installFetched`. `hasLoadedContent` returned to
+true, editing was enabled, the caption read "Edited just now" — and every save funnel
+returned early on the latch that nothing ever cleared. Every keystroke lost, on a
+document that exists. The guard also sat *before* `isDirty = false`, so `isDirty`
+stayed true and `apply()` short-circuited into `cacheServerCopy` forever: the screen
+never updated again either.
+
+Worse, the latch was redundant. `isDocumentDiscarded` already existed for the delete
+path (which *does* unmount). Round 5's flag both duplicated it and broke recovery.
+It is gone; the funnels gate on `isDocumentDiscarded`, and the recoverable state is
+now `isUnavailable`, cleared by `install(...)`.
+
+Round 6 also found the 403 teardown's own draft being re-rendered: `load()` cleared
+`errorMessage` and `restoreLocalContent()` reinstalled the draft holding the full
+revoked body, so pull-to-refresh — the action the terminal message invites — showed
+the revoked document with no warning at all. `load()` now skips the local phase and
+preserves the terminal message while `isUnavailable` holds.
+
 Round 4 also showed the `.failed` pin had no reachable escape: `saveNow()` is wired
 only to the editing surface, and tap-to-edit is blocked offline — which is when
 saves fail. The reading caption is now "Couldn't save · tap to retry", extracted as

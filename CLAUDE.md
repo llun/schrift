@@ -527,6 +527,15 @@ markdown write endpoint**. Understand this before touching the save path:
      reappearing on disk*. `handleDidDelete` → `discardPendingWork` (drops the
      draft too); `becomeUnavailable` → `suppressLocalWriteThrough` (**keeps** the
      draft — a 403 revokes access, it doesn't delete the user's unsaved work).
+  0c. **A delete is terminal; a 404/403 is not.** Deleting pops the screen, so
+     `isDocumentDiscarded` is a latch and gates the save funnels. A 404/403 leaves
+     the screen mounted with its pull-to-refresh, and every 404 maps to
+     `.notFound` — including a proxy hiccup — so `isUnavailable` must **not** gate
+     them: `install(...)` clears it the moment content is back. Gating a save on it
+     made every funnel silently return on a recovered document while the caption
+     still read "Edited just now". While it holds, `load()` skips the local phase
+     and keeps the terminal message, or the purged body (or the draft the teardown
+     just wrote) is re-rendered with the warning cleared.
   1. **A stored draft is unsaved work regardless of `displaySource`.** A save
      failing mid-session leaves `.clean` on screen with the user's only copy in
      `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`

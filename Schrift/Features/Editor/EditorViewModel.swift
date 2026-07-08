@@ -84,11 +84,13 @@ final class EditorViewModel {
     /// otherwise re-save — and re-draft — a document that no longer exists.
     private(set) var isDocumentDiscarded = false
     private(set) var displaySource: DisplaySource = .none
-    /// The document is gone (deleted, or 404/403). No save may be enqueued for it
-    /// again — an enqueue would re-create the draft the purge removed and PATCH a
-    /// document that no longer exists. Belt-and-braces: today the screen unmounts
-    /// first, so nothing can re-dirty it.
-    private(set) var isDiscarded = false
+    /// A 404/403 declared the document gone. Unlike a delete this is **recoverable**
+    /// — the screen stays mounted with its pull-to-refresh, and every 404 maps to
+    /// `.notFound`, including a proxy hiccup. So this is not a latch: `install(...)`
+    /// clears it the moment content is back on screen. While it holds, the local
+    /// phase must not re-render the purged copy (or the draft the teardown just
+    /// wrote) with the terminal message cleared.
+    private(set) var isUnavailable = false
     private var savedMarkdown = ""
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
@@ -185,21 +187,29 @@ final class EditorViewModel {
     // MARK: - Loading
 
     func load() async {
-        errorMessage = nil
+        // The terminal 404/403 message survives until the server says otherwise:
+        // only a successful fetch (`install`) clears it. Clearing it here would
+        // leave the user staring at revoked content with no warning.
+        if !isUnavailable { errorMessage = nil }
         // The local phase runs once per installed document: load() re-fires
         // on pop-back (.task) — reinstalling would clobber a dirty editing
         // session with the cached copy. After the first install, load() is
-        // revalidate-only.
+        // revalidate-only. It is skipped entirely for a document declared gone:
+        // the purge removed its cache, but the teardown's write-ahead flush may
+        // have just written a draft holding the full (revoked) body, and
+        // `restoreLocalContent` would happily put it back on screen.
         if !hasLoadedContent {
             updateAvailable = false
             pendingFreshContent = nil
-            // Sub pages restore alongside the content so the Subpages section
-            // renders instantly (and offline); loadChildren revalidates after
-            // each successful content fetch.
-            if let cachedChildren = childrenCache.children(for: documentID) {
-                subpages = cachedChildren
+            if !isUnavailable {
+                // Sub pages restore alongside the content so the Subpages section
+                // renders instantly (and offline); loadChildren revalidates after
+                // each successful content fetch.
+                if let cachedChildren = childrenCache.children(for: documentID) {
+                    subpages = cachedChildren
+                }
+                restoreLocalContent()
             }
-            restoreLocalContent()
             if displaySource == .none {
                 isLoading = true
             }
@@ -255,7 +265,11 @@ final class EditorViewModel {
             // For .sessionExpired specifically, the shared client's
             // onSessionExpired hook has already raised the app-level re-login
             // sheet; the editor recovers on its next refresh or save.
-            if displaySource == .none {
+            // A document already declared gone keeps its terminal message: a
+            // transient failure is no evidence that it came back.
+            if isUnavailable {
+                errorMessage = unavailableMessage
+            } else if displaySource == .none {
                 errorMessage = "Couldn't load this document. Pull to refresh to try again."
             }
         }
@@ -291,6 +305,14 @@ final class EditorViewModel {
         }
     }
 
+    /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
+    /// never promises changes that were never written.
+    private var unavailableMessage: String {
+        saveCoordinator.storedDraft(documentID: documentID) != nil
+            ? "This document is no longer available. Your unsaved changes are kept on this device."
+            : "This document is no longer available."
+    }
+
     /// Definitive 404/403: the document is gone or access was revoked. Purge
     /// the durable copy (privacy), disable editing, show the terminal state.
     private func becomeUnavailable() {
@@ -305,7 +327,7 @@ final class EditorViewModel {
         // An in-flight save can still land after this purge and write the full body
         // back into the cache — on a 403, revoked content reappearing on disk.
         saveCoordinator.suppressLocalWriteThrough(documentID: documentID)
-        isDiscarded = true
+        isUnavailable = true
         contentCache.remove(documentID: documentID)
         childrenCache.remove(parentID: documentID)
         childrenCache.removeDocument(documentID)
@@ -335,10 +357,7 @@ final class EditorViewModel {
         displayedSourceMarkdown = ""
         displaySource = .none
         hasLoadedContent = false  // startEditing guards on this
-        errorMessage =
-            saveCoordinator.storedDraft(documentID: documentID) != nil
-            ? "This document is no longer available. Your unsaved changes are kept on this device."
-            : "This document is no longer available."
+        errorMessage = unavailableMessage
     }
 
     /// `mayPredateLocalSave` is the coordinator's verdict, taken when the fetch
@@ -535,7 +554,6 @@ final class EditorViewModel {
         autosaveTask = nil
         dirtySince = nil
         isDirty = false
-        isDiscarded = true
         saveCoordinator.discardPendingWork(documentID: documentID)
         // A photo upload can still be in flight and would otherwise re-save (and
         // re-draft) the deleted document when it lands. `hasLoadedContent` stays
@@ -567,6 +585,13 @@ final class EditorViewModel {
             title = contentTitle
         }
         savedTitle = title
+        // Content is on screen again, so a prior 404/403 no longer describes this
+        // document — it was transient, or access was restored. Saving must resume,
+        // and the terminal message (which load() deliberately preserved) must go.
+        if isUnavailable {
+            isUnavailable = false
+            errorMessage = nil
+        }
         rawMarkdown = markdown
         blocks = parseEditorBlocks(markdown)
         // Every block gets a fresh identity here, so any caret state still
@@ -1165,10 +1190,11 @@ final class EditorViewModel {
         dirtySince = nil
         // `hasLoadedContent` mirrors `startEditing`'s invariant at the exit: with
         // no content loaded, `currentMarkdown()` is the empty document, and a
-        // full-overwrite save of that destroys the server copy. `isDiscarded` keeps
-        // a gone document from acquiring a fresh draft and a doomed PATCH. This is
-        // the funnel that must never be bypassed.
-        guard !isDiscarded, hasLoadedContent, isDirty else { return }
+        // full-overwrite save of that destroys the server copy. `isDocumentDiscarded`
+        // (delete only — never the recoverable 404/403 state) keeps a deleted
+        // document from acquiring a fresh draft and a doomed PATCH. This is the
+        // funnel that must never be bypassed.
+        guard !isDocumentDiscarded, hasLoadedContent, isDirty else { return }
         isDirty = false
         let markdown = currentMarkdown()
         if markdown == savedMarkdown, title == savedTitle {
@@ -1187,7 +1213,7 @@ final class EditorViewModel {
     /// the document behind its failed save (`reconcileDraft` pins the screen while
     /// a failed save's draft survives).
     func saveNow() {
-        guard !isDiscarded else { return }
+        guard !isDocumentDiscarded else { return }
         if isDirty {
             flushPendingChanges()
         }
