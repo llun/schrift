@@ -145,19 +145,23 @@ final class AttachmentEndpointsClientTests: XCTestCase {
                 _ = try await makeClient().checkMedia(path: hostile)
                 XCTFail("Expected checkMedia to reject \(hostile)")
             } catch let error as DocsAPIError {
-                guard case .network = error else {
+                // Not `guard … else { continue }`: a `continue` here would skip the
+                // request-count assertion on exactly the buggy path that issues a
+                // request and then throws `.decoding`, leaving it only ever reached
+                // after a correct rejection (where the log is trivially empty).
+                if case .network = error {
+                } else {
                     XCTFail("Expected .network for \(hostile), got \(error)")
-                    continue
                 }
             } catch {
                 XCTFail("Unexpected error for \(hostile): \(error)")
             }
-            XCTAssertEqual(
-                log.count(ofMethod: "GET", urlContaining: "evil.com"), 0,
-                "checkMedia must not issue a request for \(hostile)")
-            XCTAssertEqual(
-                log.count(ofMethod: "GET", urlContaining: "media-check"), 0,
-                "checkMedia must not issue a request for \(hostile)")
+            // The invariant is "no request at all", not "no request to a particular
+            // host": a substring count is structurally zero for these inputs even if
+            // checkMedia wrongly issued a GET to some other URL. Assert the recorder
+            // saw nothing, which a rejected path guarantees and a leaked one violates.
+            XCTAssertTrue(
+                log.methods.isEmpty, "checkMedia must not issue any request for \(hostile)")
         }
     }
 

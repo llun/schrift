@@ -400,7 +400,10 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertTrue(
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
             "the appended markdown must parse back to an .image block, not literal text")
-        XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown, "the save must carry the source, not blocks")
+        // The "carries the source, not a serialization of the lossy blocks" claim is
+        // asserted by the sibling `testInsertPhotoPreservesALossySourceAuthoredDuringTheSession`:
+        // here the source round-trips, so `currentMarkdown()`, `rawMarkdown`, and
+        // `serializeMarkdown(blocks)` are all equal and nothing in this test can tell them apart.
     }
 
     /// `openInMarkdownMode` is computed once, in `install()`. A document whose
