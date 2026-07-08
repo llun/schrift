@@ -202,6 +202,26 @@ The second: a save landing after a DELETE re-created the content-cache entry
 write-throughs the cache unconditionally. `discardPendingWork` now remembers the id
 and `finish` skips the resurrect.
 
+**F. Round 5 found round 4's fix half-applied, and its comment wrong.** Round 4
+wired the delete path (`handleDidDelete` → `discardPendingWork`) so an in-flight
+save couldn't resurrect the purged cache entry — and left the *other* purge site,
+`becomeUnavailable()`, untouched. On a 403 the in-flight save's success path wrote
+the full body straight back into the content cache: revoked content reappearing on
+disk, reachable from retained Home/Search/Shared results, with no path that purges
+it again. `becomeUnavailable` now calls `suppressLocalWriteThrough`, which unlike
+`discardPendingWork` **keeps** the draft — a 403 revokes access, it doesn't delete
+the user's unsaved work.
+
+Round 5 also read round 4's own comment — *"Their in-flight edit is unsavable
+either way; a stored draft survives"* — and found it false, the **seventh** wrong
+comment on this branch. With a 10 s autosave debounce, a user who has typed for 8 s
+has no draft at all: `enqueue` is the only writer of one. Round 4 stopped the flush
+from writing `""`, but simply *discarded* the edit instead. `becomeUnavailable` now
+**flushes first**, while the blocks still hold the text — `enqueue` is write-ahead,
+so the draft lands on disk before any PATCH, and `recoverDrafts()` replays it if the
+404/403 was transient (every 404 maps to `.notFound`, including a proxy hiccup). The
+terminal message says so instead of letting the work vanish silently.
+
 Round 4 also showed the `.failed` pin had no reachable escape: `saveNow()` is wired
 only to the editing surface, and tap-to-edit is blocked offline — which is when
 saves fail. The reading caption is now "Couldn't save · tap to retry", extracted as

@@ -512,14 +512,21 @@ markdown write endpoint**. Understand this before touching the save path:
   was learned the hard way; each has a named regression test.
   0. **Never enqueue a save for content that isn't loaded.** `startEditing` guards
      the *entry* to an editing session on `hasLoadedContent`; `flushPendingChanges`
-     guards the *exit* on it too, and `becomeUnavailable`/`handleDidDelete` end the
-     session (cancel the autosave, clear `isDirty`) before dropping the content.
-     Without that, a 404/403 landing mid-edit cleared `blocks` while the autosave
-     timer kept ticking — the next flush serialized `[]`, enqueued an **empty
-     document**, and overwrote the user's draft with it; a *transient* 404 then let
-     `recoverDrafts()` replay that emptiness onto the server. Likewise a save
-     landing after a DELETE must not write-through the content cache
-     (`discardPendingWork` remembers the id; `finish` skips the resurrect).
+     guards the *exit* on it and on `isDiscarded`, and
+     `becomeUnavailable`/`handleDidDelete` end the session (cancel the autosave,
+     clear `isDirty`) before dropping the content. Without that, a 404/403 landing
+     mid-edit cleared `blocks` while the autosave timer kept ticking — the next
+     flush serialized `[]`, enqueued an **empty document**, and overwrote the user's
+     draft with it; a *transient* 404 then let `recoverDrafts()` replay that
+     emptiness onto the server. `becomeUnavailable` **flushes first**, while the
+     blocks still hold the edit: `enqueue` is write-ahead, so the user's text lands
+     on disk and `recoverDrafts()` replays it if the 404/403 was transient.
+  0b. **A purge must survive its own in-flight save.** Both purge sites tell the
+     coordinator, or `finish`'s success path write-throughs the content cache and
+     recreates what was just removed — on a 403 that is *revoked content
+     reappearing on disk*. `handleDidDelete` → `discardPendingWork` (drops the
+     draft too); `becomeUnavailable` → `suppressLocalWriteThrough` (**keeps** the
+     draft — a 403 revokes access, it doesn't delete the user's unsaved work).
   1. **A stored draft is unsaved work regardless of `displaySource`.** A save
      failing mid-session leaves `.clean` on screen with the user's only copy in
      `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`

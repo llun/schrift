@@ -553,7 +553,11 @@ final class EditorViewModelTests: XCTestCase {
     /// so the next flush serialized the now-empty block list and enqueued it —
     /// replacing the user's draft with an empty document, and (after a *transient*
     /// 404) letting `recoverDrafts()` replay that emptiness onto the server.
-    func testUnavailableMidEditNeverEnqueuesAnEmptyDocument() async {
+    ///
+    /// The edit itself must not be thrown away either: `enqueue` is write-ahead, so
+    /// flushing *before* the content goes puts the user's real text on disk, where
+    /// `recoverDrafts()` replays it if the 404/403 turns out to have been transient.
+    func testUnavailableMidEditPersistsTheEditAndNeverEnqueuesAnEmptyDocument() async {
         let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Mine"))
         stubOffline()
@@ -565,14 +569,21 @@ final class EditorViewModelTests: XCTestCase {
 
         stubStatus(404)
         await viewModel.load()  // the document is gone; the editing session is not
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        // The teardown flushes write-ahead, so a PATCH goes out; let it settle
+        // rather than leaving it to land inside a later test.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
 
-        viewModel.flushPendingChanges()  // autosave, .onDisappear, or scenePhase
-
-        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "never save an emptied document")
-        XCTAssertNil(draftStore.draft(for: documentID), "the draft is not replaced by an empty one")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Mine edited\n",
+            "the in-flight edit is persisted, not discarded and not emptied")
         XCTAssertFalse(viewModel.isEditing, "the editing session ends with the document")
         XCTAssertFalse(viewModel.isDirty)
+        XCTAssertTrue(viewModel.errorMessage?.contains("no longer available") ?? false)
+
+        // A later autosave / .onDisappear / scenePhase flush must not empty it.
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Mine edited\n")
     }
 
     func testRevalidate403PurgesCacheToo() async {
@@ -845,8 +856,24 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        // The draft is kept (a 403 revokes access, it doesn't delete), and the
+        // terminal message says so rather than letting the work vanish silently.
+        XCTAssertEqual(
+            viewModel.errorMessage,
+            "This document is no longer available. Your unsaved changes are kept on this device.")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
         XCTAssertFalse(viewModel.hasUnsavedLocalContent, "nothing is on screen to be unsaved")
+    }
+
+    /// No draft: the terminal message must not promise changes that don't exist.
+    func testUnavailableDocumentWithNoDraftSaysNothingAboutUnsavedChanges() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        stubStatus(404)
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
     }
 
     /// The unchanged branch drops a stash unconditionally: if the server has

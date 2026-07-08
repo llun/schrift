@@ -177,6 +177,18 @@ final class DocumentSaveCoordinator {
         }
     }
 
+    /// The document became unavailable (404/403) and the editor purged its local
+    /// copy. An in-flight save can still land afterwards and, on the success path,
+    /// write the full body straight back into the content cache — on a 403 that is
+    /// revoked content reappearing on disk. Unlike `discardPendingWork`, the draft
+    /// stays: it is the user's only copy of unsaved work, and `recoverDrafts()`
+    /// decides its fate next launch (replay if reachable, purge on a real 404/403).
+    func suppressLocalWriteThrough(documentID: UUID) {
+        queued[documentID] = nil
+        guard inFlight[documentID] != nil else { return }
+        discardedDuringSave.insert(documentID)
+    }
+
     private func start(documentID: UUID, save: PendingSave) {
         inFlightContent[documentID] = save
         states[documentID] = .saving
@@ -198,8 +210,11 @@ final class DocumentSaveCoordinator {
         // Any revalidation fetch still in flight was issued before this save
         // settled, so its response may predate it (see `mayPredateSave`).
         settledSaves[documentID, default: 0] += 1
-        // Deleted while this save was on the wire: leave no local trace, whatever
-        // the server made of the PATCH. Anything queued behind it is already gone.
+        // Deleted or revoked while this save was on the wire: write no local copy,
+        // whatever the server made of the PATCH. The draft is left exactly as the
+        // caller left it — `discardPendingWork` (delete) already removed it;
+        // `suppressLocalWriteThrough` (404/403) deliberately kept it as the user's
+        // only copy of unsaved work.
         if discardedDuringSave.remove(documentID) != nil {
             queued[documentID] = nil
             states[documentID] = .idle

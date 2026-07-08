@@ -62,4 +62,15 @@ final class EditorViewTests: XCTestCase {
 
         XCTAssertEqual(caption, SyncCaption(text: "Not synced yet", offersRetry: false))
     }
+
+    /// `.failed` without unsaved local content only happens once the document is
+    /// gone (a delete purges the draft). Nothing pins the screen and there is
+    /// nothing to retry, so the caption must not offer one.
+    func testFailedSaveWithNoUnsavedContentOffersNoRetry() {
+        let caption = syncCaption(
+            hasUnsavedLocalContent: false, isOffline: false, saveState: .failed("x"), lastSyncedAt: now, now: now)
+
+        XCTAssertFalse(caption.offersRetry)
+        XCTAssertEqual(caption.text, "Synced just now")
+    }
 }

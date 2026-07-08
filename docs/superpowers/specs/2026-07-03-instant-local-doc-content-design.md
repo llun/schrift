@@ -414,11 +414,15 @@ branch instead of popping a banner. Outcomes:
   `hasUnsavedLocalContent` follows the same rule (gated on `hasLoadedContent`,
   since `becomeUnavailable` deliberately keeps the draft — a 403 is revoked
   access, not a deletion), so the "Synced X ago" caption never lies about a
-  failed save. That draft only survives because `becomeUnavailable` **ends the
-  editing session first** (cancels the autosave, clears `isDirty`, drops to
-  `.reading`) and `flushPendingChanges` refuses to run without `hasLoadedContent`
-  — otherwise a 404/403 landing mid-edit would flush the emptied block list and
-  replace the draft with an empty document. A failed save also **pins** the
+  failed save. That draft only survives because `becomeUnavailable` **flushes the
+  live edit first** (`enqueue` is write-ahead, so the user's text reaches disk
+  before any PATCH), then **ends the editing session** (cancels the autosave, clears
+  `isDirty`, drops to `.reading`), and `flushPendingChanges` refuses to run without
+  `hasLoadedContent` — otherwise a 404/403 landing mid-edit would flush the emptied
+  block list and replace the draft with an empty document. It also calls
+  `suppressLocalWriteThrough`, or an in-flight save landing after the purge would
+  write the full body back into the content cache (on a 403: revoked content
+  reappearing on disk). A failed save also **pins** the
   document (every revalidation and pull-to-refresh no-ops while its draft is on
   screen), so the reading surface's "Couldn't save · tap to retry" caption is
   load-bearing: it is the only escape when offline, where tap-to-edit is blocked.

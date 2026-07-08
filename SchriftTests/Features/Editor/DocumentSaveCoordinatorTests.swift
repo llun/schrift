@@ -325,6 +325,26 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 
+    /// A 404/403 purges the local copy too — and an in-flight save landing after it
+    /// would write the full body straight back into the cache (a privacy problem on
+    /// a 403: the content is revoked, not deleted). Unlike a delete, the draft is
+    /// the user's only copy of unsaved work and must survive.
+    func testSuppressedWriteThroughSkipsTheCacheButKeepsTheDraft() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        // The document becomes unavailable while the save's PATCH is on the wire.
+        contentCache.remove(documentID: documentID)
+        coordinator.suppressLocalWriteThrough(documentID: documentID)
+
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        XCTAssertNil(contentCache.content(for: documentID), "a revoked document keeps no local body")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Mine", "unsaved work survives")
+    }
+
     // MARK: - Save markers (raced-revalidation detection)
 
     func testSaveMarkerWithNoSaveActivityDoesNotPredate() {
