@@ -499,9 +499,11 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, blocksBefore))
         XCTAssertEqual(viewModel.rawMarkdown, markdownBefore)
-        XCTAssertFalse(viewModel.isDirty)
-        // `enqueue` writes the draft synchronously, so a resurrected draft is the
-        // direct evidence of a save. (Counting PATCHes would be flaky here: the
+        // Not `isDirty`: the correct path returns from `insertImageBlock`'s
+        // `!isDocumentDiscarded` guard before the `defer`'d flush is even registered,
+        // and the buggy path's flush would clear the flag anyway -- false in both
+        // worlds. `enqueue` writes the draft synchronously, so a resurrected draft is
+        // the direct evidence of a save. (Counting PATCHes would be flaky here: the
         // coordinator's saves are async and can land during a later test.)
         XCTAssertNil(
             viewModel.saveCoordinator.storedDraft(documentID: documentID),
