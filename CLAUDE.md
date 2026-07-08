@@ -531,11 +531,18 @@ markdown write endpoint**. Understand this before touching the save path:
      `isDocumentDiscarded` is a latch and gates the save funnels. A 404/403 leaves
      the screen mounted with its pull-to-refresh, and every 404 maps to
      `.notFound` — including a proxy hiccup — so `isUnavailable` must **not** gate
-     them: `install(...)` clears it the moment content is back. Gating a save on it
-     made every funnel silently return on a recovered document while the caption
-     still read "Edited just now". While it holds, `load()` skips the local phase
-     and keeps the terminal message, or the purged body (or the draft the teardown
-     just wrote) is re-rendered with the warning cleared.
+     them. Gating a save on it made every funnel silently return on a recovered
+     document while the caption still read "Edited just now".
+     **Any 200 discharges it** (`markAvailableAgain`, before `apply`): that is the
+     server saying the document is back. Discharging it inside `install(...)` looks
+     equivalent and is not — `becomeUnavailable`'s own write-ahead flush leaves a
+     draft, so `apply` diverts into `reconcileDraft`, which never installs, and the
+     screen stays dead forever with pull-to-refresh no-oping. For the same reason
+     `reconcileDraft` re-installs the draft when `!hasLoadedContent`: every branch
+     below it assumes the content it protects is actually on screen. While
+     `isUnavailable` holds, `load()` skips the local phase (or the purged body — or
+     the draft the teardown just wrote — is re-rendered with the warning cleared)
+     and shows **no spinner**: `readingSurface` owns the only `.refreshable`.
   1. **A stored draft is unsaved work regardless of `displaySource`.** A save
      failing mid-session leaves `.clean` on screen with the user's only copy in
      `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`

@@ -86,10 +86,13 @@ final class EditorViewModel {
     private(set) var displaySource: DisplaySource = .none
     /// A 404/403 declared the document gone. Unlike a delete this is **recoverable**
     /// — the screen stays mounted with its pull-to-refresh, and every 404 maps to
-    /// `.notFound`, including a proxy hiccup. So this is not a latch: `install(...)`
-    /// clears it the moment content is back on screen. While it holds, the local
-    /// phase must not re-render the purged copy (or the draft the teardown just
-    /// wrote) with the terminal message cleared.
+    /// `.notFound`, including a proxy hiccup. So this is not a latch: any **200
+    /// response** discharges it (`markAvailableAgain`), because that is the server
+    /// saying the document is back. Discharging it in `install(...)` instead looks
+    /// equivalent and is not: with a stored draft, `apply` diverts into
+    /// `reconcileDraft`, which never installs, and the screen stays dead forever.
+    /// While it holds, the local phase must not re-render the purged copy (or the
+    /// draft the teardown just wrote) with the terminal message cleared.
     private(set) var isUnavailable = false
     private var savedMarkdown = ""
     private var savedTitle = ""
@@ -210,7 +213,10 @@ final class EditorViewModel {
                 }
                 restoreLocalContent()
             }
-            if displaySource == .none {
+            // No spinner for a document declared gone: `readingSurface` owns the
+            // only `.refreshable`, and swapping it for a `ProgressView` mid-refresh
+            // would tear down the very gesture the terminal message invites.
+            if displaySource == .none, !isUnavailable {
                 isLoading = true
             }
         }
@@ -250,6 +256,7 @@ final class EditorViewModel {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            markAvailableAgain()
             apply(
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
@@ -291,6 +298,7 @@ final class EditorViewModel {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            markAvailableAgain()
             apply(
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
@@ -303,6 +311,17 @@ final class EditorViewModel {
             guard generation == revalidationGeneration else { return }
             errorMessage = "Couldn't refresh. Please try again."
         }
+    }
+
+    /// A 200 is the server saying the document is back — whatever `apply` then
+    /// decides to do with the body. Discharging this inside `install(...)` instead
+    /// stranded any document with a stored draft: `apply` diverts into
+    /// `reconcileDraft`, whose draft-wins exits never install, so the terminal state
+    /// was never cleared and pull-to-refresh — the only affordance left — no-oped.
+    private func markAvailableAgain() {
+        guard isUnavailable else { return }
+        isUnavailable = false
+        errorMessage = nil
     }
 
     /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
@@ -424,6 +443,15 @@ final class EditorViewModel {
     /// meaningfully later than the draft itself — never to the user's own
     /// refresh, because the draft is work that hasn't reached the server yet.
     private func reconcileDraft(_ formatted: FormattedDocumentContent, draft: PendingDraft) {
+        // Nothing is on screen: `becomeUnavailable` tore it down, and its own
+        // write-ahead flush is what wrote this draft. The draft is the user's only
+        // copy, so put it back — every branch below then reasons about content that
+        // is actually displayed, as they all assume.
+        if !hasLoadedContent {
+            install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
+            displaySource = .draft
+            hasLocalCopy = true
+        }
         // A save that failed *this session* leaves a draft the user is looking at,
         // with the "Couldn't save" retry on screen. The clock-tolerance rule below
         // is for drafts stranded by an *earlier* session (`recoverDrafts`' job);
@@ -585,13 +613,6 @@ final class EditorViewModel {
             title = contentTitle
         }
         savedTitle = title
-        // Content is on screen again, so a prior 404/403 no longer describes this
-        // document — it was transient, or access was restored. Saving must resume,
-        // and the terminal message (which load() deliberately preserved) must go.
-        if isUnavailable {
-            isUnavailable = false
-            errorMessage = nil
-        }
         rawMarkdown = markdown
         blocks = parseEditorBlocks(markdown)
         // Every block gets a fresh identity here, so any caret state still

@@ -244,6 +244,30 @@ revoked body, so pull-to-refresh — the action the terminal message invites —
 the revoked document with no warning at all. `load()` now skips the local phase and
 preserves the terminal message while `isUnavailable` holds.
 
+**H. Round 7 found round 6's fix stranding the exact scenario it was written for.**
+Round 6 discharged the terminal 404/403 state in `install(...)`, reasoning that
+`install` is the one funnel every content-on-screen path routes through. True — but
+`becomeUnavailable`'s own write-ahead flush *writes a draft*, and on the recovery
+fetch `apply` diverts into `reconcileDraft` **before** the `case .none: installFetched`
+arm. Both of `reconcileDraft`'s draft-wins exits are `cacheServerCopy; return`.
+Neither installs. So a transient 404 taken while the user had unsaved edits — the
+flagship case of round 6's own commit message — left the document permanently dead:
+empty body, "This document is no longer available", `hasLoadedContent == false`, and
+pull-to-refresh (the only affordance, since `startEditing` and the retry caption both
+gate on `hasLoadedContent`) repeating the no-op forever. The two tests round 6 added
+straddled the bug: one had no draft, the other never let the fetch succeed.
+
+Fix: a **200 discharges the terminal state** (`markAvailableAgain`, called before
+`apply`) — that is the server saying the document is back, whatever `apply` then does
+with the body. And `reconcileDraft` re-installs the draft when `!hasLoadedContent`,
+because every branch below it assumes the content it is protecting is on screen.
+Round 6's comment ("`install(...)` clears it the moment content is back on screen")
+was the ninth wrong comment on this branch.
+
+Round 7 also caught that `isLoading` would swap `readingSurface` — the sole owner of
+`.refreshable` — for a `ProgressView` during the very refresh the terminal message
+invites. No spinner is shown while `isUnavailable`.
+
 Round 4 also showed the `.failed` pin had no reachable escape: `saveNow()` is wired
 only to the editing surface, and tap-to-edit is blocked offline — which is when
 saves fail. The reading caption is now "Couldn't save · tap to retry", extracted as

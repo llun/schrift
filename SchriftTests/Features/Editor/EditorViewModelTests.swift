@@ -893,6 +893,36 @@ final class EditorViewModelTests: XCTestCase {
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
+    /// The scenario `becomeUnavailable`'s write-ahead flush exists for: a transient
+    /// 404 taken *while the user has unsaved edits*. The flush stores a draft — and
+    /// on the recovery fetch `apply` diverts into `reconcileDraft`, which keeps the
+    /// draft and never calls `install(...)`. Discharging the terminal state only in
+    /// `install(...)` therefore stranded the document forever: empty body, "no
+    /// longer available", and pull-to-refresh the only affordance, no-oping.
+    /// A 200 is the server saying the document is back — that is what clears it.
+    func testTransient404WithUnsavedEditRecoversAndRestoresTheDraft() async {
+        let (viewModel, coordinator, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Mine"))
+        stubOffline()
+        await viewModel.load()
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine edited")
+        stubStatus(404)
+        await viewModel.load()  // proxy hiccup: teardown flushes, writing a draft
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertTrue(viewModel.isUnavailable)
+
+        stubLoad(content: "# Mine")  // the hiccup is over
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.isUnavailable, "a 200 means the document is back")
+        XCTAssertTrue(viewModel.hasLoadedContent)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.blocks.first?.text, "Mine edited", "the user's only copy is back on screen")
+        XCTAssertTrue(viewModel.hasLocalCopy)
+    }
+
     /// The terminal state must be sticky against the *local* phase: a document
     /// declared gone must not be re-rendered from a cached copy or the draft the
     /// 403 teardown just wrote, with its "no longer available" message cleared.
