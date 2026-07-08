@@ -520,8 +520,10 @@ markdown write endpoint**. Understand this before touching the save path:
      `recoverDrafts`' job. A draft whose save failed *this* session is a retry
      candidate the user is looking at, so `reconcileDraft` returns early on
      `saveState == .failed`. Applying the tolerance rule there deletes visible
-     content, and needs no remote edit to fire: a device clock two minutes slow
-     already puts every server `updated_at` beyond `draft.updatedAt + tolerance`.
+     content. The comparison mixes clocks — `draft.updatedAt` is the device's,
+     `formatted.updatedAt` the server's **last write** — so a slow device shrinks
+     the window from the draft's side, and even the user's own partially-landed
+     save (content PATCH applied, title PATCH failed) can read as "newer".
   2. **Never install or cache a response that may predate one of our own saves.**
      A revalidation issued while a save was in flight can be answered from the
      server's pre-save state; installing it resurrects exactly what the save
@@ -604,7 +606,10 @@ markdown write endpoint**. Understand this before touching the save path:
   `final class <Type>Tests: XCTestCase`, `@testable import Schrift`, mirroring the
   source tree. Add `@MainActor` to test classes whose subject is `@MainActor`.
 - Fake HTTP with **`MockURLProtocol`** (`makeSession()` + `stubHandler`; inspect
-  `lastRequest` for single-request tests); reset those statics in `tearDown`.
+  `lastRequest` for single-request tests). Call **`MockURLProtocol.reset()`** in
+  `tearDown` — not just `stubHandler = nil`. It also drains deferred deliveries:
+  one outliving its test reports into a torn-down `URLSession` and kills the test
+  *process*, blaming whichever unrelated test was running at the time.
   For multi-request flows (VM loads, the two-PATCH save, coalescing), pass the
   shared thread-safe `RequestRecorder` (`SchriftTests/Support/AsyncTestHelpers.swift`)
   into the `stubHandler` (`log.record(request)`) and assert on `methods` /

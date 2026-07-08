@@ -43,6 +43,15 @@ final class Counter: @unchecked Sendable {
         value += 1
         return value
     }
+
+    /// Gate on this, not on a `RequestRecorder` count, when a stub picks its branch
+    /// from `next()`: the recorder pins *recording* order, which need not be the
+    /// order the branches were taken.
+    var current: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }
 
 /// Polls a condition on the main actor until it holds or the timeout passes.

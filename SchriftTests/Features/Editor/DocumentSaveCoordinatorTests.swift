@@ -8,6 +8,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     private let otherDocumentID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
     private var cacheDirectory: URL!
+    /// Every suite `makeCoordinator` creates, so tearDown can remove each persistent
+    /// domain instead of leaking a plist per test.
+    private var draftSuiteNames: [String] = []
 
     private static let formattedBody = Data(
         """
@@ -36,13 +39,16 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DocumentSaveCoordinatorTests.\(UUID().uuidString)", isDirectory: true)
+        draftSuiteNames = []
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
         cacheDirectory = nil
+        for suiteName in draftSuiteNames {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
         super.tearDown()
     }
 
@@ -51,6 +57,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     ) -> (DocumentSaveCoordinator, PendingDraftStore, DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
@@ -307,7 +314,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testSaveMarkerWithNoSaveActivityDoesNotPredate() {
         let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
         let marker = coordinator.saveMarker(documentID: documentID)
-        XCTAssertFalse(coordinator.mayPredateSave(marker, documentID: documentID))
+        XCTAssertFalse(coordinator.mayPredateSave(marker))
     }
 
     func testSaveMarkerTakenWhileASaveIsInFlightPredates() async {
@@ -318,9 +325,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
         let marker = coordinator.saveMarker(documentID: documentID)
 
-        XCTAssertTrue(coordinator.mayPredateSave(marker, documentID: documentID), "in flight when the marker was taken")
+        XCTAssertTrue(coordinator.mayPredateSave(marker), "in flight when the marker was taken")
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
-        XCTAssertTrue(coordinator.mayPredateSave(marker, documentID: documentID), "still true once it lands")
+        XCTAssertTrue(coordinator.mayPredateSave(marker), "still true once it lands")
     }
 
     /// The case a "was a save pending?" boolean alone would miss: no save existed
@@ -330,12 +337,12 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
         stubSavePipeline(log: log)
         let marker = coordinator.saveMarker(documentID: documentID)
-        XCTAssertFalse(coordinator.mayPredateSave(marker, documentID: documentID))
+        XCTAssertFalse(coordinator.mayPredateSave(marker))
 
         coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
-        XCTAssertTrue(coordinator.mayPredateSave(marker, documentID: documentID))
+        XCTAssertTrue(coordinator.mayPredateSave(marker))
     }
 
     func testSaveMarkerPredatesAFailedSaveToo() async {
@@ -351,7 +358,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         }
 
         XCTAssertTrue(
-            coordinator.mayPredateSave(marker, documentID: documentID),
+            coordinator.mayPredateSave(marker),
             "a failed content PATCH may still have been applied server-side before it errored")
     }
 
@@ -365,6 +372,6 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
-        XCTAssertFalse(coordinator.mayPredateSave(marker, documentID: otherID), "another document's save is irrelevant")
+        XCTAssertFalse(coordinator.mayPredateSave(marker), "another document's save is irrelevant")
     }
 }

@@ -40,8 +40,7 @@ final class FormattedDocumentContentClientTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         super.tearDown()
     }
 

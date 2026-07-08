@@ -46,8 +46,10 @@ final class DocumentSaveCoordinator {
     }
 
     /// A fingerprint of a document's save activity, taken when a revalidation
-    /// fetch is issued. See `mayPredateSave(_:documentID:)`.
+    /// fetch is issued. Carries its own `documentID` so it can't be checked
+    /// against the wrong document. See `mayPredateSave(_:)`.
     struct SaveMarker: Equatable, Sendable {
+        fileprivate let documentID: UUID
         fileprivate let settledSaves: Int
         fileprivate let hadPendingSave: Bool
     }
@@ -95,19 +97,20 @@ final class DocumentSaveCoordinator {
 
     func saveMarker(documentID: UUID) -> SaveMarker {
         SaveMarker(
+            documentID: documentID,
             settledSaves: settledSaves[documentID] ?? 0,
             hadPendingSave: pendingSave(documentID: documentID) != nil
         )
     }
 
-    /// True when a save for this document was already in flight when `marker` was
+    /// True when a save for the marker's document was already in flight when it was
     /// taken, or settled after it. Either way a fetch issued at `marker` may have
     /// been answered from the server's **pre-save** state, so its body must never
     /// be installed or cached: it would resurrect exactly the content the save
     /// replaced, and — because saves are a full overwrite — the next save would
     /// push that stale body back to the server.
-    func mayPredateSave(_ marker: SaveMarker, documentID: UUID) -> Bool {
-        marker.hadPendingSave || (settledSaves[documentID] ?? 0) != marker.settledSaves
+    func mayPredateSave(_ marker: SaveMarker) -> Bool {
+        marker.hadPendingSave || (settledSaves[marker.documentID] ?? 0) != marker.settledSaves
     }
 
     func enqueue(documentID: UUID, title: String, markdown: String) {

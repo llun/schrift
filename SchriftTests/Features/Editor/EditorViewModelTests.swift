@@ -22,8 +22,7 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
         UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
         for suiteName in draftSuiteNames {
@@ -97,16 +96,15 @@ final class EditorViewModelTests: XCTestCase {
         log.count(ofMethod: "PATCH", urlContaining: "/content/")
     }
 
-    /// `saveDelay` holds the content PATCH open so a save is deterministically
-    /// still in flight when a concurrently-issued GET reaches `apply`. `getDelay`
-    /// holds the GET open instead, so its response lands *after* the save settled
-    /// — the raced-fetch case. Both use `Stub.delay`, never `Thread.sleep`, so one
-    /// stalled request never blocks the other.
+    /// `getDelay` holds the formatted-content GET open (via `Stub.delay`, never
+    /// `Thread.sleep`, which would stall the PATCH too) so its response lands
+    /// *after* a concurrent save settled — the raced-fetch case. Nothing needs to
+    /// stall the save: `enqueue` sets the pending save synchronously, which is all
+    /// `restoreLocalContent` reads.
     private func stubLoadAndSavePipeline(
         content: String?,
         log: RequestRecorder,
         contentStatus: Int = 204,
-        saveDelay: TimeInterval = 0,
         getDelay: TimeInterval = 0
     ) {
         let body = formattedBody(content: content)
@@ -117,7 +115,7 @@ final class EditorViewModelTests: XCTestCase {
             case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: getDelay)
             case "PATCH" where url.hasSuffix("/content/"):
-                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil, delay: saveDelay)
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
             case "PATCH":
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
             default:
@@ -615,12 +613,10 @@ final class EditorViewModelTests: XCTestCase {
         // Distinct bodies, and the *first* (superseded) fetch resolves last.
         // With one shared body both loads agree and the test passes even with the
         // generation guard deleted — it has to be able to tell them apart.
-        let log = RequestRecorder()
         let requestCount = Counter()
         let firstBody = formattedBody(content: "# First")
         let secondBody = formattedBody(content: "# Second")
-        MockURLProtocol.stubHandler = { request in
-            log.record(request)
+        MockURLProtocol.stubHandler = { _ in
             let isFirst = requestCount.next() == 1
             return .init(
                 statusCode: 200, headers: [:], body: isFirst ? firstBody : secondBody, error: nil,
@@ -629,9 +625,11 @@ final class EditorViewModelTests: XCTestCase {
 
         let first = Task { await viewModel.load() }
         // Don't race the stub: the second load may only be issued once the first
-        // request is inside the handler, or "first request" and "first generation"
-        // can disagree and the assertion below becomes a coin flip.
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        // request has *taken its branch*, or "first request" and "first generation"
+        // can disagree and the assertion below becomes a coin flip. Gate on the
+        // counter the branch is chosen from, not on a recorder — recording order
+        // need not match branch order.
+        await waitUntil { requestCount.current >= 1 }
         let second = Task { await viewModel.load() }
         await first.value
         await second.value
@@ -681,13 +679,14 @@ final class EditorViewModelTests: XCTestCase {
     func testRefreshAppliesRemoteContentAfterAnInFlightSaveCompletes() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, _, _) = makeEnvironment()
-        // The stalled PATCH keeps the save in flight while the GET reaches apply().
-        stubLoadAndSavePipeline(content: "# Server", log: log, saveDelay: 0.2)
-        // Enqueue synchronously so restoreLocalContent() sees the pending save.
+        stubLoadAndSavePipeline(content: "# Server", log: log)
+        // `enqueue` sets the pending save synchronously, and `restoreLocalContent`
+        // reads it before `load()`'s first await — so the screen is installed from
+        // the in-flight content without needing to stall the PATCH to prove it.
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
         await viewModel.load()
-        XCTAssertEqual(viewModel.displaySource, .pendingSave)
         XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "the in-flight content owns the screen")
         await waitUntil { viewModel.saveState == .saved }
 
@@ -704,11 +703,12 @@ final class EditorViewModelTests: XCTestCase {
     func testRefreshAfterAFailedSaveKeepsTheDraftOnScreen() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500, saveDelay: 0.2)
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
         await viewModel.load()
-        XCTAssertEqual(viewModel.displaySource, .pendingSave)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Mine")
         await waitUntil {
             if case .failed = viewModel.saveState { return true }
             return false
@@ -757,17 +757,18 @@ final class EditorViewModelTests: XCTestCase {
     /// The clock-tolerance rule exists for drafts *stranded by an earlier
     /// session* (`recoverDrafts`' job). A save that failed **this** session is a
     /// retry candidate the user is looking at, with the "Couldn't save" retry on
-    /// screen — the server must never silently delete it. Note the trigger needs
-    /// no remote edit at all: a device clock two minutes slow puts every server
-    /// `updated_at` beyond `draft.updatedAt + tolerance`.
+    /// screen — the server must never silently delete it. The comparison mixes
+    /// clocks (`draft.updatedAt` is the device's, `formatted.updatedAt` the
+    /// server's *last write*), so a slow device widens the set of server writes
+    /// that read as "newer" — including the user's own partially-landed save.
     func testRevalidationAfterAFailedSaveKeepsTheDraftEvenWhenTheServerLooksNewer() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500, saveDelay: 0.2)
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
         await viewModel.load()
-        XCTAssertEqual(viewModel.displaySource, .pendingSave)
         await waitUntil {
             if case .failed = viewModel.saveState { return true }
             return false
@@ -1038,6 +1039,55 @@ final class EditorViewModelTests: XCTestCase {
         }
         XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "Changed text\n")
         XCTAssertTrue(viewModel.isEditing)
+    }
+
+    /// Typing and undoing after a failed save leaves `isDirty` true with content
+    /// that matches `savedMarkdown`, so the flush enqueues nothing. `saveNow()` must
+    /// still fire the retry — swallowing it strands the document behind its failed
+    /// save (`reconcileDraft` pins the screen while that draft survives), and the
+    /// reading surface has no retry affordance at all.
+    func testSaveNowRetriesWhenADirtyFlushEnqueuesNothing() async {
+        let log = RequestRecorder()
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
+        viewModel.flushPendingChanges()
+        await waitUntil {
+            if case .failed = viewModel.saveState { return true }
+            return false
+        }
+
+        // Type and undo: dirty again, but the content is what the failed save held.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text!")
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
+        XCTAssertTrue(viewModel.isDirty)
+
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 204)
+        viewModel.saveNow()
+
+        await waitUntil { viewModel.saveState == .saved }
+        XCTAssertEqual(viewModel.saveState, .saved)
+    }
+
+    /// `applyPendingUpdate` is the last content-installing path; a draft must veto
+    /// it, or it becomes the same install-over-unsaved-work bug review already found.
+    func testApplyPendingUpdateRefusesWhileADraftExists() async {
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
+        stubLoad(content: "# New")
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable)
+        viewModel.finishEditing()
+
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date()))
+        viewModel.applyPendingUpdate()
+
+        XCTAssertEqual(viewModel.blocks.first?.text, "Old", "unsaved work is never installed over")
     }
 
     func testSaveNowRetriesAfterFailure() async {

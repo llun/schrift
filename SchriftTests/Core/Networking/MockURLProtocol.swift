@@ -10,7 +10,9 @@ final class MockURLProtocol: URLProtocol {
         /// stalls with `Thread.sleep` blocks URLSession's single protocol thread,
         /// which silently serializes every other in-flight request — the concurrent
         /// GET+PATCH flows some tests exist to exercise then never overlap. Delivery
-        /// is deferred instead, so overlapping requests stay genuinely overlapping.
+        /// is deferred to the main queue instead, so overlapping requests stay
+        /// genuinely overlapping. Tests must `await` every delayed request they
+        /// start; `MockURLProtocol.reset()` cancels any that are left.
         let delay: TimeInterval
 
         init(statusCode: Int, headers: [String: String], body: Data, error: Error?, delay: TimeInterval = 0) {
@@ -24,8 +26,6 @@ final class MockURLProtocol: URLProtocol {
 
     nonisolated(unsafe) static var stubHandler: (@Sendable (URLRequest) -> Stub)?
 
-    private static let responseQueue = DispatchQueue(
-        label: "dev.llun.Schrift.MockURLProtocol", attributes: .concurrent)
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _lastRequest: URLRequest?
 
@@ -44,7 +44,11 @@ final class MockURLProtocol: URLProtocol {
         }
     }
 
-    private let cancelLock = NSLock()
+    /// Deferred deliveries still scheduled, so `reset()` can cancel them. One that
+    /// outlives its test reports into a torn-down `URLSession`, which hangs or kills
+    /// the test *process* and blames whichever unrelated test was running.
+    nonisolated(unsafe) private static var pendingDeliveries: [DispatchWorkItem] = []
+
     private var isCancelled = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -62,23 +66,40 @@ final class MockURLProtocol: URLProtocol {
             deliver(stub)
             return
         }
-        MockURLProtocol.responseQueue.asyncAfter(deadline: .now() + stub.delay) { [weak self] in
-            guard let self else { return }
-            self.cancelLock.lock()
-            let cancelled = self.isCancelled
-            self.cancelLock.unlock()
-            guard !cancelled else { return }
+        // Deferred deliveries run on the **main queue**, the one thread that is
+        // certainly alive and that `tearDown` also runs on. A private background
+        // queue looked tidier but delivered into whatever state the process was in,
+        // which hung the test process roughly one run in twenty. Main is serial, so
+        // by the time `reset()` cancels a work item, no delivery is half-done — no
+        // lock, no drain, and nothing can outlive its test.
+        //
+        // `self` is captured strongly on purpose: a dropped delivery would leave the
+        // awaiting `session.data(for:)` suspended forever.
+        let item = DispatchWorkItem {
+            guard !self.isCancelled else { return }
             self.deliver(stub)
         }
+        MockURLProtocol.lock.lock()
+        MockURLProtocol.pendingDeliveries.append(item)
+        MockURLProtocol.lock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + stub.delay, execute: item)
     }
 
-    /// Best-effort: a delivery already past its cancellation check still runs.
-    /// Tests must therefore await every delayed request they start rather than
-    /// let one outlive the test — otherwise it reports to a torn-down client.
     override func stopLoading() {
-        cancelLock.lock()
         isCancelled = true
-        cancelLock.unlock()
+    }
+
+    /// Call from every `tearDown`. Cancels deliveries still scheduled so none can
+    /// fire into the next test's session. Safe without a drain: deliveries run on
+    /// the main queue, and `tearDown` is already on it.
+    static func reset() {
+        stubHandler = nil
+        lastRequest = nil
+        lock.lock()
+        let items = pendingDeliveries
+        pendingDeliveries = []
+        lock.unlock()
+        for item in items { item.cancel() }
     }
 
     private func deliver(_ stub: Stub) {

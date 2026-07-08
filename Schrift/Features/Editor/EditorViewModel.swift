@@ -147,11 +147,18 @@ final class EditorViewModel {
     /// Nothing counts once the document is off screen: `becomeUnavailable` keeps
     /// the draft on purpose (a 403 is revoked access, not a deletion) and the
     /// caption must not claim unsaved content for a document that isn't there.
+    /// Read on every render of the reading surface (a 60 s `TimelineView` tick),
+    /// so the in-memory checks come first: `storedDraft` decodes the whole draft
+    /// store out of UserDefaults, and the common clean case must never pay for it.
     var hasUnsavedLocalContent: Bool {
         guard hasLoadedContent else { return false }
-        return isDirty
-            || saveCoordinator.pendingSave(documentID: documentID) != nil
-            || saveCoordinator.storedDraft(documentID: documentID) != nil
+        if isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil { return true }
+        // A draft only outlives its save when that save failed; otherwise the
+        // draft on disk is exactly the `.draft` source already on screen.
+        if case .failed = saveCoordinator.state(for: documentID) {
+            return saveCoordinator.storedDraft(documentID: documentID) != nil
+        }
+        return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
     }
 
     var saveState: SaveState {
@@ -224,7 +231,7 @@ final class EditorViewModel {
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
             apply(
                 formatted: formatted,
-                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker, documentID: documentID)
+                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
@@ -261,7 +268,7 @@ final class EditorViewModel {
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
             apply(
                 formatted: formatted,
-                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker, documentID: documentID)
+                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
@@ -329,11 +336,13 @@ final class EditorViewModel {
         case .pendingSave, .clean, .draft:
             // `.pendingSave` reaching here means the save that owned the screen
             // landed (a failed one leaves the draft caught above) and this fetch
-            // postdates it. `.draft` means the draft was saved and cleared while
-            // we awaited. Either way nothing local is left to protect, so the
-            // screen holds an ordinary clean copy. Leaving the source pinned
-            // would strand it forever: every later revalidation *and* every
-            // pull-to-refresh would no-op in silence.
+            // postdates it. `.draft` means the draft went while we awaited —
+            // `recoverDrafts` discarding it, or a delete — never a save, which
+            // would have bumped the settled count and returned at
+            // `mayPredateLocalSave` above. Either way nothing local is left to
+            // protect, so the screen holds an ordinary clean copy. Leaving the
+            // source pinned would strand it forever: every later revalidation
+            // *and* every pull-to-refresh would no-op in silence.
             displaySource = .clean
             reconcileClean(formatted)
         case .none:
@@ -360,23 +369,31 @@ final class EditorViewModel {
         // A save that failed *this session* leaves a draft the user is looking at,
         // with the "Couldn't save" retry on screen. The clock-tolerance rule below
         // is for drafts stranded by an *earlier* session (`recoverDrafts`' job);
-        // applying it here would silently delete visible content — and it needs no
-        // remote edit to fire, since a device clock two minutes slow already puts
-        // every server `updated_at` beyond `draft.updatedAt + tolerance`.
+        // applying it here silently deletes visible content. The comparison mixes
+        // clocks — `draft.updatedAt` is the device's, `formatted.updatedAt` the
+        // server's *last write* — so a device running slow shrinks the window from
+        // the draft's side, and even the user's own partially-landed save (content
+        // PATCH applied, title PATCH failed) can then read as "newer than the draft".
         if case .failed = saveCoordinator.state(for: documentID) {
             cacheServerCopy(formatted)
             return
         }
         if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
             cacheServerCopy(formatted)
-        } else {
-            // Server newer beyond tolerance: the stale draft would never have
-            // been shown — server wins, and the draft goes (re-checked inside
-            // discardStoredDraft; the user may have produced a newer one while
-            // we awaited).
-            saveCoordinator.discardStoredDraft(draft)
-            installFetched(formatted)
+            return
         }
+        // Server newer beyond tolerance: this stranded draft would never have been
+        // shown — server wins, and the draft goes. `discardStoredDraft` re-checks
+        // identity; that check cannot fail today (no await since `apply` read the
+        // draft), but install only on success. Installing over a draft that
+        // survived would leave unsaved work on disk that isn't on screen — the
+        // state every rule here exists to prevent.
+        saveCoordinator.discardStoredDraft(draft)
+        guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
+            cacheServerCopy(formatted)
+            return
+        }
+        installFetched(formatted)
     }
 
     /// Silent cache update while local edits own the screen — next open (or
@@ -446,7 +463,15 @@ final class EditorViewModel {
     /// The "Updated" banner tap: swaps in the body stashed while an editing
     /// session held the screen. Guarded so a stray tap can never replace blocks
     /// mid-edit or clobber dirty content.
+    ///
+    /// The `storedDraft` guard is belt-and-braces: a stash implies no draft today
+    /// (`apply` only reaches `reconcileClean` with none, and `markDirty` drops the
+    /// stash before any enqueue can create one). It is the one remaining
+    /// content-installing path that doesn't consult the draft store, and it has
+    /// exactly the shape of the bug review found — install over a draft, then
+    /// `saveNow()` pushes the server's own body back.
     func applyPendingUpdate() {
+        guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return }
         guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
         install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
         displaySource = .clean
@@ -1104,12 +1129,17 @@ final class EditorViewModel {
         saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown)
     }
 
-    /// Manual save: flushes dirty edits, or retries the last content after a failure.
+    /// Manual save: flushes dirty edits, and retries the last content after a
+    /// failure. The two are not exclusive — typing and undoing after a failed save
+    /// leaves `isDirty` true with content that matches `savedMarkdown`, so the
+    /// flush enqueues nothing. Returning there would swallow the retry and strand
+    /// the document behind its failed save (`reconcileDraft` pins the screen while
+    /// a failed save's draft survives).
     func saveNow() {
         if isDirty {
             flushPendingChanges()
-            return
         }
+        guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
         if case .failed = saveCoordinator.state(for: documentID) {
             saveCoordinator.enqueue(documentID: documentID, title: savedTitle, markdown: savedMarkdown)
         }

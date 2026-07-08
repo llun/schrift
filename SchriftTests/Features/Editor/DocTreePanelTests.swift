@@ -17,8 +17,7 @@ final class DocTreePanelTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
         super.tearDown()
     }

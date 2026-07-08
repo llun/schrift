@@ -420,11 +420,13 @@ branch instead of popping a banner. Outcomes:
   looking at. A draft whose save failed *this* session is a retry candidate with
   its "Couldn't save" retry on screen, so `reconcileDraft` returns early on
   `saveState == .failed`. Applying the tolerance rule there deletes visible
-  content, and it needs no remote edit to fire: `draft.updatedAt` is the device
-  clock, `formatted.updatedAt` the server's, so a device two minutes slow puts
-  *every* server timestamp beyond the window. (`pendingDraftClockTolerance`'s own
-  doc comment states the intent: losing the user's typed content is worse than
-  replaying it over a near-simultaneous web edit.)
+  content. The comparison mixes clocks — `draft.updatedAt` is the device's,
+  `formatted.updatedAt` the server's **last write** — so a slow device shrinks the
+  window from the draft's side, and even the user's own partially-landed save
+  (content PATCH applied, title PATCH failed) can then read as "newer than the
+  draft". (`pendingDraftClockTolerance`'s own doc comment states the intent:
+  losing the user's typed content is worse than replaying it over a
+  near-simultaneous web edit.)
 - **The fetch raced one of our own saves** (a save was in flight when it was
   issued, or one settled while it awaited — `DocumentSaveCoordinator.saveMarker`
   / `mayPredateSave`): the server may have answered from its **pre-save** state.

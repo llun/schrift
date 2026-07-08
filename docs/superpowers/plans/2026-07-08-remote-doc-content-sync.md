@@ -114,12 +114,18 @@ inside a single await, so the marker carries a monotonic settled-save count.
 
 **C. Fixing A introduced a third loss.** Routing a `.clean`-with-a-draft screen
 into `reconcileDraft` handed it to the clock-tolerance rule — whose else-branch
-*discards* the draft. `main` never did that. The trigger needs no remote edit:
-`draft.updatedAt` is the device clock at `enqueue`, `formatted.updatedAt` the
-server's, so a device two minutes slow puts every server timestamp beyond
-`draft.updatedAt + 120s`. A passive revalidation then deleted the user's visible
-content, and since `install()` resets `savedMarkdown`, the still-visible
-"Couldn't save" retry button enqueued the *server's* body and confirmed the loss.
+*discards* the draft. `main` never did that. A passive revalidation then deleted
+the user's visible content, and since `install()` resets `savedMarkdown`, the
+still-visible "Couldn't save" retry button enqueued the *server's* body and
+confirmed the loss.
+
+The comparison mixes clocks: `draft.updatedAt` is the device's at `enqueue`,
+`formatted.updatedAt` the server's **last write**. A slow device shrinks the
+window from the draft's side, so a genuine remote edit — or even the user's own
+partially-landed save (content PATCH applied, title PATCH failed) — can read as
+"newer than the draft". (An earlier version of this note claimed a slow clock
+alone fires the rule for *any* document; that is wrong, and review caught it.
+`formatted.updatedAt` is the last write, not the current server time.)
 
 `pendingDraftClockTolerance`'s own doc comment states the opposite intent. That
 rule exists for drafts **stranded by an earlier session** — `recoverDrafts()`'
@@ -132,14 +138,42 @@ under a document `becomeUnavailable` had torn off the screen (it deliberately
 keeps the draft, because a 403 is revoked access, not a deletion) — now gated on
 `hasLoadedContent`.
 
-Reproducing B required fixing `MockURLProtocol` first. It delivered every stub on
-URLSession's single protocol thread, so a `Thread.sleep` meant to hold one request
-open silently serialized every other in-flight request — the B test passed for the
-wrong reason (the stalled GET was blocking the PATCH it was supposed to race)
-until the mock grew a `Stub.delay` that defers *delivery* on a concurrent queue
-instead. Zero delay keeps the original synchronous path byte-for-byte, so the
-other ~600 tests are unaffected; `stopLoading` now cancels a deferred delivery,
-and `lastRequest` is lock-guarded.
+**D. Round 3 found the pin could freeze the document.** `saveNow()` returned early
+whenever `isDirty`, even when the flush enqueued nothing — and typing then undoing
+after a failed save leaves exactly that state (`isDirty`, content equal to
+`savedMarkdown`). The retry was swallowed, and with C's pin in place the document
+was stuck behind its failed save for the whole app session: every pull-to-refresh
+silently did nothing, and the reading surface has no retry affordance at all.
+`saveNow()` now flushes *and* falls through to the retry.
+
+Round 3 also caught three comments that were simply wrong (including the
+clock-skew claim above), a `SaveMarker` that silently accepted a mismatched
+`documentID` — making `testSaveMarkerIsPerDocument` pass for the wrong reason —
+and a performance regression: `hasUnsavedLocalContent` decoded the whole draft
+store out of UserDefaults on every render of a 60 s `TimelineView`.
+
+## The test mock took three attempts
+
+Reproducing B required fixing `MockURLProtocol` first, and the first two fixes
+were both wrong:
+
+1. **Original.** Every stub was delivered on URLSession's single protocol thread,
+   so a `Thread.sleep` meant to hold one request open silently serialized every
+   other in-flight request. The B test passed against knowingly-buggy code — the
+   stalled GET was blocking the PATCH it was supposed to race.
+2. **`Stub.delay` on a private background queue.** The B test now went red as it
+   should. But delivering into a `URLSession` from an arbitrary background thread
+   hung the *test process* roughly one run in twenty, and the abort was blamed on
+   whichever unrelated slow test happened to be running (`signal kill`). Draining
+   the queue in `tearDown` didn't fix it.
+3. **`Stub.delay` on the main queue.** Main is the thread the tests already run
+   on, is certainly alive, and is serial — so `reset()` cancelling a scheduled work
+   item is sufficient, with no drain and no lock. `delay: 0` keeps the original
+   synchronous path byte-for-byte, so the other ~600 tests are untouched.
+
+The lesson: a mock that defers work has to defer it somewhere the test owns.
+`MockURLProtocol.reset()` (not `stubHandler = nil`) is now the tearDown contract,
+and it cancels anything still scheduled.
 
 `waitUntil` also now fails the test on timeout rather than returning silently — a
 stalled wait was surfacing as a confusing assertion failure further down. That
@@ -173,7 +207,8 @@ after (`git stash` on `EditorViewModel.swift` alone):
   finding A.
 - `testRevalidationRacingOurOwnSaveNeverInstallsThePreSaveBody` — review
   finding B.
-- `testRefreshAfterAFailedSaveDiscardsAStaleDraftAndInstallsTheServerCopy` — the
+- `testRevalidationAfterAFailedSaveKeepsTheDraftEvenWhenTheServerLooksNewer` and
+  `testStrandedDraftStillLosesToANewerServerCopyOnRefresh` — the two sides of the
   one branch that legitimately destroys local content.
 - `testEditingStartedDuringTheFetchStashesTheResponseBehindTheBanner` — the route
   the shipped app actually takes into the banner (the other banner tests drive
