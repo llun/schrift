@@ -256,11 +256,11 @@ final class EditorViewModel {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            markAvailableAgain()
             apply(
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
+            markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -298,11 +298,11 @@ final class EditorViewModel {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            markAvailableAgain()
             apply(
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
+            markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -313,13 +313,16 @@ final class EditorViewModel {
         }
     }
 
-    /// A 200 is the server saying the document is back — whatever `apply` then
-    /// decides to do with the body. Discharging this inside `install(...)` instead
-    /// stranded any document with a stored draft: `apply` diverts into
-    /// `reconcileDraft`, whose draft-wins exits never install, so the terminal state
-    /// was never cleared and pull-to-refresh — the only affordance left — no-oped.
+    /// A 200 whose body `apply` actually put on screen is the server saying the
+    /// document is back. Two near-misses, both of which stranded a real screen:
+    /// discharging inside `install(...)` misses `reconcileDraft`'s draft-wins exits
+    /// (which never install), and discharging *before* `apply` clears the terminal
+    /// message for a response `apply` then declines — `mayPredateLocalSave` is true
+    /// whenever a save was in flight when the fetch was issued, and this teardown's
+    /// own write-ahead flush starts one — leaving a blank body with no error and no
+    /// spinner. So: after `apply`, and only if content actually landed.
     private func markAvailableAgain() {
-        guard isUnavailable else { return }
+        guard isUnavailable, hasLoadedContent else { return }
         isUnavailable = false
         errorMessage = nil
     }

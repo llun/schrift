@@ -923,6 +923,37 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasLocalCopy)
     }
 
+    /// `markAvailableAgain()` must not clear the terminal state for a response
+    /// `apply` then declines to use. The teardown's own write-ahead flush starts a
+    /// save, so a refresh issued while that PATCH is in flight has
+    /// `mayPredateLocalSave == true` and `apply` returns without installing —
+    /// leaving an empty body, no error and no spinner: a blank screen offering
+    /// "Start writing" on a document that never loads.
+    func testRecoveryFetchThatAppliesNothingKeepsTheTerminalState() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Mine"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine edited")
+
+        stubStatus(404)
+        await viewModel.load()  // teardown flushes: a PATCH is now in flight
+        XCTAssertTrue(viewModel.isUnavailable)
+
+        // A 200 arrives while that save is still pending, so apply() installs nothing.
+        stubLoadAndSavePipeline(content: "# Mine", log: log, getDelay: 0.05)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine edited")
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.hasLoadedContent, "nothing was installed")
+        XCTAssertTrue(
+            viewModel.errorMessage?.contains("no longer available") ?? false,
+            "a response apply() ignored must not clear the terminal message")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
     /// The terminal state must be sticky against the *local* phase: a document
     /// declared gone must not be re-rendered from a cached copy or the draft the
     /// 403 teardown just wrote, with its "no longer available" message cleared.
