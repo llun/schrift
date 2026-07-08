@@ -27,6 +27,8 @@ SchriftTests/Features/Editor/EditorViewModelTests.swift
   s_bd016ef1df7174::t_383df9c4165690 606-653
   s_bd016ef1df7174::t_deece604ed9b1a 391-392,396-398,402,413,416-417
   s_bd016ef1df7174::t_2e65d074eba1ce 78-85
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_bd016ef1df7174::t_e55182038dee79 303
 ---
 {
   "schema_version": "authorship/3.0.0",
