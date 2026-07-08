@@ -1,0 +1,38 @@
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_bd016ef1df7174::t_bd4472192eecde 757-763,775-776,785-803,808-821
+  s_bd016ef1df7174::t_5b352c2d64da8b 822
+Schrift/Features/Editor/EditorViewModel.swift
+  s_bd016ef1df7174::t_1e45153c38622c 297-300,302,306,309-313
+  s_bd016ef1df7174::t_227c7d64daddf3 324-325,327-329
+  s_bd016ef1df7174::t_6ea60d21f072f5 280-283,288
+  s_bd016ef1df7174::t_279b92c35dec6c 124-126,128-129
+  s_bd016ef1df7174::t_185e684bd42593 336-344
+CLAUDE.md
+  s_bd016ef1df7174::t_7819eee34a110f 587-593
+  s_bd016ef1df7174::t_20f9d8f3a49b80 471-479
+SchriftTests/Support/AsyncTestHelpers.swift
+  s_bd016ef1df7174::t_856512e9595c6a 64,66-84
+  s_bd016ef1df7174::t_7afc5797e7bb3b 49-50,54-55,62-63
+  s_bd016ef1df7174::t_4bd5582e9fb9bd 65
+SchriftTests/Core/Networking/MockURLProtocol.swift
+  s_bd016ef1df7174::t_23e56f8f1d7270 75-77
+SchriftTests/Features/Connect/WebLoginCoordinatorTests.swift
+  s_bd016ef1df7174::t_dbd78fa3ee5610 91
+  s_bd016ef1df7174::t_dd1499a7398a10 57,67,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5cd2da06b4e9b3328b5c049eaddcbc076b3c4281",
+  "prompts": {},
+  "sessions": {
+    "s_bd016ef1df7174": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b275856-0d78-4dc0-ab5d-2e97309bd5de",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
