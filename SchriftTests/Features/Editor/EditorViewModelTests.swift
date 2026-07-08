@@ -75,6 +75,14 @@ final class EditorViewModelTests: XCTestCase {
         }
     }
 
+    /// Every request fails as if the device were offline — the way to reach an
+    /// installed-from-cache screen whose revalidation never landed.
+    private func stubOffline() {
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+    }
+
     /// A save is a content PATCH (base64 Yjs) followed by a title PATCH; each
     /// save is counted by its single content PATCH.
     private func savesInFlight(_ log: RequestRecorder) -> Int {
@@ -313,17 +321,53 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "* bullet")
     }
 
-    func testRevalidateChangedBodyStashesBehindBanner() async {
+    /// The reported bug: a document edited on the web showed its new title but
+    /// kept rendering the cached body, because a passive revalidation only ever
+    /// stashed the fresh body behind the "Updated" banner.
+    func testRevalidateAppliesChangedBodyWhenNotEditing() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
         stubLoad(content: "# New")
 
         await viewModel.load()
 
+        XCTAssertEqual(viewModel.rawMarkdown, "# New", "a clean reading copy always shows the server's body")
+        XCTAssertEqual(viewModel.blocks.first?.text, "New")
+        XCTAssertFalse(viewModel.updateAvailable, "nothing to opt into — it is already on screen")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# New")
+    }
+
+    /// Reopening the screen (`.task` refires on pop-back) must keep applying
+    /// remote edits, not strand the first-loaded copy.
+    func testSecondLoadAppliesContentChangedSinceTheFirst() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoad(content: "# First")
+        await viewModel.load()
+
+        stubLoad(content: "# Second")
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Second")
+        XCTAssertFalse(viewModel.updateAvailable)
+    }
+
+    /// The banner's remaining job: an editing session owns the caret, so a
+    /// changed body waits until editing ends rather than being swapped in.
+    func testRevalidateWhileEditingStashesBehindBanner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubOffline()
+        await viewModel.load()  // instant from cache, revalidation failed silently
+        viewModel.startEditing()
+
+        stubLoad(content: "# New")
+        await viewModel.load()
+
         XCTAssertTrue(viewModel.updateAvailable)
-        XCTAssertEqual(viewModel.rawMarkdown, "# Old", "on-screen content untouched")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Old", "content under the caret is never swapped")
         XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# New", "future opens get the fresh copy")
 
+        viewModel.finishEditing()
         viewModel.applyPendingUpdate()
 
         XCTAssertFalse(viewModel.updateAvailable)
@@ -344,25 +388,33 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
     }
 
+    /// Re-entering an editing session drops a body stashed by the session
+    /// before it: the user chose to work on what is on screen.
     func testStartEditingClearsPendingUpdate() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
         stubLoad(content: "# New")
         await viewModel.load()
         XCTAssertTrue(viewModel.updateAvailable)
+        viewModel.finishEditing()
 
         viewModel.startEditing()
 
         XCTAssertFalse(viewModel.updateAvailable)
-        XCTAssertEqual(viewModel.rawMarkdown, "# Old", "blocks unchanged")
+        XCTAssertEqual(viewModel.blocks.first?.text, "Old", "blocks unchanged")
     }
 
     func testApplyPendingUpdateWhileEditingIsANoOp() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
-        stubLoad(content: "# New")
+        stubOffline()
         await viewModel.load()
         viewModel.startEditing()
+        stubLoad(content: "# New")
+        await viewModel.load()
 
         viewModel.applyPendingUpdate()
 
@@ -377,9 +429,7 @@ final class EditorViewModelTests: XCTestCase {
         // round-trips cleanly, so it wouldn't exercise this path.)
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "```"))
-        MockURLProtocol.stubHandler = { _ in
-            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
-        }
+        stubOffline()
 
         await viewModel.load()
 
@@ -391,9 +441,13 @@ final class EditorViewModelTests: XCTestCase {
         // would skip the round-trip check.
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
         stubLoad(content: "```")
         await viewModel.load()
         XCTAssertTrue(viewModel.updateAvailable)
+        viewModel.finishEditing()
 
         viewModel.applyPendingUpdate()
 
@@ -405,7 +459,7 @@ final class EditorViewModelTests: XCTestCase {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
         stubLoad(content: "# Server")
-        await viewModel.load()  // banner set; now simulate editing instead
+        await viewModel.load()
         viewModel.startEditing()
         viewModel.updateTitle("Edited")
 
@@ -509,10 +563,11 @@ final class EditorViewModelTests: XCTestCase {
         async let second: Void = viewModel.load()
         _ = await (first, second)
 
-        // Whatever interleaving occurred, exactly one coherent outcome:
-        // banner set with old content displayed, and no stale stash.
-        XCTAssertTrue(viewModel.updateAvailable)
-        XCTAssertEqual(viewModel.rawMarkdown, "# Old")
+        // Whatever interleaving occurred, exactly one coherent outcome: the
+        // fetched body on screen, no stale stash, no spinner left behind.
+        XCTAssertEqual(viewModel.rawMarkdown, "# New")
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertFalse(viewModel.isLoading)
     }
 
     // MARK: - Explicit refresh (pull-to-refresh)
@@ -520,9 +575,7 @@ final class EditorViewModelTests: XCTestCase {
     func testRefreshAppliesNewerContentDirectlyWithoutBanner() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
-        MockURLProtocol.stubHandler = { _ in
-            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
-        }
+        stubOffline()
         await viewModel.load()  // instant from cache, revalidation failed silently
 
         stubLoad(content: "# New")
@@ -533,17 +586,69 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(viewModel.lastSyncedAt)
     }
 
-    func testRefreshClearsAPendingBanner() async {
+    func testRefreshClearsABannerStashedByAnEditingSession() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
         stubLoad(content: "# New")
         await viewModel.load()
         XCTAssertTrue(viewModel.updateAvailable)
+        viewModel.finishEditing()
 
         await viewModel.refresh()
 
         XCTAssertFalse(viewModel.updateAvailable)
         XCTAssertEqual(viewModel.rawMarkdown, "# New")
+    }
+
+    /// Opening a document while its save is still in flight pinned
+    /// `displaySource` to `.pendingSave` for the life of the screen, so once
+    /// the save landed every later revalidation — and every pull-to-refresh —
+    /// silently did nothing and remote edits could never arrive.
+    func testRefreshAppliesRemoteContentAfterAnInFlightSaveCompletes() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log)
+        // Enqueue synchronously so restoreLocalContent() sees the pending save.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        await viewModel.load()
+        XCTAssertEqual(viewModel.displaySource, .pendingSave)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "the in-flight content owns the screen")
+        await waitUntil { viewModel.saveState == .saved }
+
+        stubLoad(content: "# Remote")
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Remote")
+        XCTAssertEqual(viewModel.displaySource, .clean)
+    }
+
+    /// The same unpinning must not throw away unsaved work: a save that failed
+    /// leaves its draft behind, and that draft still owns the screen.
+    func testRefreshAfterAFailedSaveKeepsTheDraftOnScreen() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        await viewModel.load()
+        XCTAssertEqual(viewModel.displaySource, .pendingSave)
+        await waitUntil {
+            if case .failed = viewModel.saveState { return true }
+            return false
+        }
+
+        // The fixture's updated_at (2026-01-15) predates the just-written
+        // draft, so the draft wins and stays on screen.
+        stubLoad(content: "# Remote")
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "unsaved work is never clobbered")
+        XCTAssertEqual(viewModel.displaySource, .draft)
+        XCTAssertNotNil(draftStore.draft(for: documentID))
     }
 
     func testRefreshFailureSurfacesErrorEvenWithLocalContent() async {

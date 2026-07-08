@@ -231,10 +231,10 @@ final class EditorViewModel {
         }
     }
 
-    /// Explicit pull-to-refresh. Unlike the passive on-open revalidation it
-    /// awaits the fetch (the refresh spinner reflects real work), applies a
-    /// changed server copy DIRECTLY when clean (the user asked — no banner),
-    /// and surfaces failures instead of swallowing them.
+    /// Explicit pull-to-refresh. It applies the same content rules as the
+    /// passive on-open revalidation — a clean document always shows the latest
+    /// server body — and differs only in that it surfaces failures instead of
+    /// swallowing them (the user asked, so silence would read as a no-op).
     func refresh() async {
         guard hasLoadedContent else {
             await load()  // error-state retry: full initial flow, as today
@@ -246,7 +246,7 @@ final class EditorViewModel {
         do {
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            apply(formatted: formatted, userInitiated: true)
+            apply(formatted: formatted)
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -279,7 +279,7 @@ final class EditorViewModel {
         errorMessage = "This document is no longer available."
     }
 
-    private func apply(formatted: FormattedDocumentContent, userInitiated: Bool = false) {
+    private func apply(formatted: FormattedDocumentContent) {
         defer { updatedAt = formatted.updatedAt }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
@@ -289,26 +289,47 @@ final class EditorViewModel {
         }
         switch displaySource {
         case .pendingSave:
-            break  // in-flight content is newer than the server copy
-        case .draft:
-            if let draft = saveCoordinator.storedDraft(documentID: documentID),
-                formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance)
-            {
-                cacheServerCopy(formatted)
+            // Reaching here proves the save that owned the screen is no longer
+            // pending — the early return above covers the in-flight case. It
+            // either landed (the screen now holds what the server holds, i.e.
+            // an ordinary clean copy) or it failed and left its draft behind.
+            // Staying `.pendingSave` would strand the screen forever: every
+            // later revalidation *and* every pull-to-refresh would no-op in
+            // silence, so remote edits could never appear.
+            if saveCoordinator.storedDraft(documentID: documentID) != nil {
+                displaySource = .draft
+                reconcileDraft(formatted)
             } else {
-                // Server newer beyond tolerance: today the stale draft would
-                // never have been shown — server wins, and the draft goes
-                // (re-checked inside discardStoredDraft; the user may have
-                // produced a newer one while we awaited).
-                if let draft = saveCoordinator.storedDraft(documentID: documentID) {
-                    saveCoordinator.discardStoredDraft(draft)
-                }
-                installFetched(formatted)
+                displaySource = .clean
+                reconcileClean(formatted)
             }
+        case .draft:
+            reconcileDraft(formatted)
         case .none:
             installFetched(formatted)
         case .clean:
-            reconcileClean(formatted, applyDirectly: userInitiated)
+            reconcileClean(formatted)
+        }
+    }
+
+    /// An unsaved draft owns the screen. It only loses to a server copy written
+    /// meaningfully later than the draft itself — never to the user's own
+    /// refresh, because the draft is work that hasn't reached the server yet.
+    private func reconcileDraft(_ formatted: FormattedDocumentContent) {
+        guard let draft = saveCoordinator.storedDraft(documentID: documentID) else {
+            // Saved (and cleared) while we awaited: nothing local to protect.
+            installFetched(formatted)
+            return
+        }
+        if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+            cacheServerCopy(formatted)
+        } else {
+            // Server newer beyond tolerance: the stale draft would never have
+            // been shown — server wins, and the draft goes (re-checked inside
+            // discardStoredDraft; the user may have produced a newer one while
+            // we awaited).
+            saveCoordinator.discardStoredDraft(draft)
+            installFetched(formatted)
         }
     }
 
@@ -324,13 +345,18 @@ final class EditorViewModel {
             ))
     }
 
-    /// Clean content on screen: never swap it on a passive open. Titles are
-    /// non-destructive and apply silently in BOTH branches (savedTitle follows
-    /// so flushPendingChanges never enqueues a spurious save); only body
-    /// differences drive the banner — unless `applyDirectly` (explicit
-    /// refresh()), which installs the fetched body immediately instead of
-    /// stashing it behind the "Updated" banner.
-    private func reconcileClean(_ formatted: FormattedDocumentContent, applyDirectly: Bool = false) {
+    /// Clean content on screen — nothing local to protect, so a changed server
+    /// body is simply installed. Titles are non-destructive and apply silently
+    /// in BOTH branches (savedTitle follows so flushPendingChanges never
+    /// enqueues a spurious save); applying only the title while stashing the
+    /// body was the "remote edits never show up, only the title does" bug.
+    ///
+    /// The one exception is an open editing session: swapping the document out
+    /// from under the caret is destructive, so the fetched body waits behind
+    /// the "Updated" banner, which surfaces once editing ends. (A dirty session
+    /// never reaches here — `apply` returns early — and `startEditing`/
+    /// `markDirty` drop the stash, so local work always wins.)
+    private func reconcileClean(_ formatted: FormattedDocumentContent) {
         let fetched = formatted.content ?? ""
         let now = Date()
         if let fetchedTitle = formatted.title, fetchedTitle != title {
@@ -345,23 +371,23 @@ final class EditorViewModel {
                 syncedAt: now
             ))
         if serverChanged(fetched: fetched) {
-            if applyDirectly {
+            if isEditing {
+                pendingFreshContent = (markdown: fetched, syncedAt: now)
+                updateAvailable = true
+            } else {
                 install(markdown: fetched, title: nil, syncedAt: now)
                 updateAvailable = false
                 pendingFreshContent = nil
-            } else {
-                pendingFreshContent = (markdown: fetched, syncedAt: now)
-                updateAvailable = true
             }
         } else {
             // Raw may differ only cosmetically — converge the comparison
             // basis on the fetched raw so future comparisons settle.
             displayedSourceMarkdown = fetched
             lastSyncedAt = now
-            if applyDirectly {
-                updateAvailable = false
-                pendingFreshContent = nil
-            }
+            // The server now holds what's on screen, so any body stashed by an
+            // earlier fetch (server since reverted) has nothing left to offer.
+            updateAvailable = false
+            pendingFreshContent = nil
         }
     }
 
@@ -371,8 +397,9 @@ final class EditorViewModel {
             != serializeMarkdown(parseEditorBlocks(displayedSourceMarkdown))
     }
 
-    /// The "Updated" banner tap: swaps in the stashed fresh body. Guarded so a
-    /// stray tap can never replace blocks mid-edit or clobber dirty content.
+    /// The "Updated" banner tap: swaps in the body stashed while an editing
+    /// session held the screen. Guarded so a stray tap can never replace blocks
+    /// mid-edit or clobber dirty content.
     func applyPendingUpdate() {
         guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
         install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)

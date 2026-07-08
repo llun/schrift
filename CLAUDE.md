@@ -490,10 +490,26 @@ markdown write endpoint**. Understand this before touching the save path:
   network-with-spinner), then revalidates silently as the awaited structured
   tail of `load()` (deliberately no unstructured `Task`; a generation counter
   makes superseded fetches no-ops) — content equality (never re-serialized
-  blocks) decides whether the "Updated" banner appears.
+  blocks) decides whether the fetched body counts as a change at all.
   The coordinator write-throughs the cache on save success; delete and 404/403
   revalidation purge the entry; sign-out clears the store. Offline is
   read-only. See `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`.
+- **A clean copy always ends up showing the server's body.** `apply(formatted:)`
+  takes no "user initiated" flag: passive `load()` and pull-to-refresh apply
+  identical content rules, and `refresh()` differs only in surfacing failures.
+  Applying the fetched **title** while stashing the fetched **body** is exactly
+  what produced "remote edits never arrive, only the title does" — don't
+  reintroduce it. The **"Updated" banner**
+  (`updateAvailable`/`pendingFreshContent`) is reserved for the one destructive
+  case: a revalidation landing while an **editing session** holds the caret. It
+  surfaces when editing ends, and `startEditing`/`markDirty` drop the stash so
+  local work always wins. Likewise `displaySource` must never stay pinned at
+  `.pendingSave` once that save has completed — `apply`'s early return already
+  covers the still-in-flight case, so *reaching* the `.pendingSave` branch means
+  reclassify (a surviving draft ⇒ `.draft`, otherwise `.clean`). Pinning it
+  stranded the screen: every later revalidation **and** every pull-to-refresh
+  no-oped in silence. See
+  `docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md`.
 
 ### Persistence (`*Store` types)
 

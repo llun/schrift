@@ -16,6 +16,21 @@
 > `onSessionExpired` hook now also presents the app-level re-login sheet; the
 > editor itself is unchanged and recovers on its next refresh or save (see
 > [`../plans/2026-07-04-persist-session-cookies-and-reauth.md`](../plans/2026-07-04-persist-session-cookies-and-reauth.md)).
+>
+> **Amendment (2026-07-08):** the "never swap clean content on a passive open"
+> rule below is **withdrawn**. It made a document edited on the web show its new
+> **title** (applied silently) while still rendering the cached **body**, which
+> reads as "remote edits never arrive". A **clean** copy — not dirty, no pending
+> save, and no open editing session — now has the fetched body **installed
+> directly** on every revalidation, passive or explicit; passive `load()` and
+> pull-to-refresh apply identical content rules and differ only in whether a
+> failure is surfaced. The **"Updated" banner** survives for the one case where
+> swapping is destructive: a revalidation landing while an **editing session**
+> holds the caret stashes the body and offers it once editing ends.
+> Independently, `displaySource` no longer stays pinned at `.pendingSave` after
+> the save it named completed — that stranded the screen so *no* later
+> revalidation or pull-to-refresh could ever apply server content. See
+> [`../plans/2026-07-08-remote-doc-content-sync.md`](../plans/2026-07-08-remote-doc-content-sync.md).
 
 Date: 2026-07-03
 Status: Implemented (shipped 2026-07-03, PR #36; rev 2 — revised the same day
@@ -30,13 +45,13 @@ opened, its content renders immediately from the cache and the server copy is
 revalidated **in the background** (stale-while-revalidate). Only a document that
 has never been loaded on this device still shows a loading spinner. A
 **"Synced X ago"** caption under the title reflects when the local copy last
-matched the server and updates live as syncs complete. When a passive background
-revalidation finds a newer server copy while the user is viewing clean content, a
-subtle, tappable **"Updated"** banner offers to refresh — clean content is never
-swapped out from under the user on a passive open (the stale-draft server-wins
-rule in §2 is the one deliberate exception, matching today's behavior). An
-**explicit pull-to-refresh** is different: it awaits the fetch and applies fresh
-content directly.
+matched the server and updates live as syncs complete. When a revalidation —
+passive or an explicit pull-to-refresh — finds a newer server copy while the user
+is viewing **clean** content, the fresh body is **installed directly**: there is
+no local work to protect, so remote edits simply appear. The one exception is an
+open **editing session**, where swapping the document out from under the caret
+would be destructive: there the fresh body is stashed behind a subtle, tappable
+**"Updated"** banner that surfaces once editing ends.
 
 As a direct consequence, previously-opened documents become **readable offline**
 for the first time (offline remains read-only — editing stays disabled offline,
@@ -52,7 +67,7 @@ wording gated on an actual local copy existing.
 - Keep the content current: revalidate against the server in the background on
   open, and surface a newer server copy without disrupting the user.
 - Give pull-to-refresh real semantics: an explicit refresh awaits the fetch and
-  applies the result directly.
+  surfaces failures rather than swallowing them.
 - Show, under the title, the time the local copy last synced to the server, and
   update it live when a sync completes.
 - Read previously-opened documents offline (natural consequence of the cache).
@@ -370,10 +385,21 @@ branch instead of popping a banner. Outcomes:
 - **Clean, and the comparison above says unchanged:** bump `syncedAt` to now in
   the cache and refresh `lastSyncedAt` (caption becomes "Synced just now"). No
   banner.
-- **Clean, and the comparison says the server changed:** stash the fresh
-  **body** in `pendingFreshContent` and set `updateAvailable = true` (drives the
-  banner). Do **not** change the displayed blocks. Update the cache entry so
-  future opens use the fresh copy.
+- **Clean, and the comparison says the server changed:** install the fetched
+  body (`install(...)`, so the round-trip check and the dirty baseline are never
+  bypassed) and clear any stash. Update the cache entry so future opens are
+  instant. **Exception — an editing session is open** (`isEditing`, but still
+  clean): swapping blocks under the caret is destructive, so stash the fresh body
+  in `pendingFreshContent`, set `updateAvailable = true` (drives the banner), and
+  leave the displayed blocks alone; the banner renders once editing ends.
+  `startEditing()`/`markDirty()` drop the stash, so local work always wins.
+- **Displayed source was an in-flight save (source 1) that has since completed:**
+  reaching this branch proves the save is no longer pending (the dirty rule above
+  intercepts the in-flight case), so the screen holds either exactly what the
+  server holds (the save landed → treat as clean) or the content of a draft the
+  failed save left behind (→ treat as a stored draft). Leaving the source pinned
+  at `.pendingSave` strands the screen: every later revalidation *and* every
+  pull-to-refresh no-ops in silence and remote edits can never appear.
 - **Title reconciliation** (in every clean branch): a changed server title
   applies **silently and immediately** — set `title` and `savedTitle` (so
   `flushPendingChanges`' title comparison doesn't enqueue a spurious save) and
@@ -430,16 +456,15 @@ func handleDidDelete()             // §6
 #### Pull-to-refresh (explicit refresh)
 
 `.refreshable` stops calling `load()` and calls a distinct intent
-`func refresh() async` (`EditorView.swift:204–206`):
+`func refresh() async` (`EditorView.swift:257–259`):
 
 - It **awaits** the revalidation fetch, so the system refresh spinner reflects
   real work.
-- When the displayed content is **clean**, it applies the fetched content
-  **directly** through `install(...)` (bumping `syncedAt`/`lastSyncedAt`,
-  updating the cache, clearing any pending `updateAvailable`) — the "Updated"
-  banner is reserved for *passive* on-open revalidation; a user who explicitly
-  asked for a refresh gets the content, not a pill telling them to tap again.
-  The never-swap-clean-content rule applies to passive opens only.
+- It applies the **same content rules** as a passive revalidation — `apply(...)`
+  takes no "user initiated" flag. A clean copy gets the fetched body installed
+  either way, so a refresh can never be the only way to see a remote edit.
+- Its one difference is **loudness**: a failure sets `errorMessage` instead of
+  being swallowed. A user who explicitly asked deserves to know it didn't work.
 - When the displayed content is **dirty**, the dirty rules above hold (silent
   cache update, edits untouched) — the visual no-op is deliberate.
 - On failure it **sets `errorMessage` even when local content is shown**
@@ -574,11 +599,12 @@ revalidate (awaited tail; classify at completion; latest-wins) ◀────�
       │                        ─▶ install server copy, drop draft
       │  dirty on screen       ─▶ update cache silently, no banner
       │  clean & unchanged     ─▶ bump syncedAt ("Synced just now")
-      │  clean & body changed  ─▶ stash body + updateAvailable (banner)
+      │  clean & body changed  ─▶ install it (editing? stash + banner instead)
       │  clean & title changed ─▶ apply title silently (both branches)
+      │  save landed/failed    ─▶ leave .pendingSave: reclassify clean/draft
       ▼
-refresh() (pull) ─▶ same, but awaited by the spinner; clean+changed
-      │             applies directly (no banner); failure sets errorMessage
+refresh() (pull) ─▶ same rules, awaited by the spinner; a failure additionally
+      │             sets errorMessage instead of being swallowed
       ▼
 save success (coordinator) ──▶ write cache (markdown+title, syncedAt = now)
 delete / 404 / 403 ──▶ remove cache entry        sign-out ──▶ removeAll()
@@ -636,7 +662,8 @@ XCTest, mirroring the source tree. New/updated:
     disabled; 403 → same; 401 → cache kept, content readable;
   - `refresh()`: applies newer server content directly (no banner) when clean;
     sets `errorMessage` on failure even with cached content; leaves edits
-    untouched when dirty;
+    untouched when dirty; reclassifies a completed `.pendingSave` so it can
+    apply remote content instead of no-oping forever;
   - stored draft with no cache renders offline (regression for the current gap);
   - `handleDidDelete()` → cache entry and draft removed;
   - subpages: empty-state suppressed until a successful fetch this session.
