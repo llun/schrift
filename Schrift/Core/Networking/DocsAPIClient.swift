@@ -34,6 +34,22 @@ actor DocsAPIClient {
         return origin
     }
 
+    /// Resolves a server-relative path (e.g. the `/media/…` value returned by
+    /// media-check) against the **server origin**, not the `/api/v1.0/` base.
+    /// Lives here because `baseURL` is private.
+    ///
+    /// `path` is **server-controlled**, and `URL(string:relativeTo:)` happily
+    /// escapes the origin: `//evil.com/x` resolves to `https://evil.com/x`, and
+    /// `http://evil.com/x` even downgrades the scheme. The resolved URL would be
+    /// embedded in the document and persisted for every collaborator, so pin it
+    /// to the same origin as `baseURL` and return nil otherwise.
+    func absoluteServerURL(for path: String) -> URL? {
+        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL,
+            url.scheme == baseURL.scheme, url.host == baseURL.host, url.port == baseURL.port
+        else { return nil }
+        return url
+    }
+
     func get<T: Decodable>(_ path: String) async throws -> T {
         try await send(path: path, method: "GET", body: nil)
     }

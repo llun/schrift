@@ -57,6 +57,14 @@ struct EditorFormattingBar: View {
                     viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
                 }
             }
+            // Stays disabled while an upload is in flight (and before content has
+            // loaded): the view model would decline anyway, so don't invite the tap.
+            barButton(
+                icon: "photo", label: "Insert photo",
+                disabled: !hasTarget || !viewModel.canInsertPhoto
+            ) {
+                viewModel.requestPhotoInsertion()
+            }
         }
         .padding(.horizontal, DocsSpacing.space2xs)
         .padding(.vertical, DocsSpacing.space3xs)

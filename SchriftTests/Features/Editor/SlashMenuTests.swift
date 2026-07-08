@@ -33,4 +33,25 @@ final class SlashMenuTests: XCTestCase {
     func testNoMatchesReturnsEmpty() {
         XCTAssertTrue(filteredSlashItems(query: "zzzz").isEmpty)
     }
+
+    // MARK: - Actions
+
+    func testConvertItemsCarryTheirBlockKind() {
+        XCTAssertEqual(allSlashMenuItems.first { $0.id == "heading2" }?.action, .convert(.heading(level: 2)))
+        XCTAssertEqual(allSlashMenuItems.first { $0.id == "divider" }?.action, .convert(.divider))
+    }
+
+    /// Every other item just swaps a `BlockKind`; the photo item is the one
+    /// side-effecting action, and its block is inserted later, on upload success.
+    func testPhotoItemIsTheOnlySideEffectAction() {
+        XCTAssertEqual(allSlashMenuItems.filter { $0.action == .insertPhoto }.map(\.id), ["photo"])
+    }
+
+    func testPhotoItemMatchesImageKeywords() {
+        for query in ["photo", "ima", "picture", "img"] {
+            XCTAssertTrue(
+                filteredSlashItems(query: query).contains { $0.action == .insertPhoto },
+                "Expected the photo item to match \"\(query)\"")
+        }
+    }
 }

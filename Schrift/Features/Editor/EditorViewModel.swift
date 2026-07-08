@@ -58,6 +58,13 @@ final class EditorViewModel {
     var lastSyncedAt: Date? = nil
     var hasLocalCopy = false
     var updateAvailable = false
+    /// Drives the system photo picker. Set by the slash-menu photo item and the
+    /// formatting-bar button; cleared by SwiftUI when the picker dismisses.
+    var isPhotoPickerPresented = false
+    /// True while a picked photo is being prepared, uploaded and confirmed. No
+    /// placeholder block exists during this window — the `.image` block is only
+    /// inserted on success.
+    var isUploadingPhoto = false
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -65,11 +72,17 @@ final class EditorViewModel {
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration
+    /// Delay between media-check readiness polls. Tests pass `.zero`.
+    let mediaCheckRetryInterval: Duration
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
     /// would overwrite the whole server document with an empty draft.
     private(set) var hasLoadedContent = false
+    /// Set once the document is deleted locally. Unlike `becomeUnavailable()`, the
+    /// delete path leaves `hasLoadedContent` true, so a late photo insert would
+    /// otherwise re-save — and re-draft — a document that no longer exists.
+    private(set) var isDocumentDiscarded = false
     private(set) var displaySource: DisplaySource = .none
     private var savedMarkdown = ""
     private var savedTitle = ""
@@ -97,6 +110,14 @@ final class EditorViewModel {
     /// deferral so a long burst still persists periodically.
     private static let maxAutosaveDeferral: TimeInterval = 30
 
+    /// How many times to poll media-check before falling back to the URL derived
+    /// from the upload key. The default deployment's scanner is the dummy
+    /// backend, so readiness is near-immediate.
+    private static let mediaCheckMaxAttempts = 5
+
+    /// Friendly copy for every failure in the photo-insert pipeline.
+    private static let photoErrorMessage = "Couldn't add the photo. Please try again."
+
     init(
         client: DocsAPIClient,
         documentID: UUID,
@@ -104,7 +125,8 @@ final class EditorViewModel {
         saveCoordinator: DocumentSaveCoordinator,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
-        autosaveInterval: Duration = .seconds(10)
+        autosaveInterval: Duration = .seconds(10),
+        mediaCheckRetryInterval: Duration = .seconds(1)
     ) {
         self.client = client
         self.documentID = documentID
@@ -113,6 +135,7 @@ final class EditorViewModel {
         self.contentCache = contentCache
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
+        self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.savedTitle = title
     }
 
@@ -370,6 +393,10 @@ final class EditorViewModel {
         // it would re-cache the list for a deleted document.
         childrenGeneration += 1
         saveCoordinator.discardPendingWork(documentID: documentID)
+        // A photo upload can still be in flight and would otherwise re-save (and
+        // re-draft) the deleted document when it lands. `hasLoadedContent` stays
+        // true here, so the insert needs its own gate.
+        isDocumentDiscarded = true
     }
 
     /// Installs the fetched server copy and records it in the content cache.
@@ -500,8 +527,15 @@ final class EditorViewModel {
     }
 
     /// The markdown representation of whatever surface currently owns the content.
+    /// Only **blocks** mode makes `blocks` authoritative. In markdown mode the user
+    /// is editing the source directly, and in reading mode `rawMarkdown` is kept in
+    /// sync by `install`/`finishEditing`/`setMode` while `blocks` may be a lossy
+    /// parse of it — so a full-overwrite save must carry the source, not the
+    /// serialization. Do **not** key this off `openInMarkdownMode`: that flag is
+    /// computed once in `install` and goes stale the moment a session authors
+    /// content the block model can't represent.
     func currentMarkdown() -> String {
-        mode == .markdown ? rawMarkdown : serializeMarkdown(blocks)
+        mode == .blocks ? serializeMarkdown(blocks) : rawMarkdown
     }
 
     // MARK: - Block mutations
@@ -705,30 +739,245 @@ final class EditorViewModel {
     /// Inserts raw text at the caret in markdown-source mode.
     func insertAtCursor(_ token: String) {
         let source = rawMarkdown as NSString
-        var range = selection ?? NSRange(location: source.length, length: 0)
-        range.location = min(max(0, range.location), source.length)
-        range.length = min(max(0, range.length), source.length - range.location)
+        let range = clampedSelectionRange(in: source)
         rawMarkdown = source.replacingCharacters(in: range, with: token)
         selection = NSRange(location: range.location + (token as NSString).length, length: 0)
         markDirty()
+    }
+
+    private func clampedSelectionRange(in source: NSString) -> NSRange {
+        var range = selection ?? NSRange(location: source.length, length: 0)
+        range.location = min(max(0, range.location), source.length)
+        range.length = min(max(0, range.length), source.length - range.location)
+        return range
+    }
+
+    /// What `insertAtCursor(token)` *would* produce — so a caller can verify the
+    /// result before committing to it.
+    private func markdownReplacingSelection(with token: String) -> String {
+        let source = rawMarkdown as NSString
+        return source.replacingCharacters(in: clampedSelectionRange(in: source), with: token)
     }
 
     /// Applies a block type chosen from the slash menu to the focused block,
     /// consuming the "/query" text.
     func applySlashSelection(_ item: SlashMenuItem) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
+        // Photo is the one item that can decline: while an upload is in flight the
+        // picker won't open. Bail out *before* consuming the "/photo" text, or the
+        // selection would silently eat what the user typed and do nothing.
+        if case .insertPhoto = item.action, !canInsertPhoto { return }
         blocks[index].text = ""
         slashQueryText = nil
-        if item.kind == .divider {
+        switch item.action {
+        case .convert(.divider):
             blocks[index].kind = .divider
             let newBlock = EditorBlock(kind: .paragraph)
             blocks.insert(newBlock, at: index + 1)
             focusBlock(newBlock.id, cursorAt: 0)
-        } else {
-            blocks[index].kind = item.kind
+        case .convert(let kind):
+            blocks[index].kind = kind
             focusBlock(focusedBlockID, cursorAt: 0)
+        case .insertPhoto:
+            // The block stays an empty paragraph; `insertImageBlock` replaces it
+            // in place once the upload succeeds (and leaves it alone if it
+            // doesn't, so a failed pick never strands a placeholder).
+            focusBlock(focusedBlockID, cursorAt: 0)
+            requestPhotoInsertion()
         }
         markDirty()
+    }
+
+    // MARK: - Photo insertion
+
+    /// Editing may only begin once content has loaded, and one upload at a time.
+    /// Both photo entry points share this gate.
+    var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto }
+
+    /// Entry point for both the formatting-bar button and the slash-menu item.
+    func requestPhotoInsertion() {
+        guard canInsertPhoto else { return }
+        isPhotoPickerPresented = true
+    }
+
+    /// Runs the picked photo through prepare → upload → readiness poll and
+    /// inserts the resulting `.image` block. A cancelled pick (`nil` data) is a
+    /// silent no-op; any failure sets friendly copy and inserts nothing, so a
+    /// broken upload can never leave a placeholder in the document.
+    func insertPhoto(loadingData: @Sendable () async throws -> Data?) async {
+        guard canInsertPhoto else { return }
+        // Clear a previous failure's copy, like every other async intent method —
+        // otherwise a successful retry leaves the red banner on screen.
+        errorMessage = nil
+        isUploadingPhoto = true
+        defer { isUploadingPhoto = false }
+        do {
+            guard let originalData = try await loadingData() else { return }
+            // Decoding a 48 MP HEIC and re-encoding it must not block the main
+            // thread (the uploading spinner would freeze). `preparedJPEGData` is a
+            // pure function over Sendable values, so it can run anywhere.
+            let prepared = await Task.detached(priority: .userInitiated) {
+                preparedJPEGData(from: originalData)
+            }.value
+            guard let jpegData = prepared else {
+                reportPhotoFailure()
+                return
+            }
+            let mediaCheckPath = try await client.uploadAttachment(
+                documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: jpegData)
+            guard let urlString = await readyMediaURLString(fromMediaCheckPath: mediaCheckPath) else {
+                reportPhotoFailure()
+                return
+            }
+            insertImageBlock(url: urlString)
+        } catch {
+            reportPhotoFailure()
+        }
+    }
+
+    /// The document can go away mid-upload (404 revalidation, or a delete). Its
+    /// terminal message must not be masked by copy inviting a retry that the now
+    /// disabled button can't perform.
+    private func reportPhotoFailure() {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        errorMessage = Self.photoErrorMessage
+    }
+
+    /// Polls media-check until the attachment is ready and returns the absolute
+    /// media URL to embed (matching what the web client persists). Falls back to
+    /// the URL derived from the upload key if readiness can't be confirmed in
+    /// time — the upload already succeeded, so the URL must never be lost.
+    private func readyMediaURLString(fromMediaCheckPath path: String) async -> String? {
+        for attempt in 0..<Self.mediaCheckMaxAttempts {
+            if attempt > 0 { try? await Task.sleep(for: mediaCheckRetryInterval) }
+            if let response = try? await client.checkMedia(path: path),
+                response.status == MediaCheckResponse.readyStatus, let file = response.file,
+                let absolute = await client.absoluteServerURL(for: file)
+            {
+                return absolute.absoluteString
+            }
+        }
+        guard let key = attachmentKey(fromMediaCheckPath: path),
+            let absolute = await client.absoluteServerURL(for: "/media/" + key)
+        else { return nil }
+        return absolute.absoluteString
+    }
+
+    /// Mirrors the divider slash behavior: replace a focused empty paragraph in
+    /// place, otherwise insert below the focused block, and always leave an
+    /// editable paragraph after the image (an image is a non-editable leaf).
+    ///
+    /// The upload can outlive the editing session: neither Done nor a navigation
+    /// pop cancels the picker's `Task`. **Every** path therefore persists
+    /// immediately rather than through `markDirty`'s debounce, whose `autosaveTask`
+    /// is owned by this view model — a pop releases the last strong reference, so
+    /// the debounced `self?.flushPendingChanges()` no-ops and the finished upload
+    /// is silently lost. A pop also leaves `mode` untouched (only `finishEditing`
+    /// sets `.reading`), so this must not be keyed off the mode. Flushing enqueues
+    /// on the app-scoped save coordinator, which owns its `Task`s precisely so
+    /// navigating away can never cancel a save.
+    private func insertImageBlock(url: String) {
+        // The document may have been deleted, or gone 404, while the photo was
+        // uploading. Saving now would resurrect it — `discardPendingWork` has
+        // already removed its draft, and `enqueue` would write a fresh one.
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        defer { flushPendingChanges() }
+
+        if mode == .markdown {
+            // The image markdown must land on a line of its own: `parseImageLine`
+            // is column-zero anchored and requires the line to *end* in `)`, so
+            // `Hello![](url)` would round-trip as literal text, not an image. The
+            // surrounding blank lines also keep it out of an adjacent paragraph.
+            // Even then the caret may sit inside a fenced code block, which
+            // swallows the line — verify before committing, exactly as below.
+            let token = "\n\n![](\(url))\n\n"
+            guard addsImage(to: rawMarkdown, after: markdownReplacingSelection(with: token), url: url) else {
+                reportPhotoFailure()
+                return
+            }
+            insertAtCursor(token)  // marks dirty
+            return
+        }
+
+        // The session already ended. Append to the authoritative source — `blocks`
+        // may be a lossy parse of it — rather than to a serialization that would
+        // rewrite what the user actually wrote.
+        if mode == .reading {
+            let source = currentMarkdown()
+            let appended = markdownAppendingImage(to: source, url: url)
+            // A source whose tail is an unterminated code fence swallows anything
+            // appended to it (`closesCodeFence` never matches a blank line), so the
+            // image would render as literal code. Never rewrite the source to make
+            // room, and never report success without producing an image.
+            guard addsImage(to: source, after: appended, url: url) else {
+                reportPhotoFailure()
+                return
+            }
+            rawMarkdown = appended
+            blocks = parseEditorBlocks(appended)
+            markDirty()
+            return
+        }
+
+        let image = EditorBlock(kind: .image(alt: "", url: url))
+        let trailing = EditorBlock(kind: .paragraph)
+        var updated = blocks
+        if let focusedBlockID, let index = blockIndex(focusedBlockID) {
+            if updated[index].kind == .paragraph, updated[index].text.isEmpty {
+                updated[index] = image
+                updated.insert(trailing, at: index + 1)
+            } else {
+                updated.insert(image, at: index + 1)
+                updated.insert(trailing, at: index + 2)
+            }
+        } else {
+            updated.append(image)
+            updated.append(trailing)
+        }
+        // Blocks mode saves `serializeMarkdown(blocks)`, and `MarkdownYjs.encode`
+        // re-parses exactly that — so a neighbouring paragraph holding a bare "```"
+        // turns the serialized image line into code and the photo never reaches the
+        // server, even though the editor still shows it. Verify against the *saved*
+        // representation, not the block array.
+        guard addsImage(to: currentMarkdown(), after: serializeMarkdown(updated), url: url) else {
+            reportPhotoFailure()
+            return
+        }
+        blocks = updated
+        focusBlock(trailing.id, cursorAt: 0)
+        markDirty()
+    }
+
+    /// Whether the edit actually *added* an image. **All three** insertion paths
+    /// (markdown, reading, blocks) must check this: none may report success without
+    /// producing an image. A fenced code block — open at the end of the source,
+    /// wrapping the caret, or formed by a neighbouring block on serialization —
+    /// swallows the image line whole.
+    ///
+    /// Counts rather than asking `contains`: a document that already held a
+    /// byte-identical `![](url)` would satisfy `contains` even when the new line was
+    /// swallowed. Fresh attachment UUIDs make that unreachable today, but that is an
+    /// invariant of the *server*, not of this function.
+    private func addsImage(to before: String, after: String, url: String) -> Bool {
+        imageCount(in: after, url: url) > imageCount(in: before, url: url)
+    }
+
+    private func imageCount(in markdown: String, url: String) -> Int {
+        parseEditorBlocks(markdown).filter { $0.kind == .image(alt: "", url: url) }.count
+    }
+
+    /// Appends a standalone, blank-line-separated image line. That keeps it out of
+    /// a trailing paragraph — but it does **not** guarantee an `.image` block: a
+    /// source ending in an unterminated code fence swallows everything after it.
+    /// The caller must verify the result rather than assume.
+    private func markdownAppendingImage(to source: String, url: String) -> String {
+        let imageLine = "![](\(url))\n"
+        guard !source.isEmpty else { return imageLine }
+        // Compare the trailing *byte*, not the trailing Character: Swift treats
+        // "\r\n" as one extended grapheme cluster, so `hasSuffix("\n")` is false for
+        // a CRLF-terminated source and we'd add a newline that is already there.
+        let endsWithNewline = source.utf8.last == 0x0A
+        return source + (endsWithNewline ? "" : "\n") + "\n" + imageLine
     }
 
     /// Tap on the empty canvas below the last block: reuse a trailing empty

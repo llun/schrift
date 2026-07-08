@@ -6,26 +6,7 @@ private final class RequestLog: @unchecked Sendable {
     var requests: [URLRequest] = []
 }
 
-private func bodyData(from request: URLRequest) -> Data? {
-    if let body = request.httpBody {
-        return body
-    }
-    guard let stream = request.httpBodyStream else { return nil }
-    stream.open()
-    defer { stream.close() }
-    var data = Data()
-    let bufferSize = 4096
-    var buffer = [UInt8](repeating: 0, count: bufferSize)
-    while stream.hasBytesAvailable {
-        let bytesRead = stream.read(&buffer, maxLength: bufferSize)
-        if bytesRead > 0 {
-            data.append(buffer, count: bytesRead)
-        } else {
-            break
-        }
-    }
-    return data
-}
+// `bodyData(from:)` now lives in SchriftTests/Support/RequestBodyHelpers.swift.
 
 private func jsonBody(_ request: URLRequest?) -> [String: String]? {
     request.flatMap(bodyData(from:)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }

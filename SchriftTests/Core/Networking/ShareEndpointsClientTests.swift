@@ -2,26 +2,8 @@ import XCTest
 
 @testable import Schrift
 
-private func bodyData(from request: URLRequest) -> Data? {
-    if let body = request.httpBody {
-        return body
-    }
-    guard let stream = request.httpBodyStream else { return nil }
-    stream.open()
-    defer { stream.close() }
-    var data = Data()
-    let bufferSize = 4096
-    var buffer = [UInt8](repeating: 0, count: bufferSize)
-    while stream.hasBytesAvailable {
-        let bytesRead = stream.read(&buffer, maxLength: bufferSize)
-        if bytesRead > 0 {
-            data.append(buffer, count: bytesRead)
-        } else {
-            break
-        }
-    }
-    return data
-}
+// `bodyData(from:)` now lives in SchriftTests/Support/RequestBodyHelpers.swift —
+// the multipart attachment tests need the same stream-draining helper.
 
 final class ShareEndpointsClientTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
