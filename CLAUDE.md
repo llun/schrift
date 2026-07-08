@@ -169,7 +169,8 @@ Schrift/
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
-│   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions,
+│   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
+│   │                    (incl. AttachmentEndpoints: multipart upload + media-check),
 │   │                    Codable models, DocsAPIError, CSRF
 │   └── Yjs/             on-device Markdown→BlockNote→Yjs encoder that builds the
 │                        base64 content payload for saves (MarkdownYjs,
@@ -189,7 +190,8 @@ Schrift/
 │   │                    ReauthenticationViewModel), RecentServersStore
 │   ├── Home/            document list, filters, offline metadata cache
 │   ├── Search/ Shared/ Profile/ Options/ Share/
-│   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache
+│   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache,
+│                        photo insert (ImagePreparation)
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
 docs/                    living docs (ci.md, testflight-setup.md) + specs and dated
@@ -321,7 +323,21 @@ new code reads like the surrounding code.
   lowercase UUIDs and the trailing slash. Paths resolve against the client's
   `baseURL`, which **already contains `/api/v1.0/`** (appended in `RootView`) —
   never repeat the prefix, and never start a path with `/` (a leading slash
-  resolves against the host root and silently drops `/api/v1.0/`).
+  resolves against the host root and silently drops `/api/v1.0/`). The **one
+  intentional exception** is `checkMedia(path:)`, which replays a rooted
+  `/api/v1.0/…` path the *server* handed us verbatim; `absoluteServerURL(for:)`
+  relies on the same rule to resolve `/media/…` against the origin.
+- **Attachments** (`AttachmentEndpoints.swift`): `POST documents/{id}/attachment-upload/`
+  is multipart with **exactly one field, `file`** — `file_name`/`content_type`/
+  `expected_extension`/`is_unsafe` are computed server-side and are *not* client
+  fields. Its `201` returns a server-relative **media-check path**, not a media
+  URL: `GET` that path until `{"status":"ready","file":"/media/{key}"}`, then embed
+  the **absolute** `https://{host}/media/{key}` (what the web client persists, and
+  what `extract_attachments()` regex-matches). The multipart body builder is a pure
+  free function with a caller-supplied boundary — never interpolate user data into
+  it. The uploaded bytes must be a real JPEG named `photo.jpg`: the backend
+  magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
+  never renders inline.
 - One error type `DocsAPIError`; status is translated centrally by
   `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound`,
   429→`rateLimited(retryAfter:)`, else `server`). Wrap `URLSession`/decoder
@@ -414,7 +430,16 @@ markdown write endpoint**. Understand this before touching the save path:
   the image block has **no `textColor`**, and `previewWidth` is emitted as
   `undefined` (`YAnyValue.undefined` → lib0 `writeAny` 127), not omitted. In the
   editor an image renders as a **non-editable leaf** (like a divider): it deletes
-  as a unit, is never converted, and never receives inline markers. Anything
+  as a unit, is never converted, and never receives inline markers. Photos are
+  inserted through that same block: the slash-menu "Photo" item and the
+  formatting-bar button run `prepare → upload → bounded media-check poll →
+  insert`, and the `.image` block is created **only on success** — a cancelled
+  pick is a silent no-op, every failure sets `"Couldn't add the photo. Please try
+  again."`, and no placeholder block ever reaches the document or a save. If
+  readiness can't be confirmed within the poll budget, the URL derived from the
+  upload key is used rather than losing an upload that already succeeded.
+  `PhotosPicker` is the out-of-process system picker — **no** photo-library usage
+  description and **no** `project.yml` change. Anything
   ambiguous stays `.unknown` and renders **verbatim**: a relative url, an
   indented line, trailing text, a `]` in the alt, or a url with whitespace or
   unbalanced parens. The last one is load-bearing — `URL(string:)` accepts `(`

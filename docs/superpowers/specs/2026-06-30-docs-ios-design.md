@@ -32,6 +32,13 @@ survives an in-app edit-and-save instead of being flattened to literal text.
 The Yjs encoder now supports leaf blocks that still carry props; the image byte
 layout is locked by a golden fixture captured from `@blocknote/core@0.51.4`. See
 `docs/superpowers/plans/2026-07-07-image-block-round-trip.md`.
+Revised: 2026-07-08 — users can **insert photos** from their library. A new
+multipart `attachment-upload` endpoint plus a bounded media-check readiness poll
+yield the absolute `/media/{key}` URL the web client persists; the picked photo
+is downscaled and re-encoded to JPEG on device, and the `.image` block is
+inserted only on upload success. Entry points: the slash-menu "Photo" item and a
+formatting-bar button. See
+`docs/superpowers/plans/2026-07-07-photo-upload-insert.md`.
 
 ## Summary
 
