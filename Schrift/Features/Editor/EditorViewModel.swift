@@ -921,25 +921,38 @@ final class EditorViewModel {
 
         let image = EditorBlock(kind: .image(alt: "", url: url))
         let trailing = EditorBlock(kind: .paragraph)
+        var updated = blocks
         if let focusedBlockID, let index = blockIndex(focusedBlockID) {
-            if blocks[index].kind == .paragraph, blocks[index].text.isEmpty {
-                blocks[index] = image
-                blocks.insert(trailing, at: index + 1)
+            if updated[index].kind == .paragraph, updated[index].text.isEmpty {
+                updated[index] = image
+                updated.insert(trailing, at: index + 1)
             } else {
-                blocks.insert(image, at: index + 1)
-                blocks.insert(trailing, at: index + 2)
+                updated.insert(image, at: index + 1)
+                updated.insert(trailing, at: index + 2)
             }
         } else {
-            blocks.append(image)
-            blocks.append(trailing)
+            updated.append(image)
+            updated.append(trailing)
         }
+        // Blocks mode saves `serializeMarkdown(blocks)`, and `MarkdownYjs.encode`
+        // re-parses exactly that — so a neighbouring paragraph holding a bare "```"
+        // turns the serialized image line into code and the photo never reaches the
+        // server, even though the editor still shows it. Verify against the *saved*
+        // representation, not the block array.
+        guard addsImage(to: currentMarkdown(), after: serializeMarkdown(updated), url: url) else {
+            reportPhotoFailure()
+            return
+        }
+        blocks = updated
         focusBlock(trailing.id, cursorAt: 0)
         markDirty()
     }
 
-    /// Whether the edit actually *added* an image. Neither insertion path may report
-    /// success without one: a fenced code block — open at the end of the source, or
-    /// wrapping the caret — swallows the image line whole.
+    /// Whether the edit actually *added* an image. **All three** insertion paths
+    /// (markdown, reading, blocks) must check this: none may report success without
+    /// producing an image. A fenced code block — open at the end of the source,
+    /// wrapping the caret, or formed by a neighbouring block on serialization —
+    /// swallows the image line whole.
     ///
     /// Counts rather than asking `contains`: a document that already held a
     /// byte-identical `![](url)` would satisfy `contains` even when the new line was

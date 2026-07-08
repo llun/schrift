@@ -219,9 +219,9 @@ helpers have no source counterpart: fakes live beside the code they fake
 and cross-suite helpers live in `SchriftTests/Support/` (`AsyncTestHelpers.swift`
 — the shared `waitUntil` poller and `RequestRecorder`; `RequestBodyHelpers.swift`
 — `bodyData(from:)`, which drains `httpBodyStream` because `URLSession` moves
-bodies there; `TestImages.swift` — `testPNGData`/`testPixelSize`, CoreGraphics
-fixtures so image tests need no bundle asset). Follow the directory mirror when
-adding files.
+bodies there; `TestImages.swift` — `testPNGData`/`testPixelSize`/`testImageProperties`/
+`testJPEGDataWithGPSMetadata`, CoreGraphics fixtures so image tests need no bundle
+asset). Follow the directory mirror when adding files.
 
 ## Coding standards
 
@@ -449,7 +449,17 @@ markdown write endpoint**. Understand this before touching the save path:
   readiness can't be confirmed within the poll budget, the URL derived from the
   upload key is used rather than losing an upload that already succeeded.
   `PhotosPicker` is the out-of-process system picker — **no** photo-library usage
-  description and **no** `project.yml` change. Anything
+  description and **no** `project.yml` change (never pass `photoLibrary:`, which
+  makes it in-process and *would* need one). `preparedJPEGData` rebuilds the upload
+  from a bare `CGImage`, passing only the compression quality, so the original
+  photo's EXIF — **including GPS coordinates** — is dropped: never copy the source
+  properties into `CGImageDestinationAddImage` (locked by
+  `ImagePreparationTests.testStripsGPSAndIdentifyingMetadata`). **All three** insert
+  paths (blocks, markdown, reading) must verify the edit actually *added* an
+  `.image` block before committing it — a fenced code block, open at the tail,
+  wrapping the caret, or formed by a neighbouring block on serialization, swallows
+  the image line, and `MarkdownYjs.encode` re-parses the same markdown the save
+  sends. Never rewrite the source to make room; surface the friendly error. Anything
   ambiguous stays `.unknown` and renders **verbatim**: a relative url, an
   indented line, trailing text, a `]` in the alt, or a url with whitespace or
   unbalanced parens. The last one is load-bearing — `URL(string:)` accepts `(`
@@ -730,6 +740,14 @@ Do **not** do any of the following without explicit human sign-off:
 - **Never add telemetry, analytics, crash reporting, or any network call to a
   third-party host.** The app only talks to the user's self-hosted server; no
   beacons, remote logging, or hardcoded external endpoints.
+- **Never upload a photo's original metadata.** `preparedJPEGData` re-encodes from a
+  bare `CGImage` so EXIF — **including GPS coordinates** — is stripped. Copying the
+  source properties into `CGImageDestinationAddImage` would silently geotag every
+  upload; `ImagePreparationTests.testStripsGPSAndIdentifyingMetadata` locks it.
+- **Never turn a server-supplied string into a request URL or an embedded document
+  URL without pinning it to the server origin.** `URL(string:relativeTo:)` does not
+  do this: `//evil.com/x` resolves to `https://evil.com/x`. `checkMedia(path:)` and
+  `absoluteServerURL(for:)` are the only two such places — keep their guards.
 - **Preserve the zero-third-party-dependency posture.** No new SPM / CocoaPods /
   Carthage packages. Get explicit sign-off before adding any dependency, and never
   add one from an unvetted or arbitrary source.

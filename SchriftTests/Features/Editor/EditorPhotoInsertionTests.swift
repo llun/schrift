@@ -240,6 +240,45 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.kind), [.paragraph, .image(alt: "", url: expectedMediaURL)])
     }
 
+    /// Blocks mode saves `serializeMarkdown(blocks)`, and `MarkdownYjs.encode`
+    /// re-parses exactly that. A paragraph holding a bare "```" turns the serialized
+    /// image line into code, so the photo never reaches the server even though the
+    /// editor still shows it — until the next revalidation, when it vanishes.
+    func testInsertPhotoInBlocksModeNextToAFenceParagraphErrorsInsteadOfVanishing() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.blocks = [EditorBlock(kind: .paragraph, text: "```")]
+        viewModel.focusedBlockID = viewModel.blocks[0].id
+        let blocksBefore = viewModel.blocks
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, blocksBefore), "the blocks must be untouched")
+        XCTAssertFalse(viewModel.isDirty)
+        // The proof that the guard is right: the would-be save round-trips to no image.
+        XCTAssertTrue(
+            parseEditorBlocks("```\n\n![](\(expectedMediaURL))\n").allSatisfy {
+                $0.kind != .image(alt: "", url: expectedMediaURL)
+            })
+    }
+
+    /// The ordinary blocks-mode insert must still work — the new guard must not
+    /// refuse a perfectly good document.
+    func testInsertPhotoInBlocksModeNextToOrdinaryBlocksStillSucceeds() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.blocks = [
+            EditorBlock(kind: .quote, text: "q"), EditorBlock(kind: .unknown, text: "| a | b |"),
+        ]
+        viewModel.focusedBlockID = viewModel.blocks[0].id
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
+    }
+
     /// A fenced code block swallows the inserted line just as an unterminated fence
     /// swallows an appended one. The markdown branch must verify too — otherwise the
     /// user uploads a photo, gets literal `![](…)` inside their code, and no error.
@@ -398,9 +437,31 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// The picker's Task retains the view model, so an upload can land after the
     /// document was deleted. `handleDidDelete()` already discarded the draft; saving
     /// now would write a fresh one and resurrect the deleted content on reopen.
-    /// A photo failure must not mask a terminal state with copy inviting a retry the
-    /// (now disabled) button can't perform.
-    func testAPhotoFailureDoesNotMaskTheDocumentGoneMessage() async throws {
+    /// A photo insert must not clear or overwrite the document's terminal message
+    /// with copy inviting a retry the (now disabled) button can't perform. Here a 404
+    /// revalidation drives `becomeUnavailable()`, which is the only writer of both
+    /// that message and `hasLoadedContent = false`.
+    func testAPhotoInsertDoesNotMaskTheDocumentGoneMessage() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.finishEditing()
+
+        // The document is revoked or deleted elsewhere; revalidation 404s.
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertFalse(viewModel.hasLoadedContent)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        // Without the `canInsertPhoto` gate, `insertPhoto`'s entry `errorMessage = nil`
+        // would wipe it, and a subsequent upload failure would replace it.
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+    }
+
+    /// Deleting leaves `hasLoadedContent` true, so this exercises the *other* clause:
+    /// a failed upload landing after the delete must not raise the photo error.
+    func testAPhotoFailureAfterDeleteRaisesNoError() async throws {
         stubUploadPipeline(uploadStatus: 400)
         let viewModel = await makeEditingViewModel()
         viewModel.finishEditing()
@@ -408,8 +469,6 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        // Without the guard the 400 would set the photo copy over the document's
-        // own terminal message.
         XCTAssertNil(viewModel.errorMessage)
     }
 
