@@ -18,6 +18,21 @@
 >   NOT performed** — it needs a signed-in device and a live `docs.llun.dev`.
 >   Everything else is covered by tests; that on-device pass is still owed.
 >
+> The plan said nothing about a photo landing *after* the editing session ends
+> (Done, or a navigation pop — neither cancels the picker's `Task`). Six review
+> rounds hardened that path into rules the plan never anticipated:
+> - The insert **always persists immediately** (`flushPendingChanges()`), never via
+>   `markDirty`'s debounce: that `autosaveTask` dies with the view model on a pop.
+> - `currentMarkdown()` returns `serializeMarkdown(blocks)` **only in blocks mode**.
+>   In reading mode `blocks` may be a lossy parse of `rawMarkdown`, so a
+>   full-overwrite save must carry the source. It must *not* key off
+>   `openInMarkdownMode`, which `install()` computes once and which goes stale.
+> - Neither insertion path may report success without producing an `.image` block:
+>   a fenced code block (open at the tail, or wrapping the caret) swallows the image
+>   line. We never rewrite the source to make room; we surface the friendly error.
+> - `isDocumentDiscarded` gates the insert, or an upload landing after a delete
+>   re-drafts the document and resurrects it on reopen.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a user pick a photo from their library and insert it into a document as a PR-1 `.image` block that renders in both the app and the La Suite Docs web client.

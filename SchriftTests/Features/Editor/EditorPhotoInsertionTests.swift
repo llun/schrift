@@ -240,6 +240,23 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.kind), [.paragraph, .image(alt: "", url: expectedMediaURL)])
     }
 
+    /// A fenced code block swallows the inserted line just as an unterminated fence
+    /// swallows an appended one. The markdown branch must verify too — otherwise the
+    /// user uploads a photo, gets literal `![](…)` inside their code, and no error.
+    func testInsertPhotoWithTheCaretInsideACodeFenceErrorsInsteadOfVanishing() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.mode = .markdown
+        viewModel.rawMarkdown = "```\ncode\n```"
+        viewModel.selection = NSRange(location: 8, length: 0)  // inside the fence
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.rawMarkdown, "```\ncode\n```", "the source must be untouched")
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
     func testInsertPhotoInMarkdownModeMidLineStillYieldsAStandaloneImage() async throws {
         stubUploadPipeline()
         let viewModel = await makeEditingViewModel()
@@ -360,6 +377,21 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// The picker's Task retains the view model, so an upload can land after the
     /// document was deleted. `handleDidDelete()` already discarded the draft; saving
     /// now would write a fresh one and resurrect the deleted content on reopen.
+    /// A photo failure must not mask a terminal state with copy inviting a retry the
+    /// (now disabled) button can't perform.
+    func testAPhotoFailureDoesNotMaskTheDocumentGoneMessage() async throws {
+        stubUploadPipeline(uploadStatus: 400)
+        let viewModel = await makeEditingViewModel()
+        viewModel.finishEditing()
+        viewModel.handleDidDelete()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        // Without the guard the 400 would set the photo copy over the document's
+        // own terminal message.
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testInsertPhotoAfterDeleteDoesNotResurrectTheDocument() async throws {
         stubUploadPipeline()
         let viewModel = await makeEditingViewModel()

@@ -127,13 +127,20 @@ final class AttachmentEndpointsClientTests: XCTestCase {
 
     /// The media-check path is the one request URL the *server* chooses. It must
     /// not be able to steer our HTTP client off-origin.
+    ///
+    /// Asserts on a URL-filtered recorder rather than `MockURLProtocol.lastRequest`:
+    /// that static is set by *any* request, and a lingering save from another test
+    /// class's `DocumentSaveCoordinator` would clobber it.
     func testCheckMediaRejectsOffOriginPathsWithoutIssuingARequest() async {
         for hostile in [
             "//evil.com/x", "https://evil.com/x", "http://evil.com/x", "javascript:alert(1)",
             "file:///etc/passwd", "api/v1.0/relative",
         ] {
-            MockURLProtocol.lastRequest = nil
-            MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
+            let log = RequestRecorder()
+            MockURLProtocol.stubHandler = { request in
+                log.record(request)
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            }
             do {
                 _ = try await makeClient().checkMedia(path: hostile)
                 XCTFail("Expected checkMedia to reject \(hostile)")
@@ -145,7 +152,12 @@ final class AttachmentEndpointsClientTests: XCTestCase {
             } catch {
                 XCTFail("Unexpected error for \(hostile): \(error)")
             }
-            XCTAssertNil(MockURLProtocol.lastRequest, "checkMedia must not issue a request for \(hostile)")
+            XCTAssertEqual(
+                log.count(ofMethod: "GET", urlContaining: "evil.com"), 0,
+                "checkMedia must not issue a request for \(hostile)")
+            XCTAssertEqual(
+                log.count(ofMethod: "GET", urlContaining: "media-check"), 0,
+                "checkMedia must not issue a request for \(hostile)")
         }
     }
 
@@ -223,7 +235,11 @@ final class AttachmentEndpointsClientTests: XCTestCase {
     }
 
     func testUploadAttachmentRejectsHeaderInjectingFileName() async {
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: Data(), error: nil) }
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 201, headers: [:], body: Data(), error: nil)
+        }
         do {
             _ = try await makeClient().uploadAttachment(
                 documentID: documentID, fileName: "a\r\nX-Evil: 1", contentType: "image/jpeg", data: Data([0xFF]))
@@ -233,7 +249,7 @@ final class AttachmentEndpointsClientTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
-        XCTAssertNil(MockURLProtocol.lastRequest)
+        XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
     }
 
     func testAttachmentKeyDecodesPercentEncodedKey() {

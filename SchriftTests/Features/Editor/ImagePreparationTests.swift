@@ -38,6 +38,27 @@ final class ImagePreparationTests: XCTestCase {
         XCTAssertEqual(size.height, 100)
     }
 
+    /// The upload must not geotag the user. `preparedJPEGData` rebuilds the output
+    /// from a bare `CGImage`, passing only the compression quality — copying the
+    /// source properties into `CGImageDestinationAddImage` is one line away and
+    /// would silently ship GPS coordinates to the server.
+    func testStripsGPSAndIdentifyingMetadata() throws {
+        let original = testJPEGDataWithGPSMetadata(width: 60, height: 40)
+        let sourceProperties = try XCTUnwrap(testImageProperties(of: original))
+        XCTAssertNotNil(sourceProperties[kCGImagePropertyGPSDictionary], "fixture must actually carry GPS")
+
+        let prepared = try XCTUnwrap(preparedJPEGData(from: original))
+
+        let properties = try XCTUnwrap(testImageProperties(of: prepared))
+        XCTAssertNil(properties[kCGImagePropertyGPSDictionary], "GPS coordinates must never be uploaded")
+        XCTAssertNil(properties[kCGImagePropertyTIFFDictionary])
+        // Belt and braces: the identifying strings must not survive anywhere in the
+        // bytes, not merely be absent from the parsed property dictionaries.
+        for secret in ["SecretLens 50mm", "SecretMake", "2026:07:08 12:00:00"] {
+            XCTAssertNil(prepared.range(of: Data(secret.utf8)), "\"\(secret)\" leaked into the upload")
+        }
+    }
+
     func testNonImageDataReturnsNil() {
         XCTAssertNil(preparedJPEGData(from: Data([0x00, 0x01, 0x02])))
     }

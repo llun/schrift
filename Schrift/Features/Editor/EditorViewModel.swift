@@ -739,12 +739,24 @@ final class EditorViewModel {
     /// Inserts raw text at the caret in markdown-source mode.
     func insertAtCursor(_ token: String) {
         let source = rawMarkdown as NSString
-        var range = selection ?? NSRange(location: source.length, length: 0)
-        range.location = min(max(0, range.location), source.length)
-        range.length = min(max(0, range.length), source.length - range.location)
+        let range = clampedSelectionRange(in: source)
         rawMarkdown = source.replacingCharacters(in: range, with: token)
         selection = NSRange(location: range.location + (token as NSString).length, length: 0)
         markDirty()
+    }
+
+    private func clampedSelectionRange(in source: NSString) -> NSRange {
+        var range = selection ?? NSRange(location: source.length, length: 0)
+        range.location = min(max(0, range.location), source.length)
+        range.length = min(max(0, range.length), source.length - range.location)
+        return range
+    }
+
+    /// What `insertAtCursor(token)` *would* produce — so a caller can verify the
+    /// result before committing to it.
+    private func markdownReplacingSelection(with token: String) -> String {
+        let source = rawMarkdown as NSString
+        return source.replacingCharacters(in: clampedSelectionRange(in: source), with: token)
     }
 
     /// Applies a block type chosen from the slash menu to the focused block,
@@ -808,19 +820,27 @@ final class EditorViewModel {
                 preparedJPEGData(from: originalData)
             }.value
             guard let jpegData = prepared else {
-                errorMessage = Self.photoErrorMessage
+                reportPhotoFailure()
                 return
             }
             let mediaCheckPath = try await client.uploadAttachment(
                 documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: jpegData)
             guard let urlString = await readyMediaURLString(fromMediaCheckPath: mediaCheckPath) else {
-                errorMessage = Self.photoErrorMessage
+                reportPhotoFailure()
                 return
             }
             insertImageBlock(url: urlString)
         } catch {
-            errorMessage = Self.photoErrorMessage
+            reportPhotoFailure()
         }
+    }
+
+    /// The document can go away mid-upload (404 revalidation, or a delete). Its
+    /// terminal message must not be masked by copy inviting a retry that the now
+    /// disabled button can't perform.
+    private func reportPhotoFailure() {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        errorMessage = Self.photoErrorMessage
     }
 
     /// Polls media-check until the attachment is ready and returns the absolute
@@ -868,7 +888,14 @@ final class EditorViewModel {
             // is column-zero anchored and requires the line to *end* in `)`, so
             // `Hello![](url)` would round-trip as literal text, not an image. The
             // surrounding blank lines also keep it out of an adjacent paragraph.
-            insertAtCursor("\n\n![](\(url))\n\n")  // marks dirty
+            // Even then the caret may sit inside a fenced code block, which
+            // swallows the line — verify before committing, exactly as below.
+            let token = "\n\n![](\(url))\n\n"
+            guard producesImage(markdownReplacingSelection(with: token), url: url) else {
+                reportPhotoFailure()
+                return
+            }
+            insertAtCursor(token)  // marks dirty
             return
         }
 
@@ -881,8 +908,8 @@ final class EditorViewModel {
             // appended to it (`closesCodeFence` never matches a blank line), so the
             // image would render as literal code. Never rewrite the source to make
             // room, and never report success without producing an image.
-            guard parseEditorBlocks(appended).contains(where: { $0.kind == .image(alt: "", url: url) }) else {
-                errorMessage = Self.photoErrorMessage
+            guard producesImage(appended, url: url) else {
+                reportPhotoFailure()
                 return
             }
             rawMarkdown = appended
@@ -909,6 +936,13 @@ final class EditorViewModel {
         markDirty()
     }
 
+    /// Whether `markdown` really contains the image we just tried to place. Neither
+    /// insertion path may report success without one: a fenced code block — open at
+    /// the end of the source, or wrapping the caret — swallows the image line whole.
+    private func producesImage(_ markdown: String, url: String) -> Bool {
+        parseEditorBlocks(markdown).contains { $0.kind == .image(alt: "", url: url) }
+    }
+
     /// Appends a standalone, blank-line-separated image line. That keeps it out of
     /// a trailing paragraph — but it does **not** guarantee an `.image` block: a
     /// source ending in an unterminated code fence swallows everything after it.
@@ -916,7 +950,11 @@ final class EditorViewModel {
     private func markdownAppendingImage(to source: String, url: String) -> String {
         let imageLine = "![](\(url))\n"
         guard !source.isEmpty else { return imageLine }
-        return source + (source.hasSuffix("\n") ? "" : "\n") + "\n" + imageLine
+        // Compare the trailing *byte*, not the trailing Character: Swift treats
+        // "\r\n" as one extended grapheme cluster, so `hasSuffix("\n")` is false for
+        // a CRLF-terminated source and we'd add a newline that is already there.
+        let endsWithNewline = source.utf8.last == 0x0A
+        return source + (endsWithNewline ? "" : "\n") + "\n" + imageLine
     }
 
     /// Tap on the empty canvas below the last block: reuse a trailing empty
