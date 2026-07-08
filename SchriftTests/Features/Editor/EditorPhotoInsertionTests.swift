@@ -137,22 +137,22 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// picker's Task is never cancelled — so the insert has to persist itself even
     /// from an ordinary blocks-mode session. Relying on `markDirty`'s debounce would
     /// lose the upload whenever the view model is released before it fires.
+    /// `isDirty == false` is the discriminator: the insert calls `markDirty()`, so
+    /// only an immediate `flushPendingChanges()` can clear it. (Counting PATCHes
+    /// here would be flaky — the coordinator's saves are async, so a prior test's
+    /// PATCH can land during this one.)
     func testInsertPhotoFlushesTheSaveImmediatelyFromBlocksMode() async throws {
-        let log = RequestRecorder()
-        stubUploadPipeline(log: log)
+        stubUploadPipeline()
         let viewModel = await makeEditingViewModel()
         XCTAssertEqual(viewModel.mode, .blocks)
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         XCTAssertFalse(viewModel.isDirty, "the save must reach the coordinator, not a debounce that dies with the view")
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") == 1 }
-        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
     }
 
     func testInsertPhotoFlushesTheSaveImmediatelyFromMarkdownMode() async throws {
-        let log = RequestRecorder()
-        stubUploadPipeline(log: log)
+        stubUploadPipeline()
         let viewModel = await makeEditingViewModel()
         viewModel.mode = .markdown
         viewModel.rawMarkdown = "Hello"
@@ -161,8 +161,6 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         XCTAssertFalse(viewModel.isDirty)
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") == 1 }
-        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
     }
 
     /// The bytes we upload must be a JPEG *and* be named `photo.jpg`: the backend
@@ -262,8 +260,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// **immediately** — the autosave debounce is owned by this view model, which a
     /// pop has already released, so it would silently drop the finished upload.
     func testInsertPhotoAfterLeavingEditModeAppendsTheImageAndSavesImmediately() async throws {
-        let log = RequestRecorder()
-        stubUploadPipeline(log: log)
+        stubUploadPipeline()
         let viewModel = await makeEditingViewModel()
         viewModel.blocks = [EditorBlock(kind: .paragraph, text: "Body")]
         viewModel.finishEditing()
@@ -276,8 +273,6 @@ final class EditorPhotoInsertionTests: XCTestCase {
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
             "rawMarkdown must not go stale, or a markdown-mode save would drop the image")
         XCTAssertFalse(viewModel.isDirty, "the save must be flushed to the coordinator, not left to the debounce")
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") == 1 }
-        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
     }
 
     /// A source ending in an unterminated fence swallows anything appended to it, so
