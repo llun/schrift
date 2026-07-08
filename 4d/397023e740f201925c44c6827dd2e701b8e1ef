@@ -1,0 +1,33 @@
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_bd016ef1df7174::t_8463f4462d0d1f 892-893
+  s_bd016ef1df7174::t_7f8b194f85f45e 868-891,894-917
+docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md
+  s_bd016ef1df7174::t_67bef9229bde9d 225-246
+Schrift/Features/Editor/EditorViewModel.swift
+  s_bd016ef1df7174::t_8463f4462d0d1f 589-594
+  s_bd016ef1df7174::t_c882fe07d071fe 308-315,360,588
+  s_bd016ef1df7174::t_f24544ecf141e5 1216
+  s_bd016ef1df7174::t_420092dbd3ca01 190-193,197-200,204-211
+  s_bd016ef1df7174::t_cbeddd6711bf71 1193-1197
+  s_bd016ef1df7174::t_eae65babf89d65 268-272
+  s_bd016ef1df7174::t_92b15000f25f3e 87-93
+  s_bd016ef1df7174::t_7c4c03fb657b52 330
+CLAUDE.md
+  s_bd016ef1df7174::t_1cf1a209875b4e 530-538
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4d397023e740f201925c44c6827dd2e701b8e1ef",
+  "prompts": {},
+  "sessions": {
+    "s_bd016ef1df7174": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b275856-0d78-4dc0-ab5d-2e97309bd5de",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
