@@ -414,7 +414,14 @@ branch instead of popping a banner. Outcomes:
   `hasUnsavedLocalContent` follows the same rule (gated on `hasLoadedContent`,
   since `becomeUnavailable` deliberately keeps the draft — a 403 is revoked
   access, not a deletion), so the "Synced X ago" caption never lies about a
-  failed save.
+  failed save. That draft only survives because `becomeUnavailable` **ends the
+  editing session first** (cancels the autosave, clears `isDirty`, drops to
+  `.reading`) and `flushPendingChanges` refuses to run without `hasLoadedContent`
+  — otherwise a 404/403 landing mid-edit would flush the emptied block list and
+  replace the draft with an empty document. A failed save also **pins** the
+  document (every revalidation and pull-to-refresh no-ops while its draft is on
+  screen), so the reading surface's "Couldn't save · tap to retry" caption is
+  load-bearing: it is the only escape when offline, where tap-to-edit is blocked.
   **`pendingDraftClockTolerance` may only discard a draft *stranded by an earlier
   session*** — that is `recoverDrafts`' job, at launch, on a document nobody is
   looking at. A draft whose save failed *this* session is a retry candidate with

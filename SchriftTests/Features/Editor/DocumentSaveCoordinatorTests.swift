@@ -85,10 +85,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
             case "PATCH" where url.hasSuffix("/content/"):
-                if saveDelay > 0 {
-                    Thread.sleep(forTimeInterval: saveDelay)
-                }
-                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil, delay: saveDelay)
             case "PATCH":
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
             default:
@@ -159,8 +156,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
 
         await waitUntil(timeout: 5) { self.isSaved(coordinator.state(for: self.documentID)) }
-        // Give any (incorrect) follow-up a moment to start.
-        try? await Task.sleep(for: .milliseconds(100))
+        await waitAndConfirmNever { self.savesInFlight(log) > 1 }
 
         XCTAssertEqual(savesInFlight(log), 1)
     }
@@ -306,6 +302,26 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         let (coordinator, draftStore, _) = makeCoordinator(backgroundTasks: .noop)
         draftStore.save(PendingDraft(documentID: documentID, title: "A", markdown: "a", updatedAt: Date()))
         coordinator.discardPendingWork(documentID: documentID)
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// A delete purges the local copy, but an in-flight save can land *after* it —
+    /// and `finish`'s success path write-throughs the content cache, recreating the
+    /// entry the delete just removed. Nothing purges it again, so a deleted document
+    /// keeps rendering its full body from retained Search/Shared results.
+    func testSaveLandingAfterADeleteNeverRecreatesTheCacheEntry() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        // The delete happens while the save's PATCH is still on the wire.
+        contentCache.remove(documentID: documentID)
+        coordinator.discardPendingWork(documentID: documentID)
+
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        XCTAssertNil(contentCache.content(for: documentID), "a deleted document keeps no local copy")
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 

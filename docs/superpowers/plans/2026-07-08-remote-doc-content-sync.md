@@ -181,6 +181,33 @@ tests skipped, 0 in 25. One event in 45 is indistinguishable from the control, s
 the mechanism stands. A red run proves causation no more than a green run proves
 correctness — control for the environment *first*. Recorded in `CLAUDE.md`.
 
+**E. Round 4 found two older bugs that this PR's new comments asserted were
+impossible** — which is worse than an ordinary miss, because a false comment is a
+trap for the next reader.
+
+The first is permanent content loss. `startEditing` guards the *entry* to an
+editing session on `hasLoadedContent`; nothing guarded the exit.
+`becomeUnavailable()` cleared `blocks` but left `isDirty`, `mode` and the autosave
+timer alive, so the next flush serialized `[]` and enqueued an **empty document**,
+overwriting the user's draft with `""`. A *transient* 404 (proxy hiccup, brief
+permission flap — `DocsAPIErrorMapper` maps every 404 to `.notFound`) then lets
+`recoverDrafts()` replay that emptiness onto the server. Meanwhile this PR's own
+`hasUnsavedLocalContent` change hid the symptom: `guard hasLoadedContent` makes the
+caption read "Not synced yet" at the exact moment the draft is being emptied. Fix:
+`becomeUnavailable`/`handleDidDelete` end the session before dropping the content,
+and `flushPendingChanges` mirrors `startEditing`'s invariant.
+
+The second: a save landing after a DELETE re-created the content-cache entry
+`handleDidDelete()` had just purged, because `finish()`'s success path
+write-throughs the cache unconditionally. `discardPendingWork` now remembers the id
+and `finish` skips the resurrect.
+
+Round 4 also showed the `.failed` pin had no reachable escape: `saveNow()` is wired
+only to the editing surface, and tap-to-edit is blocked offline — which is when
+saves fail. The reading caption is now "Couldn't save · tap to retry", extracted as
+a pure `syncCaption` resolver, and a failed save beats the offline wording instead
+of hiding behind "Saved on this device".
+
 `waitUntil` also now fails the test on timeout rather than returning silently — a
 stalled wait was surfacing as a confusing assertion failure further down. That
 immediately exposed four `WebLoginCoordinatorTests` using it as a grace period

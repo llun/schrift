@@ -508,14 +508,30 @@ markdown write endpoint**. Understand this before touching the save path:
   `reconcileDraft`'s server-wins rule still installs directly even mid-edit,
   which is why `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`
   — every content swap re-identifies the blocks.
-- **Two invariants keep the full-overwrite save from eating content.** Both were
-  learned the hard way; each has a named regression test.
+- **Four invariants keep the full-overwrite save from eating content.** Every one
+  was learned the hard way; each has a named regression test.
+  0. **Never enqueue a save for content that isn't loaded.** `startEditing` guards
+     the *entry* to an editing session on `hasLoadedContent`; `flushPendingChanges`
+     guards the *exit* on it too, and `becomeUnavailable`/`handleDidDelete` end the
+     session (cancel the autosave, clear `isDirty`) before dropping the content.
+     Without that, a 404/403 landing mid-edit cleared `blocks` while the autosave
+     timer kept ticking — the next flush serialized `[]`, enqueued an **empty
+     document**, and overwrote the user's draft with it; a *transient* 404 then let
+     `recoverDrafts()` replay that emptiness onto the server. Likewise a save
+     landing after a DELETE must not write-through the content cache
+     (`discardPendingWork` remembers the id; `finish` skips the resurrect).
   1. **A stored draft is unsaved work regardless of `displaySource`.** A save
      failing mid-session leaves `.clean` on screen with the user's only copy in
      `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`
-     *before* it switches on `displaySource`, and `hasUnsavedLocalContent`
-     follows the same rule (gated on `hasLoadedContent`, since
-     `becomeUnavailable` deliberately keeps the draft). **`pendingDraftClockTolerance`
+     *before* it switches on `displaySource`. `hasUnsavedLocalContent` follows the
+     same rule, gated on `hasLoadedContent` (a torn-down document claims nothing)
+     — its two guarded draft reads are exhaustive only because `enqueue` is the
+     sole writer of a draft and sets `pendingSave` synchronously; add another
+     writer and it must read the draft unconditionally. A failed save pins the
+     document (every revalidation and pull-to-refresh no-ops while its draft is on
+     screen), so the reading surface's **"Couldn't save · tap to retry" caption is
+     load-bearing** — it is the only way out when offline, where tap-to-edit is
+     blocked. **`pendingDraftClockTolerance`
      may only discard a draft *stranded by an earlier session*** — that is
      `recoverDrafts`' job. A draft whose save failed *this* session is a retry
      candidate the user is looking at, so `reconcileDraft` returns early on
@@ -529,7 +545,7 @@ markdown write endpoint**. Understand this before touching the save path:
      server's pre-save state; installing it resurrects exactly what the save
      replaced, and the next full-overwrite save pushes that back to the server.
      Snapshot `saveCoordinator.saveMarker(documentID:)` *before* issuing the
-     fetch and check `mayPredateSave(_:documentID:)` after — a boolean "was a
+     fetch and check `mayPredateSave(_:)` after — a boolean "was a
      save pending?" is not enough (a save can start *and* settle during the
      await), hence the coordinator's monotonic settled-save count.
 - `displaySource` must never stay pinned at `.pendingSave` once that save has

@@ -65,6 +65,9 @@ final class DocumentSaveCoordinator {
     private var queued: [UUID: PendingSave] = [:]
     /// Monotonic per-document count of saves that have settled (landed or failed).
     private var settledSaves: [UUID: Int] = [:]
+    /// Documents deleted while one of their saves was in flight. That save must not
+    /// resurrect any local copy when it lands.
+    private var discardedDuringSave: Set<UUID> = []
     private var hasRecoveredDrafts = false
 
     init(
@@ -162,11 +165,16 @@ final class DocumentSaveCoordinator {
     }
 
     /// Drops all queued/stored work for a document (delete flow). An already
-    /// in-flight PATCH cannot be meaningfully cancelled; it fails harmlessly
-    /// against the deleted document.
+    /// in-flight PATCH cannot be meaningfully cancelled — but it can still *land*
+    /// before the server processes the DELETE, and `finish`'s success path would
+    /// then write-through the content cache, recreating the entry the delete just
+    /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
         queued[documentID] = nil
         draftStore.remove(documentID: documentID)
+        if inFlight[documentID] != nil {
+            discardedDuringSave.insert(documentID)
+        }
     }
 
     private func start(documentID: UUID, save: PendingSave) {
@@ -190,6 +198,13 @@ final class DocumentSaveCoordinator {
         // Any revalidation fetch still in flight was issued before this save
         // settled, so its response may predate it (see `mayPredateSave`).
         settledSaves[documentID, default: 0] += 1
+        // Deleted while this save was on the wire: leave no local trace, whatever
+        // the server made of the PATCH. Anything queued behind it is already gone.
+        if discardedDuringSave.remove(documentID) != nil {
+            queued[documentID] = nil
+            states[documentID] = .idle
+            return
+        }
         if error == nil {
             states[documentID] = .saved(Date())
             if let draft = draftStore.draft(for: documentID),

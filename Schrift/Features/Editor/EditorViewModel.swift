@@ -147,14 +147,20 @@ final class EditorViewModel {
     /// Nothing counts once the document is off screen: `becomeUnavailable` keeps
     /// the draft on purpose (a 403 is revoked access, not a deletion) and the
     /// caption must not claim unsaved content for a document that isn't there.
-    /// Read on every render of the reading surface (a 60 s `TimelineView` tick),
-    /// so the in-memory checks come first: `storedDraft` decodes the whole draft
-    /// store out of UserDefaults, and the common clean case must never pay for it.
+    ///
+    /// This is read on every render of the reading surface (a 60 s `TimelineView`
+    /// tick) and `storedDraft` decodes the whole draft store out of UserDefaults,
+    /// so the in-memory checks come first. The two guarded reads below are
+    /// *exhaustive*, not a shortcut: `enqueue` is the **only** writer of a draft
+    /// (`PendingDraftStore.save` has no other caller) and it sets `pendingSave`
+    /// synchronously, so `draft != nil && !isDirty && pendingSave == nil` implies
+    /// either the save failed (`.failed`), or the draft was stranded by an earlier
+    /// session — and `restoreLocalContent` always installs *that* as `.draft`.
+    /// Add another `draftStore.save` caller, or make `enqueue` async, and this
+    /// stops being exhaustive: drop the guards and read the draft unconditionally.
     var hasUnsavedLocalContent: Bool {
         guard hasLoadedContent else { return false }
         if isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil { return true }
-        // A draft only outlives its save when that save failed; otherwise the
-        // draft on disk is exactly the `.draft` source already on screen.
         if case .failed = saveCoordinator.state(for: documentID) {
             return saveCoordinator.storedDraft(documentID: documentID) != nil
         }
@@ -294,6 +300,22 @@ final class EditorViewModel {
         lastSyncedAt = nil
         updateAvailable = false
         pendingFreshContent = nil
+        // End the editing session before the content goes. `startEditing` guards
+        // the *entry* on hasLoadedContent; nothing guarded the exit, so a 404/403
+        // landing mid-edit left `isDirty` and the autosave timer alive over an
+        // emptied block list. The next flush then serialized `[]`, enqueued an
+        // empty document, and overwrote the user's draft with it — which a
+        // *transient* 404 would let `recoverDrafts()` replay onto the server.
+        // Their in-flight edit is unsavable either way; a stored draft survives.
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        dirtySince = nil
+        isDirty = false
+        mode = .reading
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
         blocks = []
         rawMarkdown = ""
         displayedSourceMarkdown = ""
@@ -336,13 +358,13 @@ final class EditorViewModel {
         case .pendingSave, .clean, .draft:
             // `.pendingSave` reaching here means the save that owned the screen
             // landed (a failed one leaves the draft caught above) and this fetch
-            // postdates it. `.draft` means the draft went while we awaited —
-            // `recoverDrafts` discarding it, or a delete — never a save, which
-            // would have bumped the settled count and returned at
-            // `mayPredateLocalSave` above. Either way nothing local is left to
-            // protect, so the screen holds an ordinary clean copy. Leaving the
-            // source pinned would strand it forever: every later revalidation
-            // *and* every pull-to-refresh would no-op in silence.
+            // postdates it. `.draft` means the draft is gone but nothing reset the
+            // source — a save cleared it (the marker is per-fetch, so a fetch
+            // issued *after* that save reads a fresh count and arrives here),
+            // `recoverDrafts` discarded it, or the document was deleted. Either way
+            // nothing local is left to protect, so the screen holds an ordinary
+            // clean copy. Leaving the source pinned would strand it forever: every
+            // later revalidation *and* every pull-to-refresh would no-op in silence.
             displaySource = .clean
             reconcileClean(formatted)
         case .none:
@@ -490,6 +512,12 @@ final class EditorViewModel {
         // Discard any in-flight children snapshot — landing after the purge,
         // it would re-cache the list for a deleted document.
         childrenGeneration += 1
+        // End the session before `.onDisappear`'s flush can write a fresh draft
+        // (and PATCH) for a document that no longer exists.
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        dirtySince = nil
+        isDirty = false
         saveCoordinator.discardPendingWork(documentID: documentID)
         // A photo upload can still be in flight and would otherwise re-save (and
         // re-draft) the deleted document when it lands. `hasLoadedContent` stays
@@ -1117,7 +1145,11 @@ final class EditorViewModel {
         autosaveTask?.cancel()
         autosaveTask = nil
         dirtySince = nil
-        guard isDirty else { return }
+        // `hasLoadedContent` mirrors `startEditing`'s invariant at the exit: with
+        // no content loaded, `currentMarkdown()` is the empty document, and a
+        // full-overwrite save of that destroys the server copy. `becomeUnavailable`
+        // already ends the session; this is the funnel that must never be bypassed.
+        guard hasLoadedContent, isDirty else { return }
         isDirty = false
         let markdown = currentMarkdown()
         if markdown == savedMarkdown, title == savedTitle {

@@ -49,7 +49,22 @@ final class MockURLProtocol: URLProtocol {
     /// the test *process* and blames whichever unrelated test was running.
     nonisolated(unsafe) private static var pendingDeliveries: [DispatchWorkItem] = []
 
-    private var isCancelled = false
+    /// Written from `stopLoading()` on URLSession's loading thread, read from the
+    /// deferred delivery on the main queue — guarded so TSan stays quiet.
+    private let cancelLock = NSLock()
+    private var _isCancelled = false
+    private var isCancelled: Bool {
+        get {
+            cancelLock.lock()
+            defer { cancelLock.unlock() }
+            return _isCancelled
+        }
+        set {
+            cancelLock.lock()
+            defer { cancelLock.unlock() }
+            _isCancelled = newValue
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }

@@ -547,6 +547,34 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isEditing, "editing disabled in the terminal state")
     }
 
+    /// `startEditing` guards the *entry* to an editing session on
+    /// `hasLoadedContent`; nothing guarded the exit. A 404/403 landing mid-edit
+    /// cleared the blocks but left `isDirty`, `mode` and the autosave timer alive,
+    /// so the next flush serialized the now-empty block list and enqueued it —
+    /// replacing the user's draft with an empty document, and (after a *transient*
+    /// 404) letting `recoverDrafts()` replay that emptiness onto the server.
+    func testUnavailableMidEditNeverEnqueuesAnEmptyDocument() async {
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Mine"))
+        stubOffline()
+        await viewModel.load()  // cached copy on screen, revalidation failed silently
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine edited")
+        XCTAssertTrue(viewModel.isDirty)
+
+        stubStatus(404)
+        await viewModel.load()  // the document is gone; the editing session is not
+        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+
+        viewModel.flushPendingChanges()  // autosave, .onDisappear, or scenePhase
+
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "never save an emptied document")
+        XCTAssertNil(draftStore.draft(for: documentID), "the draft is not replaced by an empty one")
+        XCTAssertFalse(viewModel.isEditing, "the editing session ends with the document")
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
     func testRevalidate403PurgesCacheToo() async {
         // Privacy: revoked-access content must not stay readable on disk.
         let (viewModel, _, _, contentCache) = makeEnvironment()
