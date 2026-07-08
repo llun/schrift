@@ -1,0 +1,157 @@
+import XCTest
+
+@testable import Schrift
+
+final class AttachmentEndpointsClientTests: XCTestCase {
+    private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
+    private let documentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+    override func tearDown() {
+        MockURLProtocol.stubHandler = nil
+        MockURLProtocol.lastRequest = nil
+        super.tearDown()
+    }
+
+    private func makeClient() -> DocsAPIClient {
+        DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+    }
+
+    // MARK: - Upload
+
+    func testUploadAttachmentPostsMultipartFileAndReturnsFilePath() async throws {
+        let responseBody = Data(
+            #"{"file": "/api/v1.0/documents/11111111-1111-4111-8111-111111111111/media-check/?key=11111111-1111-4111-8111-111111111111%2Fattachments%2F22222222-2222-4222-8222-222222222222.jpg"}"#
+                .utf8)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: responseBody, error: nil) }
+        let payload = Data([0xFF, 0xD8, 0xFF, 0xE0])
+
+        let file = try await makeClient().uploadAttachment(
+            documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: payload)
+
+        XCTAssertTrue(file.hasSuffix("2222.jpg"))
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/\(documentID.uuidString.lowercased())/attachment-upload/")
+
+        let contentType = try XCTUnwrap(request.value(forHTTPHeaderField: "Content-Type"))
+        let prefix = "multipart/form-data; boundary="
+        XCTAssertTrue(contentType.hasPrefix(prefix))
+        let boundary = String(contentType.dropFirst(prefix.count))
+
+        let body = try XCTUnwrap(bodyData(from: request))
+        let bodyString = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(bodyString.contains("--\(boundary)\r\n"))
+        XCTAssertTrue(bodyString.contains(#"Content-Disposition: form-data; name="file"; filename="photo.jpg""#))
+        XCTAssertTrue(bodyString.contains("Content-Type: image/jpeg"))
+        XCTAssertTrue(bodyString.contains("--\(boundary)--\r\n"))
+        XCTAssertNotNil(body.range(of: payload))
+    }
+
+    /// The upload is a non-GET request, so it must route through `send` and pick
+    /// up the CSRF/Origin/Referer headers Django's middleware requires.
+    func testUploadAttachmentSendsCSRFAndOriginHeaders() async throws {
+        let responseBody = Data(#"{"file": "/api/v1.0/documents/1/media-check/?key=1%2Fattachments%2F2.jpg"}"#.utf8)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: responseBody, error: nil) }
+        let cookie = HTTPCookie(properties: [
+            .domain: "docs.example.org", .path: "/", .name: "csrftoken", .value: "tok123",
+        ])!
+        let client = DocsAPIClient(
+            baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [cookie] })
+
+        _ = try await client.uploadAttachment(
+            documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: Data([0xFF]))
+
+        let request = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-CSRFToken"), "tok123")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://docs.example.org/")
+    }
+
+    func testUploadFailureMapsToDocsAPIError() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 400, headers: [:], body: Data(), error: nil) }
+        do {
+            _ = try await makeClient().uploadAttachment(
+                documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: Data())
+            XCTFail("Expected DocsAPIError")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 400))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testUploadForbiddenMapsToForbidden() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+        do {
+            _ = try await makeClient().uploadAttachment(
+                documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: Data())
+            XCTFail("Expected DocsAPIError")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .forbidden)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    // MARK: - Media check
+
+    func testCheckMediaDecodesReadyResponse() async throws {
+        let responseBody = Data(#"{"status": "ready", "file": "/media/1111/attachments/2222.jpg"}"#.utf8)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
+
+        let response = try await makeClient().checkMedia(
+            path: "/api/v1.0/documents/1111/media-check/?key=1111%2Fattachments%2F2222.jpg")
+
+        XCTAssertEqual(response, MediaCheckResponse(status: "ready", file: "/media/1111/attachments/2222.jpg"))
+        // The server-provided path is rooted, so it must resolve against the host
+        // root — NOT get the /api/v1.0/ base appended a second time.
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/1111/media-check/?key=1111%2Fattachments%2F2222.jpg")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "GET")
+    }
+
+    func testCheckMediaDecodesProcessingResponseWithNoFile() async throws {
+        let responseBody = Data(#"{"status": "processing"}"#.utf8)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
+
+        let response = try await makeClient().checkMedia(path: "/api/v1.0/documents/1/media-check/?key=k")
+
+        XCTAssertEqual(response, MediaCheckResponse(status: "processing", file: nil))
+        XCTAssertNotEqual(response.status, MediaCheckResponse.readyStatus)
+    }
+
+    // MARK: - Pure helpers
+
+    func testMultipartBodyIsDeterministicAndCRLFDelimited() {
+        let body = multipartFormDataBody(
+            boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg",
+            fileData: Data("abc".utf8))
+        XCTAssertEqual(
+            String(decoding: body, as: UTF8.self),
+            "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"photo.jpg\"\r\n"
+                + "Content-Type: image/jpeg\r\n\r\nabc\r\n--B--\r\n")
+    }
+
+    func testMultipartBodyPreservesBinaryPayloadExactly() {
+        // Raw JPEG bytes must survive untouched — no UTF-8 round trip. The
+        // payload here contains a NUL and bytes that are invalid UTF-8.
+        let payload = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46])
+        let body = multipartFormDataBody(
+            boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg", fileData: payload)
+
+        XCTAssertNotNil(body.range(of: payload))
+        let trailer = Data("\r\n--B--\r\n".utf8)
+        XCTAssertEqual(body.suffix(trailer.count), trailer)
+    }
+
+    func testAttachmentKeyDecodesPercentEncodedKey() {
+        XCTAssertEqual(
+            attachmentKey(fromMediaCheckPath: "/api/v1.0/documents/1/media-check/?key=1%2Fattachments%2F2.jpg"),
+            "1/attachments/2.jpg")
+        XCTAssertNil(attachmentKey(fromMediaCheckPath: "/api/v1.0/documents/1/media-check/"))
+        XCTAssertNil(attachmentKey(fromMediaCheckPath: "not a url ?? key"))
+    }
+}

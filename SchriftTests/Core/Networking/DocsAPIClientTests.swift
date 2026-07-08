@@ -235,4 +235,19 @@ final class DocsAPIClientTests: XCTestCase {
         XCTAssertNil(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"))
         XCTAssertNil(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"))
     }
+
+    // MARK: - Server-relative URL resolution
+
+    func testAbsoluteServerURLResolvesAgainstServerRootNotAPIBase() async {
+        let url = await makeClient().absoluteServerURL(for: "/media/1111/attachments/2222.jpg")
+        XCTAssertEqual(url?.absoluteString, "https://docs.example.org/media/1111/attachments/2222.jpg")
+    }
+
+    func testAbsoluteServerURLPreservesPort() async {
+        let client = DocsAPIClient(
+            baseURL: URL(string: "https://docs.example.org:8443/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let url = await client.absoluteServerURL(for: "/media/a.jpg")
+        XCTAssertEqual(url?.absoluteString, "https://docs.example.org:8443/media/a.jpg")
+    }
 }

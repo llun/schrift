@@ -34,6 +34,13 @@ actor DocsAPIClient {
         return origin
     }
 
+    /// Resolves a server-relative path (e.g. the `/media/…` value returned by
+    /// media-check) against the **server origin**, not the `/api/v1.0/` base.
+    /// Lives here because `baseURL` is private.
+    func absoluteServerURL(for path: String) -> URL? {
+        URL(string: path, relativeTo: baseURL)?.absoluteURL
+    }
+
     func get<T: Decodable>(_ path: String) async throws -> T {
         try await send(path: path, method: "GET", body: nil)
     }
