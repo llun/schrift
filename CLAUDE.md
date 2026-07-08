@@ -326,7 +326,14 @@ new code reads like the surrounding code.
   resolves against the host root and silently drops `/api/v1.0/`). The **one
   intentional exception** is `checkMedia(path:)`, which replays a rooted
   `/api/v1.0/…` path the *server* handed us verbatim; `absoluteServerURL(for:)`
-  relies on the same rule to resolve `/media/…` against the origin.
+  relies on the same rule to resolve `/media/…` against the origin. Because those
+  two are the **only** places a non-app-authored string becomes a URL, both pin it
+  to the server origin: `isSameOriginPath` rejects `//evil.com/x` and any scheme
+  before a request is issued, and `absoluteServerURL` returns nil unless
+  scheme+host+port match `baseURL`. `URL(string:relativeTo:)` does **not** do this
+  for you — `//evil.com/x` resolves to `https://evil.com/x`. Keep the guards if
+  either ever becomes non-GET: `performRequest` would send the CSRF token and
+  `Origin` to whatever host the path names.
 - **Attachments** (`AttachmentEndpoints.swift`): `POST documents/{id}/attachment-upload/`
   is multipart with **exactly one field, `file`** — `file_name`/`content_type`/
   `expected_extension`/`is_unsafe` are computed server-side and are *not* client

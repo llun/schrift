@@ -223,8 +223,9 @@ struct EditorView: View {
                 .padding(.bottom, DocsSpacing.spaceXS)
             }
         }
-        // The out-of-process system picker: no photo-library usage description
-        // and no project.yml change are needed.
+        // The out-of-process system picker: no photo-library usage description and
+        // no project.yml change are needed. Do NOT add `photoLibrary: .shared()` —
+        // that makes it in-process and would require NSPhotoLibraryUsageDescription.
         .photosPicker(isPresented: $viewModel.isPhotoPickerPresented, selection: $selectedPhotoItem, matching: .images)
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }

@@ -123,28 +123,117 @@ final class AttachmentEndpointsClientTests: XCTestCase {
         XCTAssertNotEqual(response.status, MediaCheckResponse.readyStatus)
     }
 
+    // MARK: - Media-check path validation
+
+    /// The media-check path is the one request URL the *server* chooses. It must
+    /// not be able to steer our HTTP client off-origin.
+    func testCheckMediaRejectsOffOriginPathsWithoutIssuingARequest() async {
+        for hostile in [
+            "//evil.com/x", "https://evil.com/x", "http://evil.com/x", "javascript:alert(1)",
+            "file:///etc/passwd", "api/v1.0/relative",
+        ] {
+            MockURLProtocol.lastRequest = nil
+            MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
+            do {
+                _ = try await makeClient().checkMedia(path: hostile)
+                XCTFail("Expected checkMedia to reject \(hostile)")
+            } catch let error as DocsAPIError {
+                guard case .network = error else {
+                    XCTFail("Expected .network for \(hostile), got \(error)")
+                    continue
+                }
+            } catch {
+                XCTFail("Unexpected error for \(hostile): \(error)")
+            }
+            XCTAssertNil(MockURLProtocol.lastRequest, "checkMedia must not issue a request for \(hostile)")
+        }
+    }
+
+    func testIsSameOriginPathAcceptsOnlyPathAbsoluteReferences() {
+        XCTAssertTrue(isSameOriginPath("/api/v1.0/documents/1/media-check/?key=k"))
+        XCTAssertTrue(isSameOriginPath("/media/a.jpg"))
+        XCTAssertFalse(isSameOriginPath("//evil.com/x"))
+        XCTAssertFalse(isSameOriginPath("https://evil.com/x"))
+        XCTAssertFalse(isSameOriginPath("relative/path"))
+        XCTAssertFalse(isSameOriginPath(""))
+    }
+
     // MARK: - Pure helpers
 
-    func testMultipartBodyIsDeterministicAndCRLFDelimited() {
-        let body = multipartFormDataBody(
-            boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg",
-            fileData: Data("abc".utf8))
+    func testMultipartBodyIsDeterministicAndCRLFDelimited() throws {
+        let body = try XCTUnwrap(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg",
+                fileData: Data("abc".utf8)))
         XCTAssertEqual(
             String(decoding: body, as: UTF8.self),
             "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"photo.jpg\"\r\n"
                 + "Content-Type: image/jpeg\r\n\r\nabc\r\n--B--\r\n")
     }
 
-    func testMultipartBodyPreservesBinaryPayloadExactly() {
+    func testMultipartBodyPreservesBinaryPayloadExactly() throws {
         // Raw JPEG bytes must survive untouched — no UTF-8 round trip. The
         // payload here contains a NUL and bytes that are invalid UTF-8.
         let payload = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46])
-        let body = multipartFormDataBody(
-            boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg", fileData: payload)
+        let body = try XCTUnwrap(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg",
+                fileData: payload))
 
         XCTAssertNotNil(body.range(of: payload))
         let trailer = Data("\r\n--B--\r\n".utf8)
         XCTAssertEqual(body.suffix(trailer.count), trailer)
+    }
+
+    /// The sole caller passes constants, but the signature invites a future caller
+    /// to pass the picked asset's real filename — which is user-controlled. A
+    /// quote or CRLF would break out of the multipart (or HTTP) header.
+    ///
+    /// Note `"\r\n"` is ONE Swift `Character` (an extended grapheme cluster), so a
+    /// `Character`-based check silently misses it. Lone CR and lone LF are covered
+    /// too, to pin that the guard compares unicode scalars.
+    func testMultipartBodyRejectsHeaderInjectingTokens() {
+        let payload = Data("abc".utf8)
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "a\rb", contentType: "image/jpeg", fileData: payload))
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "a\nb", contentType: "image/jpeg", fileData: payload))
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "fi\"le", fileName: "photo.jpg", contentType: "image/jpeg",
+                fileData: payload))
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "a\"; name=\"evil", contentType: "image/jpeg",
+                fileData: payload))
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "a\r\nX-Evil: 1", contentType: "image/jpeg",
+                fileData: payload))
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg\r\nX-Evil: 1",
+                fileData: payload))
+        XCTAssertNil(
+            multipartFormDataBody(
+                boundary: "B\r\n", fieldName: "file", fileName: "photo.jpg", contentType: "image/jpeg",
+                fileData: payload))
+    }
+
+    func testUploadAttachmentRejectsHeaderInjectingFileName() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: Data(), error: nil) }
+        do {
+            _ = try await makeClient().uploadAttachment(
+                documentID: documentID, fileName: "a\r\nX-Evil: 1", contentType: "image/jpeg", data: Data([0xFF]))
+            XCTFail("Expected DocsAPIError")
+        } catch let error as DocsAPIError {
+            guard case .network = error else { return XCTFail("Expected .network, got \(error)") }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertNil(MockURLProtocol.lastRequest)
     }
 
     func testAttachmentKeyDecodesPercentEncodedKey() {

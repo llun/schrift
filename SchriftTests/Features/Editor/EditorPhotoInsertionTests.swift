@@ -206,13 +206,81 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
     // MARK: - Readiness poll
 
-    func testInsertPhotoFallsBackToKeyDerivedURLWhenMediaCheckNeverReady() async throws {
-        stubUploadPipeline(mediaCheckStatus: "processing")
+    /// A ready-on-first-try attachment must be polled exactly once. Without this
+    /// the ready path and the key-derived fallback are indistinguishable — both
+    /// yield the same URL — so a regression that never polled, or polled forever,
+    /// would still pass.
+    func testReadyMediaCheckIsPolledExactlyOnce() async throws {
+        let log = RequestRecorder()
+        stubUploadPipeline(log: log)
         let viewModel = await makeEditingViewModel()
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        // The upload already succeeded — the URL must never be lost.
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "media-check"), 1)
+        XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
+    }
+
+    func testInsertPhotoFallsBackToKeyDerivedURLWhenMediaCheckNeverReady() async throws {
+        let log = RequestRecorder()
+        stubUploadPipeline(mediaCheckStatus: "processing", log: log)
+        let viewModel = await makeEditingViewModel()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        // The poll is bounded: it gives up after a fixed number of attempts…
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "media-check"), 5)
+        // …and the upload already succeeded, so the URL must never be lost.
+        XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    /// The upload succeeded but the response carried a path we can't derive a key
+    /// from, so there is no URL to embed: fail loudly rather than insert garbage.
+    func testInsertPhotoErrorsWhenTheUploadResponseHasNoUsableKey() async throws {
+        MockURLProtocol.stubHandler = { [contentBody = formattedBody(content: "Body text.")] request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("attachment-upload") {
+                let body = #"{"file": "/api/v1.0/documents/1/media-check/"}"#  // no ?key=
+                return .init(statusCode: 201, headers: [:], body: Data(body.utf8), error: nil)
+            }
+            if url.contains("media-check") {
+                return .init(statusCode: 200, headers: [:], body: Data(#"{"status": "processing"}"#.utf8), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: contentBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let viewModel = await makeEditingViewModel()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertFalse(viewModel.blocks.contains { if case .image = $0.kind { return true } else { return false } })
+    }
+
+    func testMediaCheckServerErrorsStillFallBackToTheKeyDerivedURL() async throws {
+        MockURLProtocol.stubHandler = { [contentBody = formattedBody(content: "Body text.")] request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("attachment-upload") {
+                let docID = "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b"
+                let body =
+                    "{\"file\": \"/api/v1.0/documents/\(docID)/media-check/?key=\(docID)%2Fattachments%2F22222222-2222-4222-8222-222222222222.jpg\"}"
+                return .init(statusCode: 201, headers: [:], body: Data(body.utf8), error: nil)
+            }
+            if url.contains("media-check") {
+                return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: contentBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let viewModel = await makeEditingViewModel()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
         XCTAssertNil(viewModel.errorMessage)
     }
@@ -312,6 +380,37 @@ final class EditorPhotoInsertionTests: XCTestCase {
         viewModel.requestPhotoInsertion()
 
         XCTAssertFalse(viewModel.isPhotoPickerPresented)
+    }
+
+    /// The formatting-bar button is disabled while uploading, but the slash menu
+    /// stays live. Selecting Photo then must NOT consume the "/photo" the user
+    /// typed, or the selection silently eats their text and opens nothing.
+    func testSelectingThePhotoSlashItemWhileUploadingLeavesTheTypedTextIntact() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.blocks = [EditorBlock(kind: .paragraph, text: "/photo")]
+        viewModel.focusedBlockID = viewModel.blocks[0].id
+        viewModel.slashQueryText = "photo"
+        viewModel.isUploadingPhoto = true
+
+        viewModel.applySlashSelection(try XCTUnwrap(allSlashMenuItems.first { $0.action == .insertPhoto }))
+
+        XCTAssertFalse(viewModel.isPhotoPickerPresented)
+        XCTAssertEqual(viewModel.blocks[0].text, "/photo")
+        XCTAssertEqual(viewModel.slashQueryText, "photo")
+    }
+
+    func testSelectingAConvertItemWhileUploadingStillWorks() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.blocks = [EditorBlock(kind: .paragraph, text: "/quote")]
+        viewModel.focusedBlockID = viewModel.blocks[0].id
+        viewModel.isUploadingPhoto = true
+
+        viewModel.applySlashSelection(try XCTUnwrap(allSlashMenuItems.first { $0.id == "quote" }))
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .quote)
+        XCTAssertEqual(viewModel.blocks[0].text, "")
     }
 
     func testSelectingThePhotoSlashItemPresentsThePickerAndConsumesTheQuery() async throws {

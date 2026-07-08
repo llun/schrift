@@ -250,4 +250,34 @@ final class DocsAPIClientTests: XCTestCase {
         let url = await client.absoluteServerURL(for: "/media/a.jpg")
         XCTAssertEqual(url?.absoluteString, "https://docs.example.org:8443/media/a.jpg")
     }
+
+    /// The path is server-controlled and gets embedded in a persisted, shared
+    /// document. `URL(string:relativeTo:)` will happily leave the origin, so the
+    /// resolver must pin scheme + host + port.
+    func testAbsoluteServerURLRejectsOffOriginPaths() async {
+        let client = makeClient()
+        for hostile in [
+            "//evil.com/x.jpg",  // protocol-relative authority
+            "https://evil.com/x.jpg",  // absolute, other host
+            "http://docs.example.org/x.jpg",  // scheme downgrade
+            "javascript:alert(1)",
+            "data:image/svg+xml;base64,AAAA",
+            "file:///etc/passwd",
+            "///evil.com/x",
+        ] {
+            let url = await client.absoluteServerURL(for: hostile)
+            XCTAssertNil(url, "absoluteServerURL must reject \(hostile), got \(String(describing: url))")
+        }
+    }
+
+    func testAbsoluteServerURLRejectsAPortChange() async {
+        let url = await makeClient().absoluteServerURL(for: "https://docs.example.org:8443/media/a.jpg")
+        XCTAssertNil(url)
+    }
+
+    /// Dot segments normalize within the origin, so they stay allowed.
+    func testAbsoluteServerURLAllowsPathTraversalThatStaysOnOrigin() async {
+        let url = await makeClient().absoluteServerURL(for: "/media/../../evil")
+        XCTAssertEqual(url?.host, "docs.example.org")
+    }
 }

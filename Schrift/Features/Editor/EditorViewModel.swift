@@ -736,6 +736,10 @@ final class EditorViewModel {
     /// consuming the "/query" text.
     func applySlashSelection(_ item: SlashMenuItem) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
+        // Photo is the one item that can decline: while an upload is in flight the
+        // picker won't open. Bail out *before* consuming the "/photo" text, or the
+        // selection would silently eat what the user typed and do nothing.
+        if case .insertPhoto = item.action, !canInsertPhoto { return }
         blocks[index].text = ""
         slashQueryText = nil
         switch item.action {
@@ -759,9 +763,13 @@ final class EditorViewModel {
 
     // MARK: - Photo insertion
 
+    /// Editing may only begin once content has loaded, and one upload at a time.
+    /// Both photo entry points share this gate.
+    var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto }
+
     /// Entry point for both the formatting-bar button and the slash-menu item.
     func requestPhotoInsertion() {
-        guard hasLoadedContent, !isUploadingPhoto else { return }
+        guard canInsertPhoto else { return }
         isPhotoPickerPresented = true
     }
 
@@ -770,7 +778,7 @@ final class EditorViewModel {
     /// silent no-op; any failure sets friendly copy and inserts nothing, so a
     /// broken upload can never leave a placeholder in the document.
     func insertPhoto(loadingData: @Sendable () async throws -> Data?) async {
-        guard hasLoadedContent, !isUploadingPhoto else { return }
+        guard canInsertPhoto else { return }
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
         do {
