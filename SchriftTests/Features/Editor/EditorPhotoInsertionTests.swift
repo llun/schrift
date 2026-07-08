@@ -357,7 +357,11 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the authored source must survive untouched")
         XCTAssertFalse(
             viewModel.rawMarkdown.contains("```\n```"), "we must not invent an empty code block to make room")
-        XCTAssertFalse(viewModel.isDirty, "nothing changed, so nothing may be enqueued")
+        // Not `isDirty`: the `defer`'d `flushPendingChanges()` clears it before the test
+        // observes it, so it would pass even while a swallowed-image draft was enqueued.
+        // `enqueue` writes the draft synchronously, so its absence is the real evidence.
+        XCTAssertNil(viewModel.saveCoordinator.storedDraft(documentID: documentID))
+        XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
     }
 
     /// The verification counts images rather than asking `contains`: a document that
