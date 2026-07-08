@@ -40,25 +40,6 @@ private func autolinkBareURLs(in attributed: inout AttributedString) {
     }
 }
 
-/// A block whose entire content is a single `![alt](url)` image tag with an
-/// `http(s)` target. Standalone images are parsed as `.unknown` blocks (so the
-/// save round-trip preserves them verbatim); the reader renders them as images.
-/// Returns `nil` for non-images, relative/non-http URLs, or images with any
-/// trailing content (which stay verbatim so nothing is silently dropped).
-func parseStandaloneImage(_ text: String) -> (alt: String, url: URL)? {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")"), !trimmed.contains("\n") else { return nil }
-    guard let separator = trimmed.range(of: "](") else { return nil }
-
-    let alt = String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<separator.lowerBound])
-    let urlString = String(trimmed[separator.upperBound..<trimmed.index(before: trimmed.endIndex)])
-    guard !alt.contains("]"), !urlString.isEmpty else { return nil }
-    guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
-        scheme == "http" || scheme == "https"
-    else { return nil }
-    return (alt, url)
-}
-
 /// True when an `.unknown` block is plain prose that spilled across lines (e.g.
 /// a paragraph with a hard line break) and should render as rich inline text
 /// rather than verbatim monospace. Tables (`|`), HTML (`<`), standalone images
@@ -156,10 +137,17 @@ struct MarkdownBlockView: View {
                 .frame(height: 1)
                 .padding(.vertical, DocsSpacing.spaceXS)
 
+        case .image(let alt, let url):
+            if let imageURL = URL(string: url) {
+                MarkdownImageView(alt: alt, url: imageURL)
+            } else {
+                Text("![\(alt)](\(url))")
+                    .font(DocsFont.code)
+                    .foregroundStyle(DocsColor.textPrimary)
+            }
+
         case .unknown:
-            if let image = parseStandaloneImage(block.text) {
-                MarkdownImageView(alt: image.alt, url: image.url)
-            } else if unknownRendersAsProse(block.text) {
+            if unknownRendersAsProse(block.text) {
                 Text(markdownInlineText(block.text))
                     .font(DocsFont.body)
                     .foregroundStyle(DocsColor.textPrimary)
@@ -237,7 +225,7 @@ struct MarkdownImageView: View {
             MarkdownBlockView(
                 block: EditorBlock(kind: .unknown, text: "Line one with https://a.example\nLine two continues."))
             MarkdownBlockView(
-                block: EditorBlock(kind: .unknown, text: "![diagram](https://docs.llun.dev/media/sample.png)"))
+                block: EditorBlock(kind: .image(alt: "diagram", url: "https://docs.llun.dev/media/sample.png")))
         }
         .padding()
     }

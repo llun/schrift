@@ -44,49 +44,8 @@ final class MarkdownBlockViewTests: XCTestCase {
         XCTAssertTrue(String(markdownInlineText("Line one\nLine two").characters).contains("\n"))
     }
 
-    // MARK: - Standalone image parsing
-
-    func testParsesImage() {
-        let parsed = parseStandaloneImage("![photo.png](https://docs.llun.dev/media/x.png)")
-        XCTAssertEqual(parsed?.alt, "photo.png")
-        XCTAssertEqual(parsed?.url, URL(string: "https://docs.llun.dev/media/x.png"))
-    }
-
-    func testParsesImageWithSpacesInAlt() {
-        let parsed = parseStandaloneImage("![photo (1).png](https://docs.llun.dev/a.png)")
-        XCTAssertEqual(parsed?.alt, "photo (1).png")
-        XCTAssertEqual(parsed?.url, URL(string: "https://docs.llun.dev/a.png"))
-    }
-
-    func testParsesImageWithEmptyAlt() {
-        XCTAssertEqual(parseStandaloneImage("![](https://a.dev/b.png)")?.alt, "")
-    }
-
-    func testRejectsNonHttpImageURL() {
-        XCTAssertNil(parseStandaloneImage("![x](file:///etc/passwd)"))
-        XCTAssertNil(parseStandaloneImage("![x](/relative/path.png)"))
-    }
-
-    func testRejectsImageWithEmptyURL() {
-        XCTAssertNil(parseStandaloneImage("![alt]()"))
-    }
-
-    func testRejectsImageWithBracketInAlt() {
-        XCTAssertNil(parseStandaloneImage("![a]b](https://a.dev/x.png)"))
-    }
-
-    func testRejectsImageWithTrailingText() {
-        XCTAssertNil(parseStandaloneImage("![x](https://a.dev/b.png) caption"))
-    }
-
-    func testRejectsMultiLineImage() {
-        XCTAssertNil(parseStandaloneImage("![x](https://a.dev/b.png)\nmore"))
-    }
-
-    func testNonImageReturnsNil() {
-        XCTAssertNil(parseStandaloneImage("just text"))
-        XCTAssertNil(parseStandaloneImage("[a link](https://a.dev)"))
-    }
+    // Standalone-image classification now lives in the parser
+    // (`parseImageLine` → `.image` blocks); see MarkdownParserTests.
 
     // MARK: - Unknown-block prose detection
 

@@ -184,11 +184,118 @@ final class MarkdownParserTests: XCTestCase {
         assertParses(table, [EditorBlock(kind: .unknown, text: table)])
     }
 
-    func testImageLineBecomesUnknown() {
+    // MARK: - Standalone images
+
+    func testStandaloneImageLineBecomesImageBlock() {
         assertParses(
             "![diagram](https://example.com/d.png)",
+            [EditorBlock(kind: .image(alt: "diagram", url: "https://example.com/d.png"))])
+    }
+
+    func testImageWithEmptyAltBecomesImageBlock() {
+        assertParses(
+            "![](https://example.com/d.png)",
+            [EditorBlock(kind: .image(alt: "", url: "https://example.com/d.png"))])
+    }
+
+    func testImageWithRelativeURLStaysUnknown() {
+        assertParses("![x](/media/a.png)", [EditorBlock(kind: .unknown, text: "![x](/media/a.png)")])
+    }
+
+    func testImageWithNonHTTPSchemeStaysUnknown() {
+        assertParses(
+            "![x](javascript:alert(1))",
+            [EditorBlock(kind: .unknown, text: "![x](javascript:alert(1))")])
+        assertParses(
+            "![x](file:///etc/passwd)",
+            [EditorBlock(kind: .unknown, text: "![x](file:///etc/passwd)")])
+    }
+
+    func testImageWithEmptyURLStaysUnknown() {
+        // "![alt]()" is also the tightest index-arithmetic case: the url slice is
+        // an empty range sitting exactly on the closing paren.
+        assertParses("![alt]()", [EditorBlock(kind: .unknown, text: "![alt]()")])
+    }
+
+    func testImageURLContainingBracketStaysUnknown() {
+        // The alt/url split takes the *first* "](", so a "]" inside the url means
+        // the split was ambiguous. Same corruption class as an unbalanced ")".
+        assertParses(
+            "![a](https://e.com/x](y)",
+            [EditorBlock(kind: .unknown, text: "![a](https://e.com/x](y)")])
+    }
+
+    func testLegitimateAttachmentURLsAreNotRejectedByTheGuards() {
+        // Guard against false negatives: percent-encoding, a query with balanced
+        // parens, and the Django backend's real attachment url shape.
+        assertParses(
+            "![a](https://e.com/a%20b.png)",
+            [EditorBlock(kind: .image(alt: "a", url: "https://e.com/a%20b.png"))])
+        assertParses(
+            "![a](https://e.com/a.png?x=(1))",
+            [EditorBlock(kind: .image(alt: "a", url: "https://e.com/a.png?x=(1)"))])
+        assertParses(
+            "![a](HTTPS://e.com/a.png)",
+            [EditorBlock(kind: .image(alt: "a", url: "HTTPS://e.com/a.png"))])
+    }
+
+    func testImageWithTrailingTextStaysUnknown() {
+        assertParses(
+            "![x](https://e.com/a.png) tail",
+            [EditorBlock(kind: .unknown, text: "![x](https://e.com/a.png) tail")])
+    }
+
+    func testIndentedImageStaysUnknown() {
+        assertParses(
+            "  ![x](https://e.com/a.png)",
+            [EditorBlock(kind: .unknown, text: "  ![x](https://e.com/a.png)")])
+    }
+
+    func testImageAltWithBracketStaysUnknown() {
+        assertParses(
+            "![a]b](https://e.com/a.png)",
+            [EditorBlock(kind: .unknown, text: "![a]b](https://e.com/a.png)")])
+    }
+
+    func testImageAltWithSpacesAndParenthesesBecomesImageBlock() {
+        // A downloaded-file name like "photo (1).png" is a common real alt.
+        assertParses(
+            "![photo (1).png](https://docs.example.com/a.png)",
+            [EditorBlock(kind: .image(alt: "photo (1).png", url: "https://docs.example.com/a.png"))])
+    }
+
+    func testImageURLWithBalancedParenthesesBecomesImageBlock() {
+        assertParses(
+            "![a](https://e.com/x(1).png)",
+            [EditorBlock(kind: .image(alt: "a", url: "https://e.com/x(1).png"))])
+    }
+
+    func testImageURLWithUnbalancedParenthesesStaysUnknown() {
+        // CommonMark ends the destination at the first unbalanced ")", leaving
+        // "(y)" as literal text. Our column-zero classifier takes the *last* ")",
+        // so without a balance check this would save a mangled url and silently
+        // drop the trailing "(y)". Anything ambiguous must stay verbatim.
+        assertParses(
+            "![a](https://e.com/x.png)(y)",
+            [EditorBlock(kind: .unknown, text: "![a](https://e.com/x.png)(y)")])
+    }
+
+    func testImageURLWithWhitespaceStaysUnknown() {
+        assertParses(
+            "![a](https://e.com/a b.png)",
+            [EditorBlock(kind: .unknown, text: "![a](https://e.com/a b.png)")])
+    }
+
+    func testImageInsideProseRunSplitsTheRun() {
+        // Classifying the image line flushes the pending prose run, so a
+        // web-authored image between two prose lines becomes its own block
+        // instead of being swallowed into one verbatim `.unknown` run.
+        assertParses(
+            "line one\n![img](https://e.com/a.png)\nline two",
             [
-                EditorBlock(kind: .unknown, text: "![diagram](https://example.com/d.png)")
+                EditorBlock(kind: .paragraph, text: "line one"),
+                EditorBlock(kind: .image(alt: "img", url: "https://e.com/a.png")),
+                EditorBlock(kind: .paragraph, text: "line two"),
             ])
     }
 

@@ -400,6 +400,29 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Parse markdown conservatively** so a full-overwrite save never destroys
   content: anything the editor can't model is preserved verbatim as `.unknown`
   blocks; ambiguous inline spans stay literal.
+- A standalone `![alt](url)` line with an **absolute http(s) URL** is a
+  first-class `BlockKind.image(alt:url:)` block (classified in the parser's
+  `parseClassifiedLine` chain via `parseImageLine`, so classification and
+  `canonicalizeLine` stay consistent). `alt`/`url` are raw `String`s — **never**
+  round-trip the url through `URL`; the backend's `extract_attachments()` matches
+  it byte-for-byte. It maps to a real BlockNote `image` **leaf** node (the markdown
+  alt becomes `name`, since BlockNote renders the `<img>` alt from `name`). The
+  encoder supports leaf blocks that carry props: `hasTextChild` excludes `divider`
+  **and** `image`, and props are emitted for every block. The image byte layout is
+  locked by a golden fixture (`YjsEncoderTests.testImageBlockIsLeafWithProps`)
+  captured from `@blocknote/core@0.51.4` (the version the docs frontend pins) —
+  the image block has **no `textColor`**, and `previewWidth` is emitted as
+  `undefined` (`YAnyValue.undefined` → lib0 `writeAny` 127), not omitted. In the
+  editor an image renders as a **non-editable leaf** (like a divider): it deletes
+  as a unit, is never converted, and never receives inline markers. Anything
+  ambiguous stays `.unknown` and renders **verbatim**: a relative url, an
+  indented line, trailing text, a `]` in the alt, or a url with whitespace or
+  unbalanced parens. The last one is load-bearing — `URL(string:)` accepts `(`
+  and `)`, and the classifier splits on the line's *last* `)` while CommonMark
+  ends the destination at the first *unbalanced* one, so `![a](u)(y)` would
+  otherwise save a mangled url and drop the tail. Note the column-zero contract
+  means an **indented** image now renders verbatim rather than as an image (it
+  used to render as one); no content is lost either way.
 - Two view-model invariants protect the full-overwrite save: editing may only
   begin once `hasLoadedContent` is true (`startEditing` guards on it —
   otherwise autosave would overwrite the whole server document with an empty

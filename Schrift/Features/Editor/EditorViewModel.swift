@@ -585,7 +585,9 @@ final class EditorViewModel {
         guard index > 0 else { return }
         let previous = blocks[index - 1]
         switch previous.kind {
-        case .divider:
+        case .divider, .image:
+            // Leaf blocks (divider, image) have no text to merge into; backspace
+            // at the start of the following block removes the leaf as a unit.
             blocks.remove(at: index - 1)
             focusBlock(block.id, cursorAt: 0)
             markDirty()
@@ -616,6 +618,9 @@ final class EditorViewModel {
 
     func convertBlock(blockID: UUID, to kind: BlockKind) {
         guard let index = blockIndex(blockID) else { return }
+        // An image's data lives in its kind's associated values; converting would
+        // silently destroy the image, so images are never converted.
+        if case .image = blocks[index].kind { return }
         if blocks[index].kind == kind {
             blocks[index].kind = .paragraph
         } else {
@@ -657,7 +662,7 @@ final class EditorViewModel {
         }
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         switch blocks[index].kind {
-        case .codeBlock, .unknown, .divider:
+        case .codeBlock, .unknown, .divider, .image:
             return
         default:
             break

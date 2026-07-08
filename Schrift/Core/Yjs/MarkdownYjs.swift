@@ -81,6 +81,26 @@ enum MarkdownYjs {
             return [BlockNoteBlock(node: "codeBlock", props: [("language", .string(lang))], runs: runs, id: id)]
         case .divider:
             return [BlockNoteBlock(node: "divider", props: [], runs: [], id: id)]
+        case .image(let alt, let url):
+            // Leaf node: no text child. Props mirror BlockNote 0.51.4's image
+            // propSchema (note: no `textColor`, and `previewWidth` is emitted as
+            // `undefined`, matching the real library). The markdown alt maps to
+            // `name` — BlockNote renders the `<img>` alt from `name` — so the
+            // read→edit→save round trip is stable; caption editing is out of scope.
+            return [
+                BlockNoteBlock(
+                    node: "image",
+                    props: [
+                        ("textAlignment", .string("left")),
+                        ("backgroundColor", .string("default")),
+                        ("name", .string(alt)),
+                        ("url", .string(url)),
+                        ("caption", .string("")),
+                        ("showPreview", .bool(true)),
+                        ("previewWidth", .undefined),
+                    ],
+                    runs: [], id: id)
+            ]
         case .unknown:
             // Content the editor can't model (tables, HTML, nested lists). Preserve
             // the text verbatim as one paragraph per non-empty line so a save never

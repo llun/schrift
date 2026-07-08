@@ -9,9 +9,14 @@ enum BlockKind: Equatable, Sendable {
     case quote
     case codeBlock(language: String)
     case divider
-    /// Markdown the editor doesn't model (tables, images, nested lists, HTML…).
-    /// The text is preserved verbatim — including newlines — so a full-overwrite
-    /// save never destroys content authored elsewhere.
+    /// A standalone `![alt](url)` line with an absolute http(s) URL. `alt` and
+    /// `url` are raw `String`s, never re-normalized through `URL`: the backend's
+    /// `extract_attachments()` matches the embedded url byte-for-byte, so it must
+    /// survive the round trip untouched. `text` stays empty.
+    case image(alt: String, url: String)
+    /// Markdown the editor doesn't model (tables, nested lists, HTML, relative or
+    /// ambiguous images…). The text is preserved verbatim — including newlines —
+    /// so a full-overwrite save never destroys content authored elsewhere.
     case unknown
 }
 

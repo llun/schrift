@@ -25,6 +25,13 @@ to the Connect screen (see
 Revised: 2026-07-07 — realigned with the shipped implementation: directory
 tree, Screens section (all four tabs are real features; the shipped Editor
 header), and the endpoint table (`GET /config/` was never implemented).
+Revised: 2026-07-07 (later) — a standalone `![alt](url)` line with an absolute
+http(s) URL is now a first-class `.image` block through the whole editor/save
+pipeline (parse → serialize → Yjs encode → render), so a web-authored image
+survives an in-app edit-and-save instead of being flattened to literal text.
+The Yjs encoder now supports leaf blocks that still carry props; the image byte
+layout is locked by a golden fixture captured from `@blocknote/core@0.51.4`. See
+`docs/superpowers/plans/2026-07-07-image-block-round-trip.md`.
 
 ## Summary
 

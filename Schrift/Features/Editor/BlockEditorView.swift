@@ -64,6 +64,11 @@ private struct BlockEditorRow: View {
                 .padding(.vertical, DocsSpacing.spaceXS)
                 .contentShape(Rectangle())
                 .accessibilityLabel("Divider")
+        } else if case .image(let alt, let url) = block.kind {
+            // An image is a non-editable leaf, like a divider: it has no text
+            // view. Backspace at the start of the following block deletes it as
+            // a unit (see EditorViewModel.mergeBlockWithPrevious).
+            imageLeaf(alt: alt, url: url)
         } else {
             // Every editable kind shares one structural shape (adornment slot
             // + text view with value-varying modifiers): converting the
@@ -137,6 +142,19 @@ private struct BlockEditorRow: View {
 
         default:
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func imageLeaf(alt: String, url: String) -> some View {
+        if let imageURL = URL(string: url) {
+            MarkdownImageView(alt: alt, url: imageURL)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        } else {
+            Text("![\(alt)](\(url))")
+                .font(DocsFont.code)
+                .foregroundStyle(DocsColor.textPrimary)
         }
     }
 

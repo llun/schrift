@@ -152,7 +152,51 @@ private func parseClassifiedLine(_ line: String) -> EditorBlock? {
     if let numbered = parseNumberedItem(line) {
         return numbered
     }
+    if let image = parseImageLine(line) {
+        return EditorBlock(kind: .image(alt: image.alt, url: image.url))
+    }
     return nil
+}
+
+/// A single standalone `![alt](url)` line at column zero with an absolute
+/// http(s) URL. Anything ambiguous — a relative URL, trailing text, a `]` in the
+/// alt, leading indentation, an unbalanced `)` in the url — is left to the
+/// `.unknown` path so a full-overwrite save can never corrupt content the editor
+/// doesn't fully model. `alt`/`url` are returned as raw substrings, never
+/// normalized (the backend matches the url byte-for-byte). Because
+/// `parseClassifiedLine` feeds both classification and `canonicalizeLine`, adding
+/// this keeps the two consistent automatically.
+private func parseImageLine(_ line: String) -> (alt: String, url: String)? {
+    guard line.first == "!" else { return nil }
+    let trimmed = rstrip(line)
+    guard trimmed.hasPrefix("!["), trimmed.hasSuffix(")") else { return nil }
+    guard let separator = trimmed.range(of: "](") else { return nil }
+
+    let alt = String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<separator.lowerBound])
+    let urlString = String(trimmed[separator.upperBound..<trimmed.index(before: trimmed.endIndex)])
+    guard !alt.contains("]"), !urlString.isEmpty else { return nil }
+    // The closing `)` is taken to be the line's last character, but CommonMark
+    // ends the destination at the first *unbalanced* `)`. When the two disagree
+    // (`![a](u)(y)`) the line has trailing content: bail out rather than save a
+    // mangled url and silently drop the tail. Balanced pairs (`x(1).png`) are fine.
+    guard !urlString.contains(where: \.isWhitespace), hasBalancedParentheses(urlString) else { return nil }
+    guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
+        scheme == "http" || scheme == "https"
+    else { return nil }
+    return (alt, urlString)
+}
+
+private func hasBalancedParentheses(_ text: String) -> Bool {
+    var depth = 0
+    for character in text {
+        if character == "(" {
+            depth += 1
+        } else if character == ")" {
+            depth -= 1
+            if depth < 0 { return false }
+        }
+    }
+    return depth == 0
 }
 
 private func parseHeading(_ line: String) -> EditorBlock? {

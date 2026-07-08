@@ -33,6 +33,34 @@ final class MarkdownYjsTests: XCTestCase {
         XCTAssertEqual(nodes("> q"), ["quote"])
         XCTAssertEqual(nodes("```\ncode\n```"), ["codeBlock"])
         XCTAssertEqual(nodes("---"), ["divider"])
+        XCTAssertEqual(nodes("![alt](https://example.com/a.png)"), ["image"])
+    }
+
+    /// The bug this PR fixes: a standalone image used to fall into `.unknown` and
+    /// encode as a literal-text paragraph, so a web-authored image was flattened
+    /// to the raw `![…](…)` string on the first in-app save. It must now map to a
+    /// real `image` leaf node carrying the url — never a paragraph of text.
+    func testStandaloneImageMarkdownMapsToImageNodeNotLiteralText() {
+        let markdown = "![photo](https://example.com/p.jpg)"
+        XCTAssertEqual(nodes(markdown), ["image"])
+        let block = firstBlock(markdown)
+        XCTAssertEqual(prop(block, "url"), .string("https://example.com/p.jpg"))
+        XCTAssertEqual(prop(block, "name"), .string("photo"))
+        XCTAssertEqual(prop(block, "previewWidth"), .undefined)
+        XCTAssertTrue(block.runs.isEmpty, "image is a leaf — it must carry no literal text runs")
+    }
+
+    /// Props are an *ordered* tuple array: their order is the order of the emitted
+    /// Yjs bytes. `YjsEncoderTests.testImageBlockIsLeafWithProps` locks the byte
+    /// layout for one hardcoded prop order, but nothing there constrains what
+    /// `map` actually produces — reordering these would keep the golden green
+    /// while every real save emitted bytes the golden never validated. Pin the
+    /// order (and the absence of `textColor`) here, at the mapping.
+    func testImageBlockPropOrderMatchesTheGoldenFixture() {
+        let block = firstBlock("![photo](https://example.com/p.jpg)")
+        XCTAssertEqual(
+            block.props.map(\.key),
+            ["textAlignment", "backgroundColor", "name", "url", "caption", "showPreview", "previewWidth"])
     }
 
     func testHeadingCarriesLevel() {

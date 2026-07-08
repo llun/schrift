@@ -84,6 +84,8 @@ func serializeBlock(_ block: EditorBlock, numberedIndex: Int) -> String {
         return fence + language + "\n" + block.text + "\n" + fence
     case .divider:
         return "---"
+    case .image(let alt, let url):
+        return "![\(alt)](\(url))"
     case .unknown:
         return block.text
     }

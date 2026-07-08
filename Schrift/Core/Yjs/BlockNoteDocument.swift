@@ -21,14 +21,19 @@ struct InlineRun: Equatable {
 
 /// A BlockNote block: a `blockContainer` wrapping one content element
 /// (`paragraph`, `heading`, `bulletListItem`, …). `props` are the content
-/// element's ordered attributes; `divider` carries no text and no props.
+/// element's ordered attributes. Most nodes wrap an `xmlText` child holding
+/// their inline runs; a few are leaves with no text child — `divider` (no
+/// props either) and `image` (a leaf that still carries props: url, name, …).
 struct BlockNoteBlock: Equatable {
     var node: String
     var props: [(key: String, value: YAnyValue)]
     var runs: [InlineRun]
     var id: String
 
-    var hasTextChild: Bool { node != "divider" }
+    /// Whether this node wraps an `xmlText` child for its inline content.
+    /// Leaf nodes (`divider`, `image`) have none. Props are emitted for every
+    /// node regardless — a leaf can still carry attributes.
+    var hasTextChild: Bool { node != "divider" && node != "image" }
 
     static func == (lhs: BlockNoteBlock, rhs: BlockNoteBlock) -> Bool {
         lhs.node == rhs.node && lhs.id == rhs.id && lhs.runs == rhs.runs
@@ -78,9 +83,13 @@ enum BlockNoteYjs {
             if block.hasTextChild {
                 let text = emit(.xmlText, parentClock: element)
                 emitInline(block.runs, parentText: text, emit: emit)
-                for prop in block.props {
-                    _ = emit(.any([prop.value]), parentClock: element, parentSub: prop.key)
-                }
+            }
+            // Props belong to the content element and are emitted for every
+            // block. Hoisting this out of the text-child branch is byte-neutral
+            // for text blocks (same item order) and for `divider` (empty props),
+            // and is what lets a leaf `image` carry its url/name/… attributes.
+            for prop in block.props {
+                _ = emit(.any([prop.value]), parentClock: element, parentSub: prop.key)
             }
             _ = emit(.any([.string(block.id)]), parentClock: container, parentSub: "id")
 

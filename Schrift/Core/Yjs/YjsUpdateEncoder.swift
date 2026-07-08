@@ -53,6 +53,11 @@ enum YAnyValue: Equatable {
     case int(Int)
     case bool(Bool)
     case null
+    /// JS `undefined`, distinct from `null` on the wire (lib0 `writeAny` emits
+    /// 127 for undefined, 126 for null). BlockNote serializes an unset optional
+    /// prop — e.g. the image block's `previewWidth` — as `undefined`, so a
+    /// byte-exact image block needs this case.
+    case undefined
 }
 
 /// The content payload of a Yjs `Item`. Only the variants a from-scratch
@@ -173,6 +178,7 @@ enum YjsUpdateEncoder {
             e.writeVarInt(n)
         case .bool(let b): e.writeUInt8(b ? 120 : 121)
         case .null: e.writeUInt8(126)
+        case .undefined: e.writeUInt8(127)
         }
     }
 }

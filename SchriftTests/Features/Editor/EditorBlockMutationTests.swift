@@ -131,6 +131,18 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].text, "line1")
     }
 
+    func testBackspaceAfterImageRemovesTheImageBlock() {
+        let image = EditorBlock(kind: .image(alt: "a", url: "https://e.com/a.jpg"))
+        let paragraph = EditorBlock(kind: .paragraph, text: "after")
+        let viewModel = makeViewModel(blocks: [image, paragraph])
+
+        viewModel.mergeBlockWithPrevious(blockID: paragraph.id)
+
+        XCTAssertEqual(viewModel.blocks.count, 1)
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertEqual(viewModel.blocks[0].text, "after")
+    }
+
     func testBackspaceOnFirstParagraphIsANoOp() {
         let block = EditorBlock(kind: .paragraph, text: "Hello")
         let viewModel = makeViewModel(blocks: [block])
@@ -169,6 +181,15 @@ final class EditorBlockMutationTests: XCTestCase {
         viewModel.convertBlock(blockID: block.id, to: .bulletItem)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+    }
+
+    func testConvertBlockLeavesImageBlocksUntouched() {
+        let block = EditorBlock(kind: .image(alt: "", url: "https://e.com/a.jpg"))
+        let viewModel = makeViewModel(blocks: [block])
+
+        viewModel.convertBlock(blockID: block.id, to: .heading(level: 1))
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .image(alt: "", url: "https://e.com/a.jpg"))
     }
 
     func testConvertToDividerClearsText() {
@@ -317,6 +338,17 @@ final class EditorBlockMutationTests: XCTestCase {
         viewModel.applyInlineMarker("**")
 
         XCTAssertEqual(viewModel.blocks[0].text, "let x = 1")
+    }
+
+    func testApplyInlineMarkerIgnoresImageBlocks() {
+        let block = EditorBlock(kind: .image(alt: "", url: "https://e.com/a.jpg"))
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.applyInlineMarker("**")
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .image(alt: "", url: "https://e.com/a.jpg"))
+        XCTAssertEqual(viewModel.blocks[0].text, "")
     }
 
     func testInsertAtCursorInMarkdownMode() {
