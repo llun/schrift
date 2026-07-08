@@ -542,12 +542,20 @@ markdown write endpoint**. Understand this before touching the save path:
      true whenever a save was in flight when the fetch was issued — and this
      teardown's own flush starts one), leaving a blank body, no error and no spinner.
      For the same reason `reconcileDraft` re-installs the draft when
-     `!hasLoadedContent`, and **hands it back to the save pipeline**: the teardown
-     pulled it out (`suppressLocalWriteThrough` drops the queued save; `finish`'s
-     discarded branch resets to `.idle`, not `.failed`), so otherwise no funnel would
-     ever push it — `flushPendingChanges` needs `isDirty`, `saveNow`/the retry caption
-     need `.failed`, `recoverDrafts` already ran — and the tolerance rule would
-     eventually delete it. While `isUnavailable` holds, `load()` skips the local phase
+     `!hasLoadedContent`.
+  1b. **A stored draft that wins the tolerance rule with `saveState == .idle` and no
+     pending save has no funnel at all** — `flushPendingChanges` needs `isDirty`,
+     `saveNow` and the retry caption need `.failed`, `recoverDrafts` runs once per
+     process — and the tolerance rule will eventually delete it. So `reconcileDraft`
+     **hands it back to the save pipeline**, keyed off *that state*, never off which
+     screen instance recovered it: a fresh view model (pop back, reopen — the natural
+     reaction to "no longer available") restores the draft locally and recovers
+     nothing. Two paths produce the state: `becomeUnavailable` (`suppressLocalWriteThrough`
+     drops the queued save; `finish`'s discarded branch resets to `.idle`, not
+     `.failed`) and an offline launch where `recoverDrafts` gives up. Symmetrically,
+     `finish`'s discarded branch **removes a draft the PATCH confirmed** — saved work
+     is not unsaved work, and replaying it would clobber a co-author.
+     While `isUnavailable` holds, `load()` skips the local phase
      (or the purged body — or the draft the teardown just wrote — is re-rendered with
      the warning cleared) and shows **no spinner**: `readingSurface` owns the only
      `.refreshable`.

@@ -211,13 +211,21 @@ final class DocumentSaveCoordinator {
         // settled, so its response may predate it (see `mayPredateSave`).
         settledSaves[documentID, default: 0] += 1
         // Deleted or revoked while this save was on the wire: write no local copy,
-        // whatever the server made of the PATCH. The draft is left exactly as the
-        // caller left it — `discardPendingWork` (delete) already removed it;
-        // `suppressLocalWriteThrough` (404/403) deliberately kept it as the user's
-        // only copy of unsaved work.
+        // whatever the server made of the PATCH. `discardPendingWork` (delete) already
+        // removed the draft; `suppressLocalWriteThrough` (404/403) kept it as the
+        // user's only copy of unsaved work — but only while it *is* unsaved. A PATCH
+        // that landed puts the content on the server, so keeping its draft would let
+        // the editor's stranded-draft replay push already-acknowledged bytes back over
+        // a co-author's newer write, and would leave a revoked document's body in
+        // UserDefaults indefinitely.
         if discardedDuringSave.remove(documentID) != nil {
             queued[documentID] = nil
             states[documentID] = .idle
+            if error == nil, let draft = draftStore.draft(for: documentID),
+                draft.title == save.title, draft.markdown == save.markdown
+            {
+                draftStore.remove(documentID: documentID)
+            }
             return
         }
         if error == nil {

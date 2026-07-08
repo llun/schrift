@@ -329,10 +329,11 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     /// would write the full body straight back into the cache (a privacy problem on
     /// a 403: the content is revoked, not deleted). Unlike a delete, the draft is
     /// the user's only copy of unsaved work and must survive.
-    func testSuppressedWriteThroughSkipsTheCacheButKeepsTheDraft() async {
+    /// A save whose PATCH **failed** leaves the draft: it is the user's only copy.
+    func testSuppressedWriteThroughSkipsTheCacheAndKeepsAnUnsavedDraft() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, saveDelay: 0.2)
+        stubSavePipeline(log: log, saveDelay: 0.2, contentStatus: 500)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
         // The document becomes unavailable while the save's PATCH is on the wire.
@@ -343,6 +344,24 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
         XCTAssertNil(contentCache.content(for: documentID), "a revoked document keeps no local body")
         XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Mine", "unsaved work survives")
+    }
+
+    /// A save whose PATCH **landed** is not unsaved work. Keeping its draft lets the
+    /// editor's stranded-draft replay push already-acknowledged bytes back over a
+    /// co-author's newer write — and leaves a revoked document's body in UserDefaults.
+    func testSuppressedWriteThroughDropsADraftTheServerConfirmed() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2)  // 204: the PATCH lands
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        contentCache.remove(documentID: documentID)
+        coordinator.suppressLocalWriteThrough(documentID: documentID)
+
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        XCTAssertNil(contentCache.content(for: documentID), "still no local body")
+        XCTAssertNil(draftStore.draft(for: documentID), "the server has it; it is not unsaved work")
     }
 
     // MARK: - Save markers (raced-revalidation detection)

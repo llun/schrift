@@ -956,6 +956,45 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(savesInFlight(log), 1)
     }
 
+    /// The escape from the stranded-draft state must key off the *state*, not off
+    /// which screen instance happened to recover. Tapping Back is the natural reaction
+    /// to "no longer available", and it destroys the view model — so on reopen a fresh
+    /// one restores the draft locally, `hasLoadedContent` is already true, and a
+    /// `recovered`-gated re-enqueue never fires. The draft then sits on screen
+    /// captioned "Edited just now" until a co-author's write deletes it.
+    func testStrandedDraftIsSavedEvenWhenAFreshScreenRestoresIt() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Mine"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine edited")
+
+        stubStatus(404)
+        await viewModel.load()  // teardown flushes; PATCH 404s; state becomes .idle
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertEqual(coordinator.state(for: documentID), .idle)
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        // The user taps Back and reopens: EditorScreen builds a brand-new view model
+        // over the same app-scoped coordinator and the same on-disk draft.
+        let reopened = EditorViewModel(
+            client: DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+            documentID: documentID,
+            title: "Doc",
+            saveCoordinator: coordinator,
+            contentCache: contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        )
+        stubLoadAndSavePipeline(content: "# Mine", log: log)  // the hiccup is over
+        await reopened.load()
+
+        XCTAssertEqual(reopened.blocks.first?.text, "Mine edited")
+        await waitUntil { reopened.saveState == .saved }
+        XCTAssertNil(draftStore.draft(for: documentID), "the stranded draft reached the server")
+    }
+
     /// The invariant `refresh()`'s `markAvailableAgain()` call relies on: a document
     /// declared gone has no loaded content, so `refresh()` always diverts to `load()`.
     /// Break it and the terminal state can outlive the fetch that revived it.

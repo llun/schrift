@@ -474,16 +474,24 @@ final class EditorViewModel {
         }
         if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
             cacheServerCopy(formatted)
-            // `becomeUnavailable` pulled this draft out of the save pipeline —
-            // `suppressLocalWriteThrough` dropped its queued save and `finish`'s
-            // discarded branch reset the state to `.idle`, not `.failed`. So no
-            // funnel will ever push it: `flushPendingChanges` needs `isDirty` (the
-            // teardown cleared it), `saveNow`/the retry caption need `.failed`, and
-            // `recoverDrafts` already ran this process. Left alone the edit sits on
-            // screen labelled "Edited just now" until a co-author's write pushes the
-            // server past the tolerance — and then the branch below deletes it.
-            // The document is back, so hand the draft back.
-            if recovered, saveCoordinator.pendingSave(documentID: documentID) == nil {
+            // A stored draft that wins the tolerance rule, with no save pushing it and
+            // no `.failed` retry affordance, has **no funnel at all**:
+            // `flushPendingChanges` needs `isDirty`, `saveNow` and the retry caption
+            // need `.failed`, and `recoverDrafts` runs once per process. That is the
+            // state `becomeUnavailable` leaves behind (`suppressLocalWriteThrough`
+            // drops the queued save; `finish`'s discarded branch resets to `.idle`),
+            // and also the state an offline launch leaves when `recoverDrafts` gives
+            // up. Left alone the edit sits on screen captioned "Edited just now" until
+            // a co-author's write pushes the server past the tolerance — and then the
+            // branch below deletes it. Hand it back, whichever screen is looking:
+            // gating this on "did *this* view model recover the screen" missed the
+            // pop-back-and-reopen path, where a fresh view model restores the draft
+            // locally and never recovers anything.
+            //
+            // No storm: `enqueue` makes `pendingSave` non-nil, so `apply` short-circuits
+            // before `reconcileDraft` on every later fetch; a failure lands in `.failed`,
+            // whose branch returned above; a success removes the draft.
+            if saveCoordinator.pendingSave(documentID: documentID) == nil {
                 saveCoordinator.enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown)
             }
             return
