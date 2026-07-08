@@ -891,7 +891,7 @@ final class EditorViewModel {
             // Even then the caret may sit inside a fenced code block, which
             // swallows the line — verify before committing, exactly as below.
             let token = "\n\n![](\(url))\n\n"
-            guard producesImage(markdownReplacingSelection(with: token), url: url) else {
+            guard addsImage(to: rawMarkdown, after: markdownReplacingSelection(with: token), url: url) else {
                 reportPhotoFailure()
                 return
             }
@@ -903,12 +903,13 @@ final class EditorViewModel {
         // may be a lossy parse of it — rather than to a serialization that would
         // rewrite what the user actually wrote.
         if mode == .reading {
-            let appended = markdownAppendingImage(to: currentMarkdown(), url: url)
+            let source = currentMarkdown()
+            let appended = markdownAppendingImage(to: source, url: url)
             // A source whose tail is an unterminated code fence swallows anything
             // appended to it (`closesCodeFence` never matches a blank line), so the
             // image would render as literal code. Never rewrite the source to make
             // room, and never report success without producing an image.
-            guard producesImage(appended, url: url) else {
+            guard addsImage(to: source, after: appended, url: url) else {
                 reportPhotoFailure()
                 return
             }
@@ -936,11 +937,20 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Whether `markdown` really contains the image we just tried to place. Neither
-    /// insertion path may report success without one: a fenced code block — open at
-    /// the end of the source, or wrapping the caret — swallows the image line whole.
-    private func producesImage(_ markdown: String, url: String) -> Bool {
-        parseEditorBlocks(markdown).contains { $0.kind == .image(alt: "", url: url) }
+    /// Whether the edit actually *added* an image. Neither insertion path may report
+    /// success without one: a fenced code block — open at the end of the source, or
+    /// wrapping the caret — swallows the image line whole.
+    ///
+    /// Counts rather than asking `contains`: a document that already held a
+    /// byte-identical `![](url)` would satisfy `contains` even when the new line was
+    /// swallowed. Fresh attachment UUIDs make that unreachable today, but that is an
+    /// invariant of the *server*, not of this function.
+    private func addsImage(to before: String, after: String, url: String) -> Bool {
+        imageCount(in: after, url: url) > imageCount(in: before, url: url)
+    }
+
+    private func imageCount(in markdown: String, url: String) -> Int {
+        parseEditorBlocks(markdown).filter { $0.kind == .image(alt: "", url: url) }.count
     }
 
     /// Appends a standalone, blank-line-separated image line. That keeps it out of

@@ -313,6 +313,27 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty, "nothing changed, so nothing may be enqueued")
     }
 
+    /// The verification counts images rather than asking `contains`: a document that
+    /// already holds a byte-identical `![](url)` would satisfy `contains` even when
+    /// the newly appended line is swallowed by an open fence. Fresh attachment UUIDs
+    /// make that unreachable in production, but that's the server's invariant, not
+    /// this function's.
+    func testInsertPhotoDoesNotMistakeAPreExistingIdenticalImageForTheNewOne() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.mode = .markdown
+        // Already contains the same url, and the tail is an OPEN fence that will
+        // swallow whatever we append.
+        viewModel.rawMarkdown = "![](\(expectedMediaURL))\n\n```\ncode"
+        viewModel.selection = NSRange(location: (viewModel.rawMarkdown as NSString).length, length: 0)
+        let before = viewModel.rawMarkdown
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.rawMarkdown, before, "the swallowed insert must not be committed")
+    }
+
     /// The reading branch must append to the *source*, not to a serialization of the
     /// lossy blocks — and the result must actually be an `.image` block, which the
     /// previous version of this test never checked.
