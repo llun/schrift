@@ -226,12 +226,13 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.text), ["Hel", "", "lo"])
     }
 
-    /// Tapping Done mid-upload doesn't cancel the picker's Task. The image must
-    /// still land, and `rawMarkdown` must be re-synced — `finishEditing` already
-    /// serialized the pre-image blocks, so a later markdown-mode session would
-    /// otherwise open on stale content and save the image away.
-    func testInsertPhotoAfterLeavingEditModeAppendsTheImageAndResyncsRawMarkdown() async throws {
-        stubUploadPipeline()
+    /// Neither Done nor a navigation pop cancels the picker's Task. The image must
+    /// still land, `rawMarkdown` must stay in sync, and the save must be enqueued
+    /// **immediately** — the autosave debounce is owned by this view model, which a
+    /// pop has already released, so it would silently drop the finished upload.
+    func testInsertPhotoAfterLeavingEditModeAppendsTheImageAndSavesImmediately() async throws {
+        let log = RequestRecorder()
+        stubUploadPipeline(log: log)
         let viewModel = await makeEditingViewModel()
         viewModel.blocks = [EditorBlock(kind: .paragraph, text: "Body")]
         viewModel.finishEditing()
@@ -243,6 +244,31 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertTrue(
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
             "rawMarkdown must not go stale, or a markdown-mode save would drop the image")
+        XCTAssertFalse(viewModel.isDirty, "the save must be flushed to the coordinator, not left to the debounce")
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") == 1 }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+    }
+
+    /// An `openInMarkdownMode` document's `blocks` are a deliberately lossy parse.
+    /// Appending the image via `serializeMarkdown(blocks)` would rewrite the user's
+    /// source — here turning an unterminated fence into an empty code block they
+    /// never wrote — which is exactly what a full-overwrite save must never do.
+    func testInsertPhotoAfterLeavingEditModePreservesALossyMarkdownSource() async throws {
+        stubUploadPipeline(content: "Notes\\n```")
+        let viewModel = await makeEditingViewModel()
+        XCTAssertTrue(viewModel.openInMarkdownMode, "an unterminated fence must not round-trip")
+        XCTAssertEqual(viewModel.mode, .markdown)
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.mode, .reading)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertTrue(viewModel.rawMarkdown.hasPrefix("Notes\n```"), "the authored source must survive verbatim")
+        XCTAssertTrue(viewModel.rawMarkdown.contains("![](\(expectedMediaURL))"))
+        XCTAssertFalse(
+            viewModel.rawMarkdown.contains("```\n```"),
+            "serializing the lossy blocks would invent an empty code block")
+        XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown, "the save must carry the source, not blocks")
     }
 
     // MARK: - Readiness poll

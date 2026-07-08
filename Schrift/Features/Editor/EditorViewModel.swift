@@ -520,7 +520,13 @@ final class EditorViewModel {
 
     /// The markdown representation of whatever surface currently owns the content.
     func currentMarkdown() -> String {
-        mode == .markdown ? rawMarkdown : serializeMarkdown(blocks)
+        if mode == .markdown { return rawMarkdown }
+        // Outside an editing session an `openInMarkdownMode` document's `blocks`
+        // are a deliberately lossy parse (that is what the flag means), so its
+        // source — not the serialization — is what a full-overwrite save must
+        // carry. Reachable only via a photo insert that outlived the session.
+        if mode == .reading, openInMarkdownMode { return rawMarkdown }
+        return serializeMarkdown(blocks)
     }
 
     // MARK: - Block mutations
@@ -837,6 +843,19 @@ final class EditorViewModel {
             insertAtCursor("\n\n![](\(url))\n\n")
             return
         }
+        // The upload can outlive the editing session: neither Done nor a
+        // navigation pop cancels the picker's Task. Append to the end of the
+        // authoritative source and persist it *now* — the autosave debounce is
+        // owned by this view model, which the pop has already released, so
+        // relying on it would silently drop the finished upload.
+        if mode == .reading {
+            rawMarkdown = markdownAppendingImage(to: currentMarkdown(), url: url)
+            blocks = parseEditorBlocks(rawMarkdown)
+            markDirty()
+            flushPendingChanges()
+            return
+        }
+
         let image = EditorBlock(kind: .image(alt: "", url: url))
         let trailing = EditorBlock(kind: .paragraph)
         if let focusedBlockID, let index = blockIndex(focusedBlockID) {
@@ -851,16 +870,16 @@ final class EditorViewModel {
             blocks.append(image)
             blocks.append(trailing)
         }
-        // The upload can outlive the editing session (the picker's Task isn't
-        // cancelled by Done). `finishEditing` has already synced `rawMarkdown`
-        // from the pre-image blocks, so re-sync it or a later markdown-mode
-        // session would open on stale content and save the image away.
-        if mode == .reading {
-            rawMarkdown = serializeMarkdown(blocks)
-        } else {
-            focusBlock(trailing.id, cursorAt: 0)
-        }
+        focusBlock(trailing.id, cursorAt: 0)
         markDirty()
+    }
+
+    /// Appends a standalone image line, blank-line separated so it parses as an
+    /// `.image` block rather than being absorbed into the trailing paragraph.
+    private func markdownAppendingImage(to source: String, url: String) -> String {
+        let imageLine = "![](\(url))\n"
+        guard !source.isEmpty else { return imageLine }
+        return source + (source.hasSuffix("\n") ? "" : "\n") + "\n" + imageLine
     }
 
     /// Tap on the empty canvas below the last block: reuse a trailing empty
