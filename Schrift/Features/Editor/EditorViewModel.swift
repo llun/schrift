@@ -783,7 +783,13 @@ final class EditorViewModel {
         defer { isUploadingPhoto = false }
         do {
             guard let originalData = try await loadingData() else { return }
-            guard let jpegData = preparedJPEGData(from: originalData) else {
+            // Decoding a 48 MP HEIC and re-encoding it must not block the main
+            // thread (the uploading spinner would freeze). `preparedJPEGData` is a
+            // pure function over Sendable values, so it can run anywhere.
+            let prepared = await Task.detached(priority: .userInitiated) {
+                preparedJPEGData(from: originalData)
+            }.value
+            guard let jpegData = prepared else {
                 errorMessage = Self.photoErrorMessage
                 return
             }
@@ -824,7 +830,11 @@ final class EditorViewModel {
     /// editable paragraph after the image (an image is a non-editable leaf).
     private func insertImageBlock(url: String) {
         if mode == .markdown {
-            insertAtCursor("![](\(url))")
+            // The image markdown must land on a line of its own: `parseImageLine`
+            // is column-zero anchored and requires the line to *end* in `)`, so
+            // `Hello![](url)` would round-trip as literal text, not an image. The
+            // surrounding blank lines also keep it out of an adjacent paragraph.
+            insertAtCursor("\n\n![](\(url))\n\n")
             return
         }
         let image = EditorBlock(kind: .image(alt: "", url: url))
@@ -841,7 +851,15 @@ final class EditorViewModel {
             blocks.append(image)
             blocks.append(trailing)
         }
-        focusBlock(trailing.id, cursorAt: 0)
+        // The upload can outlive the editing session (the picker's Task isn't
+        // cancelled by Done). `finishEditing` has already synced `rawMarkdown`
+        // from the pre-image blocks, so re-sync it or a later markdown-mode
+        // session would open on stale content and save the image away.
+        if mode == .reading {
+            rawMarkdown = serializeMarkdown(blocks)
+        } else {
+            focusBlock(trailing.id, cursorAt: 0)
+        }
         markDirty()
     }
 

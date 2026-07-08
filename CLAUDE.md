@@ -217,8 +217,11 @@ helpers have no source counterpart: fakes live beside the code they fake
 (`SchriftTests/Core/Networking/MockURLProtocol.swift`,
 `SchriftTests/Core/Auth/FakeKeychainStore.swift` / `FakeCookieStorage.swift`),
 and cross-suite helpers live in `SchriftTests/Support/` (`AsyncTestHelpers.swift`
-— the shared `waitUntil` poller and `RequestRecorder`). Follow the directory
-mirror when adding files.
+— the shared `waitUntil` poller and `RequestRecorder`; `RequestBodyHelpers.swift`
+— `bodyData(from:)`, which drains `httpBodyStream` because `URLSession` moves
+bodies there; `TestImages.swift` — `testPNGData`/`testPixelSize`, CoreGraphics
+fixtures so image tests need no bundle asset). Follow the directory mirror when
+adding files.
 
 ## Coding standards
 

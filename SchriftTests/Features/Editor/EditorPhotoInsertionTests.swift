@@ -67,8 +67,9 @@ final class EditorPhotoInsertionTests: XCTestCase {
     }
 
     /// Loads content so `hasLoadedContent` is true (both photo entry points guard
-    /// on it), then enters block editing.
-    private func makeEditingViewModel(content: String = "Body text.") async -> EditorViewModel {
+    /// on it), then enters block editing. The loaded body comes from the stub
+    /// installed by `stubUploadPipeline(content:)`.
+    private func makeEditingViewModel() async -> EditorViewModel {
         let viewModel = makeViewModel()
         await viewModel.load()
         viewModel.startEditing()
@@ -191,7 +192,12 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[3].text, "after")
     }
 
-    func testInsertPhotoInMarkdownModeInsertsMarkdownAtTheCaret() async throws {
+    /// The inserted markdown must actually parse back as an `.image` block.
+    /// `parseImageLine` is column-zero anchored and requires the line to end in
+    /// `)`, so `Hello![](url)` would round-trip as literal text — the user would
+    /// upload a photo and get raw `![](…)` characters in the reading view and on
+    /// the web. The image therefore gets a line of its own.
+    func testInsertPhotoInMarkdownModeInsertsAStandaloneImageLine() async throws {
         stubUploadPipeline()
         let viewModel = await makeEditingViewModel()
         viewModel.mode = .markdown
@@ -200,8 +206,43 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.rawMarkdown, "Hello![](\(expectedMediaURL))")
         XCTAssertNil(viewModel.errorMessage)
+        let blocks = parseEditorBlocks(viewModel.rawMarkdown)
+        XCTAssertEqual(blocks.map(\.kind), [.paragraph, .image(alt: "", url: expectedMediaURL)])
+    }
+
+    func testInsertPhotoInMarkdownModeMidLineStillYieldsAStandaloneImage() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.mode = .markdown
+        viewModel.rawMarkdown = "Hello"
+        viewModel.selection = NSRange(location: 3, length: 0)  // "Hel|lo"
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        let blocks = parseEditorBlocks(viewModel.rawMarkdown)
+        XCTAssertEqual(
+            blocks.map(\.kind), [.paragraph, .image(alt: "", url: expectedMediaURL), .paragraph])
+        XCTAssertEqual(blocks.map(\.text), ["Hel", "", "lo"])
+    }
+
+    /// Tapping Done mid-upload doesn't cancel the picker's Task. The image must
+    /// still land, and `rawMarkdown` must be re-synced — `finishEditing` already
+    /// serialized the pre-image blocks, so a later markdown-mode session would
+    /// otherwise open on stale content and save the image away.
+    func testInsertPhotoAfterLeavingEditModeAppendsTheImageAndResyncsRawMarkdown() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.blocks = [EditorBlock(kind: .paragraph, text: "Body")]
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.mode, .reading)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
+        XCTAssertTrue(
+            parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
+            "rawMarkdown must not go stale, or a markdown-mode save would drop the image")
     }
 
     // MARK: - Readiness poll
