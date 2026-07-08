@@ -1,0 +1,88 @@
+SchriftTests/Features/Search/SearchViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 10
+SchriftTests/Core/Networking/MockURLProtocol.swift
+  s_bd016ef1df7174::t_9378595a666398 78-79
+  s_bd016ef1df7174::t_e487093fe79a50 13-15
+  s_bd016ef1df7174::t_08c4d2003cec15 47-49,69-77,85,92-94
+  s_bd016ef1df7174::t_250df97f30a8f3 50-51,82-84,90-91,95-102
+SchriftTests/Features/Share/ShareViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 15
+Schrift/Features/Editor/EditorViewModel.swift
+  s_bd016ef1df7174::t_37359ff2e1c263 127-129,132-138
+  s_bd016ef1df7174::t_cfc67e5f1ddbb2 316-322
+  s_bd016ef1df7174::t_128b668c491691 360,362-373
+  s_bd016ef1df7174::t_859d0c83adad39 883-888,893
+  s_bd016ef1df7174::t_1b4222b2ca59f2 211,248
+  s_bd016ef1df7174::t_06d62815422148 443-449,451
+  s_bd016ef1df7174::t_a45582a948c6de 349-353
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 23
+SchriftTests/Core/Networking/DocsAPIClientTests.swift
+  s_bd016ef1df7174::t_df916776823d59 9
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_bd016ef1df7174::t_f794485ffedede 317,328,330,340,345,361,375
+  s_bd016ef1df7174::t_8c6a6fc0209602 11-13
+  s_bd016ef1df7174::t_df916776823d59 46
+  s_bd016ef1df7174::t_947440d1cdbf43 42,49-51,60
+CLAUDE.md
+  s_bd016ef1df7174::t_2527f69d18f3d0 564-567
+  s_bd016ef1df7174::t_1c6adeff97a662 478-481
+SchriftTests/Features/Connect/ReauthenticationViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 17,22
+SchriftTests/Features/Profile/ProfileViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 10
+docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md
+  s_bd016ef1df7174::t_e24c2f8bacab27 423-429
+SchriftTests/Core/Networking/DocumentSaveTests.swift
+  s_bd016ef1df7174::t_df916776823d59 39
+SchriftTests/Features/Connect/ConnectViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 14,19
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 21
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_bd016ef1df7174::t_df916776823d59 23
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 23
+SchriftTests/Core/Networking/DocumentEndpointsTests.swift
+  s_bd016ef1df7174::t_df916776823d59 37
+SchriftTests/Support/AsyncTestHelpers.swift
+  s_bd016ef1df7174::t_c84891502dadb0 46-54
+SchriftTests/Core/Networking/DocumentDuplicateTests.swift
+  s_bd016ef1df7174::t_df916776823d59 10
+SchriftTests/Features/Editor/DocTreePanelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 20
+SchriftTests/Core/Networking/ShareEndpointsClientTests.swift
+  s_bd016ef1df7174::t_df916776823d59 31
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_bd016ef1df7174::t_3b531362df3da9 49-50,52
+  s_bd016ef1df7174::t_3cae7229534a56 100,106,112-113
+docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md
+  s_bd016ef1df7174::t_02d6ce7fbb2776 117-128
+  s_bd016ef1df7174::t_24cc59a188e75d 141-176
+  s_bd016ef1df7174::t_10c98e316fe048 210-211
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_bd016ef1df7174::t_df916776823d59 25
+  s_bd016ef1df7174::t_fb876d5ad3aa74 760-763,767,769
+  s_bd016ef1df7174::t_6493dbd22179e6 99-103,118
+  s_bd016ef1df7174::t_06f9aa908177fe 682-685,687,706,708,711
+  s_bd016ef1df7174::t_89b4de335e0a22 1044-1092
+  s_bd016ef1df7174::t_de32fc8b2faaae 619,628-632
+SchriftTests/Core/Networking/FormattedDocumentContentTests.swift
+  s_bd016ef1df7174::t_df916776823d59 43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fb6ca6c3e3b8edf5e0639ee8c519ea72fd0776f8",
+  "prompts": {},
+  "sessions": {
+    "s_bd016ef1df7174": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b275856-0d78-4dc0-ab5d-2e97309bd5de",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
