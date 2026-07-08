@@ -519,14 +519,15 @@ final class EditorViewModel {
     }
 
     /// The markdown representation of whatever surface currently owns the content.
+    /// Only **blocks** mode makes `blocks` authoritative. In markdown mode the user
+    /// is editing the source directly, and in reading mode `rawMarkdown` is kept in
+    /// sync by `install`/`finishEditing`/`setMode` while `blocks` may be a lossy
+    /// parse of it — so a full-overwrite save must carry the source, not the
+    /// serialization. Do **not** key this off `openInMarkdownMode`: that flag is
+    /// computed once in `install` and goes stale the moment a session authors
+    /// content the block model can't represent.
     func currentMarkdown() -> String {
-        if mode == .markdown { return rawMarkdown }
-        // Outside an editing session an `openInMarkdownMode` document's `blocks`
-        // are a deliberately lossy parse (that is what the flag means), so its
-        // source — not the serialization — is what a full-overwrite save must
-        // carry. Reachable only via a photo insert that outlived the session.
-        if mode == .reading, openInMarkdownMode { return rawMarkdown }
-        return serializeMarkdown(blocks)
+        mode == .blocks ? serializeMarkdown(blocks) : rawMarkdown
     }
 
     // MARK: - Block mutations
@@ -834,25 +835,35 @@ final class EditorViewModel {
     /// Mirrors the divider slash behavior: replace a focused empty paragraph in
     /// place, otherwise insert below the focused block, and always leave an
     /// editable paragraph after the image (an image is a non-editable leaf).
+    ///
+    /// The upload can outlive the editing session: neither Done nor a navigation
+    /// pop cancels the picker's `Task`. **Every** path therefore persists
+    /// immediately rather than through `markDirty`'s debounce, whose `autosaveTask`
+    /// is owned by this view model — a pop releases the last strong reference, so
+    /// the debounced `self?.flushPendingChanges()` no-ops and the finished upload
+    /// is silently lost. A pop also leaves `mode` untouched (only `finishEditing`
+    /// sets `.reading`), so this must not be keyed off the mode. Flushing enqueues
+    /// on the app-scoped save coordinator, which owns its `Task`s precisely so
+    /// navigating away can never cancel a save.
     private func insertImageBlock(url: String) {
+        defer { flushPendingChanges() }
+
         if mode == .markdown {
             // The image markdown must land on a line of its own: `parseImageLine`
             // is column-zero anchored and requires the line to *end* in `)`, so
             // `Hello![](url)` would round-trip as literal text, not an image. The
             // surrounding blank lines also keep it out of an adjacent paragraph.
-            insertAtCursor("\n\n![](\(url))\n\n")
+            insertAtCursor("\n\n![](\(url))\n\n")  // marks dirty
             return
         }
-        // The upload can outlive the editing session: neither Done nor a
-        // navigation pop cancels the picker's Task. Append to the end of the
-        // authoritative source and persist it *now* — the autosave debounce is
-        // owned by this view model, which the pop has already released, so
-        // relying on it would silently drop the finished upload.
+
+        // The session already ended. Append to the authoritative source — `blocks`
+        // may be a lossy parse of it — rather than to a serialization that would
+        // rewrite what the user actually wrote.
         if mode == .reading {
             rawMarkdown = markdownAppendingImage(to: currentMarkdown(), url: url)
             blocks = parseEditorBlocks(rawMarkdown)
             markDirty()
-            flushPendingChanges()
             return
         }
 

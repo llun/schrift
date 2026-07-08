@@ -129,9 +129,40 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { photo })
 
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
-        XCTAssertTrue(viewModel.isDirty)
         XCTAssertNil(viewModel.errorMessage)
         XCTAssertFalse(viewModel.isUploadingPhoto)
+    }
+
+    /// A pop leaves `mode` untouched (only `finishEditing` sets `.reading`), and the
+    /// picker's Task is never cancelled — so the insert has to persist itself even
+    /// from an ordinary blocks-mode session. Relying on `markDirty`'s debounce would
+    /// lose the upload whenever the view model is released before it fires.
+    func testInsertPhotoFlushesTheSaveImmediatelyFromBlocksMode() async throws {
+        let log = RequestRecorder()
+        stubUploadPipeline(log: log)
+        let viewModel = await makeEditingViewModel()
+        XCTAssertEqual(viewModel.mode, .blocks)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertFalse(viewModel.isDirty, "the save must reach the coordinator, not a debounce that dies with the view")
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") == 1 }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+    }
+
+    func testInsertPhotoFlushesTheSaveImmediatelyFromMarkdownMode() async throws {
+        let log = RequestRecorder()
+        stubUploadPipeline(log: log)
+        let viewModel = await makeEditingViewModel()
+        viewModel.mode = .markdown
+        viewModel.rawMarkdown = "Hello"
+        viewModel.selection = NSRange(location: 5, length: 0)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertFalse(viewModel.isDirty)
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") == 1 }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
     }
 
     /// The bytes we upload must be a JPEG *and* be named `photo.jpg`: the backend
@@ -269,6 +300,29 @@ final class EditorPhotoInsertionTests: XCTestCase {
             viewModel.rawMarkdown.contains("```\n```"),
             "serializing the lossy blocks would invent an empty code block")
         XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown, "the save must carry the source, not blocks")
+    }
+
+    /// `openInMarkdownMode` is computed once, in `install()`. A document whose
+    /// *loaded* source round-trips but whose *session-authored* source doesn't must
+    /// still be saved from its source — so `currentMarkdown()` must not consult that
+    /// flag. Here the fence is typed during the session, leaving the flag false.
+    func testInsertPhotoPreservesALossySourceAuthoredDuringTheSession() async throws {
+        stubUploadPipeline(content: "Notes")
+        let viewModel = await makeEditingViewModel()
+        XCTAssertFalse(viewModel.openInMarkdownMode, "the loaded source round-trips, so the flag stays false")
+
+        viewModel.mode = .markdown
+        viewModel.rawMarkdown = "Notes\n```"  // now lossy, but the flag is stale
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.mode, .reading)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertTrue(viewModel.rawMarkdown.hasPrefix("Notes\n```"))
+        XCTAssertFalse(
+            viewModel.rawMarkdown.contains("```\n```"),
+            "a stale openInMarkdownMode must not route the save through the lossy blocks")
+        XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown)
     }
 
     // MARK: - Readiness poll
