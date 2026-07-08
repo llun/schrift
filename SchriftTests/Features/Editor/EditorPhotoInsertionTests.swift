@@ -280,11 +280,11 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
     }
 
-    /// An `openInMarkdownMode` document's `blocks` are a deliberately lossy parse.
-    /// Appending the image via `serializeMarkdown(blocks)` would rewrite the user's
-    /// source — here turning an unterminated fence into an empty code block they
-    /// never wrote — which is exactly what a full-overwrite save must never do.
-    func testInsertPhotoAfterLeavingEditModePreservesALossyMarkdownSource() async throws {
+    /// A source ending in an unterminated fence swallows anything appended to it, so
+    /// the image would render as literal code. We must neither rewrite the source to
+    /// make room (that invents an empty code block the user never wrote) nor report
+    /// success without producing an image. Fail loudly and leave the source alone.
+    func testInsertPhotoIntoAnUnterminatedFenceErrorsRatherThanCorruptOrVanish() async throws {
         stubUploadPipeline(content: "Notes\\n```")
         let viewModel = await makeEditingViewModel()
         XCTAssertTrue(viewModel.openInMarkdownMode, "an unterminated fence must not round-trip")
@@ -294,11 +294,28 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertTrue(viewModel.rawMarkdown.hasPrefix("Notes\n```"), "the authored source must survive verbatim")
-        XCTAssertTrue(viewModel.rawMarkdown.contains("![](\(expectedMediaURL))"))
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the authored source must survive untouched")
         XCTAssertFalse(
-            viewModel.rawMarkdown.contains("```\n```"),
-            "serializing the lossy blocks would invent an empty code block")
+            viewModel.rawMarkdown.contains("```\n```"), "we must not invent an empty code block to make room")
+        XCTAssertFalse(viewModel.isDirty, "nothing changed, so nothing may be enqueued")
+    }
+
+    /// The reading branch must append to the *source*, not to a serialization of the
+    /// lossy blocks — and the result must actually be an `.image` block, which the
+    /// previous version of this test never checked.
+    func testInsertPhotoAfterLeavingEditModeProducesARealImageBlock() async throws {
+        stubUploadPipeline(content: "Body text.")
+        let viewModel = await makeEditingViewModel()
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.mode, .reading)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(
+            parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
+            "the appended markdown must parse back to an .image block, not literal text")
         XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown, "the save must carry the source, not blocks")
     }
 
@@ -318,11 +335,56 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertTrue(viewModel.rawMarkdown.hasPrefix("Notes\n```"))
+        // Had `currentMarkdown()` consulted the stale flag it would have returned
+        // serializeMarkdown(blocks) == "Notes\n\n```\n```\n", whose appended image
+        // *does* parse — so the insert would have succeeded and silently rewritten
+        // the source. Both assertions below fail in that world.
+        XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the authored source must survive untouched")
         XCTAssertFalse(
             viewModel.rawMarkdown.contains("```\n```"),
             "a stale openInMarkdownMode must not route the save through the lossy blocks")
         XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown)
+    }
+
+    /// Every sibling async intent (`load`, `refresh`, `startEditing`) clears
+    /// `errorMessage` on entry. Without it a successful retry leaves the red banner
+    /// on screen — it renders in every mode, and only `finishEditing()` clears it.
+    func testASuccessfulRetryClearsThePreviousPhotoError() async throws {
+        stubUploadPipeline(uploadStatus: 400)
+        let viewModel = await makeEditingViewModel()
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+
+        stubUploadPipeline()  // retry succeeds
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
+    }
+
+    /// The picker's Task retains the view model, so an upload can land after the
+    /// document was deleted. `handleDidDelete()` already discarded the draft; saving
+    /// now would write a fresh one and resurrect the deleted content on reopen.
+    func testInsertPhotoAfterDeleteDoesNotResurrectTheDocument() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.finishEditing()
+        viewModel.handleDidDelete()
+        let blocksBefore = viewModel.blocks
+        let markdownBefore = viewModel.rawMarkdown
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, blocksBefore))
+        XCTAssertEqual(viewModel.rawMarkdown, markdownBefore)
+        XCTAssertFalse(viewModel.isDirty)
+        // `enqueue` writes the draft synchronously, so a resurrected draft is the
+        // direct evidence of a save. (Counting PATCHes would be flaky here: the
+        // coordinator's saves are async and can land during a later test.)
+        XCTAssertNil(
+            viewModel.saveCoordinator.storedDraft(documentID: documentID),
+            "a deleted document's draft must not be rewritten")
+        XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
     }
 
     // MARK: - Readiness poll

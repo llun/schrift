@@ -79,6 +79,10 @@ final class EditorViewModel {
     /// Editing is only allowed once content has loaded — otherwise autosave
     /// would overwrite the whole server document with an empty draft.
     private(set) var hasLoadedContent = false
+    /// Set once the document is deleted locally. Unlike `becomeUnavailable()`, the
+    /// delete path leaves `hasLoadedContent` true, so a late photo insert would
+    /// otherwise re-save — and re-draft — a document that no longer exists.
+    private(set) var isDocumentDiscarded = false
     private(set) var displaySource: DisplaySource = .none
     private var savedMarkdown = ""
     private var savedTitle = ""
@@ -389,6 +393,10 @@ final class EditorViewModel {
         // it would re-cache the list for a deleted document.
         childrenGeneration += 1
         saveCoordinator.discardPendingWork(documentID: documentID)
+        // A photo upload can still be in flight and would otherwise re-save (and
+        // re-draft) the deleted document when it lands. `hasLoadedContent` stays
+        // true here, so the insert needs its own gate.
+        isDocumentDiscarded = true
     }
 
     /// Installs the fetched server copy and records it in the content cache.
@@ -786,6 +794,9 @@ final class EditorViewModel {
     /// broken upload can never leave a placeholder in the document.
     func insertPhoto(loadingData: @Sendable () async throws -> Data?) async {
         guard canInsertPhoto else { return }
+        // Clear a previous failure's copy, like every other async intent method —
+        // otherwise a successful retry leaves the red banner on screen.
+        errorMessage = nil
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
         do {
@@ -846,6 +857,10 @@ final class EditorViewModel {
     /// on the app-scoped save coordinator, which owns its `Task`s precisely so
     /// navigating away can never cancel a save.
     private func insertImageBlock(url: String) {
+        // The document may have been deleted, or gone 404, while the photo was
+        // uploading. Saving now would resurrect it — `discardPendingWork` has
+        // already removed its draft, and `enqueue` would write a fresh one.
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
         defer { flushPendingChanges() }
 
         if mode == .markdown {
@@ -861,8 +876,17 @@ final class EditorViewModel {
         // may be a lossy parse of it — rather than to a serialization that would
         // rewrite what the user actually wrote.
         if mode == .reading {
-            rawMarkdown = markdownAppendingImage(to: currentMarkdown(), url: url)
-            blocks = parseEditorBlocks(rawMarkdown)
+            let appended = markdownAppendingImage(to: currentMarkdown(), url: url)
+            // A source whose tail is an unterminated code fence swallows anything
+            // appended to it (`closesCodeFence` never matches a blank line), so the
+            // image would render as literal code. Never rewrite the source to make
+            // room, and never report success without producing an image.
+            guard parseEditorBlocks(appended).contains(where: { $0.kind == .image(alt: "", url: url) }) else {
+                errorMessage = Self.photoErrorMessage
+                return
+            }
+            rawMarkdown = appended
+            blocks = parseEditorBlocks(appended)
             markDirty()
             return
         }
@@ -885,8 +909,10 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Appends a standalone image line, blank-line separated so it parses as an
-    /// `.image` block rather than being absorbed into the trailing paragraph.
+    /// Appends a standalone, blank-line-separated image line. That keeps it out of
+    /// a trailing paragraph — but it does **not** guarantee an `.image` block: a
+    /// source ending in an unterminated code fence swallows everything after it.
+    /// The caller must verify the result rather than assume.
     private func markdownAppendingImage(to source: String, url: String) -> String {
         let imageLine = "![](\(url))\n"
         guard !source.isEmpty else { return imageLine }
