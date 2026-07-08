@@ -206,6 +206,15 @@ final class MarkdownParserTests: XCTestCase {
         assertParses(
             "![x](javascript:alert(1))",
             [EditorBlock(kind: .unknown, text: "![x](javascript:alert(1))")])
+        assertParses(
+            "![x](file:///etc/passwd)",
+            [EditorBlock(kind: .unknown, text: "![x](file:///etc/passwd)")])
+    }
+
+    func testImageWithEmptyURLStaysUnknown() {
+        // "![alt]()" is also the tightest index-arithmetic case: the url slice is
+        // an empty range sitting exactly on the closing paren.
+        assertParses("![alt]()", [EditorBlock(kind: .unknown, text: "![alt]()")])
     }
 
     func testImageWithTrailingTextStaysUnknown() {
