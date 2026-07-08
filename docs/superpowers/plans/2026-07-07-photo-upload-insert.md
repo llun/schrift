@@ -27,9 +27,15 @@
 >   In reading mode `blocks` may be a lossy parse of `rawMarkdown`, so a
 >   full-overwrite save must carry the source. It must *not* key off
 >   `openInMarkdownMode`, which `install()` computes once and which goes stale.
-> - Neither insertion path may report success without producing an `.image` block:
->   a fenced code block (open at the tail, or wrapping the caret) swallows the image
->   line. We never rewrite the source to make room; we surface the friendly error.
+> - **All three** insertion paths (markdown, reading, blocks) must verify against
+>   the *saved* markdown before committing: none may report success without
+>   producing an `.image` block. A fenced code block swallows the image line —
+>   open at the tail, wrapping the caret, or (in blocks mode) formed on
+>   serialization by a neighbouring paragraph holding a bare ` ``` `. Blocks mode
+>   is the subtle one: the block array shows the image while
+>   `serializeMarkdown(blocks)` — the exact string `MarkdownYjs.encode` re-parses —
+>   contains none, so the photo silently never reaches the server. We never
+>   rewrite the source to make room; we surface the friendly error.
 > - `isDocumentDiscarded` gates the insert, or an upload landing after a delete
 >   re-drafts the document and resurrects it on reopen.
 >

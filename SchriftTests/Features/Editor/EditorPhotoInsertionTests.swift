@@ -255,7 +255,12 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, blocksBefore), "the blocks must be untouched")
-        XCTAssertFalse(viewModel.isDirty)
+        // Not `isDirty`: the buggy path's `markDirty()` is followed by the `defer`'d
+        // `flushPendingChanges()`, which clears the flag before the test can see it.
+        // `enqueue` writes the draft synchronously, so an absent draft is the real
+        // evidence that nothing was persisted.
+        XCTAssertNil(viewModel.saveCoordinator.storedDraft(documentID: documentID))
+        XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
         // The proof that the guard is right: the would-be save round-trips to no image.
         XCTAssertTrue(
             parseEditorBlocks("```\n\n![](\(expectedMediaURL))\n").allSatisfy {
@@ -293,7 +298,10 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
         XCTAssertEqual(viewModel.rawMarkdown, "```\ncode\n```", "the source must be untouched")
-        XCTAssertFalse(viewModel.isDirty)
+        // See the blocks-mode fence test: `isDirty` is cleared by the `defer`'d flush,
+        // so the draft is what discriminates a refused insert from a committed one.
+        XCTAssertNil(viewModel.saveCoordinator.storedDraft(documentID: documentID))
+        XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
     }
 
     func testInsertPhotoInMarkdownModeMidLineStillYieldsAStandaloneImage() async throws {
@@ -455,7 +463,10 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         // Without the `canInsertPhoto` gate, `insertPhoto`'s entry `errorMessage = nil`
-        // would wipe it, and a subsequent upload failure would replace it.
+        // wipes the terminal message and nothing restores it: the upload 404s, and
+        // `reportPhotoFailure()` then declines on its own `hasLoadedContent` guard —
+        // which `becomeUnavailable()` has already set false. The user is left with a
+        // dead document and no explanation at all.
         XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
     }
 
