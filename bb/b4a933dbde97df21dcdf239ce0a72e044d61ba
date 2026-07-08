@@ -1,0 +1,19 @@
+SchriftTests/Features/Editor/MarkdownParserTests.swift
+  s_8c866bdb7fcfb2::t_598d4327989dbb 220-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "bbb4a933dbde97df21dcdf239ce0a72e044d61ba",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
