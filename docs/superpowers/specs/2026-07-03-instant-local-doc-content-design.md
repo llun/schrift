@@ -410,9 +410,21 @@ branch instead of popping a banner. Outcomes:
 - **A stored draft outlives the save that wrote it** (the save failed): it is
   unsaved work regardless of which source installed the screen — a mid-session
   failure leaves `.clean` on screen with the draft behind it. `apply` therefore
-  consults `storedDraft(...)` *before* switching on `displaySource`, and only the
-  clock-tolerance rule may replace it. `hasUnsavedLocalContent` follows the same
-  rule, so the "Synced X ago" caption never lies about a failed save.
+  consults `storedDraft(...)` *before* switching on `displaySource`.
+  `hasUnsavedLocalContent` follows the same rule (gated on `hasLoadedContent`,
+  since `becomeUnavailable` deliberately keeps the draft — a 403 is revoked
+  access, not a deletion), so the "Synced X ago" caption never lies about a
+  failed save.
+  **`pendingDraftClockTolerance` may only discard a draft *stranded by an earlier
+  session*** — that is `recoverDrafts`' job, at launch, on a document nobody is
+  looking at. A draft whose save failed *this* session is a retry candidate with
+  its "Couldn't save" retry on screen, so `reconcileDraft` returns early on
+  `saveState == .failed`. Applying the tolerance rule there deletes visible
+  content, and it needs no remote edit to fire: `draft.updatedAt` is the device
+  clock, `formatted.updatedAt` the server's, so a device two minutes slow puts
+  *every* server timestamp beyond the window. (`pendingDraftClockTolerance`'s own
+  doc comment states the intent: losing the user's typed content is worse than
+  replaying it over a near-simultaneous web edit.)
 - **The fetch raced one of our own saves** (a save was in flight when it was
   issued, or one settled while it awaited — `DocumentSaveCoordinator.saveMarker`
   / `mayPredateSave`): the server may have answered from its **pre-save** state.

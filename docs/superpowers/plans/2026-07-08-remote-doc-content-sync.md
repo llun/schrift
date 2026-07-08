@@ -112,6 +112,26 @@ unpinned, so the *next* fetch — which postdates the save — reconciles normal
 boolean "was a save pending?" is not enough: a save can start **and** settle
 inside a single await, so the marker carries a monotonic settled-save count.
 
+**C. Fixing A introduced a third loss.** Routing a `.clean`-with-a-draft screen
+into `reconcileDraft` handed it to the clock-tolerance rule — whose else-branch
+*discards* the draft. `main` never did that. The trigger needs no remote edit:
+`draft.updatedAt` is the device clock at `enqueue`, `formatted.updatedAt` the
+server's, so a device two minutes slow puts every server timestamp beyond
+`draft.updatedAt + 120s`. A passive revalidation then deleted the user's visible
+content, and since `install()` resets `savedMarkdown`, the still-visible
+"Couldn't save" retry button enqueued the *server's* body and confirmed the loss.
+
+`pendingDraftClockTolerance`'s own doc comment states the opposite intent. That
+rule exists for drafts **stranded by an earlier session** — `recoverDrafts()`'
+job, at launch, on a document nobody is looking at. A draft whose save failed
+*this* session is a retry candidate with its retry affordance on screen. Fix:
+`reconcileDraft` returns early on `saveState == .failed`.
+
+The same round also found `hasUnsavedLocalContent` captioning "Couldn't save"
+under a document `becomeUnavailable` had torn off the screen (it deliberately
+keeps the draft, because a 403 is revoked access, not a deletion) — now gated on
+`hasLoadedContent`.
+
 Reproducing B required fixing `MockURLProtocol` first. It delivered every stub on
 URLSession's single protocol thread, so a `Thread.sleep` meant to hold one request
 open silently serialized every other in-flight request — the B test passed for the
@@ -120,6 +140,12 @@ until the mock grew a `Stub.delay` that defers *delivery* on a concurrent queue
 instead. Zero delay keeps the original synchronous path byte-for-byte, so the
 other ~600 tests are unaffected; `stopLoading` now cancels a deferred delivery,
 and `lastRequest` is lock-guarded.
+
+`waitUntil` also now fails the test on timeout rather than returning silently — a
+stalled wait was surfacing as a confusing assertion failure further down. That
+immediately exposed four `WebLoginCoordinatorTests` using it as a grace period
+before a *negative* assertion, the opposite contract; they moved to a new
+`waitAndConfirmNever` helper.
 
 A concurrency lesson came out of the first attempt at
 `testSecondLoadSupersedesFirstRevalidation`: keying the stub's response off "which
