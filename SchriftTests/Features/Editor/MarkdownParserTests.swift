@@ -226,6 +226,48 @@ final class MarkdownParserTests: XCTestCase {
             [EditorBlock(kind: .unknown, text: "![a]b](https://e.com/a.png)")])
     }
 
+    func testImageAltWithSpacesAndParenthesesBecomesImageBlock() {
+        // A downloaded-file name like "photo (1).png" is a common real alt.
+        assertParses(
+            "![photo (1).png](https://docs.example.com/a.png)",
+            [EditorBlock(kind: .image(alt: "photo (1).png", url: "https://docs.example.com/a.png"))])
+    }
+
+    func testImageURLWithBalancedParenthesesBecomesImageBlock() {
+        assertParses(
+            "![a](https://e.com/x(1).png)",
+            [EditorBlock(kind: .image(alt: "a", url: "https://e.com/x(1).png"))])
+    }
+
+    func testImageURLWithUnbalancedParenthesesStaysUnknown() {
+        // CommonMark ends the destination at the first unbalanced ")", leaving
+        // "(y)" as literal text. Our column-zero classifier takes the *last* ")",
+        // so without a balance check this would save a mangled url and silently
+        // drop the trailing "(y)". Anything ambiguous must stay verbatim.
+        assertParses(
+            "![a](https://e.com/x.png)(y)",
+            [EditorBlock(kind: .unknown, text: "![a](https://e.com/x.png)(y)")])
+    }
+
+    func testImageURLWithWhitespaceStaysUnknown() {
+        assertParses(
+            "![a](https://e.com/a b.png)",
+            [EditorBlock(kind: .unknown, text: "![a](https://e.com/a b.png)")])
+    }
+
+    func testImageInsideProseRunSplitsTheRun() {
+        // Classifying the image line flushes the pending prose run, so a
+        // web-authored image between two prose lines becomes its own block
+        // instead of being swallowed into one verbatim `.unknown` run.
+        assertParses(
+            "line one\n![img](https://e.com/a.png)\nline two",
+            [
+                EditorBlock(kind: .paragraph, text: "line one"),
+                EditorBlock(kind: .image(alt: "img", url: "https://e.com/a.png")),
+                EditorBlock(kind: .paragraph, text: "line two"),
+            ])
+    }
+
     func testHTMLLineBecomesUnknown() {
         assertParses("<div>widget</div>", [EditorBlock(kind: .unknown, text: "<div>widget</div>")])
     }
