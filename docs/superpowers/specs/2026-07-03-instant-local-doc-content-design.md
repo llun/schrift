@@ -24,12 +24,18 @@
 > save, and no open editing session — now has the fetched body **installed
 > directly** on every revalidation, passive or explicit; passive `load()` and
 > pull-to-refresh apply identical content rules and differ only in whether a
-> failure is surfaced. The **"Updated" banner** survives for the one case where
+> failure is surfaced. The **"Updated" banner** survives for the case where
 > swapping is destructive: a revalidation landing while an **editing session**
 > holds the caret stashes the body and offers it once editing ends.
 > Independently, `displaySource` no longer stays pinned at `.pendingSave` after
-> the save it named completed — that stranded the screen so *no* later
-> revalidation or pull-to-refresh could ever apply server content. See
+> the save it named settled — that stranded the screen so *no* later
+> revalidation or pull-to-refresh could ever apply server content.
+> Two safeguards landed with it, each after review found it could destroy
+> content: a **stored draft is unsaved work regardless of `displaySource`** (a
+> mid-session save failure leaves `.clean` on screen with the draft behind it),
+> and a response to a fetch that **raced one of our own saves** is never
+> installed or cached (the server may answer it from the pre-save state, and the
+> next full-overwrite save would push that resurrected body back). See
 > [`../plans/2026-07-08-remote-doc-content-sync.md`](../plans/2026-07-08-remote-doc-content-sync.md).
 
 Date: 2026-07-03
@@ -393,13 +399,29 @@ branch instead of popping a banner. Outcomes:
   in `pendingFreshContent`, set `updateAvailable = true` (drives the banner), and
   leave the displayed blocks alone; the banner renders once editing ends.
   `startEditing()`/`markDirty()` drop the stash, so local work always wins.
-- **Displayed source was an in-flight save (source 1) that has since completed:**
+- **Displayed source was an in-flight save (source 1) that has since settled:**
   reaching this branch proves the save is no longer pending (the dirty rule above
-  intercepts the in-flight case), so the screen holds either exactly what the
-  server holds (the save landed → treat as clean) or the content of a draft the
-  failed save left behind (→ treat as a stored draft). Leaving the source pinned
-  at `.pendingSave` strands the screen: every later revalidation *and* every
-  pull-to-refresh no-ops in silence and remote edits can never appear.
+  intercepts the in-flight case) *and* that this fetch postdates it (the
+  raced-fetch rule below intercepts the rest), so the screen holds an ordinary
+  clean copy — a failed save's draft is caught by the draft rule above. Leaving
+  the source pinned at `.pendingSave` strands the screen: every later
+  revalidation *and* every pull-to-refresh no-ops in silence and remote edits can
+  never appear.
+- **A stored draft outlives the save that wrote it** (the save failed): it is
+  unsaved work regardless of which source installed the screen — a mid-session
+  failure leaves `.clean` on screen with the draft behind it. `apply` therefore
+  consults `storedDraft(...)` *before* switching on `displaySource`, and only the
+  clock-tolerance rule may replace it. `hasUnsavedLocalContent` follows the same
+  rule, so the "Synced X ago" caption never lies about a failed save.
+- **The fetch raced one of our own saves** (a save was in flight when it was
+  issued, or one settled while it awaited — `DocumentSaveCoordinator.saveMarker`
+  / `mayPredateSave`): the server may have answered from its **pre-save** state.
+  Never install and never cache that body: it resurrects exactly the content the
+  save replaced, and because saves are a full overwrite the next save pushes it
+  back to the server. Only `displaySource` is unpinned, so the next fetch — which
+  postdates the save — reconciles normally. A boolean "was a save pending?" is
+  insufficient: a save can start *and* settle inside a single await, which is why
+  the marker carries a monotonic settled-save count.
 - **Title reconciliation** (in every clean branch): a changed server title
   applies **silently and immediately** — set `title` and `savedTitle` (so
   `flushPendingChanges`' title comparison doesn't enqueue a spurious save) and
@@ -443,7 +465,7 @@ New VM state and intents (summary):
 var lastSyncedAt: Date?            // drives the "Synced X ago" caption
 var hasLocalCopy: Bool             // drives offline chrome
 var updateAvailable: Bool          // drives the "Updated" banner
-private var pendingFreshContent: String?         // stashed fresh markdown (body only)
+private var pendingFreshContent: (markdown: String, syncedAt: Date)?   // stashed body only
 private var displayedSourceMarkdown: String      // staleness comparison basis
 private var revalidationGeneration: Int
 
@@ -601,7 +623,8 @@ revalidate (awaited tail; classify at completion; latest-wins) ◀────�
       │  clean & unchanged     ─▶ bump syncedAt ("Synced just now")
       │  clean & body changed  ─▶ install it (editing? stash + banner instead)
       │  clean & title changed ─▶ apply title silently (both branches)
-      │  save landed/failed    ─▶ leave .pendingSave: reclassify clean/draft
+      │  fetch raced our save  ─▶ discard the response; unpin .pendingSave only
+      │  save settled          ─▶ .pendingSave reclassifies: draft (failed) / clean
       ▼
 refresh() (pull) ─▶ same rules, awaited by the spinner; a failure additionally
       │             sets errorMessage instead of being swallowed
@@ -645,8 +668,14 @@ XCTest, mirroring the source tree. New/updated:
   - revalidate, server identical → `lastSyncedAt` advances, no banner; server
     export differing **only in canonicalization** → no banner (phantom-banner
     regression); same after a save success;
-  - revalidate, body changed, clean → `updateAvailable == true`, on-screen blocks
-    unchanged until `applyPendingUpdate()`;
+  - revalidate, body changed, clean & **not** editing → body installed, no banner
+    (the "only the title updates" regression); clean & editing →
+    `updateAvailable == true`, blocks unchanged until `applyPendingUpdate()`;
+  - revalidate whose fetch raced a local save → body neither installed nor
+    cached; the screen keeps the just-saved content and is not stranded;
+  - revalidate with a draft left behind by a failed save → draft survives
+    regardless of `displaySource`; a draft the server has passed beyond the clock
+    tolerance is discarded and the server copy installed;
   - revalidate, **title** changed, body identical → title + cache + `savedTitle`
     updated silently (no spurious save), no banner;
   - revalidate while dirty → three cases: in-flight save → untouched; stored

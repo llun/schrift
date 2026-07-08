@@ -141,11 +141,13 @@ final class EditorViewModel {
 
     var isEditing: Bool { mode != .reading }
 
-    /// Caption rule 1: unsaved local content wins over "Synced X ago".
+    /// Caption rule 1: unsaved local content wins over "Synced X ago". A stored
+    /// draft counts whatever `displaySource` says — a save failing mid-session
+    /// leaves `.clean` on screen with the draft (the user's only copy) behind it.
     var hasUnsavedLocalContent: Bool {
         isDirty
             || saveCoordinator.pendingSave(documentID: documentID) != nil
-            || (displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil)
+            || saveCoordinator.storedDraft(documentID: documentID) != nil
     }
 
     var saveState: SaveState {
@@ -211,9 +213,15 @@ final class EditorViewModel {
     /// refresh()) applying its outcome after a newer one has already run.
     private func revalidate(generation: Int) async {
         do {
+            // Snapshot before issuing: only the coordinator's state at *issue*
+            // time can tell us whether the response might predate our own save.
+            let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            apply(formatted: formatted)
+            apply(
+                formatted: formatted,
+                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker, documentID: documentID)
+            )
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -244,9 +252,13 @@ final class EditorViewModel {
         revalidationGeneration += 1
         let generation = revalidationGeneration
         do {
+            let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            apply(formatted: formatted)
+            apply(
+                formatted: formatted,
+                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker, documentID: documentID)
+            )
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -279,37 +291,56 @@ final class EditorViewModel {
         errorMessage = "This document is no longer available."
     }
 
-    private func apply(formatted: FormattedDocumentContent) {
+    /// `mayPredateLocalSave` is the coordinator's verdict, taken when the fetch
+    /// was *issued*, on whether this response could have been served from the
+    /// server's pre-save state (see `DocumentSaveCoordinator.mayPredateSave`).
+    private func apply(formatted: FormattedDocumentContent, mayPredateLocalSave: Bool) {
         defer { updatedAt = formatted.updatedAt }
+        // This fetch raced one of our own saves, so its body may be the one that
+        // save just replaced. Neither install nor cache it — a later
+        // full-overwrite save would push the resurrected body to the server.
+        // Only the display source is settled, so the next fetch isn't stranded.
+        if mayPredateLocalSave {
+            unpinSettledPendingSave()
+            return
+        }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
         if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
             cacheServerCopy(formatted)
             return
         }
-        switch displaySource {
-        case .pendingSave:
-            // Reaching here proves the save that owned the screen is no longer
-            // pending — the early return above covers the in-flight case. It
-            // either landed (the screen now holds what the server holds, i.e.
-            // an ordinary clean copy) or it failed and left its draft behind.
-            // Staying `.pendingSave` would strand the screen forever: every
-            // later revalidation *and* every pull-to-refresh would no-op in
-            // silence, so remote edits could never appear.
-            if saveCoordinator.storedDraft(documentID: documentID) != nil {
-                displaySource = .draft
-                reconcileDraft(formatted)
-            } else {
-                displaySource = .clean
-                reconcileClean(formatted)
-            }
-        case .draft:
+        // A draft outliving its save (the save failed) is unsaved work no matter
+        // which source installed the screen — a save failing mid-session leaves
+        // `.clean` on screen with the draft behind it. The clock-tolerance rule,
+        // never `displaySource`, decides whether the server may replace it.
+        if saveCoordinator.storedDraft(documentID: documentID) != nil {
+            displaySource = .draft
             reconcileDraft(formatted)
+            return
+        }
+        switch displaySource {
+        case .pendingSave, .clean:
+            // `.pendingSave` reaching here means the save that owned the screen
+            // landed (a failed one leaves the draft caught above) and this fetch
+            // postdates it, so the screen holds an ordinary clean copy. Leaving
+            // the source pinned would strand the screen forever: every later
+            // revalidation *and* every pull-to-refresh would no-op in silence.
+            displaySource = .clean
+            reconcileClean(formatted)
+        case .draft:
+            reconcileDraft(formatted)  // draft saved and cleared while we awaited
         case .none:
             installFetched(formatted)
-        case .clean:
-            reconcileClean(formatted)
         }
+    }
+
+    /// The save that owned the screen has settled, so `.pendingSave` no longer
+    /// describes it. Reclassify without touching content — the response that
+    /// triggered this is untrustworthy — so the next fetch reconciles normally.
+    private func unpinSettledPendingSave() {
+        guard displaySource == .pendingSave, saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
+        displaySource = saveCoordinator.storedDraft(documentID: documentID) != nil ? .draft : .clean
     }
 
     /// An unsaved draft owns the screen. It only loses to a server copy written
@@ -452,6 +483,14 @@ final class EditorViewModel {
         savedTitle = title
         rawMarkdown = markdown
         blocks = parseEditorBlocks(markdown)
+        // Every block gets a fresh identity here, so any caret state still
+        // pointing into the outgoing blocks is now dangling. Clearing it in the
+        // one funnel every content swap routes through makes that unrepresentable
+        // — `reconcileDraft`'s server-wins install can land mid-edit.
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
         openInMarkdownMode = !markdown.isEmpty && !markdownSurvivesRoundTrip(markdown)
         // The dirty baseline uses the same representation currentMarkdown()
         // produces, so an unchanged document never triggers a save.

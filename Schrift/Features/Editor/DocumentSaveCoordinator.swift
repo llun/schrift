@@ -45,6 +45,13 @@ final class DocumentSaveCoordinator {
         case failed(String)
     }
 
+    /// A fingerprint of a document's save activity, taken when a revalidation
+    /// fetch is issued. See `mayPredateSave(_:documentID:)`.
+    struct SaveMarker: Equatable, Sendable {
+        fileprivate let settledSaves: Int
+        fileprivate let hadPendingSave: Bool
+    }
+
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
     private let contentCache: DocumentContentCacheStore
@@ -54,6 +61,8 @@ final class DocumentSaveCoordinator {
     private var inFlight: [UUID: Task<Void, Never>] = [:]
     private var inFlightContent: [UUID: PendingSave] = [:]
     private var queued: [UUID: PendingSave] = [:]
+    /// Monotonic per-document count of saves that have settled (landed or failed).
+    private var settledSaves: [UUID: Int] = [:]
     private var hasRecoveredDrafts = false
 
     init(
@@ -82,6 +91,23 @@ final class DocumentSaveCoordinator {
     /// been replayed yet.
     func storedDraft(documentID: UUID) -> PendingDraft? {
         draftStore.draft(for: documentID)
+    }
+
+    func saveMarker(documentID: UUID) -> SaveMarker {
+        SaveMarker(
+            settledSaves: settledSaves[documentID] ?? 0,
+            hadPendingSave: pendingSave(documentID: documentID) != nil
+        )
+    }
+
+    /// True when a save for this document was already in flight when `marker` was
+    /// taken, or settled after it. Either way a fetch issued at `marker` may have
+    /// been answered from the server's **pre-save** state, so its body must never
+    /// be installed or cached: it would resurrect exactly the content the save
+    /// replaced, and — because saves are a full overwrite — the next save would
+    /// push that stale body back to the server.
+    func mayPredateSave(_ marker: SaveMarker, documentID: UUID) -> Bool {
+        marker.hadPendingSave || (settledSaves[documentID] ?? 0) != marker.settledSaves
     }
 
     func enqueue(documentID: UUID, title: String, markdown: String) {
@@ -158,6 +184,9 @@ final class DocumentSaveCoordinator {
     private func finish(documentID: UUID, save: PendingSave, error: Error?) {
         inFlight[documentID] = nil
         inFlightContent[documentID] = nil
+        // Any revalidation fetch still in flight was issued before this save
+        // settled, so its response may predate it (see `mayPredateSave`).
+        settledSaves[documentID, default: 0] += 1
         if error == nil {
             states[documentID] = .saved(Date())
             if let draft = draftStore.draft(for: documentID),

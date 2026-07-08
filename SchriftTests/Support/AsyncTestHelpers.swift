@@ -31,6 +31,20 @@ final class RequestRecorder: @unchecked Sendable {
     }
 }
 
+/// Thread-safe monotonic counter for stub handlers that must distinguish the
+/// nth concurrent request (MockURLProtocol calls them off the main actor).
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+}
+
 /// Polls a condition on the main actor until it holds or the timeout passes.
 @MainActor
 func waitUntil(

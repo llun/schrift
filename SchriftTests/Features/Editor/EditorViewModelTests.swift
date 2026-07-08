@@ -9,12 +9,16 @@ final class EditorViewModelTests: XCTestCase {
 
     private var cacheDirectory: URL!
     private var childrenSuiteName: String!
+    /// Every suite `makeEnvironment` creates, so tearDown can remove each
+    /// persistent domain instead of leaking a plist per environment.
+    private var draftSuiteNames: [String] = []
 
     override func setUp() {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditorViewModelTests-\(UUID().uuidString)", isDirectory: true)
         childrenSuiteName = "EditorViewModelTests.children.\(UUID().uuidString)"
+        draftSuiteNames = []
     }
 
     override func tearDown() {
@@ -22,6 +26,9 @@ final class EditorViewModelTests: XCTestCase {
         MockURLProtocol.lastRequest = nil
         try? FileManager.default.removeItem(at: cacheDirectory)
         UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
+        for suiteName in draftSuiteNames {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
         super.tearDown()
     }
 
@@ -34,6 +41,7 @@ final class EditorViewModelTests: XCTestCase {
     ) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         // Isolated: load()/delete/404 paths touch the children cache, which
@@ -89,16 +97,27 @@ final class EditorViewModelTests: XCTestCase {
         log.count(ofMethod: "PATCH", urlContaining: "/content/")
     }
 
-    private func stubLoadAndSavePipeline(content: String?, log: RequestRecorder, contentStatus: Int = 204) {
+    /// `saveDelay` holds the content PATCH open so a save is deterministically
+    /// still in flight when a concurrently-issued GET reaches `apply`. `getDelay`
+    /// holds the GET open instead, so its response lands *after* the save settled
+    /// — the raced-fetch case. Both use `Stub.delay`, never `Thread.sleep`, so one
+    /// stalled request never blocks the other.
+    private func stubLoadAndSavePipeline(
+        content: String?,
+        log: RequestRecorder,
+        contentStatus: Int = 204,
+        saveDelay: TimeInterval = 0,
+        getDelay: TimeInterval = 0
+    ) {
         let body = formattedBody(content: content)
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             switch request.httpMethod {
             case "GET" where url.contains("formatted-content"):
-                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+                return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: getDelay)
             case "PATCH" where url.hasSuffix("/content/"):
-                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil, delay: saveDelay)
             case "PATCH":
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
             default:
@@ -351,6 +370,35 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.updateAvailable)
     }
 
+    /// The route the shipped app actually takes into the banner: the cached copy
+    /// renders synchronously, so the reading surface is live while the fetch is
+    /// in flight. Tapping a block then starts editing *before* the response
+    /// lands. (The other banner tests drive `load()` twice, which the app never
+    /// does — this one guards against the banner becoming unreachable UI.)
+    func testEditingStartedDuringTheFetchStashesTheResponseBehindTheBanner() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        let body = formattedBody(content: "# New")
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.3)  // held open
+        }
+
+        async let loading: Void = viewModel.load()
+        // The cached copy is on screen after the synchronous local phase; the
+        // user taps into it while the revalidation is still awaiting.
+        await waitUntil { viewModel.hasLoadedContent }
+        viewModel.startEditing()
+        await loading
+
+        XCTAssertTrue(viewModel.updateAvailable, "the response arrived mid-edit and was stashed")
+        XCTAssertEqual(viewModel.blocks.first?.text, "Old", "content under the caret is never swapped")
+
+        viewModel.finishEditing()
+        viewModel.applyPendingUpdate()
+
+        XCTAssertEqual(viewModel.blocks.first?.text, "New")
+    }
+
     /// The banner's remaining job: an editing session owns the caret, so a
     /// changed body waits until editing ends rather than being swapped in.
     func testRevalidateWhileEditingStashesBehindBanner() async {
@@ -415,10 +463,17 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.startEditing()
         stubLoad(content: "# New")
         await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "precondition: a body is stashed")
 
         viewModel.applyPendingUpdate()
 
         XCTAssertEqual(viewModel.rawMarkdown, "# Old")
+        // The stash must SURVIVE the refused apply — clearing it before the
+        // guard would silently destroy the fetched body.
+        XCTAssertTrue(viewModel.updateAvailable)
+        viewModel.finishEditing()
+        viewModel.applyPendingUpdate()
+        XCTAssertEqual(viewModel.blocks.first?.text, "New")
     }
 
     func testNonRoundTrippableCachedContentOpensInMarkdownMode() async {
@@ -557,15 +612,31 @@ final class EditorViewModelTests: XCTestCase {
     func testSecondLoadSupersedesFirstRevalidation() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
-        stubLoad(content: "# New")
+        // Distinct bodies, and the *first* (superseded) fetch resolves last.
+        // With one shared body both loads agree and the test passes even with the
+        // generation guard deleted — it has to be able to tell them apart.
+        let log = RequestRecorder()
+        let requestCount = Counter()
+        let firstBody = formattedBody(content: "# First")
+        let secondBody = formattedBody(content: "# Second")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let isFirst = requestCount.next() == 1
+            return .init(
+                statusCode: 200, headers: [:], body: isFirst ? firstBody : secondBody, error: nil,
+                delay: isFirst ? 0.3 : 0)
+        }
 
-        async let first: Void = viewModel.load()
-        async let second: Void = viewModel.load()
-        _ = await (first, second)
+        let first = Task { await viewModel.load() }
+        // Don't race the stub: the second load may only be issued once the first
+        // request is inside the handler, or "first request" and "first generation"
+        // can disagree and the assertion below becomes a coin flip.
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        let second = Task { await viewModel.load() }
+        await first.value
+        await second.value
 
-        // Whatever interleaving occurred, exactly one coherent outcome: the
-        // fetched body on screen, no stale stash, no spinner left behind.
-        XCTAssertEqual(viewModel.rawMarkdown, "# New")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Second", "the superseded fetch never applies")
         XCTAssertFalse(viewModel.updateAvailable)
         XCTAssertFalse(viewModel.isLoading)
     }
@@ -610,7 +681,8 @@ final class EditorViewModelTests: XCTestCase {
     func testRefreshAppliesRemoteContentAfterAnInFlightSaveCompletes() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, _, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log)
+        // The stalled PATCH keeps the save in flight while the GET reaches apply().
+        stubLoadAndSavePipeline(content: "# Server", log: log, saveDelay: 0.2)
         // Enqueue synchronously so restoreLocalContent() sees the pending save.
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
@@ -624,6 +696,7 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.rawMarkdown, "# Remote")
         XCTAssertEqual(viewModel.displaySource, .clean)
+        XCTAssertEqual(savesInFlight(log), 1, "reconciling never re-saves")
     }
 
     /// The same unpinning must not throw away unsaved work: a save that failed
@@ -631,7 +704,7 @@ final class EditorViewModelTests: XCTestCase {
     func testRefreshAfterAFailedSaveKeepsTheDraftOnScreen() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500, saveDelay: 0.2)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
         await viewModel.load()
@@ -649,6 +722,114 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "unsaved work is never clobbered")
         XCTAssertEqual(viewModel.displaySource, .draft)
         XCTAssertNotNil(draftStore.draft(for: documentID))
+        XCTAssertNil(viewModel.errorMessage, "a protected draft is a deliberate, silent no-op")
+    }
+
+    /// A draft left behind by a *failed* save is unsaved work no matter which
+    /// source installed the screen. Reaching `reconcileClean` with `.clean` on
+    /// screen (the state a save failing mid-session leaves behind) used to
+    /// install the server body straight over it — and `saveNow()` would then
+    /// push the server's own body back, making the loss permanent.
+    func testRevalidationAfterAFailedSaveNeverClobbersTheSurvivingDraft() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
+        await viewModel.load()
+        XCTAssertEqual(viewModel.displaySource, .clean)
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine")
+        viewModel.finishEditing()  // flush → enqueue → PATCH 500, draft survives
+        await waitUntil {
+            if case .failed = viewModel.saveState { return true }
+            return false
+        }
+
+        stubLoad(content: "# Server")  // the save never landed
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.blocks.first?.text, "Mine", "the failed save's content survives")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Mine\n", "the edited block is still a heading")
+        XCTAssertEqual(viewModel.displaySource, .draft, "a surviving draft owns the screen")
+        XCTAssertTrue(viewModel.hasUnsavedLocalContent)
+    }
+
+    /// The other half of the reclassification: a draft the server has moved
+    /// meaningfully past is stale, so the server wins and the draft is dropped.
+    /// This is the branch that legitimately destroys local content, so it needs
+    /// to be pinned down exactly.
+    func testRefreshAfterAFailedSaveDiscardsAStaleDraftAndInstallsTheServerCopy() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500, saveDelay: 0.2)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        await viewModel.load()
+        XCTAssertEqual(viewModel.displaySource, .pendingSave)
+        await waitUntil {
+            if case .failed = viewModel.saveState { return true }
+            return false
+        }
+        // Age the surviving draft far past the fixture's updated_at (2026-01-15),
+        // which `enqueue`'s `Date()` stamp could never be.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine",
+                updatedAt: Date(timeIntervalSince1970: 0)))
+
+        stubLoad(content: "# Remote")
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Remote", "server wins beyond the clock tolerance")
+        XCTAssertEqual(viewModel.displaySource, .clean)
+        XCTAssertNil(draftStore.draft(for: documentID), "stale draft discarded")
+    }
+
+    /// The unchanged branch drops a stash unconditionally: if the server has
+    /// converged back to what is on screen, the stashed body has nothing to offer.
+    func testRevalidationMatchingTheScreenDropsAStaleStash() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Old"))
+        stubOffline()
+        await viewModel.load()
+        viewModel.startEditing()
+        stubLoad(content: "# New")
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        stubLoad(content: "# Old")  // the server reverted
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.updateAvailable)
+        viewModel.finishEditing()
+        viewModel.applyPendingUpdate()  // the stash is really gone, not just the flag
+        XCTAssertEqual(viewModel.blocks.first?.text, "Old")
+    }
+
+    /// A revalidation issued while one of our own saves was in flight may be
+    /// answered from the server's pre-save state. Installing that body would
+    /// resurrect exactly what the save replaced — and the next full-overwrite
+    /// save would push it back to the server.
+    func testRevalidationRacingOurOwnSaveNeverInstallsThePreSaveBody() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, contentCache) = makeEnvironment()
+        // The GET is stalled so its (pre-save) response lands after the PATCH
+        // has completed and cleared the pending save.
+        stubLoadAndSavePipeline(content: "# Old", log: log, getDelay: 0.3)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        await viewModel.load()
+        await waitUntil { viewModel.saveState == .saved }
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "the just-saved content stays on screen")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, "# Mine", "cache not poisoned")
+
+        // …and the screen is not stranded: the next fetch reconciles normally.
+        stubLoad(content: "# Remote")
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.rawMarkdown, "# Remote")
+        XCTAssertEqual(viewModel.displaySource, .clean)
     }
 
     func testRefreshFailureSurfacesErrorEvenWithLocalContent() async {

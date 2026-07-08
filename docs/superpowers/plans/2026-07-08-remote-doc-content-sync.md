@@ -66,18 +66,68 @@ precisely the moment to reconcile, not to give up.
 ## The fix
 
 - `reconcileClean` installs the fetched body whenever the copy on screen is
-  clean. The banner is kept for the single destructive case — a revalidation
-  landing while an **editing session** holds the caret — and surfaces once
-  editing ends. When the fetched body matches what's on screen, any stale stash
-  is now cleared unconditionally.
-- `apply(formatted:)` loses its `userInitiated` parameter: passive `load()` and
-  explicit `refresh()` apply identical content rules. `refresh()` keeps its one
-  real difference — it surfaces failures instead of swallowing them.
-- The `.pendingSave` branch reclassifies instead of no-oping: a surviving draft
-  (the save failed) means the draft still owns the screen (`.draft`); no draft
-  (the save landed) means the screen holds an ordinary clean copy (`.clean`).
+  clean. The banner is kept for the destructive case — a revalidation landing
+  while an **editing session** holds the caret — and surfaces once editing ends.
+  When the fetched body matches what's on screen, any stale stash is now cleared
+  unconditionally.
+- `apply` loses its `userInitiated` parameter: passive `load()` and explicit
+  `refresh()` apply identical content rules. `refresh()` keeps its one real
+  difference — it surfaces failures instead of swallowing them.
+- The `.pendingSave` branch reclassifies instead of no-oping.
 - The `.draft` logic moves into a `reconcileDraft` helper, shared by both entry
   points, with the server-wins-beyond-tolerance rule unchanged.
+- `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`: every
+  content swap re-identifies the blocks, and `reconcileDraft`'s server-wins
+  install can land mid-edit.
+
+## What review caught (and the first draft got wrong)
+
+Removing the blanket "never swap clean content" rule removed the only thing
+protecting two states that had been riding on it. Two independent reviewers
+found the same class of bug; both were reproduced as failing tests before being
+fixed.
+
+**A. A draft left behind by a failed save was clobbered.** After a save fails
+mid-session the draft survives in `PendingDraftStore`, but `pendingSave()` is
+`nil`, `isDirty` is `false`, and `displaySource` is still `.clean` — so the next
+passive revalidation installed the server body straight over the user's only
+copy. `saveNow()` would then enqueue `savedMarkdown` (now the server's own body),
+making the loss permanent. Fix: `apply` consults `storedDraft(...)` **before**
+switching on `displaySource`; only the clock-tolerance rule may replace a draft.
+`hasUnsavedLocalContent` was widened to match, so the "Synced X ago" caption no
+longer lies about a failed save.
+
+**B. A revalidation racing our own save installed the pre-save body.** Because
+`displaySource == .pendingSave` is only set when a save is in flight at `load()`
+entry, the GET is necessarily issued while that PATCH is outstanding — and the
+server is free to answer it from the pre-save state. Reclassifying to `.clean`
+and reconciling *that* response reverted the screen **and the cache** to the body
+the save had just replaced; the next full-overwrite save would push it back to
+the server. `case .pendingSave: break` had been silently protecting against this.
+
+Fix: `DocumentSaveCoordinator` gained a `SaveMarker`, snapshotted before the
+fetch is issued and checked after it lands (`mayPredateSave`). A response that
+may predate a local save is neither installed nor cached; only `displaySource` is
+unpinned, so the *next* fetch — which postdates the save — reconciles normally. A
+boolean "was a save pending?" is not enough: a save can start **and** settle
+inside a single await, so the marker carries a monotonic settled-save count.
+
+Reproducing B required fixing `MockURLProtocol` first. It delivered every stub on
+URLSession's single protocol thread, so a `Thread.sleep` meant to hold one request
+open silently serialized every other in-flight request — the B test passed for the
+wrong reason (the stalled GET was blocking the PATCH it was supposed to race)
+until the mock grew a `Stub.delay` that defers *delivery* on a concurrent queue
+instead. Zero delay keeps the original synchronous path byte-for-byte, so the
+other ~600 tests are unaffected; `stopLoading` now cancels a deferred delivery,
+and `lastRequest` is lock-guarded.
+
+A concurrency lesson came out of the first attempt at
+`testSecondLoadSupersedesFirstRevalidation`: keying the stub's response off "which
+request arrived first" is not the same as "which `load()` bumped the generation
+first". Those agreed only ~60% of the time, and the suite failed 2 runs in 5. The
+test now gates the second `load()` on the first request reaching the handler.
+**Any new test that overlaps two requests must pin their order explicitly** —
+`async let` does not.
 
 ## Tests
 
@@ -93,11 +143,27 @@ after (`git stash` on `EditorViewModel.swift` alone):
 - `testRevalidateWhileEditingStashesBehindBanner`,
   `testRefreshClearsABannerStashedByAnEditingSession` — the banner's remaining,
   narrower job.
+- `testRevalidationAfterAFailedSaveNeverClobbersTheSurvivingDraft` — review
+  finding A.
+- `testRevalidationRacingOurOwnSaveNeverInstallsThePreSaveBody` — review
+  finding B.
+- `testRefreshAfterAFailedSaveDiscardsAStaleDraftAndInstallsTheServerCopy` — the
+  one branch that legitimately destroys local content.
+- `testEditingStartedDuringTheFetchStashesTheResponseBehindTheBanner` — the route
+  the shipped app actually takes into the banner (the other banner tests drive
+  `load()` twice, which the app never does), so the banner can't quietly become
+  unreachable UI.
+- `DocumentSaveCoordinatorTests`' `SaveMarker` suite, including the
+  started-and-settled-during-one-await case a boolean flag would miss.
 
 Existing banner tests (`testStartEditingClearsPendingUpdate`,
 `testApplyPendingUpdateWhileEditingIsANoOp`,
 `testApplyPendingUpdateRecomputesRoundTripMode`) were retargeted to reach the
 banner through an editing session, which is now the only way to reach it.
+`testSecondLoadSupersedesFirstRevalidation` was vacuous — both concurrent loads
+returned the same body, so it passed with the generation guard deleted. It now
+returns distinct bodies and resolves the superseded fetch last; verified red
+against a mutation that removes the guard.
 
 ## Docs
 

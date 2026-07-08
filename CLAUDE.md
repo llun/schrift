@@ -494,21 +494,40 @@ markdown write endpoint**. Understand this before touching the save path:
   The coordinator write-throughs the cache on save success; delete and 404/403
   revalidation purge the entry; sign-out clears the store. Offline is
   read-only. See `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`.
-- **A clean copy always ends up showing the server's body.** `apply(formatted:)`
-  takes no "user initiated" flag: passive `load()` and pull-to-refresh apply
-  identical content rules, and `refresh()` differs only in surfacing failures.
-  Applying the fetched **title** while stashing the fetched **body** is exactly
-  what produced "remote edits never arrive, only the title does" — don't
-  reintroduce it. The **"Updated" banner**
-  (`updateAvailable`/`pendingFreshContent`) is reserved for the one destructive
-  case: a revalidation landing while an **editing session** holds the caret. It
-  surfaces when editing ends, and `startEditing`/`markDirty` drop the stash so
-  local work always wins. Likewise `displaySource` must never stay pinned at
-  `.pendingSave` once that save has completed — `apply`'s early return already
-  covers the still-in-flight case, so *reaching* the `.pendingSave` branch means
-  reclassify (a surviving draft ⇒ `.draft`, otherwise `.clean`). Pinning it
-  stranded the screen: every later revalidation **and** every pull-to-refresh
-  no-oped in silence. See
+- **A clean copy always ends up showing the server's body.** `apply` takes no
+  "user initiated" flag: passive `load()` and pull-to-refresh apply identical
+  content rules, and `refresh()` differs only in surfacing failures (and in its
+  `hasLoadedContent` fallback to `load()`). Applying the fetched **title** while
+  stashing the fetched **body** is exactly what produced "remote edits never
+  arrive, only the title does" — don't reintroduce it. The **"Updated" banner**
+  (`updateAvailable`/`pendingFreshContent`) is reserved for the destructive case
+  in the *clean* branch: a revalidation landing while an **editing session**
+  holds the caret (the user taps into the synchronously-rendered local copy
+  while the fetch is still in flight). It surfaces when editing ends, and
+  `startEditing`/`markDirty` drop the stash so local work always wins.
+  `reconcileDraft`'s server-wins rule still installs directly even mid-edit,
+  which is why `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`
+  — every content swap re-identifies the blocks.
+- **Two invariants keep the full-overwrite save from eating content.** Both were
+  learned the hard way; each has a named regression test.
+  1. **A stored draft is unsaved work regardless of `displaySource`.** A save
+     failing mid-session leaves `.clean` on screen with the user's only copy in
+     `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`
+     *before* it switches on `displaySource`; only the clock-tolerance rule in
+     `reconcileDraft` may replace a draft. `hasUnsavedLocalContent` follows the
+     same rule.
+  2. **Never install or cache a response that may predate one of our own saves.**
+     A revalidation issued while a save was in flight can be answered from the
+     server's pre-save state; installing it resurrects exactly what the save
+     replaced, and the next full-overwrite save pushes that back to the server.
+     Snapshot `saveCoordinator.saveMarker(documentID:)` *before* issuing the
+     fetch and check `mayPredateSave(_:documentID:)` after — a boolean "was a
+     save pending?" is not enough (a save can start *and* settle during the
+     await), hence the coordinator's monotonic settled-save count.
+- `displaySource` must never stay pinned at `.pendingSave` once that save has
+  settled — pinning it stranded the screen: every later revalidation **and**
+  every pull-to-refresh no-oped in silence. Reclassify (a surviving draft ⇒
+  `.draft`, otherwise `.clean`). See
   `docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md`.
 
 ### Persistence (`*Store` types)
@@ -584,6 +603,14 @@ markdown write endpoint**. Understand this before touching the save path:
   shared thread-safe `RequestRecorder` (`SchriftTests/Support/AsyncTestHelpers.swift`)
   into the `stubHandler` (`log.record(request)`) and assert on `methods` /
   `count(ofMethod:urlContaining:)`. Never hit the real network.
+- To hold a response open, return `Stub(..., delay:)` — **not** `Thread.sleep`
+  inside the handler. Stubs are delivered on URLSession's single protocol thread,
+  so sleeping there stalls every other in-flight request and silently serializes
+  the very overlap a concurrent test exists to exercise (`Stub.delay` defers
+  delivery instead; `delay: 0` keeps the original synchronous path). And when a
+  test overlaps two requests, **pin their order explicitly** — gate the second on
+  a `RequestRecorder` count. "Which request reached the stub first" and "which
+  caller ran first" are different questions, and `async let` answers neither.
 - Isolate UserDefaults per test (`UserDefaults(suiteName:)` +
   `removePersistentDomain` in setUp/tearDown); inject `FakeKeychainStore`, and
   for cookie-dependent subjects the shared in-memory `FakeCookieStorage`
