@@ -1,0 +1,63 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_bd016ef1df7174::t_34a716621ff0af 64-65
+  s_bd016ef1df7174::t_07418a85fe022e 48-54
+  s_bd016ef1df7174::t_dc9db969971005 187-189
+  s_bd016ef1df7174::t_22266be5f040d3 96-112
+SchriftTests/Support/AsyncTestHelpers.swift
+  s_bd016ef1df7174::t_df5c1834556588 34-47
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_bd016ef1df7174::t_20d768b8011889 304-369
+CLAUDE.md
+  s_bd016ef1df7174::t_97f7d185b6bfab 561-568
+  s_bd016ef1df7174::t_d2f2ed078b4a80 452-485
+docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md
+  s_bd016ef1df7174::t_d42c8c575f3396 69-76,79-114
+  s_bd016ef1df7174::t_e213a2eff47803 115-130
+  s_bd016ef1df7174::t_6766d5abe26675 146-157,163-166
+Schrift/Features/Editor/EditorViewModel.swift
+  s_bd016ef1df7174::t_7ebb64d3aad777 232,235-238
+  s_bd016ef1df7174::t_9a8059459b5f8b 121-123,127
+  s_bd016ef1df7174::t_d8bd7e5e4405c7 271-274,276-283,290-298,300-307,309,315-320
+  s_bd016ef1df7174::t_84a8408a6dccd3 193-195,198-201
+  s_bd016ef1df7174::t_119e5d4aed912d 459-466
+  s_bd016ef1df7174::t_025a818a1bcd12 321-322
+docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md
+  s_bd016ef1df7174::t_5e5afe133a39f8 671-678
+  s_bd016ef1df7174::t_5d2d430c655a94 402,404-424
+  s_bd016ef1df7174::t_832d7bcdd5ccc2 626-627
+  s_bd016ef1df7174::t_88c865e0dae197 27,31-38
+  s_bd016ef1df7174::t_c920f7800f6fd2 468
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_bd016ef1df7174::t_538cab8dedf46d 466,471-476
+  s_bd016ef1df7174::t_f6a11f3d568a46 757-808
+  s_bd016ef1df7174::t_77c40df5bfd5ca 12-14,21,29-31
+  s_bd016ef1df7174::t_687083fd80d46d 105-111
+  s_bd016ef1df7174::t_6b9f9858b7a3b4 615-618,622-623,625-627,630-637
+  s_bd016ef1df7174::t_15a873dfed8dff 619-621,624,628,639
+  s_bd016ef1df7174::t_84802124d0015c 100-104,118,120
+  s_bd016ef1df7174::t_e3a470bf9d5676 373-382,384-401
+  s_bd016ef1df7174::t_062c1ab23b5275 752
+  s_bd016ef1df7174::t_cffca42365ce8e 44
+  s_bd016ef1df7174::t_8c568e22e99269 684-685,699,707,725-751,753-756,809-832
+  s_bd016ef1df7174::t_525fd692e0c2a6 383
+SchriftTests/Core/Networking/MockURLProtocol.swift
+  s_bd016ef1df7174::t_37a4246f8ee38c 9-22,32-33,46-48,60-63,65-82,85,95-97
+  s_bd016ef1df7174::t_5a34b4d1e3db9e 27-31,34-45,64
+  s_bd016ef1df7174::t_d693b4a84a01f6 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5ed7c66dbd8fd6bc8516f2db187d137f06dbb775",
+  "prompts": {},
+  "sessions": {
+    "s_bd016ef1df7174": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b275856-0d78-4dc0-ab5d-2e97309bd5de",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
