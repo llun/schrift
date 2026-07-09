@@ -122,4 +122,27 @@ final class EditorUnavailableDetailTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorDetail, "HTTP 404: the document's own reason")
     }
+
+    /// `errorDetail` is only ever rendered beneath `errorMessage`, so a detail that outlives
+    /// its message is invisible right up until an unrelated later message adopts it — the user
+    /// then reads a stale "HTTP 404" under "Couldn't add the subpage."
+    func testANewErrorMessageNeverInheritsThePreviousDetail() async {
+        let viewModel = makeViewModel(diagnostics: APIDiagnosticsLog())
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 404, headers: ["Content-Type": "application/json"],
+                body: Data(#"{"detail":"Not found."}"#.utf8), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertEqual(viewModel.errorDetail, "HTTP 404: Not found.")
+
+        // A different failure, from a code path that carries no detail of its own.
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        _ = await viewModel.addSubpage()
+
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the subpage. Please try again.")
+        XCTAssertNil(viewModel.errorDetail, "the previous failure's detail must not be adopted")
+    }
 }

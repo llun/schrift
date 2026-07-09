@@ -54,12 +54,20 @@ extension DocsAPIClient {
                 // and would tear the editor down and purge the cache over a proxy hiccup.
                 throw DocsAPIError.routeNotFound
             }
-            // The route's absence is a fact about the *server*, established by the probe and
-            // independent of this document. Memoize it before fetching, or a first document
-            // that happens to be deleted (or forbidden) leaves every later load re-running
-            // the whole three-request detection.
-            prefersLegacyContentRoute = true
-            return try await get(legacyPath)
+            do {
+                let content: FormattedDocumentContent = try await get(legacyPath)
+                prefersLegacyContentRoute = true
+                return content
+            } catch DocsAPIError.notFound {
+                // DRF's JSON 404: the legacy route *answered*, so it exists — this one
+                // document is simply gone. Memoize anyway, or a first document that happens
+                // to be deleted leaves every later load re-running the whole detection.
+                prefersLegacyContentRoute = true
+                throw DocsAPIError.notFound
+            }
+            // Anything else — including `.routeNotFound`, meaning neither route exists — leaves
+            // the flag alone. Pinning it to a route that cannot answer would break every
+            // content read for the rest of the client's life, with no way back but a relaunch.
         }
     }
 

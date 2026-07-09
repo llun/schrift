@@ -220,3 +220,26 @@ the failure whose reason nobody can guess.
 containing `html`. A legacy deployment whose missing-route 404 is unlabelled or `text/plain`
 gets no fallback. Django's default 404 page is `text/html`, which is what the single legacy
 server this was measured against returns.
+
+---
+
+## Amendment 5: round 3 found two more, both in round 2's fix
+
+1. **`errorDetail` could outlive its `errorMessage`.** The editor's transient catch set the
+   detail unconditionally, but only set a message in two of three branches. A silent
+   background revalidation failure over a local copy therefore left a detail with nothing
+   above it — invisible, until an unrelated later message adopted it. The user would read
+   "Couldn't add the subpage." with a stale `HTTP 500` from minutes earlier underneath.
+   `EditorViewModel` now moves the pair together through `showError(_:detail:)` /
+   `clearError()`, the way `HomeViewModel` already did.
+2. **The memo could pin the client to a route that cannot answer.** Round 2 moved
+   `prefersLegacyContentRoute = true` *before* the legacy fetch, to stop a first deleted
+   document from re-running detection forever. But if a proxy swallows *both* path shapes,
+   the flag latched onto `content/` and every content read for the rest of the session went
+   straight to an endpoint that 404s — unrecoverable short of a relaunch. It is now set when
+   the legacy route **answers as a route**: a 200, or DRF's JSON 404 (the document is gone but
+   the route exists). Never on `.routeNotFound`.
+
+Each round of review found real bugs in the previous round's fix. Two of the three were in
+code written to fix the round before it. That is the argument for adversarial re-review of
+the fix, not just of the original.

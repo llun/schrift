@@ -210,6 +210,31 @@ final class FormattedDocumentContentClientTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 2)
     }
 
+    /// If *neither* route answers (a proxy swallowing both path shapes), the client must not
+    /// pin itself to the legacy route. Doing so would skip detection forever and send every
+    /// later read to an endpoint that cannot answer — unrecoverable short of a relaunch.
+    func testNeitherRouteAnsweringLeavesTheClientUnpinned() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return Self.htmlNotFound()
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.formattedContent(documentID: documentID)
+            XCTFail("Expected routeNotFound")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .routeNotFound)
+        } catch {
+            XCTFail("Expected DocsAPIError, got \(error)")
+        }
+
+        // Not pinned: the second load still tries the modern route first.
+        _ = try? await client.formattedContent(documentID: documentID)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 4)
+    }
+
     /// A deleted document 404s as a missing *object* (JSON). It must surface `.notFound`,
     /// which the editor's teardown path depends on — and must not probe or fall back.
     func testADeletedDocumentStillThrowsNotFoundWithoutFallingBack() async {
