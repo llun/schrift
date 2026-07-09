@@ -1,0 +1,30 @@
+SchriftTests/Core/Networking/FormattedDocumentContentTests.swift
+  s_a01797913bdf0b::t_0317358e73854d 213-237
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_a01797913bdf0b::t_0317358e73854d 16-20
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a01797913bdf0b::t_12d6f051552786 163-174,177-178,221,306-310,312,314,328,353-355,370,426,726,735,757,789,1094,1126
+  s_a01797913bdf0b::t_43bc59f92b6942 175-176
+Schrift/Core/Networking/FormattedDocumentContent.swift
+  s_a01797913bdf0b::t_0136db665d58f1 57-70
+SchriftTests/Features/Editor/EditorUnavailableDetailTests.swift
+  s_a01797913bdf0b::t_e1434be97c6dd6 125-147
+docs/superpowers/plans/2026-07-09-create-document-decoding-failure.md
+  s_a01797913bdf0b::t_d5d00be6d66b34 223-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "77ca8d1a2351a41a8323c1f2ebdafb4772514907",
+  "prompts": {},
+  "sessions": {
+    "s_a01797913bdf0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dfe85d6-2b3e-4871-beb2-cfd4552628cb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
