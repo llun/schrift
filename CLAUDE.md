@@ -352,6 +352,18 @@ new code reads like the surrounding code.
   `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound`,
   429→`rateLimited(retryAfter:)`, else `server`). Wrap `URLSession`/decoder
   failures into `.network`/`.decoding`; never rethrow raw errors.
+- Because that flattening plus the view models' friendly copy makes a CSRF 403, a
+  validation 400, and a decoding bug **indistinguishable on a device**, every
+  non-2xx also fires the client's injected `onRequestFailure` hook with a
+  `RequestFailure` (method, path, status, bounded response-body prefix — and
+  **never** headers, cookies, or the CSRF token). It is called **synchronously,
+  before the error is thrown**, so a caller's `catch` can read it; that is why
+  `APIDiagnosticsLog` is lock-guarded rather than `@Observable @MainActor` (an
+  actor hop would land after the catch). Callers snapshot `marker()` before the
+  request and read `failure(after:)` in the catch — without the marker, an
+  offline `.network` failure would quote an unrelated earlier response.
+  `HomeViewModel.errorDetail` surfaces it under the error message; RootView wires
+  the one shared client and the one log together.
 - A real 401 additionally fires the client's injected `onSessionExpired` hook
   **before** `.sessionExpired` is thrown (wired to
   `SessionStore.noteSessionExpired()` by the one shared client built in
@@ -370,6 +382,20 @@ new code reads like the surrounding code.
   client-editable fields `var`, absent fields Optional. Decode server
   "abilities"/flag dictionaries **defensively** (`decodeIfPresent(...) ?? false`)
   so added keys don't break decoding.
+- **A field the *list* endpoints return is not necessarily a field the *create*
+  endpoints return.** `is_favorite` is a queryset **annotation**: the list views
+  add it, while `POST documents/` and `POST documents/{id}/children/` serialize a
+  freshly built instance that has no such attribute, so the key is simply absent
+  from both 201 bodies. Decoding it as a required `Bool` made every create fail
+  with `keyNotFound` **after the server had already created the document** — the
+  app said "Couldn't create a document. Please try again." while quietly
+  littering the server with them. `Document.isFavorite` therefore decodes with
+  `decodeIfPresent(...) ?? false` (a new document is never a favorite), locked by
+  `DocumentDecodingTests.testDecodesACreateResponseThatOmitsIsFavorite`, whose
+  fixture is a verbatim capture of a real `POST documents/` response. When you
+  add a field, check it against the *create* response too — and note
+  `Document`'s `init(from:)` lives in an **extension** so the memberwise
+  initializer survives for `SubpageRow`'s preview.
 - **Permission logic is driven by the server `abilities` dict** — never hardcode
   client-side permission rules.
 - CSRF/`Origin`/`Referer` headers are attached only on non-GET requests inside

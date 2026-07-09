@@ -10,6 +10,10 @@ final class HomeViewModel {
     var searchResults: [Document] = []
     var isLoading = false
     var errorMessage: String?
+    /// The server's own words about the failure behind `errorMessage`, when it had any —
+    /// `DocsAPIError` collapses a CSRF 403, a validation 400, and a decoding bug into the
+    /// same sentence, and a self-hoster needs to tell them apart without a debugger.
+    var errorDetail: String?
     var isOffline = false
     /// Whether the current filter's list is known — cached or fetched this
     /// session. The view may render the "No documents yet" empty state only
@@ -22,6 +26,9 @@ final class HomeViewModel {
     let saveCoordinator: DocumentSaveCoordinator
     private let cache: DocumentCacheStore
     private let userDefaults: UserDefaults
+    /// The same log the shared client records into. nil in previews and in tests that don't
+    /// care, which simply means no detail is offered.
+    private let diagnostics: APIDiagnosticsLog?
     /// Monotonic guard: a completing fetch applies its outcome only if no
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable and rapid filter switches).
@@ -31,12 +38,14 @@ final class HomeViewModel {
         client: DocsAPIClient,
         cache: DocumentCacheStore = DocumentCacheStore(),
         saveCoordinator: DocumentSaveCoordinator? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
         self.cache = cache
         self.saveCoordinator = saveCoordinator ?? DocumentSaveCoordinator(client: client)
         self.userDefaults = userDefaults
+        self.diagnostics = diagnostics
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments(filter: .all) {
             recentDocuments = recents
@@ -49,7 +58,7 @@ final class HomeViewModel {
     }
 
     func load(userInitiated: Bool = false) async {
-        errorMessage = nil
+        clearError()
         loadGeneration += 1
         let generation = loadGeneration
         let filter = selectedFilter
@@ -86,6 +95,7 @@ final class HomeViewModel {
         Task { await coordinator.recoverDrafts() }
 
         let params = homeFilterQueryParameters(filter)
+        let marker = diagnostics?.marker()
         do {
             async let pinnedPage = client.favoriteDocuments()
             async let recentPage = client.listDocuments(
@@ -118,6 +128,7 @@ final class HomeViewModel {
             // pull-to-refresh.
             if failed, userInitiated || !hasCachedList {
                 errorMessage = "Couldn't load documents. Pull to refresh to try again."
+                errorDetail = detail(after: marker)
             }
         }
 
@@ -149,15 +160,21 @@ final class HomeViewModel {
             searchResults = []
             return
         }
+        let marker = diagnostics?.marker()
         do {
             let page = try await client.searchDocuments(query: trimmed)
             searchResults = page.results
         } catch {
             errorMessage = "Search failed. Please try again."
+            errorDetail = detail(after: marker)
         }
     }
 
     func createDocument() async -> Document? {
+        // A retry must not sit underneath the message its predecessor left behind: nothing
+        // else clears this one, since the failure path never reaches load().
+        clearError()
+        let marker = diagnostics?.marker()
         do {
             let document = try await client.createDocument(title: "Untitled document")
             if userDefaults.bool(forKey: "schrift.workOffline") {
@@ -179,16 +196,41 @@ final class HomeViewModel {
             return document
         } catch {
             errorMessage = "Couldn't create a document. Please try again."
+            errorDetail = detail(after: marker)
             return nil
         }
     }
 
     func toggleFavorite(_ document: Document) async {
+        clearError()
+        let marker = diagnostics?.marker()
         do {
             try await client.setFavorite(documentID: document.id, isFavorite: !document.isFavorite)
             await load()
         } catch {
             errorMessage = "Couldn't update favorite. Please try again."
+            errorDetail = detail(after: marker)
         }
+    }
+
+    // MARK: - Error state
+
+    /// The one way an error leaves the screen without a reload. `createDocument`'s failure
+    /// path never reaches `load()`, so before this the message could only be cleared by a
+    /// pull-to-refresh or a filter switch — it looked permanent.
+    func dismissError() {
+        clearError()
+    }
+
+    private func clearError() {
+        errorMessage = nil
+        errorDetail = nil
+    }
+
+    /// nil unless the request that just failed produced an HTTP response of its own, so an
+    /// offline `.network` failure never quotes an unrelated earlier one.
+    private func detail(after marker: Int?) -> String? {
+        guard let marker, let failure = diagnostics?.failure(after: marker) else { return nil }
+        return failure.displayText
     }
 }

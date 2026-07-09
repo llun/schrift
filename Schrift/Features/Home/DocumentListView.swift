@@ -57,10 +57,29 @@ struct DocumentListView: View {
                     .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
 
                     if let errorMessage = viewModel.errorMessage {
-                        Text(errorMessage)
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.danger)
-                            .padding(.bottom, DocsSpacing.spaceXS)
+                        HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                                Text(errorMessage)
+                                    .font(DocsFont.footnote)
+                                    .foregroundStyle(DocsColor.danger)
+                                if let errorDetail = viewModel.errorDetail {
+                                    Text(errorDetail)
+                                        .font(DocsFont.footnote)
+                                        .foregroundStyle(DocsColor.textSecondary)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                            Button {
+                                viewModel.dismissError()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(DocsFont.footnote)
+                                    .foregroundStyle(DocsColor.textSecondary)
+                            }
+                            .accessibilityLabel("Dismiss error")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, DocsSpacing.spaceXS)
                     }
 
                     content

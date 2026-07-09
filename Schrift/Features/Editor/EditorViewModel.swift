@@ -683,7 +683,16 @@ final class EditorViewModel {
     }
 
     func addSubpage() async -> Document? {
-        guard let child = try? await client.createChild(documentID: documentID, title: "Untitled subpage") else {
+        errorMessage = nil
+        let child: Document
+        do {
+            child = try await client.createChild(documentID: documentID, title: "Untitled subpage")
+        } catch {
+            // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a 403
+            // here means "you may not add children to this document", not "this document
+            // was taken away from you". Tearing the editor down would discard the user's
+            // open document over a failed sub-page.
+            errorMessage = "Couldn't add the subpage. Please try again."
             return nil
         }
         // Any in-flight children fetch predates this child — invalidate it.

@@ -129,6 +129,79 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(secondStorage.storedCookies.first?.value, "fake-session-value")
     }
 
+    /// The two cookies Django actually sets, with the attributes it actually sets them with.
+    /// `restoreSessionCookies` rebuilds each through `HTTPCookie(properties:)` and
+    /// `compactMap`s the result — a cookie that fails to reconstruct vanishes silently. If
+    /// `csrftoken` were the one to vanish, reads would keep working (the session cookie
+    /// survives) while every non-GET request 403s with no token attached, which is exactly
+    /// the shape of the create-document bug.
+    func testRestoreKeepsBothTheSessionCookieAndTheRealisticCSRFCookie() throws {
+        let keychain = FakeKeychainStore()
+        let firstStorage = FakeCookieStorage()
+        // Session-only, HttpOnly, Secure, SameSite=Lax.
+        firstStorage.setCookie(
+            HTTPCookie(properties: [
+                .domain: "docs.llun.dev", .path: "/", .name: "sessionid", .value: "fake-session-value",
+                .secure: "TRUE", HTTPCookiePropertyKey("HttpOnly"): "TRUE",
+                .sameSitePolicy: HTTPCookieStringPolicy.sameSiteLax.rawValue,
+            ])!)
+        // One-year expiry, Secure, readable by JS (not HttpOnly), SameSite=Lax.
+        firstStorage.setCookie(
+            HTTPCookie(properties: [
+                .domain: "docs.llun.dev", .path: "/", .name: "csrftoken", .value: "fake-csrf-value",
+                .secure: "TRUE", .expires: Date().addingTimeInterval(31_449_600),
+                .sameSitePolicy: HTTPCookieStringPolicy.sameSiteLax.rawValue,
+            ])!)
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: firstStorage)
+        try first.signIn(serverURL: serverURL)
+
+        // A fresh launch after process death: the cookie storage starts empty.
+        let secondStorage = FakeCookieStorage()
+        _ = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: secondStorage)
+
+        let restored = Set(secondStorage.storedCookies.map(\.name))
+        XCTAssertTrue(restored.contains("sessionid"), "session cookie lost on restore")
+        XCTAssertTrue(restored.contains("csrftoken"), "CSRF cookie lost on restore — every write would 403")
+    }
+
+    /// `csrfToken(from:)` is what `performRequest` calls to build the `X-CSRFToken` header,
+    /// and it reads the restored jar. Pin the whole chain, not just the cookie names.
+    func testRestoredCookiesStillYieldACSRFTokenForTheRequestHeader() throws {
+        let keychain = FakeKeychainStore()
+        let firstStorage = FakeCookieStorage()
+        firstStorage.setCookie(makeCookie())
+        firstStorage.setCookie(
+            HTTPCookie(properties: [
+                .domain: "docs.llun.dev", .path: "/", .name: "csrftoken", .value: "fake-csrf-value",
+                .secure: "TRUE", .expires: Date().addingTimeInterval(31_449_600),
+                .sameSitePolicy: HTTPCookieStringPolicy.sameSiteLax.rawValue,
+            ])!)
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: firstStorage)
+        try first.signIn(serverURL: serverURL)
+
+        let secondStorage = FakeCookieStorage()
+        _ = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: secondStorage)
+
+        let cookies = try XCTUnwrap(secondStorage.cookies(for: serverURL))
+        XCTAssertEqual(csrfToken(from: cookies), "fake-csrf-value")
+    }
+
+    /// Django gives `csrftoken` a one-year expiry. If that expiry has passed — or the device
+    /// clock runs ahead of it — `validStoredCookies` drops it and every write silently loses
+    /// its token, while the session-only `sessionid` sails through and reads keep working.
+    func testAnExpiredCSRFCookieIsDroppedWhileTheSessionCookieSurvives() {
+        let sessionOnly = StoredCookie(makeCookie())
+        let expiredCSRF = StoredCookie(
+            HTTPCookie(properties: [
+                .domain: "docs.llun.dev", .path: "/", .name: "csrftoken", .value: "fake-csrf-value",
+                .expires: Date().addingTimeInterval(-60),
+            ])!)
+
+        let valid = validStoredCookies([sessionOnly, expiredCSRF])
+
+        XCTAssertEqual(valid.map(\.name), ["docs_sessionid"])
+    }
+
     func testInitDoesNotRestoreCookiesWhenUnauthenticated() throws {
         let keychain = FakeKeychainStore()
         let cookies = [StoredCookie(makeCookie())]
