@@ -1,0 +1,62 @@
+Schrift/Core/Networking/RequestFailure.swift
+  s_a01797913bdf0b::t_4cf5c2be8758b3 1-60
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_a01797913bdf0b::t_6fd88093e205da 132-204
+Schrift/Features/Home/HomeViewModel.swift
+  s_a01797913bdf0b::t_a14b89df611677 131
+  s_a01797913bdf0b::t_36ecc54e27488d 163,169,174-177
+  s_a01797913bdf0b::t_71c4ca9eab70ca 41-42,48
+  s_a01797913bdf0b::t_7983cab9d587ab 199,205-206,212,215-234
+  s_a01797913bdf0b::t_b5bad6434cefab 13-16
+  s_a01797913bdf0b::t_b9fe1207ebce60 29-31
+  s_a01797913bdf0b::t_291e4dc31e07f9 235
+  s_a01797913bdf0b::t_d90b553e7961de 98
+  s_a01797913bdf0b::t_69746e867d06b5 61
+docs/superpowers/plans/2026-07-09-create-document-decoding-failure.md
+  s_a01797913bdf0b::t_d25f2d33ba6da4 1-79
+SchriftTests/Core/Networking/RequestFailureTests.swift
+  s_a01797913bdf0b::t_b2604536a54eca 1-230
+Schrift/Features/Home/DocumentListView.swift
+  s_a01797913bdf0b::t_e79dc2f56d7e1a 60-82
+Schrift/Core/Networking/Document.swift
+  s_a01797913bdf0b::t_d0f155bd6235a7 80-108
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_a01797913bdf0b::t_fb4483f2eae90d 11-15,21-22,28
+  s_a01797913bdf0b::t_3ef7aa668d6b05 126-127
+Schrift/Core/Networking/APIDiagnosticsLog.swift
+  s_a01797913bdf0b::t_181fd5fc11e2e6 1-56
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_a01797913bdf0b::t_2bd33dc8c7a5fe 324-348,374-391
+  s_a01797913bdf0b::t_ea8b660f5d634c 349-351
+  s_a01797913bdf0b::t_5f65448afa360b 352-373
+CLAUDE.md
+  s_a01797913bdf0b::t_68212700d48c7e 355-366
+  s_a01797913bdf0b::t_7da1170094377f 385-398
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_a01797913bdf0b::t_8004cd94754990 683-685,689
+  s_a01797913bdf0b::t_f438bc55937a23 34-46
+  s_a01797913bdf0b::t_27733a30ec34c2 57-58
+  s_a01797913bdf0b::t_6479f082a27821 613-682,686-688,690-710
+SchriftTests/Core/Networking/DocumentDecodingTests.swift
+  s_a01797913bdf0b::t_c62756ef7e9bdb 114-176
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a01797913bdf0b::t_9d3a111fd86eea 686-695
+Schrift/App/RootView.swift
+  s_a01797913bdf0b::t_019c22403b8813 15-18,21-22,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1a17e470c47afc11d298dcc4c573f4dfd37e1389",
+  "prompts": {},
+  "sessions": {
+    "s_a01797913bdf0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dfe85d6-2b3e-4871-beb2-cfd4552628cb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
