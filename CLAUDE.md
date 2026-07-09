@@ -349,9 +349,10 @@ new code reads like the surrounding code.
   magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
   never renders inline.
 - One error type `DocsAPIError`; status is translated centrally by
-  `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound`,
-  429→`rateLimited(retryAfter:)`, else `server`). Wrap `URLSession`/decoder
-  failures into `.network`/`.decoding`; never rethrow raw errors.
+  `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound` **or
+  `routeNotFound`**, 429→`rateLimited(retryAfter:)`, else `server`). Wrap
+  `URLSession`/decoder failures into `.network`/`.decoding`; never rethrow raw
+  errors.
 - Because that flattening plus the view models' friendly copy makes a CSRF 403, a
   validation 400, and a decoding bug **indistinguishable on a device**, every
   non-2xx also fires the client's injected `onRequestFailure` hook with a
@@ -382,20 +383,35 @@ new code reads like the surrounding code.
   client-editable fields `var`, absent fields Optional. Decode server
   "abilities"/flag dictionaries **defensively** (`decodeIfPresent(...) ?? false`)
   so added keys don't break decoding.
+- **A 404 for the object and a 404 for the route are different things.** DRF
+  answers a missing **object** with JSON (`{"detail": "Not found."}`); Django
+  answers a missing **route** with its plain HTML page. `DocsAPIErrorMapper` maps
+  the latter to **`.routeNotFound`** — but only on *positive* evidence of HTML in
+  `Content-Type` (matched case-insensitively; `HTTPURLResponse` does not normalize
+  header names). An empty or unlabelled 404 stays `.notFound`, because the delete
+  and cache-purge paths key off it and must not silently stop firing.
+  `.routeNotFound` deliberately does **not** match the editor's
+  `error == .notFound || error == .forbidden` teardown: a missing route is no
+  evidence about any document, so a proxy hiccup now reads as transient instead of
+  as a deletion.
 - **Not every deployment has every route.** Content is read through
   `formattedContent(documentID:format:)`, which tries
-  `documents/{id}/formatted-content/?content_format=markdown` and, **only on
-  `.notFound`**, falls back to `documents/{id}/content/?content_format=markdown` —
-  the same `{id, title, content, created_at, updated_at}` payload on older docs
-  releases, which have no `formatted-content/` route at all and answer it with an
-  HTML 404. Because `DocsAPIErrorMapper` flattens every 404 to `.notFound` and the
-  editor reads `.notFound` as "deleted", that missing route made *every* document
-  on such a server render as "This document is no longer available." A 403 must
-  **not** retry (revoked access is not a missing route), a genuinely deleted
-  document 404s on both and must still surface `.notFound`, and the actor memoizes
-  `prefersLegacyContentRoute` only after the fallback has *succeeded* — a 404 alone
-  proves nothing. Keep `formatted-content/` primary: `content/` is only assumed to
-  hold markdown on a server that has already proved it lacks the modern route.
+  `documents/{id}/formatted-content/?content_format=markdown` and falls back to
+  `documents/{id}/content/?content_format=markdown` — the same
+  `{id, title, content, created_at, updated_at}` payload on older docs releases,
+  which have no `formatted-content/` route at all. Before this, every 404 read as
+  "deleted", so such a server rendered *every* document as "This document is no
+  longer available." The fallback is gated **twice**: only `.routeNotFound`
+  qualifies (never `.notFound`, never `.forbidden`), and the route's absence is
+  then **confirmed** against a document id that cannot exist, where a registered
+  route still answers DRF's JSON 404. Both gates are load-bearing: a reverse proxy
+  can serve HTML for a path it swallowed on a server that *does* have the route,
+  and `FormattedDocumentContent.content` is a plain `String?`, so a base64 Yjs
+  body would decode into it silently and the full-overwrite save would push that
+  blob back as the document's markdown. A transport failure during the
+  confirmation probe **propagates** — "I couldn't ask" must never read as "it
+  isn't there". Only then is `prefersLegacyContentRoute` memoized, so a legacy
+  server pays for detection once per client rather than once per document.
 - **A field the *list* endpoints return is not necessarily a field the *create*
   endpoints return.** `is_favorite` is a queryset **annotation**: the list views
   add it, while `POST documents/` and `POST documents/{id}/children/` serialize a

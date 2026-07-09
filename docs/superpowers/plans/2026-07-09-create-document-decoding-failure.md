@@ -158,3 +158,33 @@ message, marker-gated so an offline failure never quotes an unrelated earlier re
 Verified against the live backend: 6 documents listed, exactly **one** 404 for the session
 (then the memo skips it), every document opens, and a document with real content comes back
 as markdown (`# Fix Preact Security Vulnerability…`, 6903 chars) rather than base64 Yjs.
+
+---
+
+## Amendment 3: review found the fallback itself was unsafe
+
+The first version of the fallback fired on any `.notFound`. This file's own guidance already
+said every 404 maps to `.notFound` — *"including a proxy hiccup"*. Since
+`FormattedDocumentContent.content` is a plain `String?`, a base64 Yjs body from `content/`
+decodes into it silently, and the full-overwrite save would push that blob back as the
+document's markdown. The reassurance that "keeping `formatted-content/` primary makes this
+safe" was wrong: one transient 404 on a modern server was enough.
+
+The two 404s are distinguishable, measured against a live backend:
+
+```
+missing route  -> 404 text/html          (Django's plain page)
+missing object -> 404 application/json   (DRF's {"detail": "Not found."})
+```
+
+So `DocsAPIErrorMapper` gained `.routeNotFound`, on *positive* evidence of HTML only — an
+unlabelled 404 stays `.notFound`, since delete and cache-purge key off it. And because a
+proxy can serve HTML for a path it swallowed on a server that *does* have the route, the
+fallback additionally **confirms** the absence against a document id that cannot exist, where
+a registered route still answers DRF's JSON 404. A transport failure during that probe
+propagates rather than being read as "the route isn't there".
+
+Worth remembering: two review agents read this diff. One found no correctness issues at all.
+The other raised this exact scenario and then talked itself down to ~50% confidence and
+*didn't report it*. The hazard was real. A finding that would be catastrophic if true deserves
+to be checked against the server, not scored against a confidence threshold.
