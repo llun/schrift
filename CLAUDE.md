@@ -382,6 +382,20 @@ new code reads like the surrounding code.
   client-editable fields `var`, absent fields Optional. Decode server
   "abilities"/flag dictionaries **defensively** (`decodeIfPresent(...) ?? false`)
   so added keys don't break decoding.
+- **Not every deployment has every route.** Content is read through
+  `formattedContent(documentID:format:)`, which tries
+  `documents/{id}/formatted-content/?content_format=markdown` and, **only on
+  `.notFound`**, falls back to `documents/{id}/content/?content_format=markdown` —
+  the same `{id, title, content, created_at, updated_at}` payload on older docs
+  releases, which have no `formatted-content/` route at all and answer it with an
+  HTML 404. Because `DocsAPIErrorMapper` flattens every 404 to `.notFound` and the
+  editor reads `.notFound` as "deleted", that missing route made *every* document
+  on such a server render as "This document is no longer available." A 403 must
+  **not** retry (revoked access is not a missing route), a genuinely deleted
+  document 404s on both and must still surface `.notFound`, and the actor memoizes
+  `prefersLegacyContentRoute` only after the fallback has *succeeded* — a 404 alone
+  proves nothing. Keep `formatted-content/` primary: `content/` is only assumed to
+  hold markdown on a server that has already proved it lacks the modern route.
 - **A field the *list* endpoints return is not necessarily a field the *create*
   endpoints return.** `is_favorite` is a queryset **annotation**: the list views
   add it, while `POST documents/` and `POST documents/{id}/children/` serialize a

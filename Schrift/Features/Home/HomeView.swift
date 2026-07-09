@@ -56,6 +56,7 @@ struct HomeView: View {
                     documentID: document.id,
                     title: document.title ?? "Untitled document",
                     saveCoordinator: viewModel.saveCoordinator,
+                    diagnostics: viewModel.diagnostics,
                     reach: document.linkReach,
                     serverHost: serverHost,
                     linkRole: document.linkRole,

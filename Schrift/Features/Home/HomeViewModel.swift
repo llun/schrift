@@ -27,8 +27,9 @@ final class HomeViewModel {
     private let cache: DocumentCacheStore
     private let userDefaults: UserDefaults
     /// The same log the shared client records into. nil in previews and in tests that don't
-    /// care, which simply means no detail is offered.
-    private let diagnostics: APIDiagnosticsLog?
+    /// care, which simply means no detail is offered. Not private: the editor screens this
+    /// view model pushes are handed the same log, or their detail never arrives.
+    let diagnostics: APIDiagnosticsLog?
     /// Monotonic guard: a completing fetch applies its outcome only if no
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable and rapid filter switches).

@@ -13,6 +13,11 @@ actor DocsAPIClient {
     /// Called synchronously, so a caller's `catch` can quote it. Production
     /// default is a no-op.
     private let onRequestFailure: @Sendable (RequestFailure) -> Void
+    /// Set once a server has proved it has no `formatted-content/` route, so every later
+    /// content load skips the 404 instead of paying for it per document. Only ever set after
+    /// the legacy route has actually answered — a 404 alone proves nothing (a deleted
+    /// document 404s on both). See `formattedContent(documentID:format:)`.
+    var prefersLegacyContentRoute = false
 
     init(
         baseURL: URL,

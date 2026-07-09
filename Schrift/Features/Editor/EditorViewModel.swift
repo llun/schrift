@@ -48,6 +48,10 @@ final class EditorViewModel {
     var mode: Mode = .reading
     var isLoading = false
     var errorMessage: String?
+    /// The server's own words about the failure behind `errorMessage`, when it had any.
+    /// Every 404 maps to `.notFound` and reads as "deleted", so a missing route or a proxy
+    /// hiccup is indistinguishable from a deletion without this.
+    var errorDetail: String?
     var focusedBlockID: UUID?
     var cursorRequest: CursorRequest?
     var selection: NSRange?
@@ -74,6 +78,9 @@ final class EditorViewModel {
     let autosaveInterval: Duration
     /// Delay between media-check readiness polls. Tests pass `.zero`.
     let mediaCheckRetryInterval: Duration
+    /// The same log the shared client records into — the screen that pushed this one hands
+    /// it over. nil in previews and tests, which simply means no detail is offered.
+    let diagnostics: APIDiagnosticsLog?
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
@@ -135,7 +142,8 @@ final class EditorViewModel {
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         autosaveInterval: Duration = .seconds(10),
-        mediaCheckRetryInterval: Duration = .seconds(1)
+        mediaCheckRetryInterval: Duration = .seconds(1),
+        diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
         self.documentID = documentID
@@ -145,7 +153,15 @@ final class EditorViewModel {
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
+        self.diagnostics = diagnostics
         self.savedTitle = title
+    }
+
+    /// nil unless the request that just failed produced an HTTP response of its own, so an
+    /// offline `.network` failure never quotes an unrelated earlier one.
+    private func detail(after marker: Int?) -> String? {
+        guard let marker, let failure = diagnostics?.failure(after: marker) else { return nil }
+        return failure.displayText
     }
 
     var isEditing: Bool { mode != .reading }
@@ -249,6 +265,7 @@ final class EditorViewModel {
     /// `generation` guards against a superseded fetch (an earlier load() or
     /// refresh()) applying its outcome after a newer one has already run.
     private func revalidate(generation: Int) async {
+        let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
             // time can tell us whether the response might predate our own save.
@@ -264,6 +281,9 @@ final class EditorViewModel {
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
             becomeUnavailable()
+            // "No longer available" is a guess: a 404 also means a route this server does
+            // not have, or a proxy hiccup. Say what the server actually answered.
+            errorDetail = detail(after: diagnosticsMarker)
         } catch {
             guard generation == revalidationGeneration else { return }
             // Transient (.network, .server, .rateLimited, .sessionExpired —
@@ -291,8 +311,10 @@ final class EditorViewModel {
             return
         }
         errorMessage = nil
+        errorDetail = nil
         revalidationGeneration += 1
         let generation = revalidationGeneration
+        let diagnosticsMarker = diagnostics?.marker()
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
@@ -311,9 +333,11 @@ final class EditorViewModel {
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
             becomeUnavailable()
+            errorDetail = detail(after: diagnosticsMarker)
         } catch {
             guard generation == revalidationGeneration else { return }
             errorMessage = "Couldn't refresh. Please try again."
+            errorDetail = detail(after: diagnosticsMarker)
         }
     }
 
@@ -329,6 +353,7 @@ final class EditorViewModel {
         guard isUnavailable, hasLoadedContent else { return }
         isUnavailable = false
         errorMessage = nil
+        errorDetail = nil
     }
 
     /// The terminal 404/403 copy. Mentions the draft only when one exists, so it

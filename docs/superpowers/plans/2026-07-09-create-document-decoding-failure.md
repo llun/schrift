@@ -118,3 +118,43 @@ surfaced by instrumenting the *app itself* and reading `serverHost=Notes.liiib.r
 own log. Two probes that reproduced the login flow in a harness both passed, because the
 harness passed a lowercase host it had constructed itself. The harness confirmed the code
 worked on the input the harness chose — not on the input the user typed.
+
+---
+
+## Amendment 2, same day: a third bug — the read route doesn't exist on every backend
+
+Opening any document on `notes.liiib.re` showed **"This document is no longer available."**
+while the same document rendered fine in the web client.
+
+`GET documents/{id}/formatted-content/?content_format=markdown` returns a plain **HTML 404**
+on that server — the route does not exist. `DocsAPIErrorMapper` flattens every 404 to
+`.notFound`, and `EditorViewModel` reads `.notFound` as "this document was deleted", so it
+called `becomeUnavailable()`. It happened for *every* document, not one.
+
+An unauthenticated probe distinguishes a missing route (HTML 404) from a missing object
+(JSON 404):
+
+| | `formatted-content/` | `content/` |
+|---|---|---|
+| `notes.liiib.re` | missing (HTML 404) | exists |
+| `docs.llun.dev` | exists | exists |
+
+The older release serves the markdown projection at `content/?content_format=markdown`, with
+the identical `{id, title, content, created_at, updated_at}` payload.
+
+`formattedContent` now tries the modern route and falls back **only on `.notFound`**. A 403
+does not retry (revoked access is not a missing route); a genuinely deleted document 404s on
+both routes and still surfaces `.notFound`, which the editor's teardown depends on; and the
+actor memoizes `prefersLegacyContentRoute` only once the fallback has actually *succeeded* —
+a 404 alone proves nothing. Keeping `formatted-content/` primary matters: `content/` is only
+assumed to hold markdown on a server that has proved it lacks the modern route, so a backend
+where `content/` returns raw base64 Yjs can never be misread — which, given the
+full-overwrite save, would have pushed the corruption straight back to the server.
+
+The editor also no longer asserts a deletion it cannot prove: `EditorViewModel` now takes the
+`APIDiagnosticsLog` and shows the server's own response (`HTTP 404: Not found.`) beneath the
+message, marker-gated so an offline failure never quotes an unrelated earlier response.
+
+Verified against the live backend: 6 documents listed, exactly **one** 404 for the session
+(then the memo skips it), every document opens, and a document with real content comes back
+as markdown (`# Fix Preact Security Vulnerability…`, 6903 chars) rather than base64 Yjs.
