@@ -54,3 +54,12 @@ final class APIDiagnosticsLog: @unchecked Sendable {
         return failures
     }
 }
+
+/// The one-line detail a view model shows beneath its friendly error message, or nil when the
+/// request that just failed produced no HTTP response of its own — so an offline `.network`
+/// failure never quotes an unrelated earlier one. Snapshot `log.marker()` before issuing the
+/// request and pass it here from the `catch`.
+func requestFailureDetail(after marker: Int?, in log: APIDiagnosticsLog?) -> String? {
+    guard let marker, let failure = log?.failure(after: marker) else { return nil }
+    return failure.displayText
+}

@@ -10,16 +10,23 @@ final class EditorUnavailableDetailTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     private var cacheDirectory: URL!
+    private var suiteName: String!
+    private var userDefaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditorUnavailableDetailTests.\(UUID().uuidString)", isDirectory: true)
+        suiteName = "EditorUnavailableDetailTests.\(UUID().uuidString)"
+        userDefaults = UserDefaults(suiteName: suiteName)!
     }
 
     override func tearDown() {
         MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
+        // The save coordinator writes drafts into this suite; without this they persist to
+        // disk across runs.
+        userDefaults.removePersistentDomain(forName: suiteName)
         super.tearDown()
     }
 
@@ -30,15 +37,14 @@ final class EditorUnavailableDetailTests: XCTestCase {
             cookieProvider: { [] },
             onRequestFailure: { failure in diagnostics?.record(failure) }
         )
-        let suiteName = "EditorUnavailableDetailTests.\(UUID().uuidString)"
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let draftStore = PendingDraftStore(userDefaults: userDefaults)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
         return EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: contentCache,
-            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: userDefaults),
             diagnostics: diagnostics)
     }
 

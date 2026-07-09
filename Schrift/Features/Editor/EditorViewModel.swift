@@ -92,8 +92,9 @@ final class EditorViewModel {
     private(set) var isDocumentDiscarded = false
     private(set) var displaySource: DisplaySource = .none
     /// A 404/403 declared the document gone. Unlike a delete this is **recoverable**
-    /// — the screen stays mounted with its pull-to-refresh, and every 404 maps to
-    /// `.notFound`, including a proxy hiccup. So this is not a latch: it is
+    /// — the screen stays mounted with its pull-to-refresh, and a 404 can still be a proxy
+    /// hiccup (only an *HTML* 404 is separated out, as `.routeNotFound`, and never lands
+    /// here). So this is not a latch: it is
     /// discharged by a fetch whose body `apply` actually put on screen
     /// (`markAvailableAgain`, *after* `apply`, gated on `hasLoadedContent`).
     /// Neither weaker rule works — see that method for the two screens they stranded.
@@ -155,13 +156,6 @@ final class EditorViewModel {
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.diagnostics = diagnostics
         self.savedTitle = title
-    }
-
-    /// nil unless the request that just failed produced an HTTP response of its own, so an
-    /// offline `.network` failure never quotes an unrelated earlier one.
-    private func detail(after marker: Int?) -> String? {
-        guard let marker, let failure = diagnostics?.failure(after: marker) else { return nil }
-        return failure.displayText
     }
 
     var isEditing: Bool { mode != .reading }
@@ -283,7 +277,7 @@ final class EditorViewModel {
             becomeUnavailable()
             // "No longer available" is a guess: a 404 also means a route this server does
             // not have, or a proxy hiccup. Say what the server actually answered.
-            errorDetail = detail(after: diagnosticsMarker)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
             guard generation == revalidationGeneration else { return }
             // Transient (.network, .server, .rateLimited, .sessionExpired —
@@ -333,11 +327,11 @@ final class EditorViewModel {
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
             becomeUnavailable()
-            errorDetail = detail(after: diagnosticsMarker)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
             guard generation == revalidationGeneration else { return }
             errorMessage = "Couldn't refresh. Please try again."
-            errorDetail = detail(after: diagnosticsMarker)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         }
     }
 

@@ -24,9 +24,19 @@ extension DocsAPIClient {
     /// `.notFound`, which the editor's teardown path depends on; a 403 is revoked access,
     /// not a missing route, and must not retry.
     ///
-    /// Note the fallback is only reachable via the *modern* route first, so a server that
-    /// has both keeps its existing behavior — `content/`'s payload is only assumed to be
-    /// markdown on a server that has already proved it lacks `formatted-content/`.
+    /// Falling back on a *server that has both routes* would be dangerous, not merely
+    /// wasteful: `FormattedDocumentContent.content` is a plain `String?`, so a base64 Yjs
+    /// body decodes into it silently, and the full-overwrite save would then push that blob
+    /// back as the document's markdown. So the fallback is gated twice:
+    ///
+    /// 1. Only `.routeNotFound` (Django's HTML 404) qualifies — never `.notFound` (DRF's
+    ///    JSON 404 for a missing object), and never `.forbidden`.
+    /// 2. A reverse proxy can also answer HTML for a path it swallowed, on a server that
+    ///    *does* have the route. So the route's absence is **confirmed** against a document
+    ///    id that cannot exist, where a present route still answers DRF's JSON 404.
+    ///
+    /// Only then is `content/` assumed to hold markdown, and the answer memoized so a legacy
+    /// server pays for the detection once per client rather than once per document.
     func formattedContent(documentID: UUID, format: String = "markdown") async throws -> FormattedDocumentContent {
         let id = documentID.uuidString.lowercased()
         let legacyPath = "documents/\(id)/content/?content_format=\(format)"
@@ -35,13 +45,35 @@ extension DocsAPIClient {
         }
 
         do {
-            return try await get("documents/\(id)/formatted-content/?content_format=\(format)")
-        } catch DocsAPIError.notFound {
+            return try await get(formattedContentPath(id, format))
+        } catch DocsAPIError.routeNotFound {
+            guard try await formattedContentRouteIsAbsent(format: format) else {
+                // The route exists; something in front of it produced that HTML. Report the
+                // 404 we actually got rather than reading a different endpoint.
+                throw DocsAPIError.notFound
+            }
             let content: FormattedDocumentContent = try await get(legacyPath)
-            // Only now is the route's absence proven: a deleted document would have 404ed
-            // here too and rethrown, leaving the flag untouched.
             prefersLegacyContentRoute = true
             return content
+        }
+    }
+
+    private func formattedContentPath(_ id: String, _ format: String) -> String {
+        "documents/\(id)/formatted-content/?content_format=\(format)"
+    }
+
+    /// A document id no server can hold. A registered route answers DRF's JSON 404 for it
+    /// (`.notFound`); an unregistered one answers Django's HTML 404 again (`.routeNotFound`).
+    /// Transport failures propagate — "I couldn't ask" must never read as "it isn't there".
+    private func formattedContentRouteIsAbsent(format: String) async throws -> Bool {
+        let probeID = "00000000-0000-4000-8000-000000000000"
+        do {
+            let _: FormattedDocumentContent = try await get(formattedContentPath(probeID, format))
+            return false
+        } catch DocsAPIError.routeNotFound {
+            return true
+        } catch DocsAPIError.notFound {
+            return false
         }
     }
 }

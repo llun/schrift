@@ -129,7 +129,7 @@ final class HomeViewModel {
             // pull-to-refresh.
             if failed, userInitiated || !hasCachedList {
                 errorMessage = "Couldn't load documents. Pull to refresh to try again."
-                errorDetail = detail(after: marker)
+                errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             }
         }
 
@@ -167,7 +167,7 @@ final class HomeViewModel {
             searchResults = page.results
         } catch {
             errorMessage = "Search failed. Please try again."
-            errorDetail = detail(after: marker)
+            errorDetail = requestFailureDetail(after: marker, in: diagnostics)
         }
     }
 
@@ -197,7 +197,7 @@ final class HomeViewModel {
             return document
         } catch {
             errorMessage = "Couldn't create a document. Please try again."
-            errorDetail = detail(after: marker)
+            errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             return nil
         }
     }
@@ -210,7 +210,7 @@ final class HomeViewModel {
             await load()
         } catch {
             errorMessage = "Couldn't update favorite. Please try again."
-            errorDetail = detail(after: marker)
+            errorDetail = requestFailureDetail(after: marker, in: diagnostics)
         }
     }
 
@@ -228,10 +228,4 @@ final class HomeViewModel {
         errorDetail = nil
     }
 
-    /// nil unless the request that just failed produced an HTTP response of its own, so an
-    /// offline `.network` failure never quotes an unrelated earlier one.
-    private func detail(after marker: Int?) -> String? {
-        guard let marker, let failure = diagnostics?.failure(after: marker) else { return nil }
-        return failure.displayText
-    }
 }
