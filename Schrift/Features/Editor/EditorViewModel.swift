@@ -280,7 +280,7 @@ final class EditorViewModel {
             errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
             guard generation == revalidationGeneration else { return }
-            // Transient (.network, .server, .rateLimited, .sessionExpired —
+            // Transient (.network, .routeNotFound, .server, .rateLimited, .sessionExpired —
             // cookie expiry must not purge the cache): keep the local copy.
             // For .sessionExpired specifically, the shared client's
             // onSessionExpired hook has already raised the app-level re-login
@@ -292,6 +292,9 @@ final class EditorViewModel {
             } else if displaySource == .none {
                 errorMessage = "Couldn't load this document. Pull to refresh to try again."
             }
+            // `.routeNotFound` lands here — a misconfigured server or a proxy eating the
+            // path — and that is precisely the failure whose reason nobody can guess.
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         }
     }
 

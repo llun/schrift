@@ -188,3 +188,35 @@ Worth remembering: two review agents read this diff. One found no correctness is
 The other raised this exact scenario and then talked itself down to ~50% confidence and
 *didn't report it*. The hazard was real. A finding that would be catastrophic if true deserves
 to be checked against the server, not scored against a confidence threshold.
+
+---
+
+## Amendment 4: round 2 found three defects in round 1's fix
+
+An adversarial re-review, told to *refute* the new design rather than check it, found three:
+
+1. **The confirmation probe stole the diagnostic.** `APIDiagnosticsLog.failure(after:)`
+   returned `failures.last`. The probe fires *after* the document's own 404 and records a 404
+   of its own — for an id the user never opened — so `errorDetail` quoted the probe. The
+   causal failure is the **first** after the marker, not the last. Later requests in the same
+   call are consequences, not causes.
+2. **A `.forbidden` from the probe tore down the user's document.** An ACL that checks
+   permission before existence answers the probe with 403; it escaped `formattedContent` and
+   hit the editor's `.notFound || .forbidden` teardown, purging the cache for the document on
+   screen. Only `.routeNotFound` and `.notFound` are conclusive; everything else now reports
+   "not absent" and is swallowed. A transport error is the one exception — it is about the
+   connection, so it applies to the caller's request too.
+3. **The memo was set too late.** It sat after the legacy fetch, so a first document that
+   happened to be deleted left every later load re-running the three-request detection.
+   Absence is a fact about the *server*, established by the probe; memoize it there.
+
+Also corrected: when the probe proves the route exists, the rethrown error is now
+`.routeNotFound`, not `.notFound` — the latter is read everywhere as "this document was
+deleted" and would purge a cache over a proxy hiccup. And `.routeNotFound` reaching the
+editor's transient branch had no `errorDetail`, which a new test drove out: that is exactly
+the failure whose reason nobody can guess.
+
+**Known limitation, recorded rather than hidden:** the 404 split keys off `Content-Type`
+containing `html`. A legacy deployment whose missing-route 404 is unlabelled or `text/plain`
+gets no fallback. Django's default 404 page is `text/html`, which is what the single legacy
+server this was measured against returns.

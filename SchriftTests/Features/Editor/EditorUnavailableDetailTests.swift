@@ -78,4 +78,48 @@ final class EditorUnavailableDetailTests: XCTestCase {
         XCTAssertFalse(viewModel.isUnavailable)
         XCTAssertNil(viewModel.errorDetail)
     }
+
+    /// A missing route (or a proxy serving HTML for a path it swallowed) is no evidence about
+    /// any document. It must not tear the editor down or purge the cache the way a real 404
+    /// does — the screen stays, with a transient message and its pull-to-refresh.
+    func testAnHTML404DoesNotDeclareTheDocumentDeleted() async {
+        let viewModel = makeViewModel(diagnostics: APIDiagnosticsLog())
+        MockURLProtocol.stubHandler = { request in
+            // Route absent for the document, present for the confirmation probe -> the HTML
+            // came from in front of the server.
+            if request.url?.path.contains("00000000") == true {
+                return .init(
+                    statusCode: 404, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"detail":"Not found."}"#.utf8), error: nil)
+            }
+            return .init(
+                statusCode: 404, headers: ["Content-Type": "text/html"],
+                body: Data("<html>404</html>".utf8), error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isUnavailable, "a route 404 must not read as a deletion")
+        XCTAssertNotNil(viewModel.errorMessage)
+    }
+
+    /// The detail must quote the document's own response, not the confirmation probe's — the
+    /// probe asks about an id the user never opened.
+    func testTheDetailQuotesTheDocumentsResponseNotTheProbes() async {
+        let viewModel = makeViewModel(diagnostics: APIDiagnosticsLog())
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.path.contains("00000000") == true {
+                return .init(
+                    statusCode: 404, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"detail":"probe: wrong reason"}"#.utf8), error: nil)
+            }
+            return .init(
+                statusCode: 404, headers: ["Content-Type": "text/html"],
+                body: Data("the document's own reason".utf8), error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.errorDetail, "HTTP 404: the document's own reason")
+    }
 }

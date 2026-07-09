@@ -48,13 +48,18 @@ extension DocsAPIClient {
             return try await get(formattedContentPath(id, format))
         } catch DocsAPIError.routeNotFound {
             guard try await formattedContentRouteIsAbsent(format: format) else {
-                // The route exists; something in front of it produced that HTML. Report the
-                // 404 we actually got rather than reading a different endpoint.
-                throw DocsAPIError.notFound
+                // The route is there (or the probe couldn't prove otherwise), so that HTML
+                // came from something in front of it. Rethrow `.routeNotFound`, never
+                // `.notFound`: the latter is read everywhere as "this document was deleted",
+                // and would tear the editor down and purge the cache over a proxy hiccup.
+                throw DocsAPIError.routeNotFound
             }
-            let content: FormattedDocumentContent = try await get(legacyPath)
+            // The route's absence is a fact about the *server*, established by the probe and
+            // independent of this document. Memoize it before fetching, or a first document
+            // that happens to be deleted (or forbidden) leaves every later load re-running
+            // the whole three-request detection.
             prefersLegacyContentRoute = true
-            return content
+            return try await get(legacyPath)
         }
     }
 
@@ -62,9 +67,19 @@ extension DocsAPIClient {
         "documents/\(id)/formatted-content/?content_format=\(format)"
     }
 
-    /// A document id no server can hold. A registered route answers DRF's JSON 404 for it
-    /// (`.notFound`); an unregistered one answers Django's HTML 404 again (`.routeNotFound`).
-    /// Transport failures propagate — "I couldn't ask" must never read as "it isn't there".
+    /// Asks whether the route exists at all, using a document id no server can hold: a
+    /// registered route answers DRF's JSON 404 for it (`.notFound`), an unregistered one
+    /// answers Django's HTML 404 again (`.routeNotFound`).
+    ///
+    /// Only those two answers are conclusive. Anything else — `.forbidden` from an ACL that
+    /// checks permission before existence, a 5xx, a decoding surprise — proves nothing, so it
+    /// reports "not absent" rather than escaping: the probe's error is about a document the
+    /// user never opened, and letting a probe `.forbidden` out would trip the editor's
+    /// `.notFound || .forbidden` teardown and purge the cache for the document on screen.
+    ///
+    /// A transport failure is the one exception. It is about the connection, not the probe,
+    /// so it applies equally to the request the caller actually made and is worth surfacing —
+    /// "I couldn't ask" must never read as "it isn't there".
     private func formattedContentRouteIsAbsent(format: String) async throws -> Bool {
         let probeID = "00000000-0000-4000-8000-000000000000"
         do {
@@ -72,7 +87,8 @@ extension DocsAPIClient {
             return false
         } catch DocsAPIError.routeNotFound {
             return true
-        } catch DocsAPIError.notFound {
+        } catch let error as DocsAPIError {
+            if case .network = error { throw error }
             return false
         }
     }

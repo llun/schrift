@@ -130,15 +130,67 @@ final class FormattedDocumentContentClientTests: XCTestCase {
 
         do {
             _ = try await makeClient().formattedContent(documentID: documentID)
-            XCTFail("Expected notFound")
+            XCTFail("Expected routeNotFound")
         } catch let error as DocsAPIError {
-            XCTAssertEqual(error, .notFound)
+            // Never `.notFound`: that is read everywhere as "this document was deleted", and
+            // would tear the editor down and purge the cache over a proxy hiccup.
+            XCTAssertEqual(error, .routeNotFound)
         } catch {
             XCTFail("Expected DocsAPIError, got \(error)")
         }
 
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/content/?"), 0, "must never read content/")
         XCTAssertEqual(log.count(ofMethod: "GET"), 2)
+    }
+
+    /// An ACL that checks permission before existence answers the probe with 403 — about a
+    /// document the user never opened. Letting it escape would hit the editor's
+    /// `.notFound || .forbidden` teardown and purge the cache for the document on screen.
+    func testAForbiddenProbeNeverEscapesAndNeverFallsBack() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            guard let path = request.url?.path else { return Self.jsonNotFound() }
+            if path.contains("00000000") { return .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+            return path.contains("formatted-content") ? Self.htmlNotFound() : Self.ok()
+        }
+
+        do {
+            _ = try await makeClient().formattedContent(documentID: documentID)
+            XCTFail("Expected routeNotFound")
+        } catch let error as DocsAPIError {
+            XCTAssertNotEqual(error, .forbidden, "the probe's 403 must not be reported as the document's")
+            XCTAssertEqual(error, .routeNotFound)
+        } catch {
+            XCTFail("Expected DocsAPIError, got \(error)")
+        }
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/content/?"), 0)
+    }
+
+    /// The route's absence is a fact about the server, proved by the probe. A first document
+    /// that happens to be deleted must not make every later load re-run the detection.
+    func testTheRouteIsRememberedEvenIfTheFirstLegacyFetchFails() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.path.contains("formatted-content") == true { return Self.htmlNotFound() }
+            return Self.jsonNotFound()  // the document itself is gone
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.formattedContent(documentID: documentID)
+            XCTFail("Expected notFound")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .notFound)
+        } catch {
+            XCTFail("Expected DocsAPIError, got \(error)")
+        }
+        // A second load goes straight to the legacy route: no modern request, no probe.
+        _ = try? await client.formattedContent(documentID: documentID)
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 2, "detection ran once")
+        XCTAssertEqual(log.count(ofMethod: "GET"), 4)
     }
 
     /// Once the route's absence is confirmed, stop paying for detection on every load.

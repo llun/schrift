@@ -410,8 +410,18 @@ new code reads like the surrounding code.
   body would decode into it silently and the full-overwrite save would push that
   blob back as the document's markdown. A transport failure during the
   confirmation probe **propagates** — "I couldn't ask" must never read as "it
-  isn't there". Only then is `prefersLegacyContentRoute` memoized, so a legacy
-  server pays for detection once per client rather than once per document.
+  isn't there" — while a probe `.forbidden` or 5xx proves nothing and is
+  *swallowed*, since it concerns a document the user never opened and would
+  otherwise trip the editor's teardown. When the probe says the route exists, the
+  error rethrown is `.routeNotFound`, never `.notFound`. Absence is a fact about
+  the **server**, so `prefersLegacyContentRoute` is memoized as soon as the probe
+  confirms it — before the document fetch, or a first document that happens to be
+  deleted would make every later load re-run the detection.
+  **Known limitation:** the split keys off `Content-Type` containing `html`. A
+  legacy deployment whose missing-route 404 is unlabelled, `text/plain`, or
+  `application/xhtml+xml` will not trigger the fallback and will report its
+  documents as deleted. Django's default 404 page is `text/html`, and that is what
+  the one legacy server this was tested against returns.
 - **A field the *list* endpoints return is not necessarily a field the *create*
   endpoints return.** `is_favorite` is a queryset **annotation**: the list views
   add it, while `POST documents/` and `POST documents/{id}/children/` serialize a

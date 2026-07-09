@@ -39,13 +39,28 @@ final class APIDiagnosticsLog: @unchecked Sendable {
         return recorded
     }
 
-    /// The newest failure recorded since `marker`, or nil when none was. That nil is the
-    /// point: a transport error (`.network`) or a decoding failure has no HTTP status, so
-    /// without the marker the catch would quote an unrelated older response as its reason.
+    /// The **first** failure recorded after `marker` — the one that caused the throw — or nil
+    /// when none was.
+    ///
+    /// First, not last: a single call can issue more than one request, and the later ones are
+    /// consequences, not causes. `formattedContent`'s confirmation probe is exactly this — it
+    /// fires *after* the document's own 404 and records a 404 of its own, for a document id
+    /// that does not exist. Quoting the newest failure would show the user a reason belonging
+    /// to a request they never made.
+    ///
+    /// The nil is equally load-bearing: a transport error (`.network`) or a decoding failure
+    /// has no HTTP response, so without the marker the catch would quote an unrelated older
+    /// one as its reason.
     func failure(after marker: Int) -> RequestFailure? {
         lock.lock()
         defer { lock.unlock() }
-        return recorded > marker ? failures.last : nil
+        guard recorded > marker else { return nil }
+        // `failures` holds only the last `capacity` of the `recorded` total, so index from the
+        // end. If the causal failure has already been evicted, the oldest we still hold is the
+        // closest thing to it.
+        let offsetFromEnd = recorded - marker
+        guard offsetFromEnd <= failures.count else { return failures.first }
+        return failures[failures.count - offsetFromEnd]
     }
 
     var recentFailures: [RequestFailure] {
