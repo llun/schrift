@@ -1,0 +1,36 @@
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_a01797913bdf0b::t_3ab37340bcc785 34-40,42
+Schrift/Features/Connect/ConnectView.swift
+  s_a01797913bdf0b::t_aa33b1d945c391 41-46
+docs/superpowers/plans/2026-07-09-create-document-decoding-failure.md
+  s_a01797913bdf0b::t_16af5587efff58 80-120
+Schrift/Features/Connect/ServerURLInput.swift
+  s_a01797913bdf0b::t_7b24f1db232a03 3-15,22,27-28
+SchriftTests/Features/Connect/ServerURLInputTests.swift
+  s_a01797913bdf0b::t_0465c759e0a627 47-66
+SchriftTests/Core/Auth/WebLoginTests.swift
+  s_a01797913bdf0b::t_8a2c329f541531 89-90
+  s_a01797913bdf0b::t_8501c67d4121d6 68-88,91-99
+CLAUDE.md
+  s_a01797913bdf0b::t_3a02ed896be96f 404-419
+Schrift/Core/Auth/WebLogin.swift
+  s_a01797913bdf0b::t_39ab74b695efe7 7-12,14-15
+SchriftTests/Core/Networking/RequestFailureTests.swift
+  s_a01797913bdf0b::t_c4bbe5bccb9730 194-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "eb40b57f88ce6fe890ac2a7e1d2f32fc085ada6a",
+  "prompts": {},
+  "sessions": {
+    "s_a01797913bdf0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dfe85d6-2b3e-4871-beb2-cfd4552628cb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
