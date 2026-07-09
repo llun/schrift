@@ -77,3 +77,44 @@ Landed alongside three things that made the bug invisible in the first place:
   `WKWebView` OIDC login: `createDocument` → 201, `createChild` → 201, zero non-2xx
   responses recorded.
 - Full suite: 721 tests, 0 failures.
+
+---
+
+## Amendment, same day: a second, independent bug — host case
+
+The "pin/unpin and saving fail too" report above was dismissed as a misreport. It was not.
+There was a **second** bug, and it produces exactly that symptom.
+
+The user typed `Notes.liiib.re` — iOS autocapitalizes the first letter of a plain text
+field. `normalizedServerURL` canonicalized the scheme and stripped the path but left the
+host's case alone, and two consumers compare hosts without normalizing:
+
+- `isLoginNavigationComplete` compared `url.host == serverHost`. WebKit always reports
+  `url.host` lowercased, so `notes.liiib.re != Notes.liiib.re`, detection never fired, and
+  the **login sheet never closed** — it just sat there showing the signed-in web app.
+- `DocsAPIClient.siteOrigin` sent `Origin: https://Notes.liiib.re`. Confirmed against the
+  live backend:
+
+  | `Origin` header | Result |
+  |---|---|
+  | `https://notes.liiib.re` | `201 Created` |
+  | `https://Notes.liiib.re` | `403 {"detail":"CSRF Failed: Origin checking failed - https://Notes.liiib.re does not match any trusted origins."}` |
+
+  Django compares `Origin` against its own host, so **every** non-GET 403s while GETs —
+  which carry no `Origin` — keep working. The app looks read-only for no visible reason.
+
+Fixed at three layers: `normalizedServerURL` lowercases scheme and host (the single
+canonicalization point, and never the path — paths are case-sensitive);
+`isLoginNavigationComplete` compares case-insensitively while staying an exact host match;
+and `siteOrigin` lowercases too, since a `serverURL` persisted by an earlier launch still
+carries the capital. The Connect field now sets `.textInputAutocapitalization(.never)`.
+
+Verified against the live backend by feeding the literal string `Notes.liiib.re` through
+`normalizedServerURL` → the real `WebLoginView.Coordinator` → `DocsAPIClient`: login
+completes, and `createDocument`, `createChild` and `setFavorite` all return 2xx.
+
+**Method note.** The first bug was found by instrumenting the request path; this one only
+surfaced by instrumenting the *app itself* and reading `serverHost=Notes.liiib.re` in its
+own log. Two probes that reproduced the login flow in a harness both passed, because the
+harness passed a lowercase host it had constructed itself. The harness confirmed the code
+worked on the input the harness chose — not on the input the user typed.

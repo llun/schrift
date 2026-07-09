@@ -65,4 +65,36 @@ final class WebLoginTests: XCTestCase {
         syncCookies([], into: fake)
         XCTAssertTrue(fake.storedCookies.isEmpty)
     }
+
+    // MARK: - Host comparison is case-insensitive
+
+    /// WebKit reports `url.host` lowercased. A `serverHost` carrying the capital that iOS
+    /// autocapitalization put there (`Notes.liiib.re`) never matched, so the login sheet
+    /// stayed open on the signed-in web app forever. Hostnames are case-insensitive;
+    /// `normalizedServerURL` now lowercases them, and this keeps the comparison correct
+    /// even for a `serverHost` that came from somewhere else.
+    func testLoginCompletesWhenServerHostDiffersOnlyByCase() {
+        let url = URL(string: "https://notes.liiib.re/")!
+
+        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "Notes.liiib.re"))
+        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "NOTES.LIIIB.RE"))
+    }
+
+    /// Case-insensitivity must not become substring- or suffix-matching.
+    func testLoginStillRejectsADifferentHost() {
+        let url = URL(string: "https://evil.example.org/")!
+
+        XCTAssertFalse(isLoginNavigationComplete(url: url, serverHost: "notes.liiib.re"))
+        XCTAssertFalse(
+            isLoginNavigationComplete(
+                url: URL(string: "https://notes.liiib.re.evil.org/")!,
+                serverHost: "notes.liiib.re"))
+    }
+
+    /// The API-path exclusion must survive the case change: the callback hop is not "done".
+    func testAPIPathIsStillNotComplete() {
+        let callback = URL(string: "https://notes.liiib.re/api/v1.0/callback/?code=abc")!
+
+        XCTAssertFalse(isLoginNavigationComplete(url: callback, serverHost: "Notes.liiib.re"))
+    }
 }

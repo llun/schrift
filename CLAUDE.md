@@ -401,6 +401,22 @@ new code reads like the surrounding code.
 - CSRF/`Origin`/`Referer` headers are attached only on non-GET requests inside
   `performRequest`. New mutating endpoints must go through `send`/`sendVoid` so
   those headers are applied — see [Safety](#safety--never-add-anything-dangerous).
+- **The server host must be lowercase everywhere.** Hostnames are case-insensitive
+  per DNS, but nothing that compares them is. iOS autocapitalizes the first letter
+  of a plain text field, so a user typing their address gets `Docs.llun.dev`, and
+  that single capital broke two things at once: `isLoginNavigationComplete`
+  compared `url.host == serverHost` against WebKit's always-lowercase `url.host`
+  and never matched, so the **login sheet never closed** and sat on the signed-in
+  web app; and `siteOrigin` sent `Origin: https://Docs.llun.dev`, which Django
+  answers with `403 CSRF Failed: Origin checking failed`, killing **every** non-GET
+  while GETs — which carry no `Origin` — kept working, so the app looked
+  mysteriously read-only. `normalizedServerURL` is the single canonicalization
+  point and lowercases scheme + host (never the path — paths *are* case-sensitive);
+  `isLoginNavigationComplete` compares case-insensitively (still an **exact** host
+  match, never a suffix one); and `siteOrigin` lowercases too, because a
+  `serverURL` persisted by an earlier launch still carries the capital. The Connect
+  field also sets `.textInputAutocapitalization(.never)`. A read-only-looking app
+  whose GETs all work is this bug until proven otherwise.
 
 ### Design system (`DesignSystem`)
 

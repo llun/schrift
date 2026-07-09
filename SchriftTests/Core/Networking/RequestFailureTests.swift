@@ -191,6 +191,25 @@ final class DocsAPIClientDiagnosticsTests: XCTestCase {
         XCTAssertFalse(serialized.contains("Set-Cookie"))
     }
 
+    /// Django compares the `Origin` header against its own host and rejects a mismatch with
+    /// "CSRF Failed: Origin checking failed", which 403s **every** non-GET while GETs —
+    /// carrying no Origin — keep working. `normalizedServerURL` now lowercases the host, but
+    /// a `serverURL` already persisted in UserDefaults from an earlier launch still carries
+    /// the capital, so the client must not trust its own `baseURL` either.
+    func testOriginAndRefererAreLowercasedEvenIfTheBaseURLHostIsNot() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }
+        let client = DocsAPIClient(
+            baseURL: URL(string: "https://Docs.Example.ORG/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] }
+        )
+
+        try? await client.sendVoid(path: "documents/", method: "POST", body: Data())
+
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"), "https://docs.example.org/")
+    }
+
     func testSuccessfulResponseReportsNothing() async throws {
         let recorder = FailureRecorder()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }

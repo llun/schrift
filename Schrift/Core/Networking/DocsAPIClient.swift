@@ -31,8 +31,15 @@ actor DocsAPIClient {
     /// The bare site origin (scheme + host [+ port]) derived from `baseURL`, used
     /// for the CSRF `Origin`/`Referer` headers. Note this is *not* `baseURL`,
     /// which includes the `/api/v1.0/` path.
+    ///
+    /// Scheme and host are lowercased. Django compares `Origin` against its own host and
+    /// answers a mismatch with `403 CSRF Failed: Origin checking failed`, which kills
+    /// **every** non-GET while GETs — which carry no Origin — keep working, making the app
+    /// look mysteriously read-only. `normalizedServerURL` lowercases the host on input, but
+    /// a `serverURL` persisted by an earlier launch still carries the capital, so `baseURL`
+    /// can't be trusted here either.
     private var siteOrigin: String? {
-        guard let scheme = baseURL.scheme, var host = baseURL.host else { return nil }
+        guard let scheme = baseURL.scheme?.lowercased(), var host = baseURL.host?.lowercased() else { return nil }
         // URL.host strips the brackets from an IPv6 literal; restore them so the
         // Origin/Referer stay valid URLs for self-hosted IPv6 servers.
         if host.contains(":") { host = "[\(host)]" }
