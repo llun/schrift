@@ -604,6 +604,14 @@ final class EditorViewModel {
         // Discard any in-flight children snapshot — landing after the purge,
         // it would re-cache the list for a deleted document.
         childrenGeneration += 1
+        // …and the in-flight *content* fetch, for the same reason: a 200 landing
+        // after this purge reaches `apply` → `reconcileClean`, which write-throughs
+        // unconditionally, re-caching the body just removed. Every `revalidate` /
+        // `refresh` path re-checks its captured generation before `apply` (and
+        // before `becomeUnavailable`, so a delete racing a fetch that then 404s
+        // doesn't tear down a document already being deleted), so bumping here is
+        // all it takes.
+        revalidationGeneration += 1
         // End the session before `.onDisappear`'s flush can write a fresh draft
         // (and PATCH) for a document that no longer exists.
         autosaveTask?.cancel()

@@ -41,8 +41,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
         UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
         UserDefaults(suiteName: draftSuiteName)?.removePersistentDomain(forName: draftSuiteName)

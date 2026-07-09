@@ -527,6 +527,22 @@ markdown write endpoint**. Understand this before touching the save path:
      reappearing on disk*. `handleDidDelete` → `discardPendingWork` (drops the
      draft too); `becomeUnavailable` → `suppressLocalWriteThrough` (**keeps** the
      draft — a 403 revokes access, it doesn't delete the user's unsaved work).
+     **A purge must equally survive its own in-flight *revalidation*.** A content
+     GET issued before the purge can be answered with a 200 after it — and before
+     SwiftUI cancels the editor's `.task` — reaching `apply` → `reconcileClean`,
+     which write-throughs the cache unconditionally and re-caches the body just
+     removed; it then renders from retained Search/Shared results until eviction.
+     So `handleDidDelete` bumps `revalidationGeneration` exactly as it already
+     bumps `childrenGeneration`. Every `revalidate`/`refresh` path re-checks its
+     captured generation before `apply` **and** before `becomeUnavailable`, so
+     this also stops a delete racing a fetch that then 404s from tearing down a
+     document already being deleted. `becomeUnavailable` needs no such bump: it
+     is only ever reached *from* a generation-checked catch, so it is by
+     construction the **newest** fetch — an older one may well still be in
+     flight (nothing serializes `load()` against a pull-to-refresh `refresh()`,
+     and the synchronous local phase sets `hasLoadedContent` before `refresh()`
+     reads it), but an older fetch already fails that same guard on resume and
+     returns before it can re-cache. Bumping there would invalidate nothing.
   0c. **A delete is terminal; a 404/403 is not.** Deleting pops the screen, so
      `isDocumentDiscarded` is a latch and gates the save funnels. A 404/403 leaves
      the screen mounted with its pull-to-refresh, and every 404 maps to
