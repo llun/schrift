@@ -1465,4 +1465,30 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNil(contentCache.content(for: documentID))
         XCTAssertNil(draftStore.draft(for: documentID))
     }
+
+    /// The revalidation counterpart of
+    /// `DocumentSaveCoordinatorTests.testSaveLandingAfterADeleteNeverRecreatesTheCacheEntry`:
+    /// a content GET issued before the delete can be answered with a 200 *after*
+    /// `handleDidDelete` purged the cache — and before SwiftUI cancels the
+    /// editor's `.task`. `reconcileClean` write-throughs unconditionally, so
+    /// without the generation bump the deleted body reappears on disk and keeps
+    /// rendering from retained Search/Shared results until eviction.
+    func testRevalidationLandingAfterADeleteNeverRecreatesTheCacheEntry() async {
+        let log = RequestRecorder()
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        // Seeded so load()'s synchronous local phase installs it: the fetch that
+        // follows is a revalidation, and `apply` reaches `reconcileClean`.
+        contentCache.save(cachedEntry(markdown: "# Cached"))
+        stubLoadAndSavePipeline(content: "# Server", log: log, getDelay: 0.2)
+
+        async let loading: Void = viewModel.load()
+        // The stub records at issue time, before the delayed delivery — so this
+        // resolves while the GET is genuinely still in flight.
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        viewModel.handleDidDelete()
+        await loading
+
+        XCTAssertNil(contentCache.content(for: documentID), "the purge survives the late 200")
+        XCTAssertTrue(viewModel.isDocumentDiscarded)
+    }
 }
