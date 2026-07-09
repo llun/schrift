@@ -120,10 +120,16 @@ final class EditorViewModelLinkTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    /// The reuse above is a *lookup*, not "are there any sub-pages": a link out of the
+    /// sub-tree, with the Subpages section populated, must still miss and fetch.
     func testOpenLinkedDocumentFetchesADocumentThatIsNotASubpage() async {
         let sibling = decodeDocument(id: "33333333-3333-4333-8333-333333333333", title: "Some child")
         childrenCache.save([sibling], for: documentID)
         let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()  // seeds subpages from the cache; the content fetch fails
+        XCTAssertEqual(viewModel.subpages?.map(\.title), ["Some child"], "subpages is populated but misses linkedID")
+
         MockURLProtocol.stubHandler = { _ in
             .init(
                 statusCode: 200, headers: [:],
@@ -134,6 +140,9 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertEqual(document?.title, "Unrelated doc")
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
     }
 
     // MARK: - Failure
