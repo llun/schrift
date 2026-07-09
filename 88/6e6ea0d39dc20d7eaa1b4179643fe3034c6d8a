@@ -1,0 +1,22 @@
+CLAUDE.md
+  s_a01797913bdf0b::t_b41bbcdf13802e 352-355
+  s_a01797913bdf0b::t_8a6bec10040127 386-396,399-414
+docs/superpowers/plans/2026-07-09-create-document-decoding-failure.md
+  s_a01797913bdf0b::t_d58e1c2afead68 161-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "886e6ea0d39dc20d7eaa1b4179643fe3034c6d8a",
+  "prompts": {},
+  "sessions": {
+    "s_a01797913bdf0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dfe85d6-2b3e-4871-beb2-cfd4552628cb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
