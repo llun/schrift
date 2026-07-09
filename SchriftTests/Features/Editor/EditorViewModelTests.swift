@@ -1226,7 +1226,10 @@ final class EditorViewModelTests: XCTestCase {
 
     func testTypingRestartsTheDebounce() async {
         let log = RequestRecorder()
-        let (viewModel, _, _, _) = makeEnvironment(autosaveInterval: .milliseconds(400))
+        // A 2 s debounce with a 200 ms gap between edits leaves ~1.8 s of slack for
+        // the negative assertion — the earlier 400 ms/200 ms pairing left only
+        // ~200 ms, which a loaded CI runner routinely overran, firing the save early.
+        let (viewModel, _, _, _) = makeEnvironment(autosaveInterval: .seconds(2))
         stubLoadAndSavePipeline(content: "Original text", log: log)
         await viewModel.load()
         viewModel.startEditing()
@@ -1235,11 +1238,11 @@ final class EditorViewModelTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(200))
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Change two")
 
-        // 200ms after the first edit the (restarted) debounce must not have fired.
+        // A fraction into the (restarted) debounce, the save must not have fired.
         XCTAssertEqual(savesInFlight(log), 0)
 
-        await waitUntil { viewModel.saveState == .saved }
-        XCTAssertEqual(savesInFlight(log), 1)
+        await waitUntil(timeout: 6) { viewModel.saveState == .saved }
+        XCTAssertEqual(savesInFlight(log), 1, "the two edits coalesced into one save")
     }
 
     func testFlushSkipsWhenContentUnchanged() async {
