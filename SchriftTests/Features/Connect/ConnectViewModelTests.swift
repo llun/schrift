@@ -11,12 +11,12 @@ final class ConnectViewModelTests: XCTestCase {
         super.setUp()
         userDefaults = UserDefaults(suiteName: suiteName)
         userDefaults.removePersistentDomain(forName: suiteName)
-        MockURLProtocol.stubHandler = nil
+        MockURLProtocol.reset()
     }
 
     override func tearDown() {
         userDefaults.removePersistentDomain(forName: suiteName)
-        MockURLProtocol.stubHandler = nil
+        MockURLProtocol.reset()
         super.tearDown()
     }
 

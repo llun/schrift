@@ -31,14 +31,64 @@ final class RequestRecorder: @unchecked Sendable {
     }
 }
 
+/// Thread-safe monotonic counter for stub handlers that must distinguish the
+/// nth concurrent request (MockURLProtocol calls them off the main actor).
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+
+    /// Gate on this, not on a `RequestRecorder` count, when a stub picks its branch
+    /// from `next()`: the recorder pins *recording* order, which need not be the
+    /// order the branches were taken.
+    var current: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 /// Polls a condition on the main actor until it holds or the timeout passes.
+/// A timeout fails the test where it happened: returning silently turns a stalled
+/// wait into a confusing assertion failure further down.
 @MainActor
 func waitUntil(
     timeout: TimeInterval = 3,
+    file: StaticString = #filePath,
+    line: UInt = #line,
     _ condition: @MainActor () -> Bool
 ) async {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition(), Date() < deadline {
+        try? await Task.sleep(for: .milliseconds(25))
+    }
+    if !condition() {
+        XCTFail("waitUntil timed out after \(timeout)s", file: file, line: line)
+    }
+}
+
+/// The negative counterpart: polls for `timeout` and fails if the condition ever
+/// becomes true. Use it for "assert nothing more happened" — `waitUntil` means
+/// "this must become true", and its timeout is a failure.
+@MainActor
+func waitAndConfirmNever(
+    timeout: TimeInterval = 0.3,
+    file: StaticString = #filePath,
+    line: UInt = #line,
+    _ condition: @MainActor () -> Bool
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() {
+            XCTFail("condition became true within \(timeout)s", file: file, line: line)
+            return
+        }
         try? await Task.sleep(for: .milliseconds(25))
     }
 }

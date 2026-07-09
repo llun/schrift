@@ -54,7 +54,7 @@ final class WebLoginCoordinatorTests: XCTestCase {
         coordinator.handleNavigation(
             to: URL(string: "https://idp.example.com/realms/docs/login-actions/authenticate?execution=OTP"))
 
-        await waitUntil(timeout: 0.3) { completed }
+        await waitAndConfirmNever { completed }
         XCTAssertFalse(completed)
     }
 
@@ -64,7 +64,7 @@ final class WebLoginCoordinatorTests: XCTestCase {
 
         coordinator.handleNavigation(to: URL(string: "https://docs.llun.dev/api/v1.0/callback/?code=abc&state=xyz"))
 
-        await waitUntil(timeout: 0.3) { completed }
+        await waitAndConfirmNever { completed }
         XCTAssertFalse(completed)
     }
 
@@ -74,7 +74,7 @@ final class WebLoginCoordinatorTests: XCTestCase {
 
         coordinator.handleNavigation(to: nil)
 
-        await waitUntil(timeout: 0.3) { completed }
+        await waitAndConfirmNever { completed }
         XCTAssertFalse(completed)
     }
 
@@ -88,7 +88,7 @@ final class WebLoginCoordinatorTests: XCTestCase {
         coordinator.handleNavigation(to: URL(string: "https://docs.llun.dev/home/"))
 
         await waitUntil { completionCount >= 1 }
-        await waitUntil(timeout: 0.3) { completionCount > 1 }
+        await waitAndConfirmNever { completionCount > 1 }
         XCTAssertEqual(completionCount, 1)
     }
 }

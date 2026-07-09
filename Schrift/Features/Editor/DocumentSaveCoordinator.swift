@@ -45,6 +45,15 @@ final class DocumentSaveCoordinator {
         case failed(String)
     }
 
+    /// A fingerprint of a document's save activity, taken when a revalidation
+    /// fetch is issued. Carries its own `documentID` so it can't be checked
+    /// against the wrong document. See `mayPredateSave(_:)`.
+    struct SaveMarker: Equatable, Sendable {
+        fileprivate let documentID: UUID
+        fileprivate let settledSaves: Int
+        fileprivate let hadPendingSave: Bool
+    }
+
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
     private let contentCache: DocumentContentCacheStore
@@ -54,6 +63,11 @@ final class DocumentSaveCoordinator {
     private var inFlight: [UUID: Task<Void, Never>] = [:]
     private var inFlightContent: [UUID: PendingSave] = [:]
     private var queued: [UUID: PendingSave] = [:]
+    /// Monotonic per-document count of saves that have settled (landed or failed).
+    private var settledSaves: [UUID: Int] = [:]
+    /// Documents deleted while one of their saves was in flight. That save must not
+    /// resurrect any local copy when it lands.
+    private var discardedDuringSave: Set<UUID> = []
     private var hasRecoveredDrafts = false
 
     init(
@@ -82,6 +96,24 @@ final class DocumentSaveCoordinator {
     /// been replayed yet.
     func storedDraft(documentID: UUID) -> PendingDraft? {
         draftStore.draft(for: documentID)
+    }
+
+    func saveMarker(documentID: UUID) -> SaveMarker {
+        SaveMarker(
+            documentID: documentID,
+            settledSaves: settledSaves[documentID] ?? 0,
+            hadPendingSave: pendingSave(documentID: documentID) != nil
+        )
+    }
+
+    /// True when a save for the marker's document was already in flight when it was
+    /// taken, or settled after it. Either way a fetch issued at `marker` may have
+    /// been answered from the server's **pre-save** state, so its body must never
+    /// be installed or cached: it would resurrect exactly the content the save
+    /// replaced, and — because saves are a full overwrite — the next save would
+    /// push that stale body back to the server.
+    func mayPredateSave(_ marker: SaveMarker) -> Bool {
+        marker.hadPendingSave || (settledSaves[marker.documentID] ?? 0) != marker.settledSaves
     }
 
     func enqueue(documentID: UUID, title: String, markdown: String) {
@@ -133,11 +165,28 @@ final class DocumentSaveCoordinator {
     }
 
     /// Drops all queued/stored work for a document (delete flow). An already
-    /// in-flight PATCH cannot be meaningfully cancelled; it fails harmlessly
-    /// against the deleted document.
+    /// in-flight PATCH cannot be meaningfully cancelled — but it can still *land*
+    /// before the server processes the DELETE, and `finish`'s success path would
+    /// then write-through the content cache, recreating the entry the delete just
+    /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
         queued[documentID] = nil
         draftStore.remove(documentID: documentID)
+        if inFlight[documentID] != nil {
+            discardedDuringSave.insert(documentID)
+        }
+    }
+
+    /// The document became unavailable (404/403) and the editor purged its local
+    /// copy. An in-flight save can still land afterwards and, on the success path,
+    /// write the full body straight back into the content cache — on a 403 that is
+    /// revoked content reappearing on disk. Unlike `discardPendingWork`, the draft
+    /// stays: it is the user's only copy of unsaved work, and `recoverDrafts()`
+    /// decides its fate next launch (replay if reachable, purge on a real 404/403).
+    func suppressLocalWriteThrough(documentID: UUID) {
+        queued[documentID] = nil
+        guard inFlight[documentID] != nil else { return }
+        discardedDuringSave.insert(documentID)
     }
 
     private func start(documentID: UUID, save: PendingSave) {
@@ -158,6 +207,27 @@ final class DocumentSaveCoordinator {
     private func finish(documentID: UUID, save: PendingSave, error: Error?) {
         inFlight[documentID] = nil
         inFlightContent[documentID] = nil
+        // Any revalidation fetch still in flight was issued before this save
+        // settled, so its response may predate it (see `mayPredateSave`).
+        settledSaves[documentID, default: 0] += 1
+        // Deleted or revoked while this save was on the wire: write no local copy,
+        // whatever the server made of the PATCH. `discardPendingWork` (delete) already
+        // removed the draft; `suppressLocalWriteThrough` (404/403) kept it as the
+        // user's only copy of unsaved work — but only while it *is* unsaved. A PATCH
+        // that landed puts the content on the server, so keeping its draft would let
+        // the editor's stranded-draft replay push already-acknowledged bytes back over
+        // a co-author's newer write, and would leave a revoked document's body in
+        // UserDefaults indefinitely.
+        if discardedDuringSave.remove(documentID) != nil {
+            queued[documentID] = nil
+            states[documentID] = .idle
+            if error == nil, let draft = draftStore.draft(for: documentID),
+                draft.title == save.title, draft.markdown == save.markdown
+            {
+                draftStore.remove(documentID: documentID)
+            }
+            return
+        }
         if error == nil {
             states[documentID] = .saved(Date())
             if let draft = draftStore.draft(for: documentID),

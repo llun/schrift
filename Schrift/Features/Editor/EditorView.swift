@@ -13,6 +13,44 @@ func syncStatusCaption(lastSyncedAt: Date, now: Date) -> String {
     return "Synced \(formatter.localizedString(for: lastSyncedAt, relativeTo: now))"
 }
 
+/// The editor header's sync caption, and whether it doubles as a retry button.
+struct SyncCaption: Equatable {
+    let text: String
+    let offersRetry: Bool
+}
+
+/// Caption precedence: (1) a **failed save** wins over everything, including the
+/// offline wording — it is the only affordance that unpins the document, because
+/// `reconcileDraft` deliberately no-ops every revalidation while a failed save's
+/// draft is on screen, and the reading surface has no other retry (tap-to-edit is
+/// itself blocked offline, which is when saves fail most). (2) other unsaved local
+/// content → save wording (a previously-synced doc with a stranded draft must not
+/// read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
+func syncCaption(
+    hasUnsavedLocalContent: Bool,
+    isOffline: Bool,
+    saveState: EditorViewModel.SaveState,
+    lastSyncedAt: Date?,
+    now: Date
+) -> SyncCaption {
+    if hasUnsavedLocalContent {
+        if case .failed = saveState {
+            return SyncCaption(text: "Couldn't save · tap to retry", offersRetry: true)
+        }
+        if isOffline { return SyncCaption(text: "Saved on this device", offersRetry: false) }
+        switch saveState {
+        case .saving: return SyncCaption(text: "Saving…", offersRetry: false)
+        case .saved: return SyncCaption(text: "Saved", offersRetry: false)
+        case .failed: return SyncCaption(text: "Couldn't save · tap to retry", offersRetry: true)
+        case .dirty, .idle: return SyncCaption(text: "Edited just now", offersRetry: false)
+        }
+    }
+    if let lastSyncedAt {
+        return SyncCaption(text: syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now), offersRetry: false)
+    }
+    return SyncCaption(text: "Not synced yet", offersRetry: false)
+}
+
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
@@ -315,9 +353,22 @@ struct EditorView: View {
         HStack(spacing: DocsSpacing.spaceXS) {
             LinkReachPill(reach: reach)
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                Text(syncCaptionText(now: context.date))
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
+                let caption = currentSyncCaption(now: context.date)
+                if caption.offersRetry {
+                    Button {
+                        viewModel.saveNow()
+                    } label: {
+                        Text(caption.text)
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(DocsColor.textBrand)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Couldn't save. Tap to retry.")
+                } else {
+                    Text(caption.text)
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -396,23 +447,14 @@ struct EditorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Caption precedence: (1) unsaved local content → save wording (a
-    /// previously-synced doc with a stranded draft must not read "Not synced
-    /// yet"); (2) synced → "Synced X ago"; (3) neither → "Not synced yet".
-    private func syncCaptionText(now: Date) -> String {
-        if viewModel.hasUnsavedLocalContent {
-            if isOffline { return "Saved on this device" }
-            switch viewModel.saveState {
-            case .saving: return "Saving…"
-            case .saved: return "Saved"
-            case .failed: return "Couldn't save"
-            case .dirty, .idle: return "Edited just now"
-            }
-        }
-        if let lastSyncedAt = viewModel.lastSyncedAt {
-            return syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now)
-        }
-        return "Not synced yet"
+    private func currentSyncCaption(now: Date) -> SyncCaption {
+        syncCaption(
+            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+            isOffline: isOffline,
+            saveState: viewModel.saveState,
+            lastSyncedAt: viewModel.lastSyncedAt,
+            now: now
+        )
     }
 
     private var trailingActions: [NavBarAction] {

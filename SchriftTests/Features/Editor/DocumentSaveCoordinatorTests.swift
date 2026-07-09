@@ -8,6 +8,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     private let otherDocumentID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
     private var cacheDirectory: URL!
+    /// Every suite `makeCoordinator` creates, so tearDown can remove each persistent
+    /// domain instead of leaking a plist per test.
+    private var draftSuiteNames: [String] = []
 
     private static let formattedBody = Data(
         """
@@ -36,13 +39,16 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DocumentSaveCoordinatorTests.\(UUID().uuidString)", isDirectory: true)
+        draftSuiteNames = []
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
         cacheDirectory = nil
+        for suiteName in draftSuiteNames {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
         super.tearDown()
     }
 
@@ -51,6 +57,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     ) -> (DocumentSaveCoordinator, PendingDraftStore, DocumentContentCacheStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let coordinator = DocumentSaveCoordinator(
@@ -78,10 +85,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             case "GET" where url.contains("formatted-content"):
                 return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
             case "PATCH" where url.hasSuffix("/content/"):
-                if saveDelay > 0 {
-                    Thread.sleep(forTimeInterval: saveDelay)
-                }
-                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil)
+                return .init(statusCode: contentStatus, headers: [:], body: Data(), error: nil, delay: saveDelay)
             case "PATCH":
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
             default:
@@ -152,8 +156,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "same")
 
         await waitUntil(timeout: 5) { self.isSaved(coordinator.state(for: self.documentID)) }
-        // Give any (incorrect) follow-up a moment to start.
-        try? await Task.sleep(for: .milliseconds(100))
+        await waitAndConfirmNever { self.savesInFlight(log) > 1 }
 
         XCTAssertEqual(savesInFlight(log), 1)
     }
@@ -300,5 +303,130 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         draftStore.save(PendingDraft(documentID: documentID, title: "A", markdown: "a", updatedAt: Date()))
         coordinator.discardPendingWork(documentID: documentID)
         XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// A delete purges the local copy, but an in-flight save can land *after* it —
+    /// and `finish`'s success path write-throughs the content cache, recreating the
+    /// entry the delete just removed. Nothing purges it again, so a deleted document
+    /// keeps rendering its full body from retained Search/Shared results.
+    func testSaveLandingAfterADeleteNeverRecreatesTheCacheEntry() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        // The delete happens while the save's PATCH is still on the wire.
+        contentCache.remove(documentID: documentID)
+        coordinator.discardPendingWork(documentID: documentID)
+
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        XCTAssertNil(contentCache.content(for: documentID), "a deleted document keeps no local copy")
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// A 404/403 purges the local copy too — and an in-flight save landing after it
+    /// would write the full body straight back into the cache (a privacy problem on
+    /// a 403: the content is revoked, not deleted). Unlike a delete, the draft is
+    /// the user's only copy of unsaved work and must survive.
+    /// A save whose PATCH **failed** leaves the draft: it is the user's only copy.
+    func testSuppressedWriteThroughSkipsTheCacheAndKeepsAnUnsavedDraft() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2, contentStatus: 500)
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        // The document becomes unavailable while the save's PATCH is on the wire.
+        contentCache.remove(documentID: documentID)
+        coordinator.suppressLocalWriteThrough(documentID: documentID)
+
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        XCTAssertNil(contentCache.content(for: documentID), "a revoked document keeps no local body")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Mine", "unsaved work survives")
+    }
+
+    /// A save whose PATCH **landed** is not unsaved work. Keeping its draft lets the
+    /// editor's stranded-draft replay push already-acknowledged bytes back over a
+    /// co-author's newer write — and leaves a revoked document's body in UserDefaults.
+    func testSuppressedWriteThroughDropsADraftTheServerConfirmed() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2)  // 204: the PATCH lands
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        contentCache.remove(documentID: documentID)
+        coordinator.suppressLocalWriteThrough(documentID: documentID)
+
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        XCTAssertNil(contentCache.content(for: documentID), "still no local body")
+        XCTAssertNil(draftStore.draft(for: documentID), "the server has it; it is not unsaved work")
+    }
+
+    // MARK: - Save markers (raced-revalidation detection)
+
+    func testSaveMarkerWithNoSaveActivityDoesNotPredate() {
+        let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
+        let marker = coordinator.saveMarker(documentID: documentID)
+        XCTAssertFalse(coordinator.mayPredateSave(marker))
+    }
+
+    func testSaveMarkerTakenWhileASaveIsInFlightPredates() async {
+        let log = RequestRecorder()
+        let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, saveDelay: 0.2)
+        coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
+
+        let marker = coordinator.saveMarker(documentID: documentID)
+
+        XCTAssertTrue(coordinator.mayPredateSave(marker), "in flight when the marker was taken")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertTrue(coordinator.mayPredateSave(marker), "still true once it lands")
+    }
+
+    /// The case a "was a save pending?" boolean alone would miss: no save existed
+    /// when the fetch was issued, but one started *and settled* while it awaited.
+    func testSaveMarkerPredatesASaveThatStartedAndSettledAfterIt() async {
+        let log = RequestRecorder()
+        let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log)
+        let marker = coordinator.saveMarker(documentID: documentID)
+        XCTAssertFalse(coordinator.mayPredateSave(marker))
+
+        coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        XCTAssertTrue(coordinator.mayPredateSave(marker))
+    }
+
+    func testSaveMarkerPredatesAFailedSaveToo() async {
+        let log = RequestRecorder()
+        let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
+        stubSavePipeline(log: log, contentStatus: 500)
+        let marker = coordinator.saveMarker(documentID: documentID)
+
+        coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+
+        XCTAssertTrue(
+            coordinator.mayPredateSave(marker),
+            "a failed content PATCH may still have been applied server-side before it errored")
+    }
+
+    func testSaveMarkerIsPerDocument() async {
+        let log = RequestRecorder()
+        let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
+        let otherID = UUID(uuidString: "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC")!
+        stubSavePipeline(log: log)
+        let marker = coordinator.saveMarker(documentID: otherID)
+
+        coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        XCTAssertFalse(coordinator.mayPredateSave(marker), "another document's save is irrelevant")
     }
 }

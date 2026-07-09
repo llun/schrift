@@ -20,8 +20,7 @@ final class SharedViewModelTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         UserDefaults(suiteName: cacheSuiteName)?.removePersistentDomain(forName: cacheSuiteName)
         preferences.removePersistentDomain(forName: preferencesSuiteName)
         super.tearDown()

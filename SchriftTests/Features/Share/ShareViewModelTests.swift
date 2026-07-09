@@ -12,8 +12,7 @@ final class ShareViewModelTests: XCTestCase {
     private let documentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         super.tearDown()
     }
 

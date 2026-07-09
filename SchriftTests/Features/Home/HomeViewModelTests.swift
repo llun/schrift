@@ -20,8 +20,7 @@ final class HomeViewModelTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.stubHandler = nil
-        MockURLProtocol.lastRequest = nil
+        MockURLProtocol.reset()
         preferences.removePersistentDomain(forName: preferencesSuiteName)
         super.tearDown()
     }

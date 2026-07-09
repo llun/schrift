@@ -490,10 +490,108 @@ markdown write endpoint**. Understand this before touching the save path:
   network-with-spinner), then revalidates silently as the awaited structured
   tail of `load()` (deliberately no unstructured `Task`; a generation counter
   makes superseded fetches no-ops) — content equality (never re-serialized
-  blocks) decides whether the "Updated" banner appears.
+  blocks) decides whether the fetched body counts as a change at all.
   The coordinator write-throughs the cache on save success; delete and 404/403
   revalidation purge the entry; sign-out clears the store. Offline is
   read-only. See `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`.
+- **A clean copy always ends up showing the server's body.** `apply` takes no
+  "user initiated" flag: passive `load()` and pull-to-refresh apply identical
+  content rules, and `refresh()` differs only in surfacing failures (and in its
+  `hasLoadedContent` fallback to `load()`). Applying the fetched **title** while
+  stashing the fetched **body** is exactly what produced "remote edits never
+  arrive, only the title does" — don't reintroduce it. The **"Updated" banner**
+  (`updateAvailable`/`pendingFreshContent`) is reserved for the destructive case
+  in the *clean* branch: a revalidation landing while an **editing session**
+  holds the caret (the user taps into the synchronously-rendered local copy
+  while the fetch is still in flight). It surfaces when editing ends, and
+  `startEditing`/`markDirty` drop the stash so local work always wins.
+  `reconcileDraft`'s server-wins rule still installs directly even mid-edit,
+  which is why `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`
+  — every content swap re-identifies the blocks.
+- **Four invariants keep the full-overwrite save from eating content.** Every one
+  was learned the hard way; each has a named regression test.
+  0. **Never enqueue a save for content that isn't loaded.** `startEditing` guards
+     the *entry* to an editing session on `hasLoadedContent`; `flushPendingChanges`
+     guards the *exit* on it and on `isDiscarded`, and
+     `becomeUnavailable`/`handleDidDelete` end the session (cancel the autosave,
+     clear `isDirty`) before dropping the content. Without that, a 404/403 landing
+     mid-edit cleared `blocks` while the autosave timer kept ticking — the next
+     flush serialized `[]`, enqueued an **empty document**, and overwrote the user's
+     draft with it; a *transient* 404 then let `recoverDrafts()` replay that
+     emptiness onto the server. `becomeUnavailable` **flushes first**, while the
+     blocks still hold the edit: `enqueue` is write-ahead, so the user's text lands
+     on disk and `recoverDrafts()` replays it if the 404/403 was transient.
+  0b. **A purge must survive its own in-flight save.** Both purge sites tell the
+     coordinator, or `finish`'s success path write-throughs the content cache and
+     recreates what was just removed — on a 403 that is *revoked content
+     reappearing on disk*. `handleDidDelete` → `discardPendingWork` (drops the
+     draft too); `becomeUnavailable` → `suppressLocalWriteThrough` (**keeps** the
+     draft — a 403 revokes access, it doesn't delete the user's unsaved work).
+  0c. **A delete is terminal; a 404/403 is not.** Deleting pops the screen, so
+     `isDocumentDiscarded` is a latch and gates the save funnels. A 404/403 leaves
+     the screen mounted with its pull-to-refresh, and every 404 maps to
+     `.notFound` — including a proxy hiccup — so `isUnavailable` must **not** gate
+     them. Gating a save on it made every funnel silently return on a recovered
+     document while the caption still read "Edited just now".
+     **It is discharged by a fetch whose body actually reached the screen** —
+     `markAvailableAgain()`, called *after* `apply` and gated on `hasLoadedContent`.
+     Both weaker rules stranded a real screen: discharging inside `install(...)`
+     misses `reconcileDraft`'s draft-wins exits (which never install), leaving the
+     document dead with pull-to-refresh no-oping; discharging *before* `apply` clears
+     the terminal message for a response `apply` declines (`mayPredateLocalSave` is
+     true whenever a save was in flight when the fetch was issued — and this
+     teardown's own flush starts one), leaving a blank body, no error and no spinner.
+     For the same reason `reconcileDraft` re-installs the draft when
+     `!hasLoadedContent`.
+  1b. **A stored draft that wins the tolerance rule with `saveState == .idle` and no
+     pending save has no funnel at all** — `flushPendingChanges` needs `isDirty`,
+     `saveNow` and the retry caption need `.failed`, `recoverDrafts` runs once per
+     process — and the tolerance rule will eventually delete it. So `reconcileDraft`
+     **hands it back to the save pipeline**, keyed off *that state*, never off which
+     screen instance recovered it: a fresh view model (pop back, reopen — the natural
+     reaction to "no longer available") restores the draft locally and recovers
+     nothing. Two paths produce the state: `becomeUnavailable` (`suppressLocalWriteThrough`
+     drops the queued save; `finish`'s discarded branch resets to `.idle`, not
+     `.failed`) and an offline launch where `recoverDrafts` gives up. Symmetrically,
+     `finish`'s discarded branch **removes a draft the PATCH confirmed** — saved work
+     is not unsaved work, and replaying it would clobber a co-author.
+     While `isUnavailable` holds, `load()` skips the local phase
+     (or the purged body — or the draft the teardown just wrote — is re-rendered with
+     the warning cleared) and shows **no spinner**: `readingSurface` owns the only
+     `.refreshable`.
+  1. **A stored draft is unsaved work regardless of `displaySource`.** A save
+     failing mid-session leaves `.clean` on screen with the user's only copy in
+     `PendingDraftStore`. So `apply` consults `saveCoordinator.storedDraft(...)`
+     *before* it switches on `displaySource`. `hasUnsavedLocalContent` follows the
+     same rule, gated on `hasLoadedContent` (a torn-down document claims nothing)
+     — its two guarded draft reads are exhaustive only because `enqueue` is the
+     sole writer of a draft and sets `pendingSave` synchronously; add another
+     writer and it must read the draft unconditionally. A failed save pins the
+     document (every revalidation and pull-to-refresh no-ops while its draft is on
+     screen), so the reading surface's **"Couldn't save · tap to retry" caption is
+     load-bearing** — it is the only way out when offline, where tap-to-edit is
+     blocked. **`pendingDraftClockTolerance`
+     may only discard a draft *stranded by an earlier session*** — that is
+     `recoverDrafts`' job. A draft whose save failed *this* session is a retry
+     candidate the user is looking at, so `reconcileDraft` returns early on
+     `saveState == .failed`. Applying the tolerance rule there deletes visible
+     content. The comparison mixes clocks — `draft.updatedAt` is the device's,
+     `formatted.updatedAt` the server's **last write** — so a slow device shrinks
+     the window from the draft's side, and even the user's own partially-landed
+     save (content PATCH applied, title PATCH failed) can read as "newer".
+  2. **Never install or cache a response that may predate one of our own saves.**
+     A revalidation issued while a save was in flight can be answered from the
+     server's pre-save state; installing it resurrects exactly what the save
+     replaced, and the next full-overwrite save pushes that back to the server.
+     Snapshot `saveCoordinator.saveMarker(documentID:)` *before* issuing the
+     fetch and check `mayPredateSave(_:)` after — a boolean "was a
+     save pending?" is not enough (a save can start *and* settle during the
+     await), hence the coordinator's monotonic settled-save count.
+- `displaySource` must never stay pinned at `.pendingSave` once that save has
+  settled — pinning it stranded the screen: every later revalidation **and**
+  every pull-to-refresh no-oped in silence. Reclassify (a surviving draft ⇒
+  `.draft`, otherwise `.clean`). See
+  `docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md`.
 
 ### Persistence (`*Store` types)
 
@@ -563,11 +661,22 @@ markdown write endpoint**. Understand this before touching the save path:
   `final class <Type>Tests: XCTestCase`, `@testable import Schrift`, mirroring the
   source tree. Add `@MainActor` to test classes whose subject is `@MainActor`.
 - Fake HTTP with **`MockURLProtocol`** (`makeSession()` + `stubHandler`; inspect
-  `lastRequest` for single-request tests); reset those statics in `tearDown`.
+  `lastRequest` for single-request tests). Call **`MockURLProtocol.reset()`** in
+  `tearDown` — not just `stubHandler = nil`. It also drains deferred deliveries:
+  one outliving its test reports into a torn-down `URLSession` and kills the test
+  *process*, blaming whichever unrelated test was running at the time.
   For multi-request flows (VM loads, the two-PATCH save, coalescing), pass the
   shared thread-safe `RequestRecorder` (`SchriftTests/Support/AsyncTestHelpers.swift`)
   into the `stubHandler` (`log.record(request)`) and assert on `methods` /
   `count(ofMethod:urlContaining:)`. Never hit the real network.
+- To hold a response open, return `Stub(..., delay:)` — **not** `Thread.sleep`
+  inside the handler. Stubs are delivered on URLSession's single protocol thread,
+  so sleeping there stalls every other in-flight request and silently serializes
+  the very overlap a concurrent test exists to exercise (`Stub.delay` defers
+  delivery instead; `delay: 0` keeps the original synchronous path). And when a
+  test overlaps two requests, **pin their order explicitly** — gate the second on
+  a `RequestRecorder` count. "Which request reached the stub first" and "which
+  caller ran first" are different questions, and `async let` answers neither.
 - Isolate UserDefaults per test (`UserDefaults(suiteName:)` +
   `removePersistentDomain` in setUp/tearDown); inject `FakeKeychainStore`, and
   for cookie-dependent subjects the shared in-memory `FakeCookieStorage`
@@ -577,14 +686,28 @@ markdown write endpoint**. Understand this before touching the save path:
   simulator builds ad-hoc sign for free, and the Keychain tests require the test
   host's ad-hoc signature/entitlements — an unsigned host fails with
   `errSecMissingEntitlement (-34018)` (see `docs/ci.md`).
+- **Two `xcodebuild test` runs on the same simulator kill each other.** With
+  several worktrees checked out (the usual state here), a concurrent run in
+  another one aborts yours with `Test crashed with signal kill`/`signal term` and
+  "Restarting after unexpected exit, crash, or test timeout" — blaming whichever
+  slow test happened to be running, a different one each time. Suspect the
+  environment before the code; the giveaway is a test name in your `.xcresult`
+  that doesn't exist on your branch. Before concluding *anything* from a
+  repeated-run soak, give it a dedicated device (`xcrun simctl create SchriftSoak
+  com.apple.CoreSimulator.SimDeviceType.iPhone-17 <runtime>`, then
+  `-destination "platform=iOS Simulator,id=<udid>"`) and a private
+  `-derivedDataPath`, and soak the **base commit** the same way as a control. A
+  red run proves causation no more than a green run proves correctness.
 - Async tests are `func test...() async`; `await` the subject directly and assert
   on its published state. Poll eventual state with the shared `waitUntil { }`
   helper — **no `XCTestExpectation`, and never a sleep to wait for expected
-  state**. A short `Task.sleep` is allowed only for the two cases `waitUntil`
-  can't express: advancing real time inside a debounce window, and a grace
-  period before a *negative* assertion (asserting nothing more happened).
-  Simulate a slow response with `Thread.sleep` inside the `stubHandler`, not in
-  the test body.
+  state**. `waitUntil` means "this must become true": it **fails the test on
+  timeout**, so a stalled wait reports where it stalled rather than as a
+  confusing assertion failure further down. For "assert nothing more happened",
+  use its counterpart `waitAndConfirmNever { }`, which fails if the condition
+  ever becomes true. A short `Task.sleep` is allowed only for the one case
+  neither expresses: advancing real time inside a debounce window. Simulate a
+  slow response with `Stub(delay:)`, not in the test body.
 - Assert thrown errors with a **typed do/catch** (`XCTFail` on the success path,
   match the concrete `DocsAPIError` case) — not `XCTAssertThrowsError`.
 - Fixtures are **inline** JSON string literals; use deterministic repeating-digit

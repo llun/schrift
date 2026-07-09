@@ -84,6 +84,15 @@ final class EditorViewModel {
     /// otherwise re-save — and re-draft — a document that no longer exists.
     private(set) var isDocumentDiscarded = false
     private(set) var displaySource: DisplaySource = .none
+    /// A 404/403 declared the document gone. Unlike a delete this is **recoverable**
+    /// — the screen stays mounted with its pull-to-refresh, and every 404 maps to
+    /// `.notFound`, including a proxy hiccup. So this is not a latch: it is
+    /// discharged by a fetch whose body `apply` actually put on screen
+    /// (`markAvailableAgain`, *after* `apply`, gated on `hasLoadedContent`).
+    /// Neither weaker rule works — see that method for the two screens they stranded.
+    /// While it holds, the local phase must not re-render the purged copy (or the
+    /// draft the teardown just wrote) with the terminal message cleared.
+    private(set) var isUnavailable = false
     private var savedMarkdown = ""
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
@@ -141,11 +150,30 @@ final class EditorViewModel {
 
     var isEditing: Bool { mode != .reading }
 
-    /// Caption rule 1: unsaved local content wins over "Synced X ago".
+    /// Caption rule 1: unsaved local content wins over "Synced X ago". A stored
+    /// draft counts whatever `displaySource` says — a save failing mid-session
+    /// leaves `.clean` on screen with the draft (the user's only copy) behind it.
+    /// Nothing counts once the document is off screen: `becomeUnavailable` keeps
+    /// the draft on purpose (a 403 is revoked access, not a deletion) and the
+    /// caption must not claim unsaved content for a document that isn't there.
+    ///
+    /// This is read on every render of the reading surface (a 60 s `TimelineView`
+    /// tick) and `storedDraft` decodes the whole draft store out of UserDefaults,
+    /// so the in-memory checks come first. The two guarded reads below are
+    /// *exhaustive*, not a shortcut: `enqueue` is the **only** writer of a draft
+    /// (`PendingDraftStore.save` has no other caller) and it sets `pendingSave`
+    /// synchronously, so `draft != nil && !isDirty && pendingSave == nil` implies
+    /// either the save failed (`.failed`), or the draft was stranded by an earlier
+    /// session — and `restoreLocalContent` always installs *that* as `.draft`.
+    /// Add another `draftStore.save` caller, or make `enqueue` async, and this
+    /// stops being exhaustive: drop the guards and read the draft unconditionally.
     var hasUnsavedLocalContent: Bool {
-        isDirty
-            || saveCoordinator.pendingSave(documentID: documentID) != nil
-            || (displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil)
+        guard hasLoadedContent else { return false }
+        if isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil { return true }
+        if case .failed = saveCoordinator.state(for: documentID) {
+            return saveCoordinator.storedDraft(documentID: documentID) != nil
+        }
+        return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
     }
 
     var saveState: SaveState {
@@ -161,22 +189,33 @@ final class EditorViewModel {
     // MARK: - Loading
 
     func load() async {
-        errorMessage = nil
+        // The terminal 404/403 message survives until a fetch actually puts content
+        // back on screen (`markAvailableAgain`). Clearing it here would leave the
+        // user staring at revoked content — or at nothing — with no warning.
+        if !isUnavailable { errorMessage = nil }
         // The local phase runs once per installed document: load() re-fires
         // on pop-back (.task) — reinstalling would clobber a dirty editing
         // session with the cached copy. After the first install, load() is
-        // revalidate-only.
+        // revalidate-only. It is skipped entirely for a document declared gone:
+        // the purge removed its cache, but the teardown's write-ahead flush may
+        // have just written a draft holding the full (revoked) body, and
+        // `restoreLocalContent` would happily put it back on screen.
         if !hasLoadedContent {
             updateAvailable = false
             pendingFreshContent = nil
-            // Sub pages restore alongside the content so the Subpages section
-            // renders instantly (and offline); loadChildren revalidates after
-            // each successful content fetch.
-            if let cachedChildren = childrenCache.children(for: documentID) {
-                subpages = cachedChildren
+            if !isUnavailable {
+                // Sub pages restore alongside the content so the Subpages section
+                // renders instantly (and offline); loadChildren revalidates after
+                // each successful content fetch.
+                if let cachedChildren = childrenCache.children(for: documentID) {
+                    subpages = cachedChildren
+                }
+                restoreLocalContent()
             }
-            restoreLocalContent()
-            if displaySource == .none {
+            // No spinner for a document declared gone: `readingSurface` owns the
+            // only `.refreshable`, and swapping it for a `ProgressView` mid-refresh
+            // would tear down the very gesture the terminal message invites.
+            if displaySource == .none, !isUnavailable {
                 isLoading = true
             }
         }
@@ -211,9 +250,16 @@ final class EditorViewModel {
     /// refresh()) applying its outcome after a newer one has already run.
     private func revalidate(generation: Int) async {
         do {
+            // Snapshot before issuing: only the coordinator's state at *issue*
+            // time can tell us whether the response might predate our own save.
+            let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            apply(formatted: formatted)
+            apply(
+                formatted: formatted,
+                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
+            )
+            markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -225,16 +271,20 @@ final class EditorViewModel {
             // For .sessionExpired specifically, the shared client's
             // onSessionExpired hook has already raised the app-level re-login
             // sheet; the editor recovers on its next refresh or save.
-            if displaySource == .none {
+            // A document already declared gone keeps its terminal message: a
+            // transient failure is no evidence that it came back.
+            if isUnavailable {
+                errorMessage = unavailableMessage
+            } else if displaySource == .none {
                 errorMessage = "Couldn't load this document. Pull to refresh to try again."
             }
         }
     }
 
-    /// Explicit pull-to-refresh. Unlike the passive on-open revalidation it
-    /// awaits the fetch (the refresh spinner reflects real work), applies a
-    /// changed server copy DIRECTLY when clean (the user asked — no banner),
-    /// and surfaces failures instead of swallowing them.
+    /// Explicit pull-to-refresh. It applies the same content rules as the
+    /// passive on-open revalidation — a clean document always shows the latest
+    /// server body — and differs only in that it surfaces failures instead of
+    /// swallowing them (the user asked, so silence would read as a no-op).
     func refresh() async {
         guard hasLoadedContent else {
             await load()  // error-state retry: full initial flow, as today
@@ -244,9 +294,19 @@ final class EditorViewModel {
         revalidationGeneration += 1
         let generation = revalidationGeneration
         do {
+            let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
-            apply(formatted: formatted, userInitiated: true)
+            apply(
+                formatted: formatted,
+                mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
+            )
+            // Unreachable while `isUnavailable` — that implies `!hasLoadedContent`, so
+            // `refresh()`'s guard already diverted into `load()`. Kept because nothing
+            // enforces that invariant and an undischarged terminal state is a dead
+            // screen; the invariant itself is pinned by
+            // `testUnavailableAlwaysImpliesNoLoadedContent`.
+            markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -257,9 +317,43 @@ final class EditorViewModel {
         }
     }
 
+    /// A 200 whose body `apply` actually put on screen is the server saying the
+    /// document is back. Two near-misses, both of which stranded a real screen:
+    /// discharging inside `install(...)` misses `reconcileDraft`'s draft-wins exits
+    /// (which never install), and discharging *before* `apply` clears the terminal
+    /// message for a response `apply` then declines — `mayPredateLocalSave` is true
+    /// whenever a save was in flight when the fetch was issued, and this teardown's
+    /// own write-ahead flush starts one — leaving a blank body with no error and no
+    /// spinner. So: after `apply`, and only if content actually landed.
+    private func markAvailableAgain() {
+        guard isUnavailable, hasLoadedContent else { return }
+        isUnavailable = false
+        errorMessage = nil
+    }
+
+    /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
+    /// never promises changes that were never written.
+    private var unavailableMessage: String {
+        saveCoordinator.storedDraft(documentID: documentID) != nil
+            ? "This document is no longer available. Your unsaved changes are kept on this device."
+            : "This document is no longer available."
+    }
+
     /// Definitive 404/403: the document is gone or access was revoked. Purge
     /// the durable copy (privacy), disable editing, show the terminal state.
     private func becomeUnavailable() {
+        // Persist the in-flight edit **first**, while the blocks still hold it.
+        // `enqueue` is write-ahead: it stores the draft before any network call, so
+        // even a PATCH that 404s leaves the user's text on disk, and
+        // `recoverDrafts()` replays it next launch if the 404/403 turns out to have
+        // been transient (a proxy hiccup, a brief permission flap — every 404 maps
+        // to `.notFound`). Flushing *after* the teardown below would serialize the
+        // emptied block list and overwrite that draft with an empty document.
+        flushPendingChanges()
+        // An in-flight save can still land after this purge and write the full body
+        // back into the cache — on a 403, revoked content reappearing on disk.
+        saveCoordinator.suppressLocalWriteThrough(documentID: documentID)
+        isUnavailable = true
         contentCache.remove(documentID: documentID)
         childrenCache.remove(parentID: documentID)
         childrenCache.removeDocument(documentID)
@@ -271,15 +365,40 @@ final class EditorViewModel {
         lastSyncedAt = nil
         updateAvailable = false
         pendingFreshContent = nil
+        // End the editing session before the content goes. `startEditing` guards
+        // the *entry* on hasLoadedContent; nothing guards the exit otherwise, and a
+        // live autosave timer over an emptied block list is exactly how the flush
+        // above would have been undone.
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        dirtySince = nil
+        isDirty = false
+        mode = .reading
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
         blocks = []
         rawMarkdown = ""
         displayedSourceMarkdown = ""
         displaySource = .none
         hasLoadedContent = false  // startEditing guards on this
-        errorMessage = "This document is no longer available."
+        errorMessage = unavailableMessage
     }
 
-    private func apply(formatted: FormattedDocumentContent, userInitiated: Bool = false) {
+    /// `mayPredateLocalSave` is the coordinator's verdict, taken when the fetch
+    /// was *issued*, on whether this response could have been served from the
+    /// server's pre-save state (see `DocumentSaveCoordinator.mayPredateSave`).
+    private func apply(formatted: FormattedDocumentContent, mayPredateLocalSave: Bool) {
+        // This fetch raced one of our own saves, so its body may be the one that
+        // save just replaced. Take nothing from it — not the body, not the cache
+        // entry, and not `updatedAt` — since a later full-overwrite save would
+        // push the resurrected body to the server. Only the display source is
+        // settled, so the next fetch isn't stranded.
+        if mayPredateLocalSave {
+            unpinSettledPendingSave()
+            return
+        }
         defer { updatedAt = formatted.updatedAt }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
@@ -287,29 +406,108 @@ final class EditorViewModel {
             cacheServerCopy(formatted)
             return
         }
+        // A draft outliving its save (the save failed) is unsaved work no matter
+        // which source installed the screen — a save failing mid-session leaves
+        // `.clean` on screen with the draft behind it. The rules in
+        // `reconcileDraft`, never `displaySource`, decide whether the server may
+        // replace it.
+        if let draft = saveCoordinator.storedDraft(documentID: documentID) {
+            displaySource = .draft
+            reconcileDraft(formatted, draft: draft)
+            return
+        }
         switch displaySource {
-        case .pendingSave:
-            break  // in-flight content is newer than the server copy
-        case .draft:
-            if let draft = saveCoordinator.storedDraft(documentID: documentID),
-                formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance)
-            {
-                cacheServerCopy(formatted)
-            } else {
-                // Server newer beyond tolerance: today the stale draft would
-                // never have been shown — server wins, and the draft goes
-                // (re-checked inside discardStoredDraft; the user may have
-                // produced a newer one while we awaited).
-                if let draft = saveCoordinator.storedDraft(documentID: documentID) {
-                    saveCoordinator.discardStoredDraft(draft)
-                }
-                installFetched(formatted)
-            }
+        case .pendingSave, .clean, .draft:
+            // `.pendingSave` reaching here means the save that owned the screen
+            // landed (a failed one leaves the draft caught above) and this fetch
+            // postdates it. `.draft` means the draft is gone but nothing reset the
+            // source — a save cleared it (the marker is per-fetch, so a fetch
+            // issued *after* that save reads a fresh count and arrives here),
+            // `recoverDrafts` discarded it, or the document was deleted. Either way
+            // nothing local is left to protect, so the screen holds an ordinary
+            // clean copy. Leaving the source pinned would strand it forever: every
+            // later revalidation *and* every pull-to-refresh would no-op in silence.
+            displaySource = .clean
+            reconcileClean(formatted)
         case .none:
             installFetched(formatted)
-        case .clean:
-            reconcileClean(formatted, applyDirectly: userInitiated)
         }
+    }
+
+    /// The save that owned the screen has settled, so `.pendingSave` no longer
+    /// describes it. Reclassify without touching content — the response that
+    /// triggered this is untrustworthy — so the next fetch reconciles normally.
+    /// A dirty screen is left alone: no source describes it, and the dirty rule
+    /// short-circuits every later `apply` until it flushes anyway.
+    private func unpinSettledPendingSave() {
+        guard displaySource == .pendingSave, !isDirty,
+            saveCoordinator.pendingSave(documentID: documentID) == nil
+        else { return }
+        displaySource = saveCoordinator.storedDraft(documentID: documentID) != nil ? .draft : .clean
+    }
+
+    /// An unsaved draft owns the screen. It only loses to a server copy written
+    /// meaningfully later than the draft itself — never to the user's own
+    /// refresh, because the draft is work that hasn't reached the server yet.
+    private func reconcileDraft(_ formatted: FormattedDocumentContent, draft: PendingDraft) {
+        // Nothing is on screen: `becomeUnavailable` tore it down, and its own
+        // write-ahead flush is what wrote this draft. The draft is the user's only
+        // copy, so put it back — every branch below then reasons about content that
+        // is actually displayed, as they all assume.
+        let recovered = !hasLoadedContent
+        if recovered {
+            install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
+            displaySource = .draft
+            hasLocalCopy = true
+        }
+        // A save that failed *this session* leaves a draft the user is looking at,
+        // with the "Couldn't save" retry on screen. The clock-tolerance rule below
+        // is for drafts stranded by an *earlier* session (`recoverDrafts`' job);
+        // applying it here silently deletes visible content. The comparison mixes
+        // clocks — `draft.updatedAt` is the device's, `formatted.updatedAt` the
+        // server's *last write* — so a device running slow shrinks the window from
+        // the draft's side, and even the user's own partially-landed save (content
+        // PATCH applied, title PATCH failed) can then read as "newer than the draft".
+        if case .failed = saveCoordinator.state(for: documentID) {
+            cacheServerCopy(formatted)
+            return
+        }
+        if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+            cacheServerCopy(formatted)
+            // A stored draft that wins the tolerance rule, with no save pushing it and
+            // no `.failed` retry affordance, has **no funnel at all**:
+            // `flushPendingChanges` needs `isDirty`, `saveNow` and the retry caption
+            // need `.failed`, and `recoverDrafts` runs once per process. That is the
+            // state `becomeUnavailable` leaves behind (`suppressLocalWriteThrough`
+            // drops the queued save; `finish`'s discarded branch resets to `.idle`),
+            // and also the state an offline launch leaves when `recoverDrafts` gives
+            // up. Left alone the edit sits on screen captioned "Edited just now" until
+            // a co-author's write pushes the server past the tolerance — and then the
+            // branch below deletes it. Hand it back, whichever screen is looking:
+            // gating this on "did *this* view model recover the screen" missed the
+            // pop-back-and-reopen path, where a fresh view model restores the draft
+            // locally and never recovers anything.
+            //
+            // No storm: `enqueue` makes `pendingSave` non-nil, so `apply` short-circuits
+            // before `reconcileDraft` on every later fetch; a failure lands in `.failed`,
+            // whose branch returned above; a success removes the draft.
+            if saveCoordinator.pendingSave(documentID: documentID) == nil {
+                saveCoordinator.enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown)
+            }
+            return
+        }
+        // Server newer beyond tolerance: this stranded draft would never have been
+        // shown — server wins, and the draft goes. `discardStoredDraft` re-checks
+        // identity; that check cannot fail today (no await since `apply` read the
+        // draft), but install only on success. Installing over a draft that
+        // survived would leave unsaved work on disk that isn't on screen — the
+        // state every rule here exists to prevent.
+        saveCoordinator.discardStoredDraft(draft)
+        guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
+            cacheServerCopy(formatted)
+            return
+        }
+        installFetched(formatted)
     }
 
     /// Silent cache update while local edits own the screen — next open (or
@@ -324,13 +522,18 @@ final class EditorViewModel {
             ))
     }
 
-    /// Clean content on screen: never swap it on a passive open. Titles are
-    /// non-destructive and apply silently in BOTH branches (savedTitle follows
-    /// so flushPendingChanges never enqueues a spurious save); only body
-    /// differences drive the banner — unless `applyDirectly` (explicit
-    /// refresh()), which installs the fetched body immediately instead of
-    /// stashing it behind the "Updated" banner.
-    private func reconcileClean(_ formatted: FormattedDocumentContent, applyDirectly: Bool = false) {
+    /// Clean content on screen — nothing local to protect, so a changed server
+    /// body is simply installed. Titles are non-destructive and apply silently
+    /// in BOTH branches (savedTitle follows so flushPendingChanges never
+    /// enqueues a spurious save); applying only the title while stashing the
+    /// body was the "remote edits never show up, only the title does" bug.
+    ///
+    /// The one exception is an open editing session: swapping the document out
+    /// from under the caret is destructive, so the fetched body waits behind
+    /// the "Updated" banner, which surfaces once editing ends. (A dirty session
+    /// never reaches here — `apply` returns early — and `startEditing`/
+    /// `markDirty` drop the stash, so local work always wins.)
+    private func reconcileClean(_ formatted: FormattedDocumentContent) {
         let fetched = formatted.content ?? ""
         let now = Date()
         if let fetchedTitle = formatted.title, fetchedTitle != title {
@@ -345,23 +548,23 @@ final class EditorViewModel {
                 syncedAt: now
             ))
         if serverChanged(fetched: fetched) {
-            if applyDirectly {
+            if isEditing {
+                pendingFreshContent = (markdown: fetched, syncedAt: now)
+                updateAvailable = true
+            } else {
                 install(markdown: fetched, title: nil, syncedAt: now)
                 updateAvailable = false
                 pendingFreshContent = nil
-            } else {
-                pendingFreshContent = (markdown: fetched, syncedAt: now)
-                updateAvailable = true
             }
         } else {
             // Raw may differ only cosmetically — converge the comparison
             // basis on the fetched raw so future comparisons settle.
             displayedSourceMarkdown = fetched
             lastSyncedAt = now
-            if applyDirectly {
-                updateAvailable = false
-                pendingFreshContent = nil
-            }
+            // The server now holds what's on screen, so any body stashed by an
+            // earlier fetch (server since reverted) has nothing left to offer.
+            updateAvailable = false
+            pendingFreshContent = nil
         }
     }
 
@@ -371,9 +574,18 @@ final class EditorViewModel {
             != serializeMarkdown(parseEditorBlocks(displayedSourceMarkdown))
     }
 
-    /// The "Updated" banner tap: swaps in the stashed fresh body. Guarded so a
-    /// stray tap can never replace blocks mid-edit or clobber dirty content.
+    /// The "Updated" banner tap: swaps in the body stashed while an editing
+    /// session held the screen. Guarded so a stray tap can never replace blocks
+    /// mid-edit or clobber dirty content.
+    ///
+    /// The `storedDraft` guard is belt-and-braces: a stash implies no draft today
+    /// (`apply` only reaches `reconcileClean` with none, and `markDirty` drops the
+    /// stash before any enqueue can create one). It is the one remaining
+    /// content-installing path that doesn't consult the draft store, and it has
+    /// exactly the shape of the bug review found — install over a draft, then
+    /// `saveNow()` pushes the server's own body back.
     func applyPendingUpdate() {
+        guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return }
         guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
         install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
         displaySource = .clean
@@ -392,6 +604,12 @@ final class EditorViewModel {
         // Discard any in-flight children snapshot — landing after the purge,
         // it would re-cache the list for a deleted document.
         childrenGeneration += 1
+        // End the session before `.onDisappear`'s flush can write a fresh draft
+        // (and PATCH) for a document that no longer exists.
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        dirtySince = nil
+        isDirty = false
         saveCoordinator.discardPendingWork(documentID: documentID)
         // A photo upload can still be in flight and would otherwise re-save (and
         // re-draft) the deleted document when it lands. `hasLoadedContent` stays
@@ -425,6 +643,14 @@ final class EditorViewModel {
         savedTitle = title
         rawMarkdown = markdown
         blocks = parseEditorBlocks(markdown)
+        // Every block gets a fresh identity here, so any caret state still
+        // pointing into the outgoing blocks is now dangling. Clearing it in the
+        // one funnel every content swap routes through makes that unrepresentable
+        // — `reconcileDraft`'s server-wins install can land mid-edit.
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
         openInMarkdownMode = !markdown.isEmpty && !markdownSurvivesRoundTrip(markdown)
         // The dirty baseline uses the same representation currentMarkdown()
         // produces, so an unchanged document never triggers a save.
@@ -1011,7 +1237,13 @@ final class EditorViewModel {
         autosaveTask?.cancel()
         autosaveTask = nil
         dirtySince = nil
-        guard isDirty else { return }
+        // `hasLoadedContent` mirrors `startEditing`'s invariant at the exit: with
+        // no content loaded, `currentMarkdown()` is the empty document, and a
+        // full-overwrite save of that destroys the server copy. `isDocumentDiscarded`
+        // (delete only — never the recoverable 404/403 state) keeps a deleted
+        // document from acquiring a fresh draft and a doomed PATCH. This is the
+        // funnel that must never be bypassed.
+        guard !isDocumentDiscarded, hasLoadedContent, isDirty else { return }
         isDirty = false
         let markdown = currentMarkdown()
         if markdown == savedMarkdown, title == savedTitle {
@@ -1023,12 +1255,18 @@ final class EditorViewModel {
         saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown)
     }
 
-    /// Manual save: flushes dirty edits, or retries the last content after a failure.
+    /// Manual save: flushes dirty edits, and retries the last content after a
+    /// failure. The two are not exclusive — typing and undoing after a failed save
+    /// leaves `isDirty` true with content that matches `savedMarkdown`, so the
+    /// flush enqueues nothing. Returning there would swallow the retry and strand
+    /// the document behind its failed save (`reconcileDraft` pins the screen while
+    /// a failed save's draft survives).
     func saveNow() {
+        guard !isDocumentDiscarded else { return }
         if isDirty {
             flushPendingChanges()
-            return
         }
+        guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
         if case .failed = saveCoordinator.state(for: documentID) {
             saveCoordinator.enqueue(documentID: documentID, title: savedTitle, markdown: savedMarkdown)
         }
