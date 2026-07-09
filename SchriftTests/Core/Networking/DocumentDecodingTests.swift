@@ -111,4 +111,67 @@ final class DocumentDecodingTests: XCTestCase {
         XCTAssertNil(document.computedLinkReach)
         XCTAssertFalse(document.abilities.update)
     }
+
+    // MARK: - Create responses omit `is_favorite`
+
+    /// The exact body `POST /documents/` returns, captured from a live docs backend.
+    /// `is_favorite` is a **queryset annotation** the list endpoints add; `perform_create`
+    /// serializes a freshly built instance that has no such attribute, so the key is simply
+    /// absent — as it is from `POST documents/{id}/children/`. Decoding it as a required
+    /// `Bool` threw `keyNotFound`, which surfaced as "Couldn't create a document. Please try
+    /// again." *after* the server had already created the document.
+    private let createResponseFixture = """
+        {
+            "id": "b0429ca8-39ec-4e70-a383-810e511a3fcb",
+            "abilities": {"destroy": true, "partial_update": true, "children_create": true},
+            "ancestors_link_reach": null,
+            "ancestors_link_role": null,
+            "computed_link_reach": "restricted",
+            "computed_link_role": null,
+            "content": "",
+            "created_at": "2026-07-09T08:07:54.123456Z",
+            "creator": "dea263d7-5b7a-4bdc-8db2-8e2f835cd2a6",
+            "deleted_at": null,
+            "depth": 1,
+            "excerpt": null,
+            "link_reach": "restricted",
+            "link_role": "reader",
+            "nb_accesses_ancestors": 1,
+            "nb_accesses_direct": 1,
+            "numchild": 0,
+            "path": "00000Fq",
+            "title": "Untitled document",
+            "updated_at": "2026-07-09T08:07:54.123456Z",
+            "user_role": "owner"
+        }
+        """.data(using: .utf8)!
+
+    func testDecodesACreateResponseThatOmitsIsFavorite() throws {
+        let document = try JSONDecoder.docsAPI.decode(Document.self, from: createResponseFixture)
+
+        // A brand-new document is never a favorite, so absent must mean false — not a throw.
+        XCTAssertFalse(document.isFavorite)
+        XCTAssertEqual(document.title, "Untitled document")
+        XCTAssertEqual(document.depth, 1)
+        XCTAssertTrue(document.abilities.childrenCreate)
+    }
+
+    /// An explicit value must still win over the default.
+    func testAnExplicitIsFavoriteStillDecodes() throws {
+        let document = try JSONDecoder.docsAPI.decode(Document.self, from: fixture)
+
+        XCTAssertTrue(document.isFavorite)
+    }
+
+    /// The cache re-encodes `Document` with a bare `JSONEncoder` and reads it back with a
+    /// bare `JSONDecoder` (no key strategy). A hand-written `init(from:)` breaks that
+    /// round-trip if its `CodingKeys` stop matching the synthesized encoder's output.
+    func testDocumentSurvivesTheBareEncoderRoundTripUsedByTheCaches() throws {
+        let original = try JSONDecoder.docsAPI.decode(Document.self, from: fixture)
+
+        let reencoded = try JSONEncoder().encode(original)
+        let roundTripped = try JSONDecoder().decode(Document.self, from: reencoded)
+
+        XCTAssertEqual(roundTripped, original)
+    }
 }

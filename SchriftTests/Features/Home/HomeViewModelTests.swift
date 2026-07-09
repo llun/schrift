@@ -31,8 +31,19 @@ final class HomeViewModelTests: XCTestCase {
         return DocumentCacheStore(userDefaults: userDefaults)
     }
 
-    private func makeViewModel(cache: DocumentCacheStore? = nil, userDefaults: UserDefaults? = nil) -> HomeViewModel {
-        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+    private func makeViewModel(
+        cache: DocumentCacheStore? = nil,
+        userDefaults: UserDefaults? = nil,
+        diagnostics: APIDiagnosticsLog? = nil
+    ) -> HomeViewModel {
+        // The client records into the same log the view model reads, exactly as RootView
+        // wires them — a separate log would silently never produce a detail.
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onRequestFailure: { failure in diagnostics?.record(failure) }
+        )
         // Isolate the save coordinator's draft store so `load()`'s draft recovery
         // can't replay drafts left in UserDefaults.standard by other tests (which
         // would fire an extra formatted-content GET and pollute recorded URLs).
@@ -43,7 +54,8 @@ final class HomeViewModelTests: XCTestCase {
             client: client,
             cache: cache ?? makeCache(),
             saveCoordinator: coordinator,
-            userDefaults: userDefaults ?? preferences
+            userDefaults: userDefaults ?? preferences,
+            diagnostics: diagnostics
         )
     }
 
@@ -597,5 +609,103 @@ final class HomeViewModelTests: XCTestCase {
         await load.value
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertNotNil(viewModel.errorMessage, "first-ever .pinned load failed with nothing visible")
+    }
+
+    // MARK: - Create-document failure reporting
+
+    func testFailedCreateDocumentSurfacesTheServersOwnReason() async {
+        let diagnostics = APIDiagnosticsLog()
+        let viewModel = makeViewModel(diagnostics: diagnostics)
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 403, headers: [:],
+                body: #"{"detail":"CSRF Failed: CSRF token missing."}"#.data(using: .utf8)!, error: nil)
+        }
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertNil(document)
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't create a document. Please try again.")
+        XCTAssertEqual(viewModel.errorDetail, "HTTP 403: CSRF Failed: CSRF token missing.")
+    }
+
+    /// Offline, there is no HTTP response to quote. Without the marker the catch would show
+    /// the detail of whatever unrelated request failed last.
+    func testFailedCreateDocumentOffersNoDetailForATransportError() async {
+        let diagnostics = APIDiagnosticsLog()
+        diagnostics.record(RequestFailure(method: "GET", path: "documents/", statusCode: 500, body: Data()))
+        let viewModel = makeViewModel(diagnostics: diagnostics)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        _ = await viewModel.createDocument()
+
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorDetail)
+    }
+
+    /// The reported bug: the message had no way out. `createDocument`'s failure path never
+    /// reaches `load()`, which was the only thing that cleared it.
+    func testDismissErrorClearsTheCreateFailureMessage() async {
+        let diagnostics = APIDiagnosticsLog()
+        let viewModel = makeViewModel(diagnostics: diagnostics)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+        _ = await viewModel.createDocument()
+        XCTAssertNotNil(viewModel.errorMessage)
+
+        viewModel.dismissError()
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorDetail)
+    }
+
+    func testRetryingCreateDocumentClearsThePreviousMessageBeforeSucceeding() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+        _ = await viewModel.createDocument()
+        XCTAssertNotNil(viewModel.errorMessage)
+
+        // Now the create succeeds, and the load() it triggers answers with an empty page.
+        MockURLProtocol.stubHandler = { request in
+            let isCreate = request.httpMethod == "POST"
+            let body = isCreate ? Self.documentFixture() : Self.emptyPageFixture()
+            return .init(statusCode: isCreate ? 201 : 200, headers: [:], body: body, error: nil)
+        }
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertNotNil(document)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorDetail)
+    }
+
+    // `nonisolated`: both are read from inside the `@Sendable` stub handler, which does not
+    // run on the main actor this test class is isolated to.
+    private nonisolated static func emptyPageFixture() -> Data {
+        #"{"count":0,"next":null,"previous":null,"results":[]}"#.data(using: .utf8)!
+    }
+
+    private nonisolated static func documentFixture() -> Data {
+        """
+        {
+            "id": "17171717-1717-4171-8171-171717171717",
+            "title": "Untitled document",
+            "excerpt": null,
+            "abilities": {},
+            "computed_link_reach": "restricted",
+            "computed_link_role": null,
+            "created_at": "2026-01-15T10:30:00Z",
+            "creator": null,
+            "depth": 1,
+            "link_role": "reader",
+            "link_reach": "restricted",
+            "numchild": 0,
+            "path": "0002",
+            "updated_at": "2026-01-15T10:30:00Z",
+            "user_role": "owner",
+            "is_favorite": false
+        }
+        """.data(using: .utf8)!
     }
 }

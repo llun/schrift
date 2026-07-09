@@ -12,12 +12,16 @@ private struct AuthenticatedHomeContainer: View {
     init(serverURL: URL, sessionStore: SessionStore, onSignOut: @escaping () -> Void) {
         // The one client every feature shares: its onSessionExpired hook is
         // what turns any real 401 into the re-login sheet below (idempotent —
-        // concurrent 401s just re-set the same flag).
+        // concurrent 401s just re-set the same flag). Its onRequestFailure hook
+        // records what the server said about every non-2xx, which the view model
+        // below quotes — the same log object, or the detail never arrives.
+        let diagnostics = APIDiagnosticsLog()
         let client = DocsAPIClient(
             baseURL: serverURL.appendingPathComponent("api/v1.0/"),
-            onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } }
+            onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } },
+            onRequestFailure: { failure in diagnostics.record(failure) }
         )
-        _viewModel = State(initialValue: HomeViewModel(client: client))
+        _viewModel = State(initialValue: HomeViewModel(client: client, diagnostics: diagnostics))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         self.sessionStore = sessionStore

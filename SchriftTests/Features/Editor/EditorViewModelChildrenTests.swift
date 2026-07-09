@@ -321,4 +321,72 @@ final class EditorViewModelChildrenTests: XCTestCase {
         XCTAssertEqual(child?.title, "Untitled subpage")
         XCTAssertEqual(viewModel.childrenGeneration, generationBefore + 1)
     }
+
+    // MARK: - Failure reporting
+
+    /// Before this, `addSubpage()` swallowed every error with `try?` and set no message, so
+    /// tapping "New page" against a rejecting server did nothing at all, visibly.
+    func testFailedAddSubpageSurfacesAnErrorMessage() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the subpage. Please try again.")
+    }
+
+    /// A rejected sub-page must not tear the open document down the way a 403 on load does.
+    func testFailedAddSubpageLeavesTheDocumentAvailable() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        _ = await viewModel.addSubpage()
+
+        XCTAssertFalse(viewModel.isUnavailable)
+    }
+
+    // `nonisolated`: read from inside the `@Sendable` stub handler, which does not run on
+    // the main actor this test class is isolated to.
+    private nonisolated static func childFixture(id: String, title: String) -> Data {
+        """
+        {
+            "id": "\(id)",
+            "title": "\(title)",
+            "excerpt": null,
+            "abilities": {},
+            "computed_link_reach": "restricted",
+            "computed_link_role": null,
+            "created_at": "2026-01-15T10:30:00Z",
+            "creator": null,
+            "depth": 2,
+            "link_role": "reader",
+            "link_reach": "restricted",
+            "numchild": 0,
+            "path": "00010004",
+            "updated_at": "2026-01-15T10:30:00Z",
+            "user_role": "owner",
+            "is_favorite": false
+        }
+        """.data(using: .utf8)!
+    }
+
+    func testSuccessfulAddSubpageClearsAPreviousErrorMessage() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+        _ = await viewModel.addSubpage()
+        XCTAssertNotNil(viewModel.errorMessage)
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 201, headers: [:],
+                body: Self.childFixture(id: "44444444-4444-4444-8444-444444444444", title: "Untitled subpage"),
+                error: nil)
+        }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertEqual(child?.title, "Untitled subpage")
+        XCTAssertNil(viewModel.errorMessage)
+    }
 }

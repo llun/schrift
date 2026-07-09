@@ -48,6 +48,10 @@ final class EditorViewModel {
     var mode: Mode = .reading
     var isLoading = false
     var errorMessage: String?
+    /// The server's own words about the failure behind `errorMessage`, when it had any.
+    /// Every 404 maps to `.notFound` and reads as "deleted", so a missing route or a proxy
+    /// hiccup is indistinguishable from a deletion without this.
+    var errorDetail: String?
     var focusedBlockID: UUID?
     var cursorRequest: CursorRequest?
     var selection: NSRange?
@@ -74,6 +78,9 @@ final class EditorViewModel {
     let autosaveInterval: Duration
     /// Delay between media-check readiness polls. Tests pass `.zero`.
     let mediaCheckRetryInterval: Duration
+    /// The same log the shared client records into — the screen that pushed this one hands
+    /// it over. nil in previews and tests, which simply means no detail is offered.
+    let diagnostics: APIDiagnosticsLog?
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
@@ -85,8 +92,9 @@ final class EditorViewModel {
     private(set) var isDocumentDiscarded = false
     private(set) var displaySource: DisplaySource = .none
     /// A 404/403 declared the document gone. Unlike a delete this is **recoverable**
-    /// — the screen stays mounted with its pull-to-refresh, and every 404 maps to
-    /// `.notFound`, including a proxy hiccup. So this is not a latch: it is
+    /// — the screen stays mounted with its pull-to-refresh, and a 404 can still be a proxy
+    /// hiccup (only an *HTML* 404 is separated out, as `.routeNotFound`, and never lands
+    /// here). So this is not a latch: it is
     /// discharged by a fetch whose body `apply` actually put on screen
     /// (`markAvailableAgain`, *after* `apply`, gated on `hasLoadedContent`).
     /// Neither weaker rule works — see that method for the two screens they stranded.
@@ -135,7 +143,8 @@ final class EditorViewModel {
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         autosaveInterval: Duration = .seconds(10),
-        mediaCheckRetryInterval: Duration = .seconds(1)
+        mediaCheckRetryInterval: Duration = .seconds(1),
+        diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
         self.documentID = documentID
@@ -145,10 +154,27 @@ final class EditorViewModel {
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
+        self.diagnostics = diagnostics
         self.savedTitle = title
     }
 
     var isEditing: Bool { mode != .reading }
+
+    // MARK: - Error state
+
+    /// `errorMessage` and `errorDetail` must move together. The detail is only ever rendered
+    /// beneath its message, so a detail that outlives one is invisible right up until some
+    /// unrelated later message adopts it — a stale "HTTP 500" from a background revalidation
+    /// appearing under "Couldn't add the subpage."
+    private func showError(_ message: String, detail: String? = nil) {
+        errorMessage = message
+        errorDetail = detail
+    }
+
+    private func clearError() {
+        errorMessage = nil
+        errorDetail = nil
+    }
 
     /// Caption rule 1: unsaved local content wins over "Synced X ago". A stored
     /// draft counts whatever `displaySource` says — a save failing mid-session
@@ -192,7 +218,7 @@ final class EditorViewModel {
         // The terminal 404/403 message survives until a fetch actually puts content
         // back on screen (`markAvailableAgain`). Clearing it here would leave the
         // user staring at revoked content — or at nothing — with no warning.
-        if !isUnavailable { errorMessage = nil }
+        if !isUnavailable { clearError() }
         // The local phase runs once per installed document: load() re-fires
         // on pop-back (.task) — reinstalling would clobber a dirty editing
         // session with the cached copy. After the first install, load() is
@@ -249,6 +275,7 @@ final class EditorViewModel {
     /// `generation` guards against a superseded fetch (an earlier load() or
     /// refresh()) applying its outcome after a newer one has already run.
     private func revalidate(generation: Int) async {
+        let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
             // time can tell us whether the response might predate our own save.
@@ -264,19 +291,27 @@ final class EditorViewModel {
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
             becomeUnavailable()
+            // "No longer available" is a guess: a 404 also means a route this server does
+            // not have, or a proxy hiccup. Say what the server actually answered.
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
             guard generation == revalidationGeneration else { return }
-            // Transient (.network, .server, .rateLimited, .sessionExpired —
+            // Transient (.network, .routeNotFound, .server, .rateLimited, .sessionExpired —
             // cookie expiry must not purge the cache): keep the local copy.
             // For .sessionExpired specifically, the shared client's
             // onSessionExpired hook has already raised the app-level re-login
             // sheet; the editor recovers on its next refresh or save.
             // A document already declared gone keeps its terminal message: a
             // transient failure is no evidence that it came back.
+            // `.routeNotFound` lands here — a misconfigured server or a proxy eating the
+            // path — and that is precisely the failure whose reason nobody can guess. But
+            // attach it only where a message actually appears: a silent background failure
+            // over a local copy must not leave a detail behind for a later message to adopt.
+            let detail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
             if isUnavailable {
-                errorMessage = unavailableMessage
+                showError(unavailableMessage, detail: detail)
             } else if displaySource == .none {
-                errorMessage = "Couldn't load this document. Pull to refresh to try again."
+                showError("Couldn't load this document. Pull to refresh to try again.", detail: detail)
             }
         }
     }
@@ -290,9 +325,10 @@ final class EditorViewModel {
             await load()  // error-state retry: full initial flow, as today
             return
         }
-        errorMessage = nil
+        clearError()
         revalidationGeneration += 1
         let generation = revalidationGeneration
+        let diagnosticsMarker = diagnostics?.marker()
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
@@ -311,9 +347,12 @@ final class EditorViewModel {
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
             becomeUnavailable()
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
             guard generation == revalidationGeneration else { return }
-            errorMessage = "Couldn't refresh. Please try again."
+            showError(
+                "Couldn't refresh. Please try again.",
+                detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics))
         }
     }
 
@@ -328,7 +367,7 @@ final class EditorViewModel {
     private func markAvailableAgain() {
         guard isUnavailable, hasLoadedContent else { return }
         isUnavailable = false
-        errorMessage = nil
+        clearError()
     }
 
     /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
@@ -384,6 +423,7 @@ final class EditorViewModel {
         displaySource = .none
         hasLoadedContent = false  // startEditing guards on this
         errorMessage = unavailableMessage
+        errorDetail = nil
     }
 
     /// `mayPredateLocalSave` is the coordinator's verdict, taken when the fetch
@@ -683,7 +723,16 @@ final class EditorViewModel {
     }
 
     func addSubpage() async -> Document? {
-        guard let child = try? await client.createChild(documentID: documentID, title: "Untitled subpage") else {
+        clearError()
+        let child: Document
+        do {
+            child = try await client.createChild(documentID: documentID, title: "Untitled subpage")
+        } catch {
+            // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a 403
+            // here means "you may not add children to this document", not "this document
+            // was taken away from you". Tearing the editor down would discard the user's
+            // open document over a failed sub-page.
+            showError("Couldn't add the subpage. Please try again.")
             return nil
         }
         // Any in-flight children fetch predates this child — invalidate it.
@@ -705,7 +754,7 @@ final class EditorViewModel {
 
     func startEditing(focusing blockID: UUID? = nil) {
         guard hasLoadedContent else { return }
-        errorMessage = nil
+        clearError()
         updateAvailable = false
         pendingFreshContent = nil
         if blocks.isEmpty {
@@ -737,7 +786,7 @@ final class EditorViewModel {
         cursorRequest = nil
         selection = nil
         slashQueryText = nil
-        errorMessage = nil
+        clearError()
     }
 
     func setMode(_ newMode: Mode) {
@@ -1042,7 +1091,7 @@ final class EditorViewModel {
         guard canInsertPhoto else { return }
         // Clear a previous failure's copy, like every other async intent method —
         // otherwise a successful retry leaves the red banner on screen.
-        errorMessage = nil
+        clearError()
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
         do {
@@ -1074,7 +1123,7 @@ final class EditorViewModel {
     /// disabled button can't perform.
     private func reportPhotoFailure() {
         guard hasLoadedContent, !isDocumentDiscarded else { return }
-        errorMessage = Self.photoErrorMessage
+        showError(Self.photoErrorMessage)
     }
 
     /// Polls media-check until the attachment is ready and returns the absolute

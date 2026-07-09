@@ -349,9 +349,22 @@ new code reads like the surrounding code.
   magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
   never renders inline.
 - One error type `DocsAPIError`; status is translated centrally by
-  `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound`,
-  429→`rateLimited(retryAfter:)`, else `server`). Wrap `URLSession`/decoder
-  failures into `.network`/`.decoding`; never rethrow raw errors.
+  `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound` **or
+  `routeNotFound`**, 429→`rateLimited(retryAfter:)`, else `server`). Wrap
+  `URLSession`/decoder failures into `.network`/`.decoding`; never rethrow raw
+  errors.
+- Because that flattening plus the view models' friendly copy makes a CSRF 403, a
+  validation 400, and a decoding bug **indistinguishable on a device**, every
+  non-2xx also fires the client's injected `onRequestFailure` hook with a
+  `RequestFailure` (method, path, status, bounded response-body prefix — and
+  **never** headers, cookies, or the CSRF token). It is called **synchronously,
+  before the error is thrown**, so a caller's `catch` can read it; that is why
+  `APIDiagnosticsLog` is lock-guarded rather than `@Observable @MainActor` (an
+  actor hop would land after the catch). Callers snapshot `marker()` before the
+  request and read `failure(after:)` in the catch — without the marker, an
+  offline `.network` failure would quote an unrelated earlier response.
+  `HomeViewModel.errorDetail` surfaces it under the error message; RootView wires
+  the one shared client and the one log together.
 - A real 401 additionally fires the client's injected `onSessionExpired` hook
   **before** `.sessionExpired` is thrown (wired to
   `SessionStore.noteSessionExpired()` by the one shared client built in
@@ -370,11 +383,80 @@ new code reads like the surrounding code.
   client-editable fields `var`, absent fields Optional. Decode server
   "abilities"/flag dictionaries **defensively** (`decodeIfPresent(...) ?? false`)
   so added keys don't break decoding.
+- **A 404 for the object and a 404 for the route are different things.** DRF
+  answers a missing **object** with JSON (`{"detail": "Not found."}`); Django
+  answers a missing **route** with its plain HTML page. `DocsAPIErrorMapper` maps
+  the latter to **`.routeNotFound`** — but only on *positive* evidence of HTML in
+  `Content-Type` (matched case-insensitively; `HTTPURLResponse` does not normalize
+  header names). An empty or unlabelled 404 stays `.notFound`, because the delete
+  and cache-purge paths key off it and must not silently stop firing.
+  `.routeNotFound` deliberately does **not** match the editor's
+  `error == .notFound || error == .forbidden` teardown: a missing route is no
+  evidence about any document, so a proxy hiccup now reads as transient instead of
+  as a deletion.
+- **Not every deployment has every route.** Content is read through
+  `formattedContent(documentID:format:)`, which tries
+  `documents/{id}/formatted-content/?content_format=markdown` and falls back to
+  `documents/{id}/content/?content_format=markdown` — the same
+  `{id, title, content, created_at, updated_at}` payload on older docs releases,
+  which have no `formatted-content/` route at all. Before this, every 404 read as
+  "deleted", so such a server rendered *every* document as "This document is no
+  longer available." The fallback is gated **twice**: only `.routeNotFound`
+  qualifies (never `.notFound`, never `.forbidden`), and the route's absence is
+  then **confirmed** against a document id that cannot exist, where a registered
+  route still answers DRF's JSON 404. Both gates are load-bearing: a reverse proxy
+  can serve HTML for a path it swallowed on a server that *does* have the route,
+  and `FormattedDocumentContent.content` is a plain `String?`, so a base64 Yjs
+  body would decode into it silently and the full-overwrite save would push that
+  blob back as the document's markdown. A transport failure during the
+  confirmation probe **propagates** — "I couldn't ask" must never read as "it
+  isn't there" — while a probe `.forbidden` or 5xx proves nothing and is
+  *swallowed*, since it concerns a document the user never opened and would
+  otherwise trip the editor's teardown. When the probe says the route exists, the
+  error rethrown is `.routeNotFound`, never `.notFound`. Absence is a fact about
+  the **server**, so `prefersLegacyContentRoute` is memoized as soon as the probe
+  confirms it — before the document fetch, or a first document that happens to be
+  deleted would make every later load re-run the detection.
+  **Known limitation:** the split keys off `Content-Type` containing `html`. A
+  legacy deployment whose missing-route 404 is unlabelled, `text/plain`, or
+  `application/xhtml+xml` will not trigger the fallback and will report its
+  documents as deleted. Django's default 404 page is `text/html`, and that is what
+  the one legacy server this was tested against returns.
+- **A field the *list* endpoints return is not necessarily a field the *create*
+  endpoints return.** `is_favorite` is a queryset **annotation**: the list views
+  add it, while `POST documents/` and `POST documents/{id}/children/` serialize a
+  freshly built instance that has no such attribute, so the key is simply absent
+  from both 201 bodies. Decoding it as a required `Bool` made every create fail
+  with `keyNotFound` **after the server had already created the document** — the
+  app said "Couldn't create a document. Please try again." while quietly
+  littering the server with them. `Document.isFavorite` therefore decodes with
+  `decodeIfPresent(...) ?? false` (a new document is never a favorite), locked by
+  `DocumentDecodingTests.testDecodesACreateResponseThatOmitsIsFavorite`, whose
+  fixture is a verbatim capture of a real `POST documents/` response. When you
+  add a field, check it against the *create* response too — and note
+  `Document`'s `init(from:)` lives in an **extension** so the memberwise
+  initializer survives for `SubpageRow`'s preview.
 - **Permission logic is driven by the server `abilities` dict** — never hardcode
   client-side permission rules.
 - CSRF/`Origin`/`Referer` headers are attached only on non-GET requests inside
   `performRequest`. New mutating endpoints must go through `send`/`sendVoid` so
   those headers are applied — see [Safety](#safety--never-add-anything-dangerous).
+- **The server host must be lowercase everywhere.** Hostnames are case-insensitive
+  per DNS, but nothing that compares them is. iOS autocapitalizes the first letter
+  of a plain text field, so a user typing their address gets `Docs.llun.dev`, and
+  that single capital broke two things at once: `isLoginNavigationComplete`
+  compared `url.host == serverHost` against WebKit's always-lowercase `url.host`
+  and never matched, so the **login sheet never closed** and sat on the signed-in
+  web app; and `siteOrigin` sent `Origin: https://Docs.llun.dev`, which Django
+  answers with `403 CSRF Failed: Origin checking failed`, killing **every** non-GET
+  while GETs — which carry no `Origin` — kept working, so the app looked
+  mysteriously read-only. `normalizedServerURL` is the single canonicalization
+  point and lowercases scheme + host (never the path — paths *are* case-sensitive);
+  `isLoginNavigationComplete` compares case-insensitively (still an **exact** host
+  match, never a suffix one); and `siteOrigin` lowercases too, because a
+  `serverURL` persisted by an earlier launch still carries the capital. The Connect
+  field also sets `.textInputAutocapitalization(.never)`. A read-only-looking app
+  whose GETs all work is this bug until proven otherwise.
 
 ### Design system (`DesignSystem`)
 

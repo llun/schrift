@@ -38,6 +38,12 @@ struct ConnectView: View {
                     helper: "The app signs in with your existing session — no password stored.",
                     error: viewModel.errorMessage
                 )
+                // Without this, iOS capitalizes the first letter and offers to autocorrect
+                // the hostname. `normalizedServerURL` lowercases it anyway, but the user
+                // should not have to watch it fight their keyboard.
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
 
                 DocsButton(
                     title: signInTitle, size: .large, icon: "rectangle.portrait.and.arrow.right", fullWidth: true,

@@ -8,24 +8,44 @@ actor DocsAPIClient {
     /// can raise its re-login flow. Consumers must be idempotent — concurrent
     /// requests can all 401 at once. Production default is a no-op.
     private let onSessionExpired: @Sendable () -> Void
+    /// Fired on every non-2xx response (before the mapped error is thrown) with
+    /// the status and the server's own explanation, which `DocsAPIError` drops.
+    /// Called synchronously, so a caller's `catch` can quote it. Production
+    /// default is a no-op.
+    private let onRequestFailure: @Sendable (RequestFailure) -> Void
+    /// Set once a server has proved it has no `formatted-content/` route *and* that
+    /// `content/` answers, so every later content load skips the detection instead of paying
+    /// for it per document. Both halves matter: pinning this to a route that cannot answer
+    /// would break every content read for the rest of the client's life, with no way back but
+    /// a relaunch. See `formattedContent(documentID:format:)`.
+    var prefersLegacyContentRoute = false
 
     init(
         baseURL: URL,
         session: URLSession = .shared,
         cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
-        onSessionExpired: @escaping @Sendable () -> Void = {}
+        onSessionExpired: @escaping @Sendable () -> Void = {},
+        onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in }
     ) {
         self.baseURL = baseURL
         self.session = session
         self.cookieProvider = cookieProvider ?? { HTTPCookieStorage.shared.cookies(for: baseURL) ?? [] }
         self.onSessionExpired = onSessionExpired
+        self.onRequestFailure = onRequestFailure
     }
 
     /// The bare site origin (scheme + host [+ port]) derived from `baseURL`, used
     /// for the CSRF `Origin`/`Referer` headers. Note this is *not* `baseURL`,
     /// which includes the `/api/v1.0/` path.
+    ///
+    /// Scheme and host are lowercased. Django compares `Origin` against its own host and
+    /// answers a mismatch with `403 CSRF Failed: Origin checking failed`, which kills
+    /// **every** non-GET while GETs — which carry no Origin — keep working, making the app
+    /// look mysteriously read-only. `normalizedServerURL` lowercases the host on input, but
+    /// a `serverURL` persisted by an earlier launch still carries the capital, so `baseURL`
+    /// can't be trusted here either.
     private var siteOrigin: String? {
-        guard let scheme = baseURL.scheme, var host = baseURL.host else { return nil }
+        guard let scheme = baseURL.scheme?.lowercased(), var host = baseURL.host?.lowercased() else { return nil }
         // URL.host strips the brackets from an IPv6 literal; restore them so the
         // Origin/Referer stay valid URLs for self-hosted IPv6 servers.
         if host.contains(":") { host = "[\(host)]" }
@@ -116,6 +136,8 @@ actor DocsAPIClient {
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
+            onRequestFailure(
+                RequestFailure(method: method, path: path, statusCode: httpResponse.statusCode, body: data))
             var headers: [String: String] = [:]
             for (key, value) in httpResponse.allHeaderFields {
                 if let key = key as? String, let value = value as? String {

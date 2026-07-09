@@ -16,6 +16,7 @@ struct HomeSplitView: View {
                     documentID: selectedDocument.id,
                     title: selectedDocument.title ?? "Untitled document",
                     saveCoordinator: viewModel.saveCoordinator,
+                    diagnostics: viewModel.diagnostics,
                     reach: selectedDocument.linkReach,
                     serverHost: serverHost,
                     linkRole: selectedDocument.linkRole,
