@@ -102,4 +102,28 @@ final class MarkdownShortcutsTests: XCTestCase {
         XCTAssertEqual(result.text, "Hi__")
         XCTAssertEqual(result.selection, NSRange(location: 3, length: 0))
     }
+
+    // MARK: - Why the Italic button still emits `_`
+
+    /// `wrapInlineMarker` decides wrap-vs-unwrap from the **single character** on
+    /// each side of the selection. A `*` applied to a selected bold word finds a
+    /// `*` on both sides and takes the unwrap branch, silently downgrading bold to
+    /// italic — and the block editor now draws those asterisks at zero width, so
+    /// nothing warns the user.
+    ///
+    /// This is why the Italic button emits `_` (which the save parser then drops)
+    /// rather than the `*` it reads. Whoever fixes that must fix this first: the
+    /// unwrap branch needs to require a delimiter run of exactly the marker's
+    /// length, and `***x***` — what wrapping bold in `*` produces — must parse as
+    /// bold+italic rather than bold(`*x`) + literal(`*`).
+    func testASingleAsteriskAroundABoldWordUnwrapsTheBold() {
+        let result = wrapInlineMarker(text: "**word**", range: NSRange(location: 2, length: 4), marker: "*")
+        XCTAssertEqual(result.text, "*word*", "the bold is destroyed — see the doc comment")
+    }
+
+    func testAnUnderscoreAroundABoldWordNestsInsteadOfUnwrapping() {
+        let result = wrapInlineMarker(text: "**word**", range: NSRange(location: 2, length: 4), marker: "_")
+        XCTAssertEqual(result.text, "**_word_**")
+        XCTAssertEqual(InlineMarkdown.parse(result.text).first?.marks.map(\.key), ["bold"])
+    }
 }

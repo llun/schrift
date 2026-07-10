@@ -37,6 +37,18 @@ final class EditorViewModel {
         case none, pendingSave, draft, clean
     }
 
+    /// A pending link sheet. `span` is nil when creating a link; non-nil when
+    /// retargeting one the user tapped. `range` is what the new `[label](url)`
+    /// replaces, in the block's source coordinates.
+    struct LinkEditorRequest: Identifiable, Equatable {
+        let id = UUID()
+        let blockID: UUID
+        let span: InlineLinkSpan?
+        let label: String
+        let url: String
+        let range: NSRange
+    }
+
     var title: String
     var blocks: [EditorBlock] = []
     var rawMarkdown: String = ""
@@ -69,6 +81,9 @@ final class EditorViewModel {
     /// placeholder block exists during this window — the `.image` block is only
     /// inserted on success.
     var isUploadingPhoto = false
+    /// Drives the link sheet. Set by the formatting bar's link button and by a
+    /// tap on a link's label; cleared on commit or cancel.
+    var linkEditor: LinkEditorRequest?
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -1025,6 +1040,102 @@ final class EditorViewModel {
     func convertFocusedBlock(to kind: BlockKind) {
         guard let focusedBlockID else { return }
         convertBlock(blockID: focusedBlockID, to: kind)
+    }
+
+    // MARK: - Links
+
+    /// Whether the link button can act: a focused block whose text is read as
+    /// inline markdown. A code block's text is literal, so a link written into
+    /// it would never become one.
+    var canEditLink: Bool {
+        guard hasLoadedContent, mode == .blocks, let focusedBlockID, let index = blockIndex(focusedBlockID) else {
+            return false
+        }
+        return rendersInlineMarkdown(blocks[index].kind)
+    }
+
+    /// The link button. Retargets the link under the caret if there is one,
+    /// otherwise creates one from the selection (whose text becomes the label).
+    func beginLinkEditing() {
+        guard canEditLink, let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
+        let text = blocks[index].text
+        let source = text as NSString
+        var range = selection ?? NSRange(location: source.length, length: 0)
+        range.location = min(max(0, range.location), source.length)
+        range.length = min(max(0, range.length), source.length - range.location)
+
+        if let span = linkSpan(in: text, containing: range.location) {
+            beginLinkEditing(blockID: focusedBlockID, span: span)
+            return
+        }
+        linkEditor = LinkEditorRequest(
+            blockID: focusedBlockID,
+            span: nil,
+            label: source.substring(with: range),
+            url: "",
+            range: range
+        )
+    }
+
+    /// A tap on a link's label.
+    func beginLinkEditing(blockID: UUID, span: InlineLinkSpan) {
+        guard hasLoadedContent, blockIndex(blockID) != nil else { return }
+        linkEditor = LinkEditorRequest(
+            blockID: blockID, span: span, label: span.label, url: span.url, range: span.range)
+    }
+
+    func cancelLinkEditing() {
+        linkEditor = nil
+    }
+
+    /// Writes the link into the block's markdown. Returns false — leaving the
+    /// sheet open for correction — when the destination cannot be embedded
+    /// safely; `sanitizedLinkURL` explains which spellings those are. An empty
+    /// label falls back to the destination, since `[](url)` is not a link.
+    @discardableResult
+    func commitLinkEditing(label: String, url: String) -> Bool {
+        guard let request = linkEditor, let index = blockIndex(request.blockID) else { return false }
+        guard let safeURL = sanitizedLinkURL(url) else { return false }
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalLabel = trimmedLabel.isEmpty ? safeURL : trimmedLabel
+
+        let text = blocks[index].text
+        // Re-locate the span: the sheet is async, and the block's text may have
+        // been replaced underneath it by a revalidation. A stale range would
+        // splice the link into the middle of unrelated words.
+        let edit: MarkdownLinkEdit
+        if let span = request.span {
+            guard let current = linkSpan(in: text, containing: span.range.location), current == span else {
+                linkEditor = nil
+                return false
+            }
+            edit = replaceMarkdownLink(in: text, span: current, label: finalLabel, url: safeURL)
+        } else {
+            guard NSMaxRange(request.range) <= (text as NSString).length else {
+                linkEditor = nil
+                return false
+            }
+            edit = insertMarkdownLink(in: text, range: request.range, label: finalLabel, url: safeURL)
+        }
+
+        linkEditor = nil
+        blocks[index].text = edit.text
+        cursorRequest = CursorRequest(blockID: request.blockID, offset: edit.selection.location)
+        selection = edit.selection
+        markDirty()
+        return true
+    }
+
+    /// "Remove link" — keeps the label, drops the syntax.
+    func removeLink(blockID: UUID, span: InlineLinkSpan) {
+        guard let index = blockIndex(blockID) else { return }
+        let text = blocks[index].text
+        guard let current = linkSpan(in: text, containing: span.range.location), current == span else { return }
+        let edit = removeMarkdownLink(in: text, span: current)
+        blocks[index].text = edit.text
+        cursorRequest = CursorRequest(blockID: blockID, offset: edit.selection.location)
+        selection = edit.selection
+        markDirty()
     }
 
     /// Inserts a divider below the focused block (or at the end), keeping an

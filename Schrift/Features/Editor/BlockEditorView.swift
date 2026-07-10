@@ -200,6 +200,10 @@ private struct BlockEditorRow: View {
                 viewModel.focusedBlockID = nil
                 viewModel.slashQueryText = nil
             }
+        case .editLink(let span):
+            viewModel.beginLinkEditing(blockID: block.id, span: span)
+        case .removeLink(let span):
+            viewModel.removeLink(blockID: block.id, span: span)
         }
     }
 }

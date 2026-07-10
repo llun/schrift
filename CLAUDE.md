@@ -191,7 +191,9 @@ Schrift/
 │   ├── Home/            document list, filters, offline metadata cache
 │   ├── Search/ Shared/ Profile/ Options/ Share/
 │   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache,
-│                        photo insert (ImagePreparation), in-app document links (DocumentLink)
+│                        photo insert (ImagePreparation), in-app document links (DocumentLink),
+│                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
+│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet)
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
 docs/                    living docs (ci.md, testflight-setup.md) + specs and dated
@@ -486,6 +488,19 @@ new code reads like the surrounding code.
   adjacent text (Avatar, DocIcon) are instead marked `.accessibilityHidden(true)`.
 - A component view that would shadow a SwiftUI type takes a `Docs` prefix
   (`DocsButton`, `DocsTextField`); everything else keeps the bare name.
+- **A hard minimum size does not compress, and inside a `safeAreaInset` it is not
+  clipped either — it widens the whole screen.** `IconButton` floors its tap
+  target at 44pt; nine of them in `EditorFormattingBar` demanded a fixed 424pt,
+  more than any iPhone's content column (370pt at 402pt wide). That width
+  propagated out of the inset into the editor's outer `VStack`, which laid the
+  entire screen out wider than the display and centred it: the nav bar's back
+  chevron fell off the left edge. The bar therefore passes `minimumTapWidth: 0`
+  and lets its buttons divide the row; the 44pt tap **height** is never
+  negotiable. It had already been overflowing by 8pt with eight buttons — small
+  enough that nobody saw it. `EditorFormattingBarTests` pins the bar to the width
+  it is offered on the narrowest supported devices, so a tenth button fails a
+  test rather than a screen. Measure a row of fixed-minimum controls against the
+  narrowest device before adding to it.
 
 ### Editor & the on-device save (`Core/Yjs`)
 
@@ -690,6 +705,79 @@ markdown write endpoint**. Understand this before touching the save path:
   every pull-to-refresh no-oped in silence. Reclassify (a surviving draft ⇒
   `.draft`, otherwise `.clean`). See
   `docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md`.
+- **The block editor draws its markdown syntax at zero width — it never removes
+  it.** `BlockTextView`'s buffer *is* `block.text`, the raw markdown the
+  full-overwrite save re-parses, and it always will be. Inline marks render as
+  rich text (`[a](b)` shows a blue underlined `a`) because `EditorUITextView` is
+  a **TextKit 1** view (`EditorUITextView.textKit1()`; the default TextKit 2 has
+  no equivalent) whose `NSLayoutManagerDelegate` marks the syntax characters'
+  glyphs `NSGlyphProperty.null` — not drawn, zero advance, **indexes intact**.
+  So `UITextView.text.length == block.text.length` at all times, and every
+  `NSRange` in the editor (`splitBlock`, `mergeBlockWithPrevious`,
+  `applyInlineMarker`, `detectMarkdownShortcut`, `cursorRequest`, `selection`)
+  stays a *source* offset. **Never introduce a display↔source offset map**: a
+  rich in-memory run model (or `NSTextAttachment` link chips) needs one at six
+  call sites, in the one subsystem whose defining rule is that a full-overwrite
+  save must never eat content. `BlockTextRenderingTests` pins the width collapse
+  and the buffer length; if TextKit 1 ever stops honouring `.null`, fall back to
+  drawing the syntax dimmed but visible — not to an offset map.
+  The corollary is a property worth keeping: **any edit that breaks a mark's
+  syntax simply makes it render as literal text.** Backspacing `[R](url)` down to
+  `[](url)` stops it being a link and reveals it. Nothing is silently lost,
+  because the buffer is the content. That is why there is no atomic
+  "delete the whole link" rule — only `caretBeforeBackspace`, which skips the
+  caret back over a hidden run so backspace deletes the label's last letter
+  rather than a lone `)`. Its sibling `snappedSelection` keeps the caret out of
+  the interior of a hidden run and stops a selection bisecting one.
+- **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
+  block's source into visible `spans` (styled) and hidden `syntax` (the
+  complement of the spans, so the two cannot drift), plus its `links`.
+  `InlineMarkdown.parse(_:)` — what `MarkdownYjs.encode` feeds on — is a
+  *projection* of that same result. The editor's styling and the save path
+  therefore cannot disagree about what a `*` means. Do **not** add a third
+  engine: the reading surface's `AttributedString(markdown:)` is already a
+  second one, and their disagreement is a **live bug** — `_x_` renders italic
+  there and saves as literal underscores, so the Italic bar button (which emits
+  `_`) does not survive a save. Do **not** "fix" it by switching the button to
+  `*`: `wrapInlineMarker` decides wrap-vs-unwrap from the single character on
+  each side, so `*` on a selected **bold** word finds `*` on both sides, unwraps,
+  and silently destroys the bold — invisibly, since `**` is now zero-width. Nor
+  does wrapping help: `***x***` parses here as bold(`*x`) + literal(`*`). The
+  real fix is CommonMark's flanking rule for `_` (which keeps `snake_case` safe
+  and makes `**_x_**` bold+italic); it changes saved bytes, so it needs sign-off.
+  Pinned by `MarkdownShortcutsTests.testASingleAsteriskAroundABoldWordUnwrapsTheBold`.
+  Ranges are UTF-16; the scanner walks `Character`s and carries a
+  prefix sum, because `NSRange` and grapheme clusters are not the same thing.
+  Blocks whose text is literal (`rendersInlineMarkdown(_:)` — code blocks,
+  `.unknown`, the leaves) hide nothing and style nothing.
+  **`YjsEncoderTests` passing does not, on its own, prove the scanner is
+  unchanged** — it builds its `[InlineRun]` fixtures by hand and never calls
+  `parse(_:)`, and `MarkdownYjsTests` only checks node names and props. The
+  bridge is `InlineLayoutTests.testParseProducesExactlyTheRuns…`, which pins
+  `parse(_:)`'s output to the exact runs each golden fixture encodes (mark
+  **order** included — it is part of the wire format). Touch the scanner and you
+  must keep both halves green, or "the bytes didn't move" is an assumption.
+  That gap hid a real divergence for as long as links have existed: yjs writes a
+  mark value as `writeVarString(JSON.stringify(value))`, and JS does not escape
+  `/`, but Foundation does — so the app emitted `{"href":"https:\/\/x"}` where
+  yjs emits `{"href":"https://x"}`. Benign (`JSON.parse` reads both alike) but not
+  byte-identical. `linkValueJSON` now passes **`.withoutEscapingSlashes`**; keep
+  it, and reach for it in any future `JSONSerialization` output that must match
+  `JSON.stringify`.
+- **Authoring a link is the only asymmetric inline edit.** `wrapInlineMarker`
+  can only wrap a selection in the same token on both sides, so it can never
+  emit `[text](url)`; `MarkdownLinkEditing.swift` does that instead
+  (`insertMarkdownLink`/`replaceMarkdownLink`/`removeMarkdownLink`, all pure).
+  Tapping a link's *visible label* opens a `UIEditMenuInteraction` with Edit and
+  Remove — hit-tested with our own `UITapGestureRecognizer`, because an editable
+  `UITextView` does not deliver the iOS 17 `UITextItem` callbacks (a tap there
+  means "place the caret"). `sanitizedLinkURL` is the gate: an allowlist of
+  `http`/`https`/`mailto`/`tel`, `https://` prepended when scheme-less, and
+  **`(`, `)` and `\` rejected outright** — `matchLink` ends the destination at
+  the first `)`, does not balance parens, and never unescapes it, so no
+  parenthesised URL survives the round trip. Removal re-inserts the **raw**
+  label substring, escapes and all: re-inserting the *displayed* label would turn
+  a `\*text\*` into italics. An input that can't be made safe inserts nothing.
 - **A link to another document is just a markdown link.** The web editor stores
   one as a custom `interlinkingLinkInline` BlockNote node, but the server's
   markdown export flattens it to `[Title](https://<serverHost>/docs/<uuid>/)` —

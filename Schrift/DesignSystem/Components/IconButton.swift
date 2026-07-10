@@ -86,6 +86,13 @@ struct IconButton: View {
     var size: IconButtonSize = .medium
     var filled: Bool = false
     var isDisabled: Bool = false
+    /// The floor on the tap target's **width**. 44pt by default, per iOS. A row
+    /// of buttons sharing a fixed width — the editor's formatting bar — passes 0
+    /// and lets them divide the space instead: nine 44pt minimums add up to more
+    /// than an iPhone is wide, and a hard minimum does not compress, so the bar
+    /// would silently push its whole screen wider than the display.
+    /// The 44pt *height* is never negotiable.
+    var minimumTapWidth: CGFloat = DocsSpacing.rowMinHeight
     var action: () -> Void
 
     var body: some View {
@@ -107,7 +114,7 @@ struct IconButton: View {
         }
         // Keep the reference's smaller visual box, but never let the tap target
         // fall below the 44pt iOS minimum (the reference documents this too).
-        .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
+        .frame(minWidth: minimumTapWidth, minHeight: DocsSpacing.rowMinHeight)
         .contentShape(Rectangle())
         .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
