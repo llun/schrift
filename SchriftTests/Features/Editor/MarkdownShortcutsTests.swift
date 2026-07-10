@@ -103,27 +103,66 @@ final class MarkdownShortcutsTests: XCTestCase {
         XCTAssertEqual(result.selection, NSRange(location: 3, length: 0))
     }
 
-    // MARK: - Why the Italic button still emits `_`
+    // MARK: - A marker never eats a longer delimiter run
 
-    /// `wrapInlineMarker` decides wrap-vs-unwrap from the **single character** on
-    /// each side of the selection. A `*` applied to a selected bold word finds a
-    /// `*` on both sides and takes the unwrap branch, silently downgrading bold to
-    /// italic — and the block editor now draws those asterisks at zero width, so
-    /// nothing warns the user.
+    /// The unwrap branch requires the delimiter run hugging the selection to be
+    /// **exactly** the marker's length. Before that, a `*` applied to a selected
+    /// bold word found a `*` on each side, unwrapped, and silently downgraded bold
+    /// to italic — invisibly, since the block editor draws markdown syntax at zero
+    /// width. It now wraps instead.
     ///
-    /// This is why the Italic button emits `_` (which the save parser then drops)
-    /// rather than the `*` it reads. Whoever fixes that must fix this first: the
-    /// unwrap branch needs to require a delimiter run of exactly the marker's
-    /// length, and `***x***` — what wrapping bold in `*` produces — must parse as
-    /// bold+italic rather than bold(`*x`) + literal(`*`).
-    func testASingleAsteriskAroundABoldWordUnwrapsTheBold() {
+    /// The result `***word***` is not something this scanner parses as bold+italic
+    /// (it reads bold(`*word`) + literal(`*`)), but nothing emits `*`: the Italic
+    /// button emits `_`. The rule that matters is that no formatting is destroyed.
+    func testASingleAsteriskAroundABoldWordWrapsRatherThanEatingTheBold() {
         let result = wrapInlineMarker(text: "**word**", range: NSRange(location: 2, length: 4), marker: "*")
-        XCTAssertEqual(result.text, "*word*", "the bold is destroyed — see the doc comment")
+        XCTAssertEqual(result.text, "***word***")
     }
 
-    func testAnUnderscoreAroundABoldWordNestsInsteadOfUnwrapping() {
+    /// The same destruction was reachable from the shipping toolbar — Italic on a
+    /// hand-typed `__word__` used to unwrap to `_word_`. It now wraps. The result
+    /// is literal (a `_` run of three is not a delimiter), which loses no text.
+    func testItalicOnAHandTypedStrongWordWrapsRatherThanEatingIt() {
+        let result = wrapInlineMarker(text: "__word__", range: NSRange(location: 2, length: 4), marker: "_")
+        XCTAssertEqual(result.text, "___word___")
+        XCTAssertEqual(InlineMarkdown.parse(result.text), [InlineRun("___word___")])
+    }
+
+    /// Italic on a bold word nests, and — now that the scanner honors CommonMark's
+    /// flanking rule — the italic actually survives the save.
+    func testAnUnderscoreAroundABoldWordNestsAndBothMarksSurvive() {
         let result = wrapInlineMarker(text: "**word**", range: NSRange(location: 2, length: 4), marker: "_")
         XCTAssertEqual(result.text, "**_word_**")
+        XCTAssertEqual(InlineMarkdown.parse(result.text).first?.marks.map(\.key), ["bold", "italic"])
+    }
+
+    /// Toggling italic back off unwraps the lone `_` run it added, leaving the bold.
+    func testUnderscoreUnwrapsTheItalicItAddedAndLeavesTheBold() {
+        let result = wrapInlineMarker(text: "**_word_**", range: NSRange(location: 3, length: 4), marker: "_")
+        XCTAssertEqual(result.text, "**word**")
         XCTAssertEqual(InlineMarkdown.parse(result.text).first?.marks.map(\.key), ["bold"])
+    }
+
+    /// The exact-length rule must hold for the multi-character markers too, not
+    /// just `*`/`_`. Bold (`**`) is a shipping toolbar button, so a selection
+    /// already hugged by a longer `*` run — `***word***` — must wrap, not unwrap
+    /// down to `*word*` and destroy the run.
+    func testBoldMarkerOnATripleAsteriskRunWrapsRatherThanEatingIt() {
+        let result = wrapInlineMarker(text: "***word***", range: NSRange(location: 3, length: 4), marker: "**")
+        XCTAssertEqual(result.text, "*****word*****")
+    }
+
+    /// A `**` run of exactly the marker's length still unwraps — the guard tightens
+    /// the unwrap branch, it does not disable it.
+    func testBoldMarkerOnAnExactDoubleAsteriskRunStillUnwraps() {
+        let result = wrapInlineMarker(text: "**word**", range: NSRange(location: 2, length: 4), marker: "**")
+        XCTAssertEqual(result.text, "word")
+    }
+
+    /// The rule is marker-agnostic: a single backtick hugged by a double-backtick
+    /// run wraps rather than unwrapping and eating the extra backticks.
+    func testCodeMarkerOnADoubleBacktickRunWrapsRatherThanEatingIt() {
+        let result = wrapInlineMarker(text: "``code``", range: NSRange(location: 2, length: 4), marker: "`")
+        XCTAssertEqual(result.text, "```code```")
     }
 }

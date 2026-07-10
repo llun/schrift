@@ -2,10 +2,9 @@ import Foundation
 
 // Parses the common inline markdown spans inside a block's text into BlockNote
 // styled runs. Deliberately conservative: only unambiguous spans are parsed;
-// anything else (including underscores, which routinely appear intra-word) is
-// left as literal text so a save never mangles content.
+// anything ambiguous is left as literal text so a save never mangles content.
 //
-// Supported: `**bold**`, `*italic*`, `` `code` ``, `~~strike~~`,
+// Supported: `**bold**`, `*italic*`, `_italic_`, `` `code` ``, `~~strike~~`,
 // `[text](url)`, and backslash escapes of markdown punctuation.
 //
 // The scanner emits **ranges**, not just text: `layout(of:)` partitions the
@@ -165,7 +164,7 @@ enum InlineMarkdown {
                 // backslash escapes (backslash is a literal character inside code).
                 // Require non-empty content so adjacent backticks stay literal.
                 if c == "`", let close = indexOf("`", from: i + 1, limit: n, honoringEscapes: false), close > i + 1 {
-                    emit(i + 1..<close, marks: marks + [.code])
+                    emit(i + 1..<close, marks: adding(.code, to: marks))
                     i = close + 1
                     continue
                 }
@@ -195,7 +194,7 @@ enum InlineMarkdown {
                 if c == "*", i + 1 < n, chars[i + 1] == "*",
                     let close = matchDelimiter(open: i, limit: n, delimiter: "**")
                 {
-                    scan(i + 2..<close, marks: marks + [.bold])
+                    scan(i + 2..<close, marks: adding(.bold, to: marks))
                     i = close + 2
                     continue
                 }
@@ -204,14 +203,24 @@ enum InlineMarkdown {
                 if c == "~", i + 1 < n, chars[i + 1] == "~",
                     let close = matchDelimiter(open: i, limit: n, delimiter: "~~")
                 {
-                    scan(i + 2..<close, marks: marks + [.strike])
+                    scan(i + 2..<close, marks: adding(.strike, to: marks))
                     i = close + 2
                     continue
                 }
 
-                // Emphasis: *...*  (single asterisk; underscores intentionally ignored)
+                // Emphasis: *...*
                 if c == "*", let close = matchDelimiter(open: i, limit: n, delimiter: "*") {
-                    scan(i + 1..<close, marks: marks + [.italic])
+                    scan(i + 1..<close, marks: adding(.italic, to: marks))
+                    i = close + 1
+                    continue
+                }
+
+                // Emphasis: _..._ — CommonMark's flanking rule, restricted to lone
+                // underscores, so `snake_case` and `__x__` stay literal.
+                if c == "_", isLoneUnderscore(chars, at: i), canOpenUnderscore(chars, at: i),
+                    let close = matchUnderscoreEmphasis(open: i, limit: n)
+                {
+                    scan(i + 1..<close, marks: adding(.italic, to: marks))
                     i = close + 1
                     continue
                 }
@@ -219,6 +228,17 @@ enum InlineMarkdown {
                 emit(i..<i + 1, marks: marks)
                 i += 1
             }
+        }
+
+        /// Nesting the same emphasis twice (`*_x_*`) must not emit its mark twice:
+        /// a BlockNote format map holds one entry per key, and CommonMark collapses
+        /// the pair to a single `<em>`. The golden hex tests cannot catch a
+        /// duplicate — they hand-build their runs rather than calling `parse(_:)`.
+        ///
+        /// Links are exempt: nested links carry distinct `href`s, and only the
+        /// four keyed marks can collide.
+        private func adding(_ mark: InlineMark, to marks: [InlineMark]) -> [InlineMark] {
+            marks.contains { $0.key == mark.key } ? marks : marks + [mark]
         }
 
         /// Appends visible content, coalescing with the pending run when it is
@@ -309,6 +329,69 @@ enum InlineMarkdown {
             return nil
         }
 
+        /// Finds the closing `_` for an opening at `open`: the first lone `_` that
+        /// can close, honoring backslash escapes, with non-empty, non-blank inner
+        /// content — the same guards `matchDelimiter` applies.
+        ///
+        /// Flanking is evaluated against the **whole** `chars` array rather than
+        /// `bounds`, because it is a property of the source text. That is exactly
+        /// why `**_word_**` opens: the opening `_`'s predecessor is `*`, which is
+        /// punctuation. The closing search still respects `limit`, so emphasis can
+        /// never escape the span that contains it.
+        ///
+        /// **Code spans and links bind tighter than emphasis**, as in CommonMark,
+        /// so the search steps over them whole. Without that, `` _`_` `` closed on
+        /// the underscore *inside* the code span and destroyed it, and a `_` in a
+        /// link's destination (`_[x](a_ b)_`) tore the link apart — both of which a
+        /// full-overwrite save would then persist. Differential fuzzing against the
+        /// previous scanner found exactly this: 100 of the corpus's diverging
+        /// inputs were code spans being swallowed.
+        ///
+        /// `*`'s `matchDelimiter` does not step over them, and is deliberately left
+        /// alone: changing it would move the saved bytes of every `*italic*` and
+        /// `**bold**` in every existing document.
+        ///
+        /// An opener never reaches **past** an interior opener to grab a distant
+        /// closer (equivalently: a closer pairs with the nearest opener, as in
+        /// CommonMark). An intermediate lone `_` that can open but not close (a `_`
+        /// at a left word boundary — space before, letter after) starts a *new*
+        /// emphasis, so the search stops there and this opener stays literal.
+        /// Without it, `_foo _bar_` italicized `foo _bar` where CommonMark — and
+        /// the reading surface — italicize only `bar`, leaving `_foo ` literal. It
+        /// is the conservative direction (an ambiguous leading `_` stays content),
+        /// and it never drops a character. This is not a full CommonMark delimiter
+        /// stack: deeper `_`+`*` tangles can still differ, the same signed-off
+        /// out-of-scope class the `*` matcher already lives with.
+        private func matchUnderscoreEmphasis(open: Int, limit: Int) -> Int? {
+            var i = open + 1
+            while i < limit {
+                if chars[i] == "\\" {
+                    i += 2
+                    continue
+                }
+                if chars[i] == "`", let close = indexOf("`", from: i + 1, limit: limit, honoringEscapes: false),
+                    close > i + 1
+                {
+                    i = close + 1
+                    continue
+                }
+                if chars[i] == "[", let link = matchLink(from: i, limit: limit) {
+                    i = link.next
+                    continue
+                }
+                if chars[i] == "_", isLoneUnderscore(chars, at: i) {
+                    if canCloseUnderscore(chars, at: i) {
+                        let inner = chars[(open + 1)..<i]
+                        if inner.isEmpty || inner.allSatisfy({ $0 == " " }) { return nil }
+                        return i
+                    }
+                    if canOpenUnderscore(chars, at: i) { return nil }
+                }
+                i += 1
+            }
+            return nil
+        }
+
         /// Matches `[text](url)` starting at `open` (a `[`).
         private func matchLink(from open: Int, limit: Int) -> (labelRange: Range<Int>, urlRange: Range<Int>, next: Int)?
         {
@@ -359,4 +442,72 @@ enum InlineMarkdown {
 private func linkValueJSON(_ url: String) -> String {
     let data = try? JSONSerialization.data(withJSONObject: ["href": url], options: [.withoutEscapingSlashes])
     return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{\"href\":\"\"}"
+}
+
+// MARK: - Underscore emphasis
+
+/// CommonMark's ASCII punctuation set, spelled out from the spec.
+private let asciiPunctuation: Set<Character> = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+/// CommonMark's "Unicode punctuation character": an ASCII punctuation character,
+/// or one in the general categories `Pc, Pd, Pe, Pf, Pi, Po, Ps`.
+///
+/// Deliberately **not** `Character.isSymbol`, which is true for `+`, `😀` and `€`
+/// alike. Only `+` counts here (it is ASCII), and the difference is observable in
+/// Foundation's `AttributedString(markdown:)` — the reading surface, and the
+/// oracle this rule converges on: `a+_x_+a` is emphasis, `😀_x_😀` is literal.
+/// `Character.isPunctuation` is exactly the `P*` categories.
+private func isMarkdownPunctuation(_ character: Character) -> Bool {
+    character.isASCII ? asciiPunctuation.contains(character) : character.isPunctuation
+}
+
+/// The character before/after `index`, where the block's edges read as whitespace
+/// — CommonMark treats the start and end of a line as such.
+private func neighbor(_ chars: [Character], _ index: Int) -> Character? {
+    chars.indices.contains(index) ? chars[index] : nil
+}
+
+/// A delimiter is **left-flanking** when it is not followed by whitespace and
+/// either is not followed by punctuation, or is preceded by whitespace or
+/// punctuation.
+private func isLeftFlanking(_ chars: [Character], at index: Int) -> Bool {
+    guard let next = neighbor(chars, index + 1), !next.isWhitespace else { return false }
+    guard isMarkdownPunctuation(next) else { return true }
+    guard let previous = neighbor(chars, index - 1) else { return true }
+    return previous.isWhitespace || isMarkdownPunctuation(previous)
+}
+
+/// A delimiter is **right-flanking** when it is not preceded by whitespace and
+/// either is not preceded by punctuation, or is followed by whitespace or
+/// punctuation.
+private func isRightFlanking(_ chars: [Character], at index: Int) -> Bool {
+    guard let previous = neighbor(chars, index - 1), !previous.isWhitespace else { return false }
+    guard isMarkdownPunctuation(previous) else { return true }
+    guard let next = neighbor(chars, index + 1) else { return true }
+    return next.isWhitespace || isMarkdownPunctuation(next)
+}
+
+/// A `_` participates as a delimiter only when it stands alone. Runs of two or
+/// more (`__x__`, the `___` divider, `snake__case`) stay literal — the
+/// conservative choice, and the one that keeps every such document's saved bytes
+/// unchanged. `wrapInlineMarker` enforces the parallel rule from the editing
+/// side (via `hugsDelimiterRuns`): a marker must never eat a longer delimiter run.
+private func isLoneUnderscore(_ chars: [Character], at index: Int) -> Bool {
+    chars[index] == "_" && neighbor(chars, index - 1) != "_" && neighbor(chars, index + 1) != "_"
+}
+
+/// Unlike `*`, a `_` may not open emphasis inside a word — this is what keeps
+/// `snake_case` literal while `_word_` is emphasis.
+private func canOpenUnderscore(_ chars: [Character], at index: Int) -> Bool {
+    guard isLeftFlanking(chars, at: index) else { return false }
+    guard isRightFlanking(chars, at: index) else { return true }
+    // Right-flanking implies a non-whitespace predecessor exists.
+    return neighbor(chars, index - 1).map(isMarkdownPunctuation) ?? false
+}
+
+/// The mirror of `canOpenUnderscore`: a `_` may not close emphasis inside a word.
+private func canCloseUnderscore(_ chars: [Character], at index: Int) -> Bool {
+    guard isRightFlanking(chars, at: index) else { return false }
+    guard isLeftFlanking(chars, at: index) else { return true }
+    return neighbor(chars, index + 1).map(isMarkdownPunctuation) ?? false
 }

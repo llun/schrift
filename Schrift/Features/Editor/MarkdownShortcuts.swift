@@ -62,7 +62,8 @@ func wrapInlineMarker(text: String, range: NSRange, marker: String) -> (text: St
         if before.location >= 0,
             after.location + after.length <= source.length,
             source.substring(with: before) == marker,
-            source.substring(with: after) == marker
+            source.substring(with: after) == marker,
+            hugsDelimiterRuns(ofExactly: marker, around: range, in: source)
         {
             var unwrapped = source.replacingCharacters(in: after, with: "")
             unwrapped = (unwrapped as NSString).replacingCharacters(in: before, with: "")
@@ -75,6 +76,39 @@ func wrapInlineMarker(text: String, range: NSRange, marker: String) -> (text: St
 
     let inserted = source.replacingCharacters(in: range, with: marker + marker)
     return (inserted, NSRange(location: range.location + markerLength, length: 0))
+}
+
+/// Whether the delimiter runs hugging `range` are **exactly** `marker`'s length.
+///
+/// Without this the unwrap branch lets a short marker eat a longer run. Applying
+/// `*` to the selected word of `**word**` finds a `*` on each side, unwraps, and
+/// silently downgrades bold to italic — invisibly, because the block editor draws
+/// markdown syntax at zero width. The same destruction is reachable from the
+/// shipping toolbar: Italic (`_`) on a hand-typed `__word__` used to yield
+/// `_word_`. Now both wrap instead, and nothing is lost.
+private func hugsDelimiterRuns(ofExactly marker: String, around range: NSRange, in source: NSString) -> Bool {
+    let markerString = marker as NSString
+    guard markerString.length > 0 else { return true }
+    let unit = markerString.character(at: 0)
+    // Every marker the editor uses is one character repeated. A mixed marker has
+    // no single run to measure, so the substring match alone decides.
+    guard (0..<markerString.length).allSatisfy({ markerString.character(at: $0) == unit }) else { return true }
+
+    var leading = 0
+    var index = range.location - 1
+    while index >= 0, source.character(at: index) == unit {
+        leading += 1
+        index -= 1
+    }
+
+    var trailing = 0
+    index = range.location + range.length
+    while index < source.length, source.character(at: index) == unit {
+        trailing += 1
+        index += 1
+    }
+
+    return leading == markerString.length && trailing == markerString.length
 }
 
 private func detectHeadingShortcut(text: String) -> BlockShortcutMatch? {

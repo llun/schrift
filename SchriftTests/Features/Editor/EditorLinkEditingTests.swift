@@ -217,8 +217,9 @@ final class EditorLinkEditingTests: XCTestCase {
 
     /// Bold's markers are now drawn at zero width, so a user selecting a bold
     /// word sees no asterisks. Applying an inline marker must never quietly
-    /// remove the ones that are there.
-    func testApplyingItalicToABoldWordDoesNotDestroyTheBold() async {
+    /// remove the ones that are there — and the italic it adds must reach the
+    /// save, which is the whole point of the flanking rule.
+    func testApplyingItalicToABoldWordKeepsTheBoldAndSavesTheItalic() async {
         let viewModel = await makeEditingViewModel(content: "a **word** b")
         // "word" is the visible text; its source range inside "**word**".
         focusFirstBlock(viewModel, selection: NSRange(location: 4, length: 4))
@@ -227,7 +228,7 @@ final class EditorLinkEditingTests: XCTestCase {
 
         XCTAssertEqual(viewModel.blocks[0].text, "a **_word_** b")
         let runs = InlineMarkdown.parse(viewModel.blocks[0].text)
-        XCTAssertEqual(runs.map(\.text), ["a ", "_word_", " b"])
-        XCTAssertEqual(runs[1].marks.map(\.key), ["bold"], "the bold mark must survive")
+        XCTAssertEqual(runs.map(\.text), ["a ", "word", " b"], "the underscores are syntax, not content")
+        XCTAssertEqual(runs[1].marks.map(\.key), ["bold", "italic"], "both marks must reach the encoder")
     }
 }

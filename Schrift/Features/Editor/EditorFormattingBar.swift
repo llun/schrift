@@ -26,16 +26,11 @@ struct EditorFormattingBar: View {
             barButton(icon: "bold", label: "Bold") {
                 viewModel.applyInlineMarker("**")
             }
-            // `_`, even though `InlineMarkdown` ignores underscores — so italic
-            // applied here renders italic on the reading surface (Foundation's
-            // CommonMark parser does honour `_x_`) and then saves as literal
-            // underscores. That is a real bug, and `*` is NOT the fix:
-            // `wrapInlineMarker` decides wrap-vs-unwrap from the single character
-            // on each side, so `*` on a selected **bold** word sees `*` on both
-            // sides, takes the unwrap branch, and silently destroys the bold. Nor
-            // can wrapping help — `***x***` parses here as bold(`*x`) + literal
-            // (`*`). The fix is to teach the scanner CommonMark's flanking rule
-            // for `_`, which changes saved bytes and needs its own review.
+            // `_`, and `*` would be wrong. `InlineMarkdown` honors CommonMark's
+            // flanking rule for underscores, so `_x_` is emphasis that survives a
+            // save while `snake_case` stays literal — and it is what BlockNote
+            // itself writes. Wrapping a selected **bold** word in `*` would produce
+            // `***word***`, which this scanner reads as bold(`*word`) + literal.
             barButton(icon: "italic", label: "Italic") {
                 viewModel.applyInlineMarker("_")
             }
