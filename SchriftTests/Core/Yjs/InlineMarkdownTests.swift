@@ -260,4 +260,36 @@ final class InlineMarkdownTests: XCTestCase {
         XCTAssertEqual(keys(runs[0]), ["italic"])
         XCTAssertTrue(runs[1].marks.isEmpty)
     }
+
+    // MARK: Emphasis pairs with the nearest opener, not the first closer
+    //
+    // A leading `_` must not reach past a later `_word` to grab a distant closer,
+    // or it italicizes text the user (and the reading surface) meant as literal.
+    // Cross-checked against Foundation.
+
+    /// The reviewer's case: `_foo ` stays literal, only `bar` is emphasized.
+    func testAnUnclosedLeadingUnderscoreDoesNotSwallowLaterEmphasis() {
+        let runs = InlineMarkdown.parse("_foo _bar_")
+        XCTAssertEqual(runs.map(\.text), ["_foo ", "bar"])
+        XCTAssertTrue(runs[0].marks.isEmpty)
+        XCTAssertEqual(keys(runs[1]), ["italic"])
+    }
+
+    /// Realistic prose form of the same shape.
+    func testALeadingUnderscoreWordBeforeRealEmphasisStaysLiteral() {
+        let runs = InlineMarkdown.parse("the _config and _value_ matter")
+        XCTAssertEqual(runs.map(\.text), ["the _config and ", "value", " matter"])
+        XCTAssertEqual(keys(runs[1]), ["italic"])
+        XCTAssertTrue(runs[0].marks.isEmpty)
+        XCTAssertTrue(runs[2].marks.isEmpty)
+    }
+
+    /// Two adjacent complete emphases still both parse — the nearest-opener rule
+    /// only stops a reach *past* an unclosed opener.
+    func testTwoAdjacentEmphasesBothParse() {
+        let runs = InlineMarkdown.parse("_a_ _b_")
+        XCTAssertEqual(runs.map(\.text), ["a", " ", "b"])
+        XCTAssertEqual(keys(runs[0]), ["italic"])
+        XCTAssertEqual(keys(runs[2]), ["italic"])
+    }
 }

@@ -79,6 +79,24 @@ It is deliberately left alone: changing it would move the saved bytes of every
 `*italic*` and `**bold**` in every existing document, which is outside the
 signed-off delta.
 
+### The opener pairs with the nearest closer
+
+`matchUnderscoreEmphasis` stops its search at an interior lone `_` that can
+**open but not close** — a `_` at a left word boundary (space before, letter
+after), which begins a *new* emphasis. So `_foo _bar_` italicizes only `bar`,
+leaving `_foo ` literal, exactly as CommonMark and the reading surface do; the
+naive first-closer search reached past the interior `_` and italicized
+`foo _bar`. This is the conservative direction (an ambiguous leading `_` stays
+content) and it never drops a character — it only ever emphasizes *less*.
+
+It is **not** a full CommonMark delimiter stack. Deeper `_`+`*` tangles like
+`_a _b_ c_` still differ (the scanner emphasizes `b`; CommonMark emphasizes the
+outer span too) — the same signed-off out-of-scope class the greedy `*` matcher
+already lives with. The fix was validated by the same differential run below: it
+moves 71 fuzzed inputs onto Foundation's answer and 1 off it (a pure `_`+`*`
+soup string), drops zero characters, and keeps every output a subsequence of its
+input.
+
 ### Punctuation is not `isSymbol`
 
 CommonMark's "Unicode punctuation character" is *ASCII punctuation* ∪ *Unicode
@@ -172,8 +190,8 @@ Foundation's `AttributedString(markdown:)` as an independent oracle.
 
 | | |
 |---|---|
-| diverging inputs | 4,215 |
-| — gained an italic mark, visible text otherwise identical | 4,151 |
+| diverging inputs | 4,213 |
+| — gained an italic mark, visible text otherwise identical | 4,149 |
 | — visible text reshaped | 64 |
 | diverging inputs containing **no** `_` | **0** |
 | reshaped inputs lacking both `_` and `*` | **0** |
@@ -189,7 +207,11 @@ Two earlier iterations failed this harness and were fixed because of it: the
 code-span/link precedence bug above, and — in the harness itself — a check that
 "escaped every `_` and asserted the divergence vanished", which was unsound
 because it rewrote a pre-existing `\_` into `\\_` and freed the very underscore
-it meant to neutralize. It was replaced by the invariants tabulated above.
+it meant to neutralize. It was replaced by the invariants tabulated above. A
+third issue — the nearest-opener pairing — was raised by a code-review pass and
+then *confirmed* with the same two binaries against the Foundation oracle before
+landing (71 inputs moved onto Foundation's answer, 1 off, zero characters
+dropped).
 
 The harness is not committed — it needs two versions of the same file to exist
 at once. This section is its record, matching PR #50's precedent.

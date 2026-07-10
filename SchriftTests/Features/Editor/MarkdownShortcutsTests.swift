@@ -142,4 +142,27 @@ final class MarkdownShortcutsTests: XCTestCase {
         XCTAssertEqual(result.text, "**word**")
         XCTAssertEqual(InlineMarkdown.parse(result.text).first?.marks.map(\.key), ["bold"])
     }
+
+    /// The exact-length rule must hold for the multi-character markers too, not
+    /// just `*`/`_`. Bold (`**`) is a shipping toolbar button, so a selection
+    /// already hugged by a longer `*` run — `***word***` — must wrap, not unwrap
+    /// down to `*word*` and destroy the run.
+    func testBoldMarkerOnATripleAsteriskRunWrapsRatherThanEatingIt() {
+        let result = wrapInlineMarker(text: "***word***", range: NSRange(location: 3, length: 4), marker: "**")
+        XCTAssertEqual(result.text, "*****word*****")
+    }
+
+    /// A `**` run of exactly the marker's length still unwraps — the guard tightens
+    /// the unwrap branch, it does not disable it.
+    func testBoldMarkerOnAnExactDoubleAsteriskRunStillUnwraps() {
+        let result = wrapInlineMarker(text: "**word**", range: NSRange(location: 2, length: 4), marker: "**")
+        XCTAssertEqual(result.text, "word")
+    }
+
+    /// The rule is marker-agnostic: a single backtick hugged by a double-backtick
+    /// run wraps rather than unwrapping and eating the extra backticks.
+    func testCodeMarkerOnADoubleBacktickRunWrapsRatherThanEatingIt() {
+        let result = wrapInlineMarker(text: "``code``", range: NSRange(location: 2, length: 4), marker: "`")
+        XCTAssertEqual(result.text, "```code```")
+    }
 }

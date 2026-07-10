@@ -350,6 +350,17 @@ enum InlineMarkdown {
         /// `*`'s `matchDelimiter` does not step over them, and is deliberately left
         /// alone: changing it would move the saved bytes of every `*italic*` and
         /// `**bold**` in every existing document.
+        ///
+        /// The opener pairs with the **nearest** closer, not by reaching past an
+        /// interior opener. An intermediate lone `_` that can open but not close
+        /// (a `_` at a left word boundary — space before, letter after) starts a
+        /// *new* emphasis, so the search stops there and this opener stays literal.
+        /// Without it, `_foo _bar_` italicized `foo _bar` where CommonMark — and
+        /// the reading surface — italicize only `bar`, leaving `_foo ` literal. It
+        /// is the conservative direction (an ambiguous leading `_` stays content),
+        /// and it never drops a character. This is not a full CommonMark delimiter
+        /// stack: deeper `_`+`*` tangles can still differ, the same signed-off
+        /// out-of-scope class the `*` matcher already lives with.
         private func matchUnderscoreEmphasis(open: Int, limit: Int) -> Int? {
             var i = open + 1
             while i < limit {
@@ -367,10 +378,13 @@ enum InlineMarkdown {
                     i = link.next
                     continue
                 }
-                if chars[i] == "_", isLoneUnderscore(chars, at: i), canCloseUnderscore(chars, at: i) {
-                    let inner = chars[(open + 1)..<i]
-                    if inner.isEmpty || inner.allSatisfy({ $0 == " " }) { return nil }
-                    return i
+                if chars[i] == "_", isLoneUnderscore(chars, at: i) {
+                    if canCloseUnderscore(chars, at: i) {
+                        let inner = chars[(open + 1)..<i]
+                        if inner.isEmpty || inner.allSatisfy({ $0 == " " }) { return nil }
+                        return i
+                    }
+                    if canOpenUnderscore(chars, at: i) { return nil }
                 }
                 i += 1
             }
@@ -442,7 +456,7 @@ private let asciiPunctuation: Set<Character> = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^
 /// Foundation's `AttributedString(markdown:)` — the reading surface, and the
 /// oracle this rule converges on: `a+_x_+a` is emphasis, `😀_x_😀` is literal.
 /// `Character.isPunctuation` is exactly the `P*` categories.
-func isMarkdownPunctuation(_ character: Character) -> Bool {
+private func isMarkdownPunctuation(_ character: Character) -> Bool {
     character.isASCII ? asciiPunctuation.contains(character) : character.isPunctuation
 }
 
@@ -455,7 +469,7 @@ private func neighbor(_ chars: [Character], _ index: Int) -> Character? {
 /// A delimiter is **left-flanking** when it is not followed by whitespace and
 /// either is not followed by punctuation, or is preceded by whitespace or
 /// punctuation.
-func isLeftFlanking(_ chars: [Character], at index: Int) -> Bool {
+private func isLeftFlanking(_ chars: [Character], at index: Int) -> Bool {
     guard let next = neighbor(chars, index + 1), !next.isWhitespace else { return false }
     guard isMarkdownPunctuation(next) else { return true }
     guard let previous = neighbor(chars, index - 1) else { return true }
@@ -465,7 +479,7 @@ func isLeftFlanking(_ chars: [Character], at index: Int) -> Bool {
 /// A delimiter is **right-flanking** when it is not preceded by whitespace and
 /// either is not preceded by punctuation, or is followed by whitespace or
 /// punctuation.
-func isRightFlanking(_ chars: [Character], at index: Int) -> Bool {
+private func isRightFlanking(_ chars: [Character], at index: Int) -> Bool {
     guard let previous = neighbor(chars, index - 1), !previous.isWhitespace else { return false }
     guard isMarkdownPunctuation(previous) else { return true }
     guard let next = neighbor(chars, index + 1) else { return true }
@@ -475,9 +489,9 @@ func isRightFlanking(_ chars: [Character], at index: Int) -> Bool {
 /// A `_` participates as a delimiter only when it stands alone. Runs of two or
 /// more (`__x__`, the `___` divider, `snake__case`) stay literal — the
 /// conservative choice, and the one that keeps every such document's saved bytes
-/// unchanged. It is also the rule `wrapInlineMarker` applies: a marker must never
-/// eat a longer delimiter run.
-func isLoneUnderscore(_ chars: [Character], at index: Int) -> Bool {
+/// unchanged. `wrapInlineMarker` enforces the parallel rule from the editing
+/// side (via `hugsDelimiterRuns`): a marker must never eat a longer delimiter run.
+private func isLoneUnderscore(_ chars: [Character], at index: Int) -> Bool {
     chars[index] == "_" && neighbor(chars, index - 1) != "_" && neighbor(chars, index + 1) != "_"
 }
 

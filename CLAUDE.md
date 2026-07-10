@@ -780,6 +780,14 @@ markdown write endpoint**. Understand this before touching the save path:
   changing it moves the saved bytes of every `*italic*` and `**bold**` that
   already exists. When `_` and `*` fight over the same characters the leftmost
   opener wins, which is also what CommonMark does.
+- **An underscore opener pairs with the nearest closer, not the first one.**
+  The search stops at an interior lone `_` that can open but not close (a left
+  word boundary), because that starts a *new* emphasis. So `_foo _bar_`
+  italicizes only `bar` and leaves `_foo ` literal — the first-closer search
+  reached past it and italicized `foo _bar`, disagreeing with the reading
+  surface. It is not a full delimiter stack (deeper `_`+`*` tangles still differ,
+  the out-of-scope soup class), but it never drops a character and only ever
+  emphasizes less — the conservative direction.
 - **Never let one run carry the same mark key twice.** `*_x_*` nests italic in
   italic; a BlockNote format map has one entry per key, so `adding(_:to:)` skips
   a mark already present (links exempt — nested links carry distinct `href`s).
