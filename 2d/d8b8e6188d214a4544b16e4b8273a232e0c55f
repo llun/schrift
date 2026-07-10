@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md
+  s_c705f20456c874::t_2a261914205567 176-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "2dd8b8e6188d214a4544b16e4b8273a232e0c55f",
+  "prompts": {},
+  "sessions": {
+    "s_c705f20456c874": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d0206a6-9549-40f1-a918-8f431e030413",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
