@@ -78,15 +78,6 @@ final class EditorLinkEditingTests: XCTestCase {
         XCTAssertFalse(viewModel.canEditLink)
     }
 
-    func testLinkEditingIsUnavailableInMarkdownSourceMode() async {
-        let viewModel = await makeEditingViewModel(content: "Body text.")
-        viewModel.setMode(.markdown)
-        // `setMode` also clears the focus, so restore it: the mode itself is what
-        // must disable the button.
-        focusFirstBlock(viewModel, selection: NSRange(location: 0, length: 0))
-        XCTAssertFalse(viewModel.canEditLink)
-    }
-
     // MARK: - Creating
 
     func testTheSelectionBecomesTheLabel() async {

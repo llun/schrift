@@ -229,44 +229,25 @@ struct EditorView: View {
 
     private var editingSurface: some View {
         VStack(spacing: 0) {
-            EditorModeBar(
-                modeIndex: Binding(
-                    get: { viewModel.mode == .markdown ? 1 : 0 },
-                    set: { viewModel.setMode($0 == 1 ? .markdown : .blocks) }
-                ),
+            EditorSaveBar(
                 saveState: viewModel.saveState,
                 onSaveTap: { viewModel.saveNow() }
             )
 
-            if viewModel.openInMarkdownMode, viewModel.mode == .markdown {
-                Text("Some content in this document can't be edited as blocks yet, so it opens as Markdown.")
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            BlockEditorView(viewModel: viewModel)
+                .safeAreaInset(edge: .bottom) {
+                    VStack(spacing: DocsSpacing.spaceXS) {
+                        if viewModel.isUploadingPhoto {
+                            uploadingPhotoBanner
+                        }
+                        if let query = viewModel.slashQueryText {
+                            SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
+                        }
+                        EditorFormattingBar(viewModel: viewModel)
+                    }
                     .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.top, DocsSpacing.space3xs)
-            }
-
-            Group {
-                if viewModel.mode == .markdown {
-                    MarkdownSourceView(viewModel: viewModel)
-                } else {
-                    BlockEditorView(viewModel: viewModel)
+                    .padding(.bottom, DocsSpacing.spaceXS)
                 }
-            }
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: DocsSpacing.spaceXS) {
-                    if viewModel.isUploadingPhoto {
-                        uploadingPhotoBanner
-                    }
-                    if viewModel.mode == .blocks, let query = viewModel.slashQueryText {
-                        SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
-                    }
-                    EditorFormattingBar(viewModel: viewModel)
-                }
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.bottom, DocsSpacing.spaceXS)
-            }
         }
         // The out-of-process system picker: no photo-library usage description and
         // no project.yml change are needed. Do NOT add `photoLibrary: .shared()` —

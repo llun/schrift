@@ -18,14 +18,14 @@ final class EditorFormattingBarTests: XCTestCase {
     /// Logical widths, narrowest first: iPhone SE/mini, iPhone 14/15, iPhone 17.
     private let screenWidths: [CGFloat] = [375, 390, 393, 402, 430]
 
-    private func makeViewModel(mode: EditorViewModel.Mode = .blocks) -> EditorViewModel {
+    private func makeViewModel(focused: Bool = true) -> EditorViewModel {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
         let viewModel = EditorViewModel(
             client: client, documentID: UUID(), title: "Doc",
             saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop))
-        viewModel.mode = mode
+        viewModel.mode = .blocks
         viewModel.blocks = [EditorBlock(kind: .paragraph, text: "text")]
-        viewModel.focusedBlockID = viewModel.blocks[0].id
+        if focused { viewModel.focusedBlockID = viewModel.blocks[0].id }
         return viewModel
     }
 
@@ -50,14 +50,12 @@ final class EditorFormattingBarTests: XCTestCase {
         }
     }
 
-    /// Disabled buttons must not change the geometry either — in markdown mode
-    /// the link button is disabled, and in reading mode nothing has a target.
-    func testTheBarFitsWhateverIsDisabled() {
-        for mode in [EditorViewModel.Mode.blocks, .markdown] {
-            let viewModel = makeViewModel(mode: mode)
-            let column: CGFloat = 375 - 2 * DocsSpacing.gutter
-            XCTAssertLessThanOrEqual(barWidth(viewModel, offered: column), column + roundingSlack, "mode \(mode)")
-        }
+    /// Disabled buttons must not change the geometry either — with no focused block
+    /// every action is disabled, the widest the row's disabled state ever gets.
+    func testTheBarFitsWhenEveryButtonIsDisabled() {
+        let viewModel = makeViewModel(focused: false)
+        let column: CGFloat = 375 - 2 * DocsSpacing.gutter
+        XCTAssertLessThanOrEqual(barWidth(viewModel, offered: column), column + roundingSlack)
     }
 
     /// The 44pt tap *height* is what the buttons must never give up; the width is

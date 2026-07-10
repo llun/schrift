@@ -1,16 +1,14 @@
 import SwiftUI
 
-/// Editing-mode header: Blocks/Markdown toggle plus live save status.
-struct EditorModeBar: View {
-    @Binding var modeIndex: Int
+/// Editing-session header: live save status, right-aligned. The block editor is
+/// the only editing surface, so there is no mode toggle — this bar exists to keep
+/// the Save / Saving… / Saved / Retry feedback visible while editing.
+struct EditorSaveBar: View {
     let saveState: EditorViewModel.SaveState
     var onSaveTap: () -> Void
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
-            SegmentedControl(segments: ["Blocks", "Markdown"], selectedIndex: $modeIndex)
-                .frame(maxWidth: 240)
-
             Spacer(minLength: DocsSpacing.spaceXS)
 
             SaveStatusIndicator(state: saveState, onTap: onSaveTap)
@@ -79,12 +77,11 @@ struct SaveStatusIndicator: View {
 }
 
 #Preview {
-    @Previewable @State var modeIndex = 0
     VStack(spacing: DocsSpacing.spaceBase) {
-        EditorModeBar(modeIndex: $modeIndex, saveState: .dirty, onSaveTap: {})
-        EditorModeBar(modeIndex: $modeIndex, saveState: .saving, onSaveTap: {})
-        EditorModeBar(modeIndex: $modeIndex, saveState: .saved, onSaveTap: {})
-        EditorModeBar(modeIndex: $modeIndex, saveState: .failed("nope"), onSaveTap: {})
+        EditorSaveBar(saveState: .dirty, onSaveTap: {})
+        EditorSaveBar(saveState: .saving, onSaveTap: {})
+        EditorSaveBar(saveState: .saved, onSaveTap: {})
+        EditorSaveBar(saveState: .failed("nope"), onSaveTap: {})
     }
     .background(DocsColor.surfaceSunken)
 }

@@ -2,14 +2,12 @@ import SwiftUI
 
 /// Floating formatting toolbar shown above the keyboard while editing.
 ///
-/// In blocks mode the actions target the focused block (convert type, wrap
-/// the selection in inline markers); in markdown-source mode they operate at
-/// the caret. Never a blind append: everything is selection-aware.
+/// The actions target the focused block (convert type, wrap the selection in
+/// inline markers). Never a blind append: everything is selection-aware.
 struct EditorFormattingBar: View {
     @Bindable var viewModel: EditorViewModel
 
-    private var isMarkdownMode: Bool { viewModel.mode == .markdown }
-    private var hasTarget: Bool { isMarkdownMode || viewModel.focusedBlockID != nil }
+    private var hasTarget: Bool { viewModel.focusedBlockID != nil }
 
     var body: some View {
         // A fixed pill of evenly-spaced actions (matching the reference accessory
@@ -17,11 +15,7 @@ struct EditorFormattingBar: View {
         // code and divider remain reachable via their Markdown shortcuts.
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: "plus", label: "Add block", brand: true, disabled: false) {
-                if isMarkdownMode {
-                    viewModel.insertAtCursor("\n")
-                } else {
-                    viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
-                }
+                viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
             }
             barButton(icon: "bold", label: "Bold") {
                 viewModel.applyInlineMarker("**")
@@ -34,41 +28,23 @@ struct EditorFormattingBar: View {
             barButton(icon: "italic", label: "Italic") {
                 viewModel.applyInlineMarker("_")
             }
-            // Blocks mode only: a markdown-source caret has no link span to
-            // retarget, and the sheet's whole job is to hide the syntax.
             barButton(
                 icon: "link", label: "Link",
-                disabled: isMarkdownMode || !viewModel.canEditLink
+                disabled: !viewModel.canEditLink
             ) {
                 viewModel.beginLinkEditing()
             }
             barButton(icon: "list.bullet", label: "Bulleted list") {
-                if isMarkdownMode {
-                    viewModel.insertAtCursor("\n- ")
-                } else {
-                    viewModel.convertFocusedBlock(to: .bulletItem)
-                }
+                viewModel.convertFocusedBlock(to: .bulletItem)
             }
             barButton(icon: "checklist", label: "Checklist") {
-                if isMarkdownMode {
-                    viewModel.insertAtCursor("\n- [ ] ")
-                } else {
-                    viewModel.convertFocusedBlock(to: .checklistItem(checked: false))
-                }
+                viewModel.convertFocusedBlock(to: .checklistItem(checked: false))
             }
             barButton(icon: "text.quote", label: "Quote") {
-                if isMarkdownMode {
-                    viewModel.insertAtCursor("\n> ")
-                } else {
-                    viewModel.convertFocusedBlock(to: .quote)
-                }
+                viewModel.convertFocusedBlock(to: .quote)
             }
             barButton(icon: "curlybraces", label: "Code block") {
-                if isMarkdownMode {
-                    viewModel.insertAtCursor("\n```\n\n```\n")
-                } else {
-                    viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
-                }
+                viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
             }
             // Stays disabled while an upload is in flight (and before content has
             // loaded): the view model would decline anyway, so don't invite the tap.
