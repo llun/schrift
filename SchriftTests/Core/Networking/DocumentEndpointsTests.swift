@@ -138,4 +138,74 @@ final class DocumentEndpointsClientTests: XCTestCase {
 
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "DELETE")
     }
+
+    // MARK: - Retrieve
+
+    /// The single-document body a `GET documents/{id}/` answers with. Unlike the list
+    /// endpoints it carries no `content`, so resolving a link is cheap.
+    private static let documentFixture = """
+        {
+            "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+            "title": "Meeting notes",
+            "excerpt": null,
+            "abilities": {"update": true},
+            "computed_link_reach": "restricted",
+            "computed_link_role": null,
+            "created_at": "2026-01-15T10:30:00Z",
+            "creator": null,
+            "depth": 2,
+            "link_role": "reader",
+            "link_reach": "restricted",
+            "numchild": 0,
+            "path": "00010001",
+            "updated_at": "2026-01-15T10:30:00Z",
+            "user_role": "owner",
+            "is_favorite": false
+        }
+        """.data(using: .utf8)!
+
+    func testDocumentGETsTheTrailingSlashLowercasedUUIDPath() async throws {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Self.documentFixture, error: nil)
+        }
+        let client = makeClient()
+        let id = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
+
+        let document = try await client.document(documentID: id)
+
+        XCTAssertEqual(document.title, "Meeting notes")
+        XCTAssertEqual(document.linkReach, .restricted)
+        XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "GET")
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b/")
+    }
+
+    func testDocumentThrowsForbiddenWhenAccessIsDenied() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+        let client = makeClient()
+
+        do {
+            _ = try await client.document(documentID: UUID())
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .forbidden)
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    func testDocumentThrowsNotFoundForAMissingDocument() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        let client = makeClient()
+
+        do {
+            _ = try await client.document(documentID: UUID())
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .notFound)
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
 }

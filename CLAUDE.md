@@ -191,7 +191,7 @@ Schrift/
 │   ├── Home/            document list, filters, offline metadata cache
 │   ├── Search/ Shared/ Profile/ Options/ Share/
 │   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache,
-│                        photo insert (ImagePreparation)
+│                        photo insert (ImagePreparation), in-app document links (DocumentLink)
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
 docs/                    living docs (ci.md, testflight-setup.md) + specs and dated
@@ -690,6 +690,39 @@ markdown write endpoint**. Understand this before touching the save path:
   every pull-to-refresh no-oped in silence. Reclassify (a surviving draft ⇒
   `.draft`, otherwise `.clean`). See
   `docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md`.
+- **A link to another document is just a markdown link.** The web editor stores
+  one as a custom `interlinkingLinkInline` BlockNote node, but the server's
+  markdown export flattens it to `[Title](https://<serverHost>/docs/<uuid>/)` —
+  the inverse of `documentShareURL`, and indistinguishable from a pasted URL.
+  Nothing in the markdown marks it as internal, so a `.link` run in a `Text`
+  used to reach SwiftUI's **default** `OpenURLAction` and leave the app for
+  Safari. `readingSurface` therefore installs its own
+  `.environment(\.openURL, …)`, and `documentLinkAction` (pure, in
+  `Features/Editor/DocumentLink.swift`) classifies the tap: `.openInApp(id)`,
+  `.alreadyOpen` (the document on screen — swallow it; `NavigationPath.append`
+  does not de-duplicate, so a self-link would grow the stack), or
+  `.openInBrowser`. The fallback is **`.systemAction`**, never `.handled`, so
+  every external link behaves exactly as before. A URL matches only when its
+  scheme is `http`/`https` (never `javascript:`/`data:`/`file:`), its `URL.host`
+  equals `serverHost` **case-insensitively and exactly** — compare `host`, not
+  the string: `https://docs.llun.dev@evil.com/…` is hosted at `evil.com`, and
+  `docs.llun.dev.evil.com` must not pass as a suffix — and its `pathComponents`
+  are exactly `["/", "docs", "<uuid>"]`, which folds the trailing slash away
+  while rejecting `/docs/<uuid>/versions/1` and `/docs/new/`. The port is *not*
+  compared (`serverHost` carries none). None of this is a fetch guard — the id
+  only ever reaches the client's own `documents/{id}/` path — it stops the app
+  from *intercepting* somebody else's link.
+- `EditorViewModel.openLinkedDocument(_:)` resolves that id to the `Document`
+  the view pushes, **reusing a `subpages` entry when the link names a listed
+  sub-page**: it is the same value `SubpageRow` would push, it makes the common
+  case instant, and it is the only way the link works offline. Otherwise it GETs
+  `documents/{id}/` (`DocsAPIClient.document(documentID:)` — the DRF retrieve
+  route; metadata only, no `content`). A failure is **deliberately not**
+  `becomeUnavailable()`: a 404/403 there concerns the *linked* document and is
+  no evidence about the one on screen, which would otherwise be torn down —
+  along with any unsaved edit — over a dead link. `.sessionExpired` stays
+  silent, because the shared client's `onSessionExpired` hook has already raised
+  the re-login sheet.
 
 ### Persistence (`*Store` types)
 

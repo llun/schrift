@@ -49,6 +49,14 @@ extension DocsAPIClient {
             ))
     }
 
+    /// A single document's metadata. Resolves a `/docs/<uuid>/` link tapped in document
+    /// content into the `Document` the app navigates to. The response carries no `content`
+    /// — the pushed editor reads the body through its own content route — so this is a
+    /// cheap lookup rather than a second copy of the document.
+    func document(documentID: UUID) async throws -> Document {
+        try await get("documents/\(documentID.uuidString.lowercased())/")
+    }
+
     func favoriteDocuments() async throws -> PaginatedResponse<Document> {
         try await get("documents/favorite_list/")
     }

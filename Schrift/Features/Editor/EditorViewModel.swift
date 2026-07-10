@@ -750,6 +750,34 @@ final class EditorViewModel {
         return child
     }
 
+    /// Resolves a document link tapped in the reading surface (see `documentLinkAction`)
+    /// into the `Document` the view pushes. Returns nil when it can't be reached, in which
+    /// case nothing is navigated to.
+    ///
+    /// Clearing the error on entry is safe: a document declared unavailable renders no
+    /// blocks, so it has no link to tap.
+    func openLinkedDocument(_ linkedID: UUID) async -> Document? {
+        clearError()
+        // The reported case is a link to a sub-page, which the Subpages section is already
+        // listing. That `Document` is exactly what tapping its `SubpageRow` would push, so
+        // reuse it: the tap is instant, and it is the only way the link works offline.
+        if let listed = subpages?.first(where: { $0.id == linkedID }) { return listed }
+        do {
+            return try await client.document(documentID: linkedID)
+        } catch DocsAPIError.sessionExpired {
+            // The shared client's `onSessionExpired` hook already raised the re-login
+            // sheet. A second banner telling the user to "try again" would compete with it.
+            return nil
+        } catch {
+            // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a
+            // 404/403 here is about the *linked* document and says nothing about the one on
+            // screen. Tearing that down would discard it — and any unsaved edit — over a
+            // dead link.
+            showError("Couldn't open that link. Please try again.")
+            return nil
+        }
+    }
+
     // MARK: - Editing session
 
     func startEditing(focusing blockID: UUID? = nil) {

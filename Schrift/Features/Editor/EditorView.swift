@@ -334,6 +334,31 @@ struct EditorView: View {
         .refreshable {
             await viewModel.refresh()
         }
+        // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
+        // autolinker matched — dispatches through this action. Without an override the
+        // default one hands every link to the system, so a link to a sub-page left the app
+        // for Safari. Scoped to the reading surface: it is the only subtree that renders
+        // content the user didn't type, and the sheets keep the system behavior.
+        .environment(\.openURL, OpenURLAction(handler: openLink))
+    }
+
+    private func openLink(_ url: URL) -> OpenURLAction.Result {
+        switch documentLinkAction(for: url, serverHost: serverHost, currentDocumentID: viewModel.documentID) {
+        case .openInBrowser:
+            return .systemAction
+        case .alreadyOpen:
+            return .handled
+        case .openInApp(let linkedID):
+            // No navigation host (previews, and nothing else today): the link is still a
+            // real URL, so let the system have it rather than swallow the tap.
+            guard let onOpenDocument else { return .systemAction }
+            Task {
+                if let document = await viewModel.openLinkedDocument(linkedID) {
+                    onOpenDocument(document)
+                }
+            }
+            return .handled
+        }
     }
 
     private var emptyContent: some View {
