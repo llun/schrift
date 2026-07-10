@@ -1365,6 +1365,41 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.currentMarkdown(), "```")
     }
 
+    func testNonRoundTrippableDocClosedWithoutEditingEnqueuesNoSave() async {
+        // Removing the markdown fallback means a doc whose markdown can't survive a
+        // block round-trip (a lone opening fence) now opens in `.blocks` rather than
+        // a markdown source view. Opening and closing it without an edit must NOT
+        // enqueue a full-overwrite save that would normalize the fence — the dirty
+        // baseline `savedMarkdown = serializeMarkdown(blocks)` is what guarantees it.
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "```")
+        await viewModel.load()
+
+        viewModel.startEditing()
+        XCTAssertEqual(viewModel.mode, .blocks)
+        viewModel.finishEditing()
+
+        XCTAssertFalse(viewModel.isDirty)
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "a no-op session must not overwrite the fence")
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertEqual(viewModel.rawMarkdown, "```", "the untouched source is preserved verbatim")
+    }
+
+    func testFinishEditingSyncsTheReadingSourceToTheEditedBlocks() async {
+        // `finishEditing`'s conditional resync is the sole path keeping the
+        // reading-mode source fresh after an edit; a stale source would let a later
+        // photo insert or Options "copy markdown" reflect the loaded body, not the edit.
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoad(content: "# Title")
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Edited heading")
+        viewModel.finishEditing()
+
+        XCTAssertEqual(viewModel.mode, .reading)
+        XCTAssertEqual(viewModel.currentMarkdown(), "# Edited heading\n")
+    }
+
     // MARK: - Subpages fetch-awareness
 
     func testSubpagesAreNilBeforeAnySuccessfulFetch() async {

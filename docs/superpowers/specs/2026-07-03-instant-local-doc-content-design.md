@@ -37,6 +37,17 @@
 > installed or cached (the server may answer it from the pre-save state, and the
 > next full-overwrite save would push that resurrected body back). See
 > [`../plans/2026-07-08-remote-doc-content-sync.md`](../plans/2026-07-08-remote-doc-content-sync.md).
+>
+> **Revised (2026-07-10):** the Markdown editing mode was removed — the block
+> editor is the only editing surface. `install(...)` no longer computes
+> `openInMarkdownMode` or a mode-dependent baseline; it sets
+> `savedMarkdown = serializeMarkdown(blocks)` unconditionally, so opening and
+> closing a non-round-trippable document without an edit still enqueues no save.
+> `rawMarkdown` is retained as the authoritative reading-mode source: a fetch
+> installs it, and `finishEditing` re-syncs it to the edited blocks **only when
+> they diverged** from that source, so a photo upload that lands after the
+> editing session still preserves an untouched non-round-tripping document. See
+> [`../plans/2026-07-10-remove-markdown-editing-mode.md`](../plans/2026-07-10-remove-markdown-editing-mode.md).
 
 Date: 2026-07-03
 Status: Implemented (shipped 2026-07-03, PR #36; rev 2 — revised the same day
@@ -286,17 +297,15 @@ today's `load()` body (`EditorViewModel.swift:104–130`):
 private func install(markdown: String, title: String?, syncedAt: Date?)
 ```
 
-It must: set `title`/`savedTitle` (when a title is provided), set `rawMarkdown`,
-set `blocks = parseEditorBlocks(markdown)`, compute
-`openInMarkdownMode = !markdown.isEmpty && !markdownSurvivesRoundTrip(markdown)`,
-set the dirty baseline
-`savedMarkdown = openInMarkdownMode ? markdown : serializeMarkdown(blocks)`, set
+It must: set `title`/`savedTitle` (when a title is provided), set `rawMarkdown`
+(the authoritative reading-mode source), set `blocks = parseEditorBlocks(markdown)`,
+set the dirty baseline `savedMarkdown = serializeMarkdown(blocks)`, set
 `hasLoadedContent = true`, record `displayedSourceMarkdown = markdown` (see
 below), and set `lastSyncedAt = syncedAt` when one is provided. **Every** path
 that puts content on screen — initial fetch, cache hit, draft hit,
 `applyPendingUpdate()`, refresh — routes through it. Skipping it (e.g. merely
-swapping `blocks`) would bypass the round-trip safety check and risk a
-destructive full-overwrite save of non-round-trippable cached content.
+swapping `blocks`) would bypass the dirty baseline and the authoritative source
+and risk a destructive full-overwrite save of non-round-trippable cached content.
 
 #### Local phase (synchronous, no network, on `load()` entry)
 
@@ -480,8 +489,8 @@ fetch is in flight is handled by completion-time classification (above).
 - `applyPendingUpdate()` guards:
   `guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }`
   — a stray tap can never replace blocks mid-edit. It routes the stashed body
-  through `install(...)` (recomputing `openInMarkdownMode` and the
-  `savedMarkdown` baseline — never a bare `blocks` swap), bumps `lastSyncedAt`,
+  through `install(...)` (recomputing the `savedMarkdown` baseline and the
+  authoritative `rawMarkdown` source — never a bare `blocks` swap), bumps `lastSyncedAt`,
   and clears `updateAvailable`/`pendingFreshContent`.
 
 New VM state and intents (summary):
@@ -687,8 +696,9 @@ XCTest, mirroring the source tree. New/updated:
   - no cache → `isLoading` toggles true then false; content cached afterward;
   - offline (fetch throws) with cache → content stays, no `errorMessage`,
     `hasLocalCopy == true`; offline with no cache → `errorMessage` set;
-  - cached markdown that fails byte round-trip (e.g. `*` bullets) → opens with
-    `openInMarkdownMode == true`, both on cached open and after
+  - cached markdown that fails byte round-trip (e.g. `*` bullets) → opening and
+    closing the editor without an edit enqueues **no** save (the `savedMarkdown`
+    baseline equals `serializeMarkdown(blocks)`), both on cached open and after
     `applyPendingUpdate()` (destructive-save regression);
   - revalidate, server identical → `lastSyncedAt` advances, no banner; server
     export differing **only in canonicalization** → no banner (phantom-banner

@@ -691,10 +691,10 @@ final class EditorViewModel {
             ))
     }
 
-    /// Installs content as the on-screen document. Every path that puts
-    /// content on screen routes through here so the round-trip safety check
-    /// and the dirty baseline are never bypassed — skipping them risks a
-    /// destructive full-overwrite save of non-round-trippable content.
+    /// Installs content as the on-screen document. Every path that puts content on
+    /// screen routes through here so the dirty baseline (`savedMarkdown`) and the
+    /// authoritative reading-mode source (`rawMarkdown`) are never bypassed — skipping
+    /// them risks a destructive full-overwrite save of non-round-trippable content.
     private func install(markdown: String, title contentTitle: String?, syncedAt: Date?) {
         if let contentTitle {
             title = contentTitle
@@ -812,9 +812,19 @@ final class EditorViewModel {
 
     func finishEditing() {
         flushPendingChanges()
-        // Sync the authoritative source to the edited blocks so reading-mode paths
-        // (Options "copy markdown", a late photo insert) reflect the session's work.
-        rawMarkdown = serializeMarkdown(blocks)
+        // Sync the reading-mode source to the edited blocks so its consumers (Options
+        // "copy markdown", a late photo insert) reflect the session's work — but *only*
+        // when the blocks diverged from the loaded source. An unedited session must
+        // leave `rawMarkdown` as the original markdown, which the block model may parse
+        // lossily: the reading-mode photo branch is reachable only after `finishEditing`,
+        // so an unconditional resync would make a photo upload landing after Done save
+        // `serializeMarkdown(blocks)` and silently normalize a non-round-tripping
+        // document nobody edited. Comparing serializations (not raw strings) ignores the
+        // canonicalization the parser always applies, so a genuine no-op stays a no-op.
+        let serialized = serializeMarkdown(blocks)
+        if serialized != serializeMarkdown(parseEditorBlocks(rawMarkdown)) {
+            rawMarkdown = serialized
+        }
         mode = .reading
         focusedBlockID = nil
         cursorRequest = nil

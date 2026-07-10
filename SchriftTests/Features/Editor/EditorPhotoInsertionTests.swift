@@ -337,10 +337,52 @@ final class EditorPhotoInsertionTests: XCTestCase {
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
             "the appended markdown must parse back to an .image block, not literal text")
         // The "carries the source, not a serialization of the lossy blocks" claim is
-        // asserted by `testInsertPhotoIntoAnUnterminatedFenceErrorsRatherThanCorruptOrVanish`,
-        // which loads a non-round-tripping source: here the source round-trips, so
+        // asserted by the two tests below, which drive the real edit-session sequence
+        // over a non-round-tripping source: here the source round-trips, so
         // `currentMarkdown()`, `rawMarkdown`, and `serializeMarkdown(blocks)` are all
         // equal and nothing in this test can tell them apart.
+    }
+
+    /// The reading branch is reachable in the real UI only *after* `finishEditing`
+    /// (the picker is editing-only; a late upload lands post-Done). So the whole
+    /// preservation guarantee hinges on `finishEditing` NOT normalizing the source on
+    /// a no-edit session. `*` bullets don't byte-round-trip (the serializer
+    /// canonicalizes `*`→`-`), so opening such a doc, adding a photo, and tapping Done
+    /// without a text edit must save the original bullets plus the image.
+    func testInsertPhotoAfterANoEditSessionPreservesTheNonRoundTrippingSource() async throws {
+        stubUploadPipeline(content: "* a\\n* b")
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        viewModel.startEditing()  // opens in blocks mode; no text edits
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.mode, .reading)
+        XCTAssertEqual(viewModel.rawMarkdown, "* a\n* b", "a no-edit session must not normalize the source")
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.rawMarkdown.hasPrefix("* a\n* b"), "the original `*` bullets survive the late insert")
+        XCTAssertTrue(
+            parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
+    }
+
+    /// The mirror: once the user genuinely edits, the edited blocks ARE the content,
+    /// so `finishEditing` must resync the source and a late insert appends to the edit
+    /// — never to the stale loaded body (which would silently drop the edit).
+    func testInsertPhotoAfterAnEditedSessionAppendsToTheEditedContent() async throws {
+        stubUploadPipeline(content: "* a")
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "edited")
+        viewModel.finishEditing()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertTrue(viewModel.rawMarkdown.contains("edited"), "the edit must survive the late insert")
+        XCTAssertFalse(viewModel.rawMarkdown.contains("* a"), "the stale loaded source must not resurface")
+        XCTAssertTrue(
+            parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
     }
 
     /// Every sibling async intent (`load`, `refresh`, `startEditing`) clears

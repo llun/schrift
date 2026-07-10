@@ -190,7 +190,7 @@ Schrift/
 │   │                    ReauthenticationViewModel), RecentServersStore
 │   ├── Home/            document list, filters, offline metadata cache
 │   ├── Search/ Shared/ Profile/ Options/ Share/
-│   └── Editor/          block editor, Markdown toggle, save coordinator, drafts, content cache,
+│   └── Editor/          block editor, save coordinator, drafts, content cache,
 │                        photo insert (ImagePreparation), in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet)
