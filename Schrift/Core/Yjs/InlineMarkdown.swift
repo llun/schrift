@@ -346,7 +346,17 @@ enum InlineMarkdown {
 
 /// BlockNote stores a link mark's destination as `{"href": …}`. Built with
 /// `JSONSerialization`, never string interpolation: the url is user data.
+///
+/// `.withoutEscapingSlashes` is **load-bearing**, not cosmetic. Yjs writes a
+/// mark value as `writeVarString(JSON.stringify(value))`, and JavaScript's
+/// `JSON.stringify` does not escape `/`. Foundation's default does, so without
+/// this the encoder emitted `{"href":"https:\/\/x"}` (32 bytes) where yjs emits
+/// `{"href":"https://x"}` (30) — semantically identical after `JSON.parse`, but
+/// not byte-identical, which is the invariant `Core/Yjs` exists to hold.
+/// `YjsEncoderTests.testLinkMark`'s golden hex is the unescaped form; it never
+/// caught this because it hand-builds its `InlineRun`s instead of calling
+/// `parse(_:)`. `InlineLayoutTests.testParseProducesExactlyTheRuns…` closes that.
 private func linkValueJSON(_ url: String) -> String {
-    let data = try? JSONSerialization.data(withJSONObject: ["href": url])
+    let data = try? JSONSerialization.data(withJSONObject: ["href": url], options: [.withoutEscapingSlashes])
     return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{\"href\":\"\"}"
 }

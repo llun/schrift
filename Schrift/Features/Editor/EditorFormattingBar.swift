@@ -26,11 +26,18 @@ struct EditorFormattingBar: View {
             barButton(icon: "bold", label: "Bold") {
                 viewModel.applyInlineMarker("**")
             }
-            // `*`, not `_`: `InlineMarkdown` ignores underscores so that
-            // `snake_case` survives, so a `_x_` written here would render italic
-            // on the reading surface and then save as literal underscores.
+            // `_`, even though `InlineMarkdown` ignores underscores — so italic
+            // applied here renders italic on the reading surface (Foundation's
+            // CommonMark parser does honour `_x_`) and then saves as literal
+            // underscores. That is a real bug, and `*` is NOT the fix:
+            // `wrapInlineMarker` decides wrap-vs-unwrap from the single character
+            // on each side, so `*` on a selected **bold** word sees `*` on both
+            // sides, takes the unwrap branch, and silently destroys the bold. Nor
+            // can wrapping help — `***x***` parses here as bold(`*x`) + literal
+            // (`*`). The fix is to teach the scanner CommonMark's flanking rule
+            // for `_`, which changes saved bytes and needs its own review.
             barButton(icon: "italic", label: "Italic") {
-                viewModel.applyInlineMarker("*")
+                viewModel.applyInlineMarker("_")
             }
             // Blocks mode only: a markdown-source caret has no link span to
             // retarget, and the sheet's whole job is to hide the syntax.

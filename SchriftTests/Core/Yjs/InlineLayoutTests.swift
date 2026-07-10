@@ -199,4 +199,59 @@ final class InlineLayoutTests: XCTestCase {
         XCTAssertEqual(layout.spans.map { ns.substring(with: $0.range) }, ["✅ Review"])
         XCTAssertEqual(layout.syntax.map { ns.substring(with: $0) }.first, "[")
     }
+
+    // MARK: - What the save actually encodes
+
+    /// `YjsEncoderTests` asserts golden bytes for hand-built `[InlineRun]`s — it
+    /// never runs the scanner. So "the golden tests pass" alone does **not**
+    /// prove the scanner still feeds the encoder the same runs.
+    ///
+    /// These tests close that gap: they pin `parse(_:)`'s output for the very
+    /// markdown whose runs the golden fixtures encode. Together the two are a
+    /// byte-level proof by transitivity — markdown → runs → bytes. Change either
+    /// side and one of them fails.
+    func testParseProducesExactlyTheRunsTheGoldenLinkFixtureEncodes() {
+        XCTAssertEqual(
+            InlineMarkdown.parse("See [docs](https://example.com) now"),
+            [
+                InlineRun("See "),
+                InlineRun("docs", marks: [("link", "{\"href\":\"https://example.com\"}")]),
+                InlineRun(" now"),
+            ])
+    }
+
+    func testParseProducesExactlyTheRunsTheGoldenMultiMarkFixtureEncodes() {
+        XCTAssertEqual(
+            InlineMarkdown.parse("Some *italic* and **bold** and `code` here."),
+            [
+                InlineRun("Some "),
+                InlineRun("italic", marks: [("italic", "{}")]),
+                InlineRun(" and "),
+                InlineRun("bold", marks: [("bold", "{}")]),
+                InlineRun(" and "),
+                InlineRun("code", marks: [("code", "{}")]),
+                InlineRun(" here."),
+            ])
+    }
+
+    func testParseProducesExactlyTheRunsTheGoldenStrikeFixtureEncodes() {
+        XCTAssertEqual(
+            InlineMarkdown.parse("~~gone~~ text"),
+            [InlineRun("gone", marks: [("strike", "{}")]), InlineRun(" text")])
+    }
+
+    func testParseProducesExactlyTheRunsTheGoldenBoldFixtureEncodes() {
+        XCTAssertEqual(
+            InlineMarkdown.parse("Hello **world**"),
+            [InlineRun("Hello "), InlineRun("world", marks: [("bold", "{}")])])
+    }
+
+    /// Mark **order** is part of the wire format: the encoder emits them in the
+    /// order the runs carry them, so an outermost-last ordering would move bytes.
+    func testNestedMarksAreCarriedOutermostFirst() {
+        let runs = InlineMarkdown.parse("[**b**](u)")
+        XCTAssertEqual(runs.count, 1)
+        XCTAssertEqual(runs[0].marks.map(\.key), ["link", "bold"])
+        XCTAssertEqual(runs[0].marks.map(\.valueJSON), ["{\"href\":\"u\"}", "{}"])
+    }
 }

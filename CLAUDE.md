@@ -723,12 +723,34 @@ markdown write endpoint**. Understand this before touching the save path:
   *projection* of that same result. The editor's styling and the save path
   therefore cannot disagree about what a `*` means. Do **not** add a third
   engine: the reading surface's `AttributedString(markdown:)` is already a
-  second one, and their disagreement is a live bug (`_x_` renders italic there
-  and saves as literal underscores — which is why the Italic bar button emits
-  `*`, not `_`). Ranges are UTF-16; the scanner walks `Character`s and carries a
+  second one, and their disagreement is a **live bug** — `_x_` renders italic
+  there and saves as literal underscores, so the Italic bar button (which emits
+  `_`) does not survive a save. Do **not** "fix" it by switching the button to
+  `*`: `wrapInlineMarker` decides wrap-vs-unwrap from the single character on
+  each side, so `*` on a selected **bold** word finds `*` on both sides, unwraps,
+  and silently destroys the bold — invisibly, since `**` is now zero-width. Nor
+  does wrapping help: `***x***` parses here as bold(`*x`) + literal(`*`). The
+  real fix is CommonMark's flanking rule for `_` (which keeps `snake_case` safe
+  and makes `**_x_**` bold+italic); it changes saved bytes, so it needs sign-off.
+  Pinned by `MarkdownShortcutsTests.testASingleAsteriskAroundABoldWordUnwrapsTheBold`.
+  Ranges are UTF-16; the scanner walks `Character`s and carries a
   prefix sum, because `NSRange` and grapheme clusters are not the same thing.
   Blocks whose text is literal (`rendersInlineMarkdown(_:)` — code blocks,
   `.unknown`, the leaves) hide nothing and style nothing.
+  **`YjsEncoderTests` passing does not, on its own, prove the scanner is
+  unchanged** — it builds its `[InlineRun]` fixtures by hand and never calls
+  `parse(_:)`, and `MarkdownYjsTests` only checks node names and props. The
+  bridge is `InlineLayoutTests.testParseProducesExactlyTheRuns…`, which pins
+  `parse(_:)`'s output to the exact runs each golden fixture encodes (mark
+  **order** included — it is part of the wire format). Touch the scanner and you
+  must keep both halves green, or "the bytes didn't move" is an assumption.
+  That gap hid a real divergence for as long as links have existed: yjs writes a
+  mark value as `writeVarString(JSON.stringify(value))`, and JS does not escape
+  `/`, but Foundation does — so the app emitted `{"href":"https:\/\/x"}` where
+  yjs emits `{"href":"https://x"}`. Benign (`JSON.parse` reads both alike) but not
+  byte-identical. `linkValueJSON` now passes **`.withoutEscapingSlashes`**; keep
+  it, and reach for it in any future `JSONSerialization` output that must match
+  `JSON.stringify`.
 - **Authoring a link is the only asymmetric inline edit.** `wrapInlineMarker`
   can only wrap a selection in the same token on both sides, so it can never
   emit `[text](url)`; `MarkdownLinkEditing.swift` does that instead

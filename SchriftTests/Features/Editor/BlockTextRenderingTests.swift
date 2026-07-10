@@ -172,11 +172,71 @@ final class BlockTextRenderingTests: XCTestCase {
 
     // MARK: - Selection
 
-    func testTheCaretNeverRestsInsideHiddenSyntax() {
+    /// Every offset `snappedSelection` yields is a hidden-run boundary or was
+    /// never interior — so a caret dropped anywhere inside the url comes back out.
+    func testTheCaretNeverRestsStrictlyInsideHiddenSyntax() {
         let view = makeView("See [Review](https://x.dev/) now")
-        // Drop the caret in the middle of the hidden url.
-        let snapped = snappedSelection(NSRange(location: 20, length: 0), hidden: view.hiddenRanges)
-        XCTAssertFalse(
-            view.hiddenRanges.contains { NSLocationInRange(snapped.location, $0) && $0.location != snapped.location })
+        let length = view.textStorage.length
+        for offset in 0...length {
+            let snapped = snappedSelection(NSRange(location: offset, length: 0), hidden: view.hiddenRanges)
+            let interior = view.hiddenRanges.contains { range in
+                snapped.location > range.location && snapped.location < range.location + range.length
+            }
+            XCTAssertFalse(interior, "caret \(offset) snapped to \(snapped.location), which is hidden")
+        }
+    }
+
+    // MARK: - Tap hit-testing
+
+    /// The point at the centre of the link's rendered label.
+    private func labelCentre(_ view: EditorUITextView, labelRange: NSRange) -> CGPoint {
+        view.layoutManager.ensureLayout(for: view.textContainer)
+        let glyphRange = view.layoutManager.glyphRange(forCharacterRange: labelRange, actualCharacterRange: nil)
+        let rect = view.layoutManager.boundingRect(forGlyphRange: glyphRange, in: view.textContainer)
+        return CGPoint(x: rect.midX, y: rect.midY)
+    }
+
+    func testTappingTheLabelFindsTheLink() throws {
+        let view = makeView("See [Review](https://x.dev/) now")
+        let span = try XCTUnwrap(view.linkSpans.first)
+        XCTAssertEqual(view.linkSpan(at: labelCentre(view, labelRange: span.labelRange))?.url, "https://x.dev/")
+    }
+
+    /// The syntax is zero-width, so it sits on the same pixels as the text next
+    /// to it. Hit-testing the link's *full* range would open the menu when the
+    /// user taps the space after it.
+    func testTappingBesideTheLabelFindsNothing() throws {
+        let view = makeView("See [Review](https://x.dev/) now")
+        let span = try XCTUnwrap(view.linkSpans.first)
+        let centre = labelCentre(view, labelRange: span.labelRange)
+
+        // The word "See", well before the label.
+        XCTAssertNil(view.linkSpan(at: CGPoint(x: 2, y: centre.y)))
+        // Far to the right of all the text.
+        XCTAssertNil(view.linkSpan(at: CGPoint(x: 1500, y: centre.y)))
+    }
+
+    func testTappingABlockWithNoLinksFindsNothing() {
+        let view = makeView("Just some prose.")
+        XCTAssertNil(view.linkSpan(at: CGPoint(x: 10, y: 5)))
+    }
+
+    func testTheSecondOfTwoLinksIsFoundByItsOwnLabel() throws {
+        let view = makeView("[one](https://a.dev/) and [two](https://b.dev/)")
+        XCTAssertEqual(view.linkSpans.count, 2)
+        let second = view.linkSpans[1]
+        XCTAssertEqual(view.linkSpan(at: labelCentre(view, labelRange: second.labelRange))?.url, "https://b.dev/")
+    }
+
+    // MARK: - Blocks that style nothing keep nothing stale
+
+    /// Converting a block that held a link into a code block must drop its hidden
+    /// ranges, or the syntax stays invisible in a block that renders verbatim.
+    func testConvertingToACodeBlockClearsTheHiddenRanges() {
+        let view = makeView("See [Review](https://x.dev/) now")
+        XCTAssertFalse(view.hiddenRanges.isEmpty)
+        restyle(view, kind: .codeBlock(language: ""))
+        XCTAssertEqual(view.hiddenRanges, [])
+        XCTAssertEqual(view.linkSpans, [])
     }
 }

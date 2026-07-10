@@ -111,8 +111,20 @@ are already two engines that disagree — that disagreement *is* defect 2 above.
 A third engine for the editing surface would guarantee a third disagreement.
 
 So `InlineMarkdown`'s scanner is refactored to emit **ranges**, and today's
-`parse() -> [InlineRun]` becomes a thin projection of that same result. The
-golden hex tests and `MarkdownRoundTripTests` are the proof it did not drift.
+`parse() -> [InlineRun]` becomes a thin projection of that same result.
+
+**What proves the refactor didn't move the save bytes.** Not the golden hex
+tests on their own: `YjsEncoderTests` builds its `[InlineRun]` fixtures *by
+hand* and never runs the scanner, and `MarkdownYjsTests` only checks node names
+and props. So four tests pin `parse(_:)`'s output to exactly the runs each
+golden fixture encodes (`testParseProducesExactlyTheRunsTheGolden…`), plus one
+for nested mark **order**, which is itself part of the wire format. Together
+with the golden tests that is a byte-level proof by transitivity: markdown →
+runs → bytes. Change either side and one of them fails.
+
+The refactor was additionally differential-tested against the pre-refactor
+scanner over 200,068 inputs (68 hand-picked adversarial cases plus 200k fuzzed
+strings drawn from a markdown-metacharacter alphabet): zero divergence.
 
 ```swift
 enum InlineMark: Equatable { case bold, italic, code, strike, link(String) }
@@ -184,12 +196,41 @@ label is then re-scanned by `scan()`, which unescapes it.
 An input that cannot be made safe surfaces a friendly validation message and
 **inserts nothing** — never a rewritten or mangled link.
 
-## Also fixed
+## Also fixed: the encoder never matched Yjs's bytes for links
 
-The Italic bar button emits `*` instead of `_`, so what the user sees is what
-the save writes. `_x_` typed by hand still renders italic on the reading
-surface and saves as literal underscores; that asymmetry belongs to
-`AttributedString(markdown:)` and is not addressed here.
+Yjs writes a mark value as `writeVarString(JSON.stringify(value))`, and
+JavaScript's `JSON.stringify` does not escape `/`. Foundation's
+`JSONSerialization` does. So `linkValueJSON` emitted
+`{"href":"https:\/\/x"}` (32 bytes) where yjs emits `{"href":"https://x"}`
+(30) — for every link the app has ever saved.
+
+It was harmless (`JSON.parse` reads both identically) but it contradicted the
+`Core/Yjs` invariant, and the golden test could never have caught it:
+`YjsEncoderTests.testLinkMark` hand-builds its `InlineRun`s, so the production
+path never ran. `.withoutEscapingSlashes` fixes it; the new transitivity tests
+are what surfaced it.
+
+## Attempted and reverted: the Italic button
+
+The Italic button emits `_`, which `InlineMarkdown` ignores (to protect
+`snake_case`), so italic applied from the toolbar renders italic and then saves
+as literal underscores. Switching it to `*` looked like a one-line fix. It is
+not, and the attempt is recorded here so nobody repeats it:
+
+`wrapInlineMarker` decides wrap-vs-unwrap from the **single character on each
+side** of the selection. Applied with `*` to a selected bold word — source
+`**word**`, selection `{2,4}` — it finds `*` on both sides, takes the unwrap
+branch, and yields `*word*`. **The bold is silently destroyed and the
+full-overwrite save persists it**, and this change made it invisible by drawing
+the `**` at zero width.
+
+Repairing the unwrap branch does not rescue it either: wrapping would produce
+`***word***`, which this scanner reads as bold(`*word`) + literal(`*`).
+
+The real fix is CommonMark's flanking rule for `_` — `_word_` is italic,
+`snake_case` is not, and `**_word_**` is bold+italic. It changes saved bytes for
+existing documents, so it needs its own review and sign-off. Pinned meanwhile by
+`MarkdownShortcutsTests.testASingleAsteriskAroundABoldWordUnwrapsTheBold`.
 
 ## Explicitly out of scope
 
@@ -213,5 +254,7 @@ surface and saves as literal underscores; that asymmetry belongs to
 | glyph suppression | TextKit 1 stack in-test: width collapses, storage length unchanged |
 | caret rules | snapping, selection expansion, backspace normalization (pure) |
 | link editing | insert / edit / remove / sanitize, incl. rejected URLs |
+| tap hit-test | the label arms the menu; the space beside it does not |
 | save path | `YjsEncoderTests` and `MarkdownRoundTripTests` **unchanged** |
-| italic fix | bar emits `*`; the save parser reads it back as italic |
+| scanner ↔ golden | `parse(_:)` yields exactly the runs each golden fixture encodes |
+| italic hazard | `*` on a bold word unwraps it; `_` nests and preserves the bold |

@@ -215,18 +215,19 @@ final class EditorLinkEditingTests: XCTestCase {
         XCTAssertEqual(reparsed.label, "docs")
     }
 
-    /// The Italic bar button emits `*`, not `_`: `InlineMarkdown` ignores
-    /// underscores so `snake_case` survives, so `_x_` would render italic on the
-    /// reading surface and then save as literal underscores.
-    func testItalicMarkerSurvivesTheSaveParser() async {
-        let viewModel = await makeEditingViewModel(content: "make this italic")
-        focusFirstBlock(viewModel, selection: NSRange(location: 10, length: 6))
+    /// Bold's markers are now drawn at zero width, so a user selecting a bold
+    /// word sees no asterisks. Applying an inline marker must never quietly
+    /// remove the ones that are there.
+    func testApplyingItalicToABoldWordDoesNotDestroyTheBold() async {
+        let viewModel = await makeEditingViewModel(content: "a **word** b")
+        // "word" is the visible text; its source range inside "**word**".
+        focusFirstBlock(viewModel, selection: NSRange(location: 4, length: 4))
 
-        viewModel.applyInlineMarker("*")
+        viewModel.applyInlineMarker("_")
 
-        XCTAssertEqual(viewModel.blocks[0].text, "make this *italic*")
+        XCTAssertEqual(viewModel.blocks[0].text, "a **_word_** b")
         let runs = InlineMarkdown.parse(viewModel.blocks[0].text)
-        XCTAssertEqual(runs.map(\.text), ["make this ", "italic"])
-        XCTAssertEqual(runs[1].marks.map(\.key), ["italic"])
+        XCTAssertEqual(runs.map(\.text), ["a ", "_word_", " b"])
+        XCTAssertEqual(runs[1].marks.map(\.key), ["bold"], "the bold mark must survive")
     }
 }

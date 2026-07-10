@@ -216,29 +216,36 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
 
     @objc fileprivate func handleLinkTap(_ recognizer: UITapGestureRecognizer) {
         // The first tap on an unfocused block belongs to focusing it.
-        guard isFirstResponder, !linkSpans.isEmpty else { return }
+        guard isFirstResponder else { return }
         let point = recognizer.location(in: self)
-        guard let span = linkSpans.first(where: { labelContains(point, span: $0) }) else { return }
+        guard let span = linkSpan(at: point) else { return }
         onLinkTapped?(self, span, point)
     }
 
-    /// True when `point` lands on the link's *visible* label. Hit-testing the
-    /// full source range would arm the menu over the zero-width syntax, which
-    /// occupies the same pixels as its neighbours.
-    private func labelContains(_ point: CGPoint, span: InlineLinkSpan) -> Bool {
+    /// The link whose *visible label* contains `point`, if any.
+    ///
+    /// Hit-testing the link's full source range would arm the menu over its
+    /// zero-width syntax, which occupies the same pixels as whatever sits next to
+    /// it — tapping the space after a link would open the menu. Enumerating the
+    /// label's enclosing rects (rather than one bounding box) keeps a label that
+    /// wraps across lines from claiming the empty tail of the first line.
+    func linkSpan(at point: CGPoint) -> InlineLinkSpan? {
+        guard !linkSpans.isEmpty else { return nil }
         let origin = CGPoint(x: textContainerInset.left, y: textContainerInset.top)
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: span.labelRange, actualCharacterRange: nil)
-        var hit = false
-        layoutManager.enumerateEnclosingRects(
-            forGlyphRange: glyphRange, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-            in: textContainer
-        ) { rect, stop in
-            if rect.offsetBy(dx: origin.x, dy: origin.y).contains(point) {
-                hit = true
-                stop.pointee = true
+        return linkSpans.first { span in
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: span.labelRange, actualCharacterRange: nil)
+            var hit = false
+            layoutManager.enumerateEnclosingRects(
+                forGlyphRange: glyphRange, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                in: textContainer
+            ) { rect, stop in
+                if rect.offsetBy(dx: origin.x, dy: origin.y).contains(point) {
+                    hit = true
+                    stop.pointee = true
+                }
             }
+            return hit
         }
-        return hit
     }
 }
 
@@ -471,7 +478,18 @@ struct BlockTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingModelChange else { return }
-            if let editor = textView as? EditorUITextView {
+            // Only blocks that render inline markdown need a per-keystroke
+            // restyle. Code and `.unknown` blocks style nothing and hide nothing,
+            // yet they are the only ones that grow unbounded (`allowsNewlines`),
+            // and `applyInlineStyling` invalidates glyphs and layout across the
+            // *whole* block — which would re-lay-out every line of a long code
+            // block on every character. `applyStyling` has already given them
+            // their font, color and typing attributes.
+            //
+            // Converting a block to or from one of those kinds changes `styling`,
+            // so `updateUIView` restyles unconditionally and clears the outgoing
+            // block's hidden ranges. Skipping here cannot strand them.
+            if let editor = textView as? EditorUITextView, parent.styling.rendersInlineMarkdown {
                 parent.restyleInlineMarkdown(in: editor, coordinator: self)
             }
             textView.invalidateIntrinsicContentSize()
