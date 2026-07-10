@@ -488,6 +488,19 @@ new code reads like the surrounding code.
   adjacent text (Avatar, DocIcon) are instead marked `.accessibilityHidden(true)`.
 - A component view that would shadow a SwiftUI type takes a `Docs` prefix
   (`DocsButton`, `DocsTextField`); everything else keeps the bare name.
+- **A hard minimum size does not compress, and inside a `safeAreaInset` it is not
+  clipped either — it widens the whole screen.** `IconButton` floors its tap
+  target at 44pt; nine of them in `EditorFormattingBar` demanded a fixed 424pt,
+  more than any iPhone's content column (370pt at 402pt wide). That width
+  propagated out of the inset into the editor's outer `VStack`, which laid the
+  entire screen out wider than the display and centred it: the nav bar's back
+  chevron fell off the left edge. The bar therefore passes `minimumTapWidth: 0`
+  and lets its buttons divide the row; the 44pt tap **height** is never
+  negotiable. It had already been overflowing by 8pt with eight buttons — small
+  enough that nobody saw it. `EditorFormattingBarTests` pins the bar to the width
+  it is offered on the narrowest supported devices, so a tenth button fails a
+  test rather than a screen. Measure a row of fixed-minimum controls against the
+  narrowest device before adding to it.
 
 ### Editor & the on-device save (`Core/Yjs`)
 
