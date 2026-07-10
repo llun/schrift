@@ -26,8 +26,19 @@ struct EditorFormattingBar: View {
             barButton(icon: "bold", label: "Bold") {
                 viewModel.applyInlineMarker("**")
             }
+            // `*`, not `_`: `InlineMarkdown` ignores underscores so that
+            // `snake_case` survives, so a `_x_` written here would render italic
+            // on the reading surface and then save as literal underscores.
             barButton(icon: "italic", label: "Italic") {
-                viewModel.applyInlineMarker("_")
+                viewModel.applyInlineMarker("*")
+            }
+            // Blocks mode only: a markdown-source caret has no link span to
+            // retarget, and the sheet's whole job is to hide the syntax.
+            barButton(
+                icon: "link", label: "Link",
+                disabled: isMarkdownMode || !viewModel.canEditLink
+            ) {
+                viewModel.beginLinkEditing()
             }
             barButton(icon: "list.bullet", label: "Bulleted list") {
                 if isMarkdownMode {

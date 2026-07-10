@@ -37,6 +37,22 @@ func blocksContentEqual(_ lhs: [EditorBlock], _ rhs: [EditorBlock]) -> Bool {
     lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { $0.kind == $1.kind && $0.text == $1.text }
 }
 
+/// Whether a block's text is read as inline markdown — styled while editing,
+/// with its syntax hidden — or kept verbatim.
+///
+/// This must agree with `InlineMarkdown`, which declines to parse a code
+/// block's or an `.unknown` block's text: styling those would show formatting
+/// the full-overwrite save would never write. `.divider` and `.image` are leaves
+/// with no text at all.
+func rendersInlineMarkdown(_ kind: BlockKind) -> Bool {
+    switch kind {
+    case .codeBlock, .unknown, .divider, .image:
+        return false
+    case .paragraph, .heading, .bulletItem, .numberedItem, .checklistItem, .quote:
+        return true
+    }
+}
+
 /// 1-based position of the block within its contiguous run of numbered items.
 func numberedIndex(of index: Int, in blocks: [EditorBlock]) -> Int {
     var position = 1

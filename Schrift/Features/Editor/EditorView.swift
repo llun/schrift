@@ -280,6 +280,22 @@ struct EditorView: View {
                 await viewModel.insertPhoto(loadingData: { try await newItem.loadTransferable(type: Data.self) })
             }
         }
+        // `.sheet(item:)` rather than `isPresented`: the request carries the
+        // block, span and range the edit applies to, and a fresh `id` per
+        // presentation reseeds the fields.
+        .sheet(item: $viewModel.linkEditor) { request in
+            LinkEditorSheet(
+                request: request,
+                onSave: { label, url in viewModel.commitLinkEditing(label: label, url: url) },
+                onRemove: request.span.map { span in
+                    {
+                        viewModel.cancelLinkEditing()
+                        viewModel.removeLink(blockID: request.blockID, span: span)
+                    }
+                },
+                onCancel: { viewModel.cancelLinkEditing() }
+            )
+        }
     }
 
     private var uploadingPhotoBanner: some View {

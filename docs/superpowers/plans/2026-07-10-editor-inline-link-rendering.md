@@ -1,7 +1,7 @@
 # The block editor shows raw markdown instead of styled inline text
 
 Date: 2026-07-10
-Status: Planned
+Status: Implemented
 
 ## The report
 
