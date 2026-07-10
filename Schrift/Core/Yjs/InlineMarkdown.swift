@@ -351,10 +351,11 @@ enum InlineMarkdown {
         /// alone: changing it would move the saved bytes of every `*italic*` and
         /// `**bold**` in every existing document.
         ///
-        /// The opener pairs with the **nearest** closer, not by reaching past an
-        /// interior opener. An intermediate lone `_` that can open but not close
-        /// (a `_` at a left word boundary — space before, letter after) starts a
-        /// *new* emphasis, so the search stops there and this opener stays literal.
+        /// An opener never reaches **past** an interior opener to grab a distant
+        /// closer (equivalently: a closer pairs with the nearest opener, as in
+        /// CommonMark). An intermediate lone `_` that can open but not close (a `_`
+        /// at a left word boundary — space before, letter after) starts a *new*
+        /// emphasis, so the search stops there and this opener stays literal.
         /// Without it, `_foo _bar_` italicized `foo _bar` where CommonMark — and
         /// the reading surface — italicize only `bar`, leaving `_foo ` literal. It
         /// is the conservative direction (an ambiguous leading `_` stays content),
@@ -497,7 +498,7 @@ private func isLoneUnderscore(_ chars: [Character], at index: Int) -> Bool {
 
 /// Unlike `*`, a `_` may not open emphasis inside a word — this is what keeps
 /// `snake_case` literal while `_word_` is emphasis.
-func canOpenUnderscore(_ chars: [Character], at index: Int) -> Bool {
+private func canOpenUnderscore(_ chars: [Character], at index: Int) -> Bool {
     guard isLeftFlanking(chars, at: index) else { return false }
     guard isRightFlanking(chars, at: index) else { return true }
     // Right-flanking implies a non-whitespace predecessor exists.
@@ -505,7 +506,7 @@ func canOpenUnderscore(_ chars: [Character], at index: Int) -> Bool {
 }
 
 /// The mirror of `canOpenUnderscore`: a `_` may not close emphasis inside a word.
-func canCloseUnderscore(_ chars: [Character], at index: Int) -> Bool {
+private func canCloseUnderscore(_ chars: [Character], at index: Int) -> Bool {
     guard isRightFlanking(chars, at: index) else { return false }
     guard isLeftFlanking(chars, at: index) else { return true }
     return neighbor(chars, index + 1).map(isMarkdownPunctuation) ?? false

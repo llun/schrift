@@ -79,20 +79,22 @@ It is deliberately left alone: changing it would move the saved bytes of every
 `*italic*` and `**bold**` in every existing document, which is outside the
 signed-off delta.
 
-### The opener pairs with the nearest closer
+### An opener never reaches past an interior opener
 
 `matchUnderscoreEmphasis` stops its search at an interior lone `_` that can
 **open but not close** — a `_` at a left word boundary (space before, letter
-after), which begins a *new* emphasis. So `_foo _bar_` italicizes only `bar`,
+after), which begins a *new* emphasis. (Equivalently: a closer pairs with the
+nearest opener, as in CommonMark.) So `_foo _bar_` italicizes only `bar`,
 leaving `_foo ` literal, exactly as CommonMark and the reading surface do; the
 naive first-closer search reached past the interior `_` and italicized
 `foo _bar`. This is the conservative direction (an ambiguous leading `_` stays
 content) and it never drops a character — it only ever emphasizes *less*.
 
-It is **not** a full CommonMark delimiter stack. Deeper `_`+`*` tangles like
-`_a _b_ c_` still differ (the scanner emphasizes `b`; CommonMark emphasizes the
-outer span too) — the same signed-off out-of-scope class the greedy `*` matcher
-already lives with. The fix was validated by the same differential run below: it
+It is **not** a full CommonMark delimiter stack. Deeper `_`+`*` (and `_`+`~`)
+tangles like `_a _b_ c_` still differ (the scanner emphasizes `b`; CommonMark
+emphasizes the outer span too), and Foundation's GFM strikethrough consumes a
+`~` adjacent to a `_` in a way pure CommonMark does not — the same signed-off
+out-of-scope class the greedy `*` matcher already lives with. The fix was validated by the same differential run below: it
 moves 71 fuzzed inputs onto Foundation's answer and 1 off it (a pure `_`+`*`
 soup string), drops zero characters, and keeps every output a subsequence of its
 input.
@@ -199,9 +201,10 @@ Foundation's `AttributedString(markdown:)` as an independent oracle.
 | divergences changing a non-italic mark key (bold, strike, code, link) | **0** |
 | runs carrying a duplicated mark key | **0** |
 
-The zero on the third row is the load-bearing one: it proves `adding(_:to:)` and
-every edit to the `*`/`**`/`~~`/code paths are behavior-preserving on their own,
-because any change there would surface on an input with no underscore at all.
+The zero on the *diverging inputs containing no `_`* row is the load-bearing
+one: it proves `adding(_:to:)` and every edit to the `*`/`**`/`~~`/code paths are
+behavior-preserving on their own, because any change there would surface on an
+input with no underscore at all.
 
 Two earlier iterations failed this harness and were fixed because of it: the
 code-span/link precedence bug above, and — in the harness itself — a check that
