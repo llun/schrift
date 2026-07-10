@@ -1,0 +1,27 @@
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_c705f20456c874::t_c3acfdf3ecd4be 354-358
+  s_c705f20456c874::t_9d5e8e7dea8323 501
+  s_c705f20456c874::t_980b48cc4d0454 509
+docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md
+  s_c705f20456c874::t_b6d2e95d4d6cc2 82,86-87
+  s_c705f20456c874::t_75e4ac9150374d 93-97
+  s_c705f20456c874::t_d4cd63913f6fd5 204-207
+CLAUDE.md
+  s_c705f20456c874::t_32fd995c69c29c 783-786
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "ea694c87adac40971847bf0dab054e2d01e11f37",
+  "prompts": {},
+  "sessions": {
+    "s_c705f20456c874": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d0206a6-9549-40f1-a918-8f431e030413",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
