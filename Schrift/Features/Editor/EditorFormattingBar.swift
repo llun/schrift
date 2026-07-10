@@ -106,6 +106,13 @@ struct EditorFormattingBar: View {
             color: brand ? .brand : .neutral,
             size: .small,
             isDisabled: disabled ?? !hasTarget,
+            // The buttons divide the bar's width rather than each claiming 44pt.
+            // `IconButton`'s default minimum does not compress, so nine of them
+            // demanded 424pt — wider than any iPhone's content column — and the
+            // overflow propagated out through `safeAreaInset` to the editor's
+            // outer VStack, shifting the nav bar off screen. The 44pt tap height
+            // is unchanged, and the buttons stay contiguous.
+            minimumTapWidth: 0,
             action: action
         )
         .frame(maxWidth: .infinity)
