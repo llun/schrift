@@ -3,6 +3,18 @@
 Date: 2026-07-10
 Status: Implemented
 
+> **Amendment, 2026-07-10.** The sections below describing `InlineMarkdown` as
+> deliberately ignoring underscores — and the Italic button's `_` as therefore
+> not surviving a save — are **superseded**. The scanner now implements
+> CommonMark's flanking rule for lone underscores, so `_x_` is emphasis,
+> `snake_case` is content, and `**_x_**` round-trips as bold+italic. The
+> `wrapInlineMarker` unwrap branch now requires a delimiter run of exactly the
+> marker's length, so `testASingleAsteriskAroundABoldWordUnwrapsTheBold` (named
+> below) no longer exists; it is now
+> `testASingleAsteriskAroundABoldWordWrapsRatherThanEatingTheBold`. The body
+> below is preserved verbatim as the record of what was true at the time. See
+> [`2026-07-10-underscore-emphasis-flanking.md`](2026-07-10-underscore-emphasis-flanking.md).
+
 ## The report
 
 > Help me fix the block edit that it shows markdown instead of just text as

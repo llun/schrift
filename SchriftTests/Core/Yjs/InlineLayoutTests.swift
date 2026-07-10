@@ -18,7 +18,11 @@ final class InlineLayoutTests: XCTestCase {
         "run `**not bold**` here",
         "~~gone~~ text",
         "see [docs](https://example.com/x) now",
-        "call snake_case_name and _not italic_",
+        "call snake_case_name and _italic_",
+        "**_bold italic_**",
+        "_a`b_c`d_",
+        "__strong stays literal__",
+        "_*_*",
         "2 * 3 = 6",
         "unterminated **bold",
         "\\*not italic\\* and \\`not code\\`",
@@ -109,6 +113,22 @@ final class InlineLayoutTests: XCTestCase {
         let layout = InlineMarkdown.layout(of: source)
         let ns = source as NSString
         XCTAssertEqual(layout.syntax.map { ns.substring(with: $0) }, ["**", "**"])
+    }
+
+    /// The block editor draws `syntax` at zero width, so an emphasizing `_` must
+    /// be hidden while an intra-word one stays on screen as the content it is.
+    func testUnderscoreDelimitersAreSyntaxButIntraWordUnderscoresAreContent() {
+        let source = "snake_case and _italic_"
+        let layout = InlineMarkdown.layout(of: source)
+        let ns = source as NSString
+        XCTAssertEqual(layout.syntax.map { ns.substring(with: $0) }, ["_", "_"])
+        XCTAssertEqual(layout.spans.map { ns.substring(with: $0.range) }, ["snake_case and ", "italic"])
+    }
+
+    /// A `_` run of two or more is never a delimiter, so none of it is hidden.
+    func testUnderscoreRunsAreEntirelyContent() {
+        let layout = InlineMarkdown.layout(of: "__strong stays literal__")
+        XCTAssertEqual(layout.syntax, [])
     }
 
     func testBackslashIsSyntaxAndTheEscapedCharacterIsContent() {

@@ -736,16 +736,8 @@ markdown write endpoint**. Understand this before touching the save path:
   *projection* of that same result. The editor's styling and the save path
   therefore cannot disagree about what a `*` means. Do **not** add a third
   engine: the reading surface's `AttributedString(markdown:)` is already a
-  second one, and their disagreement is a **live bug** — `_x_` renders italic
-  there and saves as literal underscores, so the Italic bar button (which emits
-  `_`) does not survive a save. Do **not** "fix" it by switching the button to
-  `*`: `wrapInlineMarker` decides wrap-vs-unwrap from the single character on
-  each side, so `*` on a selected **bold** word finds `*` on both sides, unwraps,
-  and silently destroys the bold — invisibly, since `**` is now zero-width. Nor
-  does wrapping help: `***x***` parses here as bold(`*x`) + literal(`*`). The
-  real fix is CommonMark's flanking rule for `_` (which keeps `snake_case` safe
-  and makes `**_x_**` bold+italic); it changes saved bytes, so it needs sign-off.
-  Pinned by `MarkdownShortcutsTests.testASingleAsteriskAroundABoldWordUnwrapsTheBold`.
+  second one, and it is the **oracle** the scanner converges on — where they
+  disagree, the scanner is wrong.
   Ranges are UTF-16; the scanner walks `Character`s and carries a
   prefix sum, because `NSRange` and grapheme clusters are not the same thing.
   Blocks whose text is literal (`rendersInlineMarkdown(_:)` — code blocks,
@@ -764,6 +756,42 @@ markdown write endpoint**. Understand this before touching the save path:
   byte-identical. `linkValueJSON` now passes **`.withoutEscapingSlashes`**; keep
   it, and reach for it in any future `JSONSerialization` output that must match
   `JSON.stringify`.
+- **`_` is emphasis, by CommonMark's flanking rule, but only when it stands
+  alone.** A `_` is a delimiter candidate only when neither neighbour is a `_`;
+  it opens when left-flanking and (not right-flanking or preceded by
+  punctuation), and closes under the mirror rule. So `_x_` is italic,
+  `**_x_**` is bold+italic (what BlockNote exports), `snake_case` is content, and
+  `__x__`/`___x___`/`___` stay literal — the runs-of-two-or-more carve-out is
+  what keeps every such document byte-identical. "Punctuation" is CommonMark's:
+  ASCII punctuation ∪ Unicode `P*`, spelled out in `asciiPunctuation` — **not**
+  `Character.isSymbol`, which would wrongly emphasize `😀_x_😀` and `€_x_€` while
+  `a+_x_+a` (ASCII `+`) genuinely is emphasis. Flanking reads the **whole**
+  `chars` array, never the recursion's `bounds`: that is why `**_x_**` opens.
+  Landing this **changed saved bytes** and required sign-off; before it, opening
+  any web-authored italic document and letting it save destroyed the italic and
+  wrote literal underscores into the server's text —
+  `parse("**_word_**")` returned bold(`_word_`). See
+  [`docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md`](docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md).
+- **Code spans and links bind tighter than emphasis.**
+  `matchUnderscoreEmphasis`'s closing search steps over them whole, or `` _`_` ``
+  closes on the `_` *inside* the code span and destroys it, and `_[x](a_ b)_`
+  tears the link apart — both persisted by the full-overwrite save. `*`'s
+  `matchDelimiter` does **not** step over them; leave it that way, because
+  changing it moves the saved bytes of every `*italic*` and `**bold**` that
+  already exists. When `_` and `*` fight over the same characters the leftmost
+  opener wins, which is also what CommonMark does.
+- **Never let one run carry the same mark key twice.** `*_x_*` nests italic in
+  italic; a BlockNote format map has one entry per key, so `adding(_:to:)` skips
+  a mark already present (links exempt — nested links carry distinct `href`s).
+  The golden hex tests cannot catch a duplicate: they hand-build their runs.
+- **Differential-fuzz the scanner against itself before believing a byte claim.**
+  Compile the committed `InlineMarkdown.swift` and the modified one into two
+  standalone binaries, run both over one corpus, diff. The invariant that
+  matters is *"no input lacking the character you changed may diverge"* — that
+  is what proved the dedupe and the untouched `*` paths were behavior-preserving.
+  Add Foundation as a third binary for an independent oracle. It earns its keep:
+  it caught the code-span precedence bug above, on inputs no one would think to
+  write.
 - **Authoring a link is the only asymmetric inline edit.** `wrapInlineMarker`
   can only wrap a selection in the same token on both sides, so it can never
   emit `[text](url)`; `MarkdownLinkEditing.swift` does that instead
