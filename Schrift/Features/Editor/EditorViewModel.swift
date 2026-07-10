@@ -6,7 +6,6 @@ final class EditorViewModel {
     enum Mode: Equatable {
         case reading
         case blocks
-        case markdown
     }
 
     enum SaveState: Equatable {
@@ -68,9 +67,6 @@ final class EditorViewModel {
     var cursorRequest: CursorRequest?
     var selection: NSRange?
     var slashQueryText: String?
-    /// Set when the loaded markdown wouldn't survive block editing losslessly;
-    /// editing then defaults to the markdown source view.
-    var openInMarkdownMode = false
     var lastSyncedAt: Date? = nil
     var hasLocalCopy = false
     var updateAvailable = false
@@ -714,10 +710,11 @@ final class EditorViewModel {
         cursorRequest = nil
         selection = nil
         slashQueryText = nil
-        openInMarkdownMode = !markdown.isEmpty && !markdownSurvivesRoundTrip(markdown)
         // The dirty baseline uses the same representation currentMarkdown()
-        // produces, so an unchanged document never triggers a save.
-        savedMarkdown = openInMarkdownMode ? markdown : serializeMarkdown(blocks)
+        // produces in blocks mode, so an unchanged document never triggers a save.
+        // `rawMarkdown` keeps the authoritative loaded source for reading-mode
+        // paths (see `currentMarkdown()`), which `blocks` may parse lossily.
+        savedMarkdown = serializeMarkdown(blocks)
         displayedSourceMarkdown = markdown
         hasLoadedContent = true
         if let syncedAt {
@@ -803,27 +800,21 @@ final class EditorViewModel {
         if blocks.isEmpty {
             let seed = EditorBlock(kind: .paragraph)
             blocks = [seed]
-            mode = openInMarkdownMode ? .markdown : .blocks
-            if mode == .blocks {
-                focusBlock(seed.id, cursorAt: 0)
-            }
+            mode = .blocks
+            focusBlock(seed.id, cursorAt: 0)
             return
         }
-        mode = openInMarkdownMode ? .markdown : .blocks
-        if mode == .blocks, let blockID, let index = blockIndex(blockID) {
+        mode = .blocks
+        if let blockID, let index = blockIndex(blockID) {
             focusBlock(blockID, cursorAt: (blocks[index].text as NSString).length)
         }
     }
 
     func finishEditing() {
         flushPendingChanges()
-        // Keep both representations in sync so the next editing session
-        // (whichever mode it opens in) never shows or saves stale content.
-        if mode == .markdown {
-            blocks = parseEditorBlocks(rawMarkdown)
-        } else {
-            rawMarkdown = serializeMarkdown(blocks)
-        }
+        // Sync the authoritative source to the edited blocks so reading-mode paths
+        // (Options "copy markdown", a late photo insert) reflect the session's work.
+        rawMarkdown = serializeMarkdown(blocks)
         mode = .reading
         focusedBlockID = nil
         cursorRequest = nil
@@ -832,34 +823,12 @@ final class EditorViewModel {
         clearError()
     }
 
-    func setMode(_ newMode: Mode) {
-        guard newMode != mode else { return }
-        switch (mode, newMode) {
-        case (.blocks, .markdown):
-            rawMarkdown = serializeMarkdown(blocks)
-        case (.markdown, .blocks):
-            blocks = parseEditorBlocks(rawMarkdown)
-            if blocks.isEmpty {
-                blocks = [EditorBlock(kind: .paragraph)]
-            }
-        default:
-            break
-        }
-        focusedBlockID = nil
-        cursorRequest = nil
-        selection = nil
-        slashQueryText = nil
-        mode = newMode
-    }
-
     /// The markdown representation of whatever surface currently owns the content.
-    /// Only **blocks** mode makes `blocks` authoritative. In markdown mode the user
-    /// is editing the source directly, and in reading mode `rawMarkdown` is kept in
-    /// sync by `install`/`finishEditing`/`setMode` while `blocks` may be a lossy
-    /// parse of it — so a full-overwrite save must carry the source, not the
-    /// serialization. Do **not** key this off `openInMarkdownMode`: that flag is
-    /// computed once in `install` and goes stale the moment a session authors
-    /// content the block model can't represent.
+    /// Only **blocks** (editing) mode makes `blocks` authoritative. In reading mode
+    /// `rawMarkdown` is the loaded source, kept in sync by `install`/`finishEditing`,
+    /// while `blocks` may be a lossy parse of it — so a full-overwrite save triggered
+    /// while reading (a late photo insert) must carry the source, not the
+    /// serialization.
     func currentMarkdown() -> String {
         mode == .blocks ? serializeMarkdown(blocks) : rawMarkdown
     }
@@ -1012,14 +981,6 @@ final class EditorViewModel {
     /// Wraps (or unwraps) the current selection in an inline markdown marker.
     /// With no selection, inserts a marker pair and places the caret between.
     func applyInlineMarker(_ marker: String) {
-        if mode == .markdown {
-            let range = selection ?? NSRange(location: (rawMarkdown as NSString).length, length: 0)
-            let result = wrapInlineMarker(text: rawMarkdown, range: range, marker: marker)
-            rawMarkdown = result.text
-            selection = result.selection
-            markDirty()
-            return
-        }
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         switch blocks[index].kind {
         case .codeBlock, .unknown, .divider, .image:
@@ -1158,29 +1119,6 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Inserts raw text at the caret in markdown-source mode.
-    func insertAtCursor(_ token: String) {
-        let source = rawMarkdown as NSString
-        let range = clampedSelectionRange(in: source)
-        rawMarkdown = source.replacingCharacters(in: range, with: token)
-        selection = NSRange(location: range.location + (token as NSString).length, length: 0)
-        markDirty()
-    }
-
-    private func clampedSelectionRange(in source: NSString) -> NSRange {
-        var range = selection ?? NSRange(location: source.length, length: 0)
-        range.location = min(max(0, range.location), source.length)
-        range.length = min(max(0, range.length), source.length - range.location)
-        return range
-    }
-
-    /// What `insertAtCursor(token)` *would* produce — so a caller can verify the
-    /// result before committing to it.
-    private func markdownReplacingSelection(with token: String) -> String {
-        let source = rawMarkdown as NSString
-        return source.replacingCharacters(in: clampedSelectionRange(in: source), with: token)
-    }
-
     /// Applies a block type chosen from the slash menu to the focused block,
     /// consuming the "/query" text.
     func applySlashSelection(_ item: SlashMenuItem) {
@@ -1305,25 +1243,10 @@ final class EditorViewModel {
         guard hasLoadedContent, !isDocumentDiscarded else { return }
         defer { flushPendingChanges() }
 
-        if mode == .markdown {
-            // The image markdown must land on a line of its own: `parseImageLine`
-            // is column-zero anchored and requires the line to *end* in `)`, so
-            // `Hello![](url)` would round-trip as literal text, not an image. The
-            // surrounding blank lines also keep it out of an adjacent paragraph.
-            // Even then the caret may sit inside a fenced code block, which
-            // swallows the line — verify before committing, exactly as below.
-            let token = "\n\n![](\(url))\n\n"
-            guard addsImage(to: rawMarkdown, after: markdownReplacingSelection(with: token), url: url) else {
-                reportPhotoFailure()
-                return
-            }
-            insertAtCursor(token)  // marks dirty
-            return
-        }
-
-        // The session already ended. Append to the authoritative source — `blocks`
-        // may be a lossy parse of it — rather than to a serialization that would
-        // rewrite what the user actually wrote.
+        // The session already ended (Done was tapped while the upload was in
+        // flight). Append to the authoritative source — `blocks` may be a lossy
+        // parse of it — rather than to a serialization that would rewrite what the
+        // user actually wrote.
         if mode == .reading {
             let source = currentMarkdown()
             let appended = markdownAppendingImage(to: source, url: url)
@@ -1415,12 +1338,6 @@ final class EditorViewModel {
     func updateTitle(_ text: String) {
         guard title != text else { return }
         title = text
-        markDirty()
-    }
-
-    func updateRawMarkdown(_ text: String) {
-        guard rawMarkdown != text else { return }
-        rawMarkdown = text
         markDirty()
     }
 

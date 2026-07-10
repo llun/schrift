@@ -142,7 +142,6 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.title, "Doc")
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertNil(viewModel.errorMessage)
-        XCTAssertFalse(viewModel.openInMarkdownMode)
     }
 
     func testLoadWithNullContentProducesNoBlocks() async {
@@ -203,18 +202,6 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertEqual(viewModel.rawMarkdown, "Server content")
-    }
-
-    func testLoadDefaultsToMarkdownModeWhenRoundTripUnsafe() async {
-        let (viewModel, _, _, _) = makeEnvironment()
-        // A lone opening fence can't round-trip through block editing.
-        stubLoad(content: "```")
-
-        await viewModel.load()
-        viewModel.startEditing()
-
-        XCTAssertTrue(viewModel.openInMarkdownMode)
-        XCTAssertEqual(viewModel.mode, .markdown)
     }
 
     // MARK: - Instant local phase + revalidation
@@ -474,38 +461,23 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks.first?.text, "New")
     }
 
-    func testNonRoundTrippableCachedContentOpensInMarkdownMode() async {
-        // Destructive-save regression: the cached install must run the same
-        // round-trip check as a fetch, or editing a lone opening fence would
-        // silently rewrite it via a full-overwrite save. (A "*"-bulleted line
-        // is not a suitable fixture here — it canonicalizes to "-" and still
-        // round-trips cleanly, so it wouldn't exercise this path.)
-        let (viewModel, _, _, contentCache) = makeEnvironment()
-        contentCache.save(cachedEntry(markdown: "```"))
-        stubOffline()
-
-        await viewModel.load()
-
-        XCTAssertTrue(viewModel.openInMarkdownMode)
-    }
-
-    func testApplyPendingUpdateRecomputesRoundTripMode() async {
-        // The banner apply must route through install() — a bare blocks swap
-        // would skip the round-trip check.
+    func testApplyPendingUpdateInstallsFreshContent() async {
+        // The banner apply must route through install() — a bare blocks swap would
+        // skip the reparse and leave rawMarkdown (the reading-mode source) stale.
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry(markdown: "# Old"))
         stubOffline()
         await viewModel.load()
         viewModel.startEditing()
-        stubLoad(content: "```")
+        stubLoad(content: "# Fresh")
         await viewModel.load()
         XCTAssertTrue(viewModel.updateAvailable)
         viewModel.finishEditing()
 
         viewModel.applyPendingUpdate()
 
-        XCTAssertTrue(viewModel.openInMarkdownMode)
-        XCTAssertEqual(viewModel.rawMarkdown, "```")
+        XCTAssertEqual(viewModel.rawMarkdown, "# Fresh")
+        XCTAssertEqual(viewModel.blocks.first?.text, "Fresh")
     }
 
     func testRevalidateWhileDirtyUpdatesCacheSilently() async {
@@ -1369,53 +1341,28 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.saveState, .saved)
     }
 
-    // MARK: - Mode toggle
+    // MARK: - currentMarkdown
 
-    func testSwitchingToMarkdownSerializesBlocks() async {
-        let (viewModel, _, _, _) = makeEnvironment()
-        stubLoad(content: "# Title\\n\\nBody")
-        await viewModel.load()
-        viewModel.startEditing()
-
-        viewModel.setMode(.markdown)
-
-        XCTAssertEqual(viewModel.mode, .markdown)
-        XCTAssertEqual(viewModel.rawMarkdown, "# Title\n\nBody\n")
-    }
-
-    func testSwitchingBackToBlocksReparsesMarkdown() async {
+    func testCurrentMarkdownSerializesBlocksWhileEditing() async {
         let (viewModel, _, _, _) = makeEnvironment()
         stubLoad(content: "# Title")
         await viewModel.load()
         viewModel.startEditing()
-        viewModel.setMode(.markdown)
-
-        viewModel.updateRawMarkdown("# Title\n\n- New item\n")
-        viewModel.setMode(.blocks)
 
         XCTAssertEqual(viewModel.mode, .blocks)
-        XCTAssertTrue(
-            blocksContentEqual(
-                viewModel.blocks,
-                [
-                    EditorBlock(kind: .heading(level: 1), text: "Title"),
-                    EditorBlock(kind: .bulletItem, text: "New item"),
-                ]))
-        XCTAssertTrue(viewModel.isDirty)
+        XCTAssertEqual(viewModel.currentMarkdown(), "# Title\n")
     }
 
-    func testCurrentMarkdownFollowsTheActiveMode() async {
+    func testCurrentMarkdownReturnsTheLoadedSourceWhileReading() async {
+        // Reading mode keeps `rawMarkdown` as the authoritative loaded source — a
+        // late photo insert saves from it, not from a re-serialization of the lossy
+        // blocks. A lone opening fence can't round-trip, so this is where it matters.
         let (viewModel, _, _, _) = makeEnvironment()
-        stubLoad(content: "# Title")
+        stubLoad(content: "```")
         await viewModel.load()
-        viewModel.startEditing()
 
-        XCTAssertEqual(viewModel.currentMarkdown(), "# Title\n")
-
-        viewModel.setMode(.markdown)
-        viewModel.updateRawMarkdown("raw edited")
-
-        XCTAssertEqual(viewModel.currentMarkdown(), "raw edited")
+        XCTAssertEqual(viewModel.mode, .reading)
+        XCTAssertEqual(viewModel.currentMarkdown(), "```")
     }
 
     // MARK: - Subpages fetch-awareness

@@ -351,18 +351,6 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].text, "")
     }
 
-    func testInsertAtCursorInMarkdownMode() {
-        let viewModel = makeViewModel(blocks: [])
-        viewModel.mode = .markdown
-        viewModel.rawMarkdown = "Hello"
-        viewModel.selection = NSRange(location: 5, length: 0)
-
-        viewModel.insertAtCursor("\n- ")
-
-        XCTAssertEqual(viewModel.rawMarkdown, "Hello\n- ")
-        XCTAssertEqual(viewModel.selection, NSRange(location: 8, length: 0))
-    }
-
     func testInsertDividerBelowFocusedAddsTrailingParagraph() {
         let block = EditorBlock(kind: .paragraph, text: "Body")
         let viewModel = makeViewModel(blocks: [block])

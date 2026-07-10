@@ -150,18 +150,6 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty, "the save must reach the coordinator, not a debounce that dies with the view")
     }
 
-    func testInsertPhotoFlushesTheSaveImmediatelyFromMarkdownMode() async throws {
-        stubUploadPipeline()
-        let viewModel = await makeEditingViewModel()
-        viewModel.mode = .markdown
-        viewModel.rawMarkdown = "Hello"
-        viewModel.selection = NSRange(location: 5, length: 0)
-
-        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
-
-        XCTAssertFalse(viewModel.isDirty)
-    }
-
     /// The bytes we upload must be a JPEG *and* be named `photo.jpg`: the backend
     /// magic-sniffs the content and stores the attachment under an `-unsafe` key
     /// (which never renders inline) when the two disagree. The picked photo here
@@ -220,25 +208,6 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[3].text, "after")
     }
 
-    /// The inserted markdown must actually parse back as an `.image` block.
-    /// `parseImageLine` is column-zero anchored and requires the line to end in
-    /// `)`, so `Hello![](url)` would round-trip as literal text — the user would
-    /// upload a photo and get raw `![](…)` characters in the reading view and on
-    /// the web. The image therefore gets a line of its own.
-    func testInsertPhotoInMarkdownModeInsertsAStandaloneImageLine() async throws {
-        stubUploadPipeline()
-        let viewModel = await makeEditingViewModel()
-        viewModel.mode = .markdown
-        viewModel.rawMarkdown = "Hello"
-        viewModel.selection = NSRange(location: 5, length: 0)
-
-        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
-
-        XCTAssertNil(viewModel.errorMessage)
-        let blocks = parseEditorBlocks(viewModel.rawMarkdown)
-        XCTAssertEqual(blocks.map(\.kind), [.paragraph, .image(alt: "", url: expectedMediaURL)])
-    }
-
     /// Blocks mode saves `serializeMarkdown(blocks)`, and `MarkdownYjs.encode`
     /// re-parses exactly that. A paragraph holding a bare "```" turns the serialized
     /// image line into code, so the photo never reaches the server even though the
@@ -283,41 +252,6 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
     }
 
-    /// A fenced code block swallows the inserted line just as an unterminated fence
-    /// swallows an appended one. The markdown branch must verify too — otherwise the
-    /// user uploads a photo, gets literal `![](…)` inside their code, and no error.
-    func testInsertPhotoWithTheCaretInsideACodeFenceErrorsInsteadOfVanishing() async throws {
-        stubUploadPipeline()
-        let viewModel = await makeEditingViewModel()
-        viewModel.mode = .markdown
-        viewModel.rawMarkdown = "```\ncode\n```"
-        viewModel.selection = NSRange(location: 8, length: 0)  // inside the fence
-
-        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
-
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
-        XCTAssertEqual(viewModel.rawMarkdown, "```\ncode\n```", "the source must be untouched")
-        // See the blocks-mode fence test: `isDirty` is cleared by the `defer`'d flush,
-        // so the draft is what discriminates a refused insert from a committed one.
-        XCTAssertNil(viewModel.saveCoordinator.storedDraft(documentID: documentID))
-        XCTAssertNil(viewModel.saveCoordinator.pendingSave(documentID: documentID))
-    }
-
-    func testInsertPhotoInMarkdownModeMidLineStillYieldsAStandaloneImage() async throws {
-        stubUploadPipeline()
-        let viewModel = await makeEditingViewModel()
-        viewModel.mode = .markdown
-        viewModel.rawMarkdown = "Hello"
-        viewModel.selection = NSRange(location: 3, length: 0)  // "Hel|lo"
-
-        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
-
-        let blocks = parseEditorBlocks(viewModel.rawMarkdown)
-        XCTAssertEqual(
-            blocks.map(\.kind), [.paragraph, .image(alt: "", url: expectedMediaURL), .paragraph])
-        XCTAssertEqual(blocks.map(\.text), ["Hel", "", "lo"])
-    }
-
     /// Neither Done nor a navigation pop cancels the picker's Task. The image must
     /// still land, `rawMarkdown` must stay in sync, and the save must be enqueued
     /// **immediately** — the autosave debounce is owned by this view model, which a
@@ -334,7 +268,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
         XCTAssertTrue(
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
-            "rawMarkdown must not go stale, or a markdown-mode save would drop the image")
+            "rawMarkdown must not go stale, or the reading-mode save would drop the image")
         XCTAssertFalse(viewModel.isDirty, "the save must be flushed to the coordinator, not left to the debounce")
     }
 
@@ -342,18 +276,22 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// the image would render as literal code. We must neither rewrite the source to
     /// make room (that invents an empty code block the user never wrote) nor report
     /// success without producing an image. Fail loudly and leave the source alone.
+    ///
+    /// A late upload (picker `Task` outliving the session) lands in reading mode,
+    /// whose branch appends to the authoritative loaded `rawMarkdown`. Loading a
+    /// non-round-tripping source and inserting without editing exercises exactly that
+    /// path — the source stays the byte-exact original the block model can't model.
     func testInsertPhotoIntoAnUnterminatedFenceErrorsRatherThanCorruptOrVanish() async throws {
         stubUploadPipeline(content: "Notes\\n```")
-        let viewModel = await makeEditingViewModel()
-        XCTAssertTrue(viewModel.openInMarkdownMode, "an unterminated fence must not round-trip")
-        XCTAssertEqual(viewModel.mode, .markdown)
-        viewModel.finishEditing()
+        let viewModel = makeViewModel()
+        await viewModel.load()
         XCTAssertEqual(viewModel.mode, .reading)
+        XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the loaded source is the authoritative copy")
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
-        XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the authored source must survive untouched")
+        XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the loaded source must survive untouched")
         XCTAssertFalse(
             viewModel.rawMarkdown.contains("```\n```"), "we must not invent an empty code block to make room")
         // Not `isDirty`: the `defer`'d `flushPendingChanges()` clears it before the test
@@ -369,13 +307,12 @@ final class EditorPhotoInsertionTests: XCTestCase {
     /// make that unreachable in production, but that's the server's invariant, not
     /// this function's.
     func testInsertPhotoDoesNotMistakeAPreExistingIdenticalImageForTheNewOne() async throws {
-        stubUploadPipeline()
-        let viewModel = await makeEditingViewModel()
-        viewModel.mode = .markdown
-        // Already contains the same url, and the tail is an OPEN fence that will
-        // swallow whatever we append.
-        viewModel.rawMarkdown = "![](\(expectedMediaURL))\n\n```\ncode"
-        viewModel.selection = NSRange(location: (viewModel.rawMarkdown as NSString).length, length: 0)
+        // Loaded source already contains the same url, and its tail is an OPEN fence
+        // that will swallow whatever the reading-mode insert appends.
+        stubUploadPipeline(content: "![](\(expectedMediaURL))\\n\\n```\\ncode")
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        XCTAssertEqual(viewModel.mode, .reading)
         let before = viewModel.rawMarkdown
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
@@ -400,36 +337,10 @@ final class EditorPhotoInsertionTests: XCTestCase {
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
             "the appended markdown must parse back to an .image block, not literal text")
         // The "carries the source, not a serialization of the lossy blocks" claim is
-        // asserted by the sibling `testInsertPhotoPreservesALossySourceAuthoredDuringTheSession`:
-        // here the source round-trips, so `currentMarkdown()`, `rawMarkdown`, and
-        // `serializeMarkdown(blocks)` are all equal and nothing in this test can tell them apart.
-    }
-
-    /// `openInMarkdownMode` is computed once, in `install()`. A document whose
-    /// *loaded* source round-trips but whose *session-authored* source doesn't must
-    /// still be saved from its source — so `currentMarkdown()` must not consult that
-    /// flag. Here the fence is typed during the session, leaving the flag false.
-    func testInsertPhotoPreservesALossySourceAuthoredDuringTheSession() async throws {
-        stubUploadPipeline(content: "Notes")
-        let viewModel = await makeEditingViewModel()
-        XCTAssertFalse(viewModel.openInMarkdownMode, "the loaded source round-trips, so the flag stays false")
-
-        viewModel.mode = .markdown
-        viewModel.rawMarkdown = "Notes\n```"  // now lossy, but the flag is stale
-        viewModel.finishEditing()
-        XCTAssertEqual(viewModel.mode, .reading)
-
-        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
-
-        // Had `currentMarkdown()` consulted the stale flag it would have returned
-        // serializeMarkdown(blocks) == "Notes\n\n```\n```\n", whose appended image
-        // *does* parse — so the insert would have succeeded and silently rewritten
-        // the source. Both assertions below fail in that world.
-        XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the authored source must survive untouched")
-        XCTAssertFalse(
-            viewModel.rawMarkdown.contains("```\n```"),
-            "a stale openInMarkdownMode must not route the save through the lossy blocks")
-        XCTAssertEqual(viewModel.currentMarkdown(), viewModel.rawMarkdown)
+        // asserted by `testInsertPhotoIntoAnUnterminatedFenceErrorsRatherThanCorruptOrVanish`,
+        // which loads a non-round-tripping source: here the source round-trips, so
+        // `currentMarkdown()`, `rawMarkdown`, and `serializeMarkdown(blocks)` are all
+        // equal and nothing in this test can tell them apart.
     }
 
     /// Every sibling async intent (`load`, `refresh`, `startEditing`) clears
