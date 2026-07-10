@@ -93,6 +93,18 @@ names the section with the details.
   run a single class or method by appending
   `-only-testing:SchriftTests/<ClassName>` (or `…/<ClassName>/<testMethod>`)
   to the same command; run the full suite before declaring work done.
+- **Running the app in the iOS Simulator — the "Offline" quirk.** When you launch
+  the app in the Simulator it often shows **"Offline"** even though the network is
+  fine. This is a **Simulator-only** networking quirk — an HTTP/3 (QUIC) stall
+  between the Simulator's stack and the server's CloudFront front end — **not an
+  app bug and not a regression**. Do **not** treat it as evidence of a broken
+  change, and do not "fix" it in app code (there is nothing to fix). If you need to
+  verify a change end-to-end in the Simulator, **sign in and retry**: the app is
+  usable once past the stall, and pull-to-refresh / reopening the document usually
+  succeeds on a second attempt. It does not happen on a real device, which is where
+  networking behavior is verified for real. (Related giveaway: an **"Empty
+  document"** in the editor means the server genuinely returned empty markdown, not
+  this stall.)
 - All build configuration (bundle ids, deployment target, `SWIFT_VERSION`,
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`, not
