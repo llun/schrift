@@ -173,8 +173,8 @@ italic mark. **Every one of them contains both a `_` and a `*`** — a `_` alone
 or a `*` alone can never trigger it — and 61 of the 64 now agree with
 Foundation's parser where the old scanner agreed with it **zero** times. The old
 scanner was not "safe" on these inputs; it destroyed `*` characters instead of
-`_` ones. The remaining 3 are `~~`/`*`/`_` tangles that neither scanner has ever
-parsed the way CommonMark does.
+`_` ones. The remaining 3 are `*`/`_` tangles (two also with a stray single `~`)
+that neither scanner has ever parsed the way CommonMark does.
 
 ## Differential test
 
