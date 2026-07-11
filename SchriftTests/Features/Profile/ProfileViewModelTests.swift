@@ -49,7 +49,6 @@ final class ProfileViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertNil(viewModel.user)
-        XCTAssertNil(viewModel.errorMessage)
         XCTAssertFalse(viewModel.isLoading)
     }
 

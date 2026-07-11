@@ -6,7 +6,6 @@ final class ProfileViewModel {
     var user: CurrentUser?
     var serverVersion: String?
     var isLoading = false
-    var errorMessage: String?
 
     let client: DocsAPIClient
 
