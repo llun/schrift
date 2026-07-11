@@ -120,7 +120,7 @@ initials read on both); the **accent palette is identical** in dark.
 | surfaceSunken | `F8F8F9` | `0E0E13` |
 | surfaceRaised | `FFFFFF` | `202028` |
 | surfaceMuted | `F0F0F3` | `2A2A34` |
-| surfaceScrim | `1B1B23`@45% | `000000`@50% |
+| surfaceScrim | `1B1B23`@45% | `000000`@45% |
 | textPrimary | `25252F` | `F4F4F6` |
 | textSecondary | `5D5D70` | `B4B4C6` |
 | textTertiary | `69697D` | `9494AA` |
