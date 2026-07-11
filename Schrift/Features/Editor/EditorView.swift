@@ -218,6 +218,8 @@ struct EditorView: View {
                 viewModel: shareViewModel,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID)
             )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(
             isPresented: $isPresentingOptionsSheet,
@@ -238,6 +240,8 @@ struct EditorView: View {
                     onDeleted?()
                 }
             )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 

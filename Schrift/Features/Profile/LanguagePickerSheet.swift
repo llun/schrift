@@ -17,10 +17,7 @@ struct LanguagePickerSheet: View {
 
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(Array(AppLanguage.allCases.enumerated()), id: \.element) { index, language in
-                        if index > 0 {
-                            ProfileRowDivider()
-                        }
+                    ForEach(AppLanguage.allCases) { language in
                         Button {
                             loc.language = language
                             dismiss()

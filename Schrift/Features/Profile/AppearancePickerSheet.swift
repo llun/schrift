@@ -37,9 +37,6 @@ struct AppearancePickerSheet: View {
             VStack(spacing: 0) {
                 ForEach(options.indices, id: \.self) { index in
                     let option = options[index]
-                    if index > 0 {
-                        ProfileRowDivider()
-                    }
                     Button {
                         store.selected = option
                         dismiss()

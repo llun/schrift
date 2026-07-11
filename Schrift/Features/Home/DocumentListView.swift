@@ -34,7 +34,8 @@ struct DocumentListView: View {
                 title: loc[.home_title],
                 subtitle: serverHost,
                 largeTitle: true,
-                trailingActions: trailingActions
+                trailingActions: trailingActions,
+                showsBorder: false
             )
 
             if isOffline {
