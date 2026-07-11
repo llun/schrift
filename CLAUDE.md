@@ -704,8 +704,9 @@ new code reads like the surrounding code.
   `ListSection` card, no `ProfileRowDivider`, and **no `NavigationStack`/"Done"
   toolbar**. Reuse `SheetHeader` for new sheet chrome rather than re-adding a nav
   bar; the grabber is `.presentationDragIndicator(.visible)` and the close button
-  is wired to `@Environment(\.dismiss)`. The header pads `4 / 16 / 10` (the
-  app's 16pt sheet gutter, not the prototype's 18); rows keep `ListRow`'s own
+  is wired to `@Environment(\.dismiss)`. The header pads `16 / 16 / 10` (the
+  app's 16pt sheet gutter top and sides so the title clears the drag indicator,
+  not the prototype's 18); rows keep `ListRow`'s own
   16pt so the title and the row icons align. This is the pattern for future
   action/menu sheets. **The `Share` and `Version-history` sheets follow the same
   pattern** — a `SheetHeader` over a boxless body drawn on `surfacePage`, no
