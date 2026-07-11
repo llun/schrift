@@ -39,6 +39,28 @@ final class LocalizationStoreTests: XCTestCase {
         store.language = .english
         XCTAssertEqual(store.format(.search_results_other, 3), "3 results")
     }
+    func testSlovenePluralSelectsDualAndFewForms() {
+        let store = LocalizationStore(userDefaults: defaults)
+        store.language = .slovene
+        func results(_ n: Int) -> String {
+            store.plural(
+                n, one: .search_results_one, other: .search_results_other,
+                two: .search_results_two, few: .search_results_few)
+        }
+        XCTAssertEqual(results(1), "1 rezultat")  // one
+        XCTAssertEqual(results(2), "2 rezultata")  // two (dual)
+        XCTAssertEqual(results(3), "3 rezultati")  // few
+        XCTAssertEqual(results(5), "5 rezultatov")  // other
+    }
+    func testPluralFallsBackToOtherWhenDualFewOmitted() {
+        // A caller that passes only one/other still works in Slovene — the
+        // missing dual/few forms resolve to `other`.
+        let store = LocalizationStore(userDefaults: defaults)
+        store.language = .slovene
+        XCTAssertEqual(
+            store.plural(2, one: .search_results_one, other: .search_results_other),
+            "2 rezultatov")
+    }
     func testPersistsLanguage() {
         LocalizationStore(userDefaults: defaults).language = .german
         XCTAssertEqual(LocalizationStore(userDefaults: defaults).language, .german)
