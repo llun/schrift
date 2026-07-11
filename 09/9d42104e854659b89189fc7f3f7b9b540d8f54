@@ -1,0 +1,21 @@
+Schrift/App/SchriftApp.swift
+  s_dd62fdd4f50c18::t_e11cc01b871266 5-6,9-10,12-13
+Schrift/DesignSystem/Components/Badge.swift
+  s_dd62fdd4f50c18::t_02dda90e754146 95-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "099d42104e854659b89189fc7f3f7b9b540d8f54",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
