@@ -31,15 +31,11 @@ enum Strings_nl {
         .home_empty_title: "Nog geen documenten",
         .home_empty_body: "Documenten die je maakt of die met jou worden gedeeld, verschijnen hier.",
         .home_newdoc: "Nieuw document",
-        .home_pin: "Vastzetten",
-        .home_unpin: "Losmaken",
         .home_dismiss_error: "Foutmelding sluiten",
-        .home_document_options: "Documentopties",
         .home_select_document: "Selecteer een document",
         .home_error_load: "Kan documenten niet laden. Trek omlaag om het opnieuw te proberen.",
         .home_error_search: "Zoeken mislukt. Probeer het opnieuw.",
         .home_error_create: "Kan geen document maken. Probeer het opnieuw.",
-        .home_error_favorite: "Kan favoriet niet bijwerken. Probeer het opnieuw.",
 
         // Search
         .search_title: "Zoeken",
@@ -74,7 +70,6 @@ enum Strings_nl {
         .docrow_pinned: "Vastgezet",
         .docrow_shared_with_organization: "Gedeeld met organisatie",
         .docrow_public: "Openbaar",
-        .docrow_more_options: "Meer opties",
         .docrow_available_offline: "Offline beschikbaar",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

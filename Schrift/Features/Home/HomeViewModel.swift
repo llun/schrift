@@ -202,18 +202,6 @@ final class HomeViewModel {
         }
     }
 
-    func toggleFavorite(_ document: Document) async {
-        clearError()
-        let marker = diagnostics?.marker()
-        do {
-            try await client.setFavorite(documentID: document.id, isFavorite: !document.isFavorite)
-            await load()
-        } catch {
-            errorKey = .home_error_favorite
-            errorDetail = requestFailureDetail(after: marker, in: diagnostics)
-        }
-    }
-
     // MARK: - Error state
 
     /// The one way an error leaves the screen without a reload. `createDocument`'s failure

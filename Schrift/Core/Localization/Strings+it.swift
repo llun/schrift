@@ -31,15 +31,11 @@ enum Strings_it {
         .home_empty_title: "Nessun documento",
         .home_empty_body: "I documenti che crei o che vengono condivisi con te appariranno qui.",
         .home_newdoc: "Nuovo documento",
-        .home_pin: "Blocca",
-        .home_unpin: "Sblocca",
         .home_dismiss_error: "Ignora errore",
-        .home_document_options: "Opzioni documento",
         .home_select_document: "Seleziona un documento",
         .home_error_load: "Impossibile caricare i documenti. Trascina per aggiornare e riprova.",
         .home_error_search: "Ricerca non riuscita. Riprova.",
         .home_error_create: "Impossibile creare il documento. Riprova.",
-        .home_error_favorite: "Impossibile aggiornare il preferito. Riprova.",
 
         // Search
         .search_title: "Cerca",
@@ -73,7 +69,6 @@ enum Strings_it {
         .docrow_pinned: "Bloccato",
         .docrow_shared_with_organization: "Condiviso con l'organizzazione",
         .docrow_public: "Pubblico",
-        .docrow_more_options: "Altre opzioni",
         .docrow_available_offline: "Disponibile offline",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

@@ -29,15 +29,11 @@ enum Strings_zhHant {
         .home_empty_title: "尚無文件",
         .home_empty_body: "你建立或別人與你共用的文件會顯示在這裡。",
         .home_newdoc: "新文件",
-        .home_pin: "釘選",
-        .home_unpin: "取消釘選",
         .home_dismiss_error: "關閉錯誤",
-        .home_document_options: "文件選項",
         .home_select_document: "選擇文件",
         .home_error_load: "無法載入文件。下拉重新整理以再試一次。",
         .home_error_search: "搜尋失敗。請再試一次。",
         .home_error_create: "無法建立文件。請再試一次。",
-        .home_error_favorite: "無法更新最愛。請再試一次。",
 
         // Search
         .search_title: "搜尋",
@@ -71,7 +67,6 @@ enum Strings_zhHant {
         .docrow_pinned: "已釘選",
         .docrow_shared_with_organization: "與機構共用",
         .docrow_public: "公開",
-        .docrow_more_options: "更多選項",
         .docrow_available_offline: "可離線使用",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

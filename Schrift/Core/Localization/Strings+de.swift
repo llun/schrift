@@ -31,15 +31,11 @@ enum Strings_de {
         .home_empty_title: "Noch keine Dokumente",
         .home_empty_body: "Dokumente, die du erstellst oder die mit dir geteilt werden, werden hier angezeigt.",
         .home_newdoc: "Neues Dokument",
-        .home_pin: "Anheften",
-        .home_unpin: "Nicht mehr anheften",
         .home_dismiss_error: "Fehler ausblenden",
-        .home_document_options: "Dokumentoptionen",
         .home_select_document: "Dokument auswählen",
         .home_error_load: "Dokumente konnten nicht geladen werden. Zum Aktualisieren nach unten ziehen.",
         .home_error_search: "Suche fehlgeschlagen. Bitte versuche es erneut.",
         .home_error_create: "Dokument konnte nicht erstellt werden. Bitte versuche es erneut.",
-        .home_error_favorite: "Favorit konnte nicht aktualisiert werden. Bitte versuche es erneut.",
 
         // Search
         .search_title: "Suche",
@@ -75,7 +71,6 @@ enum Strings_de {
         .docrow_pinned: "Angeheftet",
         .docrow_shared_with_organization: "Mit der Organisation geteilt",
         .docrow_public: "Öffentlich",
-        .docrow_more_options: "Weitere Optionen",
         .docrow_available_offline: "Offline verfügbar",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

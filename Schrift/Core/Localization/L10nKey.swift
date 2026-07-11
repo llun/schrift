@@ -37,15 +37,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case home_empty_title = "home.empty.title"  // "No documents yet"
     case home_empty_body = "home.empty.body"  // "Documents you create or that are shared with you will appear here."
     case home_newdoc = "home.new_document"  // "New doc"
-    case home_pin = "home.pin"  // "Pin"
-    case home_unpin = "home.unpin"  // "Unpin"
     case home_dismiss_error = "home.dismiss_error"  // "Dismiss error"
-    case home_document_options = "home.document_options"  // "Document Options"
     case home_select_document = "home.select_document"  // "Select a Document"
     case home_error_load = "home.error.load"  // "Couldn't load documents. Pull to refresh to try again."
     case home_error_search = "home.error.search"  // "Search failed. Please try again."
     case home_error_create = "home.error.create"  // "Couldn't create a document. Please try again."
-    case home_error_favorite = "home.error.favorite"  // "Couldn't update favorite. Please try again."
 
     // Search
     case search_title = "search.title"  // "Search"
@@ -83,7 +79,6 @@ enum L10nKey: String, CaseIterable, Sendable {
     case docrow_pinned = "docrow.pinned"  // "Pinned"
     case docrow_shared_with_organization = "docrow.shared_with_organization"  // "Shared with organization"
     case docrow_public = "docrow.public"  // "Public"
-    case docrow_more_options = "docrow.more_options"  // "More options"
     case docrow_available_offline = "docrow.available_offline"  // "Available offline"
 
     // LinkReachPill hints (design-system component; labels reuse reach.*)
