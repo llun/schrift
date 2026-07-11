@@ -10,8 +10,10 @@ enum BadgeTone {
 }
 
 struct BadgeStyleHex: Equatable {
-    let backgroundHex: UInt32
-    let foregroundHex: UInt32
+    let backgroundLightHex: UInt32
+    let backgroundDarkHex: UInt32
+    let foregroundLightHex: UInt32
+    let foregroundDarkHex: UInt32
 }
 
 enum BadgeStyleResolver {
@@ -21,17 +23,29 @@ enum BadgeStyleResolver {
         switch tone {
         case .accent:
             return BadgeStyleHex(
-                backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary)
+                backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
+                foregroundLightHex: DocsColorHex.textBrandSecondary,
+                foregroundDarkHex: DocsColorHexDark.textBrandSecondary)
         case .neutral:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.gray100, foregroundHex: DocsColorHex.gray600)
+            return BadgeStyleHex(
+                backgroundLightHex: DocsColorHex.gray100, backgroundDarkHex: DocsColorHexDark.gray100,
+                foregroundLightHex: DocsColorHex.gray600, foregroundDarkHex: DocsColorHexDark.gray600)
         case .danger:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.dangerSoft, foregroundHex: DocsColorHex.dangerStrong)
+            return BadgeStyleHex(
+                backgroundLightHex: DocsColorHex.dangerSoft, backgroundDarkHex: DocsColorHexDark.dangerSoft,
+                foregroundLightHex: DocsColorHex.dangerStrong, foregroundDarkHex: DocsColorHexDark.dangerStrong)
         case .success:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.successSoft, foregroundHex: DocsColorHex.success650)
+            return BadgeStyleHex(
+                backgroundLightHex: DocsColorHex.successSoft, backgroundDarkHex: DocsColorHexDark.successSoft,
+                foregroundLightHex: DocsColorHex.success650, foregroundDarkHex: DocsColorHexDark.success650)
         case .warning:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.warningSoft, foregroundHex: DocsColorHex.warning650)
+            return BadgeStyleHex(
+                backgroundLightHex: DocsColorHex.warningSoft, backgroundDarkHex: DocsColorHexDark.warningSoft,
+                foregroundLightHex: DocsColorHex.warning650, foregroundDarkHex: DocsColorHexDark.warning650)
         case .info:
-            return BadgeStyleHex(backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650)
+            return BadgeStyleHex(
+                backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
+                foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650)
         }
     }
 }
@@ -45,7 +59,7 @@ struct Badge: View {
 
     var body: some View {
         let style = BadgeStyleResolver.style(tone: tone)
-        let foreground = Color(hex: style.foregroundHex)
+        let foreground = Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex)
         HStack(spacing: DocsSpacing.space3xs) {
             if dot {
                 Circle()
@@ -62,7 +76,7 @@ struct Badge: View {
         .padding(.horizontal, DocsSpacing.spaceXS)
         .padding(.vertical, 5)
         .foregroundStyle(foreground)
-        .background(Color(hex: style.backgroundHex))
+        .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex))
         .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
     }
 }
