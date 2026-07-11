@@ -11,6 +11,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case common_untitled = "common.untitled_document"
     case common_profile = "common.profile"  // "Profile"
     case common_clear_search = "common.clear_search"  // "Clear search"
+    case common_you = "common.you"  // "(you)" — suffix after the current user's name
     // Search results plural
     case search_results_one = "search.results.one"  // "%d result"
     case search_results_other = "search.results.other"  // "%d results"

@@ -1,7 +1,11 @@
 import SwiftUI
 
-func shareMemberDisplaySuffix(isCurrentUser: Bool) -> String? {
-    isCurrentUser ? "(you)" : nil
+/// Pure and testable: the *localized* "(you)" label is resolved by the caller
+/// (from `LocalizationStore`) and passed in, so this only owns the
+/// current-user branching, not the translation lookup — mirrors
+/// `docRowAccessibilityLabel`.
+func shareMemberDisplaySuffix(isCurrentUser: Bool, youLabel: String) -> String? {
+    isCurrentUser ? youLabel : nil
 }
 
 struct ShareMemberRow: View {
@@ -24,7 +28,7 @@ struct ShareMemberRow: View {
                         .foregroundStyle(DocsColor.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser) {
+                    if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser, youLabel: loc[.common_you]) {
                         Text(suffix)
                             .font(DocsFont.caption)
                             .foregroundStyle(DocsColor.textTertiary)

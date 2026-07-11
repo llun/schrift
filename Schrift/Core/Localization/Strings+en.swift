@@ -10,6 +10,7 @@ enum Strings_en {
         .common_untitled: "Untitled document",
         .common_profile: "Profile",
         .common_clear_search: "Clear search",
+        .common_you: "(you)",
         .search_results_one: "%d result",
         .search_results_other: "%d results",
 
