@@ -169,7 +169,7 @@ enum Strings_nl {
         .editor_subpages_empty: "Organiseer dit document door subpagina's te maken.",
         .editor_add_subpage: "Subpagina toevoegen",
         .editor_action_done: "Gereed",
-        .editor_action_pages: "Pagina's",
+        .editor_action_edit: "Bewerken",
         .editor_action_share: "Delen",
         .editor_action_options: "Opties",
 
@@ -230,12 +230,6 @@ enum Strings_nl {
         .editor_link_remove: "Link verwijderen",
         .editor_link_save: "Opslaan",
         .editor_link_add: "Toevoegen",
-
-        // Editor - document tree panel (DocTreePanel)
-        .editor_tree_pages: "Pagina's",
-        .editor_tree_close: "Pagina's sluiten",
-        .editor_tree_empty: "Nog geen subpagina's. Voeg er een toe om dit document te organiseren.",
-        .editor_tree_new_page: "Nieuwe pagina",
 
         // Editor - version history
         .versions_title: "Versiegeschiedenis",

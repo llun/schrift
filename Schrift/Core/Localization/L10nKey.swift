@@ -176,7 +176,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_subpages_empty = "editor.subpages_empty"  // "Organize this document by creating subpages."
     case editor_add_subpage = "editor.add_subpage"  // "Add a subpage"
     case editor_action_done = "editor.action.done"  // "Done"
-    case editor_action_pages = "editor.action.pages"  // "Pages"
+    case editor_action_edit = "editor.action.edit"  // "Edit"
     case editor_action_share = "editor.action.share"  // "Share"
     case editor_action_options = "editor.action.options"  // "Options"
 
@@ -237,12 +237,6 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_link_remove = "editor.link.remove"  // "Remove link"
     case editor_link_save = "editor.link.save"  // "Save"
     case editor_link_add = "editor.link.add"  // "Add"
-
-    // Editor - document tree panel (DocTreePanel)
-    case editor_tree_pages = "editor.tree.pages"  // "Pages"
-    case editor_tree_close = "editor.tree.close"  // "Close pages"
-    case editor_tree_empty = "editor.tree.empty"  // "No subpages yet. Add one to organize this document."
-    case editor_tree_new_page = "editor.tree.new_page"  // "New page"
 
     // Editor - version history (VersionHistorySheetView). Read-only: no
     // in-app restore, hence "Restore on the web" rather than a "Restore" pill.

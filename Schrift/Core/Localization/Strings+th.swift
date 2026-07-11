@@ -167,7 +167,7 @@ enum Strings_th {
         .editor_subpages_empty: "จัดระเบียบเอกสารนี้ด้วยการสร้างหน้าย่อย",
         .editor_add_subpage: "เพิ่มหน้าย่อย",
         .editor_action_done: "เสร็จ",
-        .editor_action_pages: "หน้า",
+        .editor_action_edit: "แก้ไข",
         .editor_action_share: "แชร์",
         .editor_action_options: "ตัวเลือก",
 
@@ -228,12 +228,6 @@ enum Strings_th {
         .editor_link_remove: "นำลิงก์ออก",
         .editor_link_save: "บันทึก",
         .editor_link_add: "เพิ่ม",
-
-        // Editor - document tree panel (DocTreePanel)
-        .editor_tree_pages: "หน้า",
-        .editor_tree_close: "ปิดหน้า",
-        .editor_tree_empty: "ยังไม่มีหน้าย่อย เพิ่มหน้าย่อยเพื่อจัดระเบียบเอกสารนี้",
-        .editor_tree_new_page: "หน้าใหม่",
 
         // Editor - version history
         .versions_title: "ประวัติเวอร์ชัน",

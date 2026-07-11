@@ -627,8 +627,9 @@ to what the Home list passes (still a `Document` / id).
   `contentCache.remove(documentID:)` and asks the coordinator to drop the
   document's queued/pending work (cancel any coalesced save,
   `PendingDraftStore.remove(documentID:)`). Without this, a deleted document
-  remains reachable from retained Search/Shared results and `DocTreePanel`,
-  renders its full cached content instantly, and — because transient revalidation
+  remains reachable from retained Search/Shared results (and, historically, the
+  since-removed `DocTreePanel`), renders its full cached content instantly, and —
+  because transient revalidation
   failures are swallowed — reads as alive indefinitely. The revalidation-404
   purge (§2) is defense-in-depth for deletes performed on other devices.
 - **Sign-out**: the sign-out flow calls `contentCache.removeAll()` (threaded

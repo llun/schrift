@@ -165,7 +165,7 @@ enum Strings_zhHant {
         .editor_subpages_empty: "建立子頁面來整理此文件。",
         .editor_add_subpage: "新增子頁面",
         .editor_action_done: "完成",
-        .editor_action_pages: "頁面",
+        .editor_action_edit: "編輯",
         .editor_action_share: "分享",
         .editor_action_options: "選項",
 
@@ -226,12 +226,6 @@ enum Strings_zhHant {
         .editor_link_remove: "移除連結",
         .editor_link_save: "儲存",
         .editor_link_add: "新增",
-
-        // Editor - document tree panel (DocTreePanel)
-        .editor_tree_pages: "頁面",
-        .editor_tree_close: "關閉頁面",
-        .editor_tree_empty: "尚無子頁面。新增一個來整理此文件。",
-        .editor_tree_new_page: "新頁面",
 
         // Editor - version history
         .versions_title: "版本歷史",

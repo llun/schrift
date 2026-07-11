@@ -165,7 +165,7 @@ enum Strings_zhHans {
         .editor_subpages_empty: "通过创建子页面来整理此文档。",
         .editor_add_subpage: "添加子页面",
         .editor_action_done: "完成",
-        .editor_action_pages: "页面",
+        .editor_action_edit: "编辑",
         .editor_action_share: "分享",
         .editor_action_options: "选项",
 
@@ -226,12 +226,6 @@ enum Strings_zhHans {
         .editor_link_remove: "移除链接",
         .editor_link_save: "保存",
         .editor_link_add: "添加",
-
-        // Editor - document tree panel (DocTreePanel)
-        .editor_tree_pages: "页面",
-        .editor_tree_close: "关闭页面",
-        .editor_tree_empty: "暂无子页面。添加一个以整理此文档。",
-        .editor_tree_new_page: "新建页面",
 
         // Editor - version history
         .versions_title: "版本历史",

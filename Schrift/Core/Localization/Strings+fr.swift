@@ -169,7 +169,7 @@ enum Strings_fr {
         .editor_subpages_empty: "Organisez ce document en créant des sous-pages.",
         .editor_add_subpage: "Ajouter une sous-page",
         .editor_action_done: "Terminé",
-        .editor_action_pages: "Pages",
+        .editor_action_edit: "Modifier",
         .editor_action_share: "Partager",
         .editor_action_options: "Options",
 
@@ -230,12 +230,6 @@ enum Strings_fr {
         .editor_link_remove: "Supprimer le lien",
         .editor_link_save: "Enregistrer",
         .editor_link_add: "Ajouter",
-
-        // Editor - document tree panel (DocTreePanel)
-        .editor_tree_pages: "Pages",
-        .editor_tree_close: "Fermer les pages",
-        .editor_tree_empty: "Aucune sous-page pour le moment. Ajoutez-en une pour organiser ce document.",
-        .editor_tree_new_page: "Nouvelle page",
 
         // Editor - version history
         .versions_title: "Historique des versions",
