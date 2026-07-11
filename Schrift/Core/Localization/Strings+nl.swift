@@ -237,6 +237,13 @@ enum Strings_nl {
         .editor_tree_empty: "Nog geen subpagina's. Voeg er een toe om dit document te organiseren.",
         .editor_tree_new_page: "Nieuwe pagina",
 
+        // Editor - version history
+        .versions_title: "Versiegeschiedenis",
+        .versions_current: "Huidige versie",
+        .versions_restore_web: "Herstellen via het web",
+        .versions_error: "Kan versies niet laden. Probeer het opnieuw.",
+        .versions_empty: "Nog geen eerdere versies.",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "Afbeelding",
         .editor_image_loading_a11y: "Afbeelding laden",

@@ -236,6 +236,13 @@ enum Strings_en {
         .editor_tree_empty: "No subpages yet. Add one to organize this document.",
         .editor_tree_new_page: "New page",
 
+        // Editor - version history
+        .versions_title: "Version history",
+        .versions_current: "Current version",
+        .versions_restore_web: "Restore on the web",
+        .versions_error: "Couldn't load versions. Please try again.",
+        .versions_empty: "No earlier versions yet.",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "Image",
         .editor_image_loading_a11y: "Loading image",

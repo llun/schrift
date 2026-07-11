@@ -235,6 +235,13 @@ enum Strings_th {
         .editor_tree_empty: "ยังไม่มีหน้าย่อย เพิ่มหน้าย่อยเพื่อจัดระเบียบเอกสารนี้",
         .editor_tree_new_page: "หน้าใหม่",
 
+        // Editor - version history
+        .versions_title: "ประวัติเวอร์ชัน",
+        .versions_current: "เวอร์ชันปัจจุบัน",
+        .versions_restore_web: "กู้คืนบนเว็บ",
+        .versions_error: "โหลดเวอร์ชันไม่ได้ โปรดลองอีกครั้ง",
+        .versions_empty: "ยังไม่มีเวอร์ชันก่อนหน้า",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "รูปภาพ",
         .editor_image_loading_a11y: "กำลังโหลดรูปภาพ",

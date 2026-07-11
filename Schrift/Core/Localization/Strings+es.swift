@@ -240,6 +240,13 @@ enum Strings_es {
         .editor_tree_empty: "Aún no hay subpáginas. Añade una para organizar este documento.",
         .editor_tree_new_page: "Nueva página",
 
+        // Editor - version history
+        .versions_title: "Historial de versiones",
+        .versions_current: "Versión actual",
+        .versions_restore_web: "Restaurar en la web",
+        .versions_error: "No se pudieron cargar las versiones. Inténtalo de nuevo.",
+        .versions_empty: "Aún no hay versiones anteriores.",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "Imagen",
         .editor_image_loading_a11y: "Cargando imagen",
