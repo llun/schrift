@@ -7,8 +7,10 @@ enum LinkReach: String {
 }
 
 struct LinkReachPillStyleHex: Equatable {
-    let backgroundHex: UInt32
-    let foregroundHex: UInt32
+    let backgroundLightHex: UInt32
+    let backgroundDarkHex: UInt32
+    let foregroundLightHex: UInt32
+    let foregroundDarkHex: UInt32
     let systemImage: String
     let label: String
     let hint: String
@@ -19,16 +21,20 @@ enum LinkReachPillStyleResolver {
         switch reach {
         case .restricted:
             return LinkReachPillStyleHex(
-                backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textSecondary,
+                backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
+                foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
                 systemImage: "lock.fill", label: "Restricted", hint: "Only invited people")
         case .authenticated:
             // Reference uses `vpn_lock` (a lock over a globe) for the org-gated state.
             return LinkReachPillStyleHex(
-                backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650,
+                backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
+                foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
                 systemImage: "network.badge.shield.half.filled", label: "Connected", hint: "Anyone in the org")
         case .public:
             return LinkReachPillStyleHex(
-                backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary,
+                backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
+                foregroundLightHex: DocsColorHex.textBrandSecondary,
+                foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
                 systemImage: "globe", label: "Public", hint: "Anyone with the link")
         }
     }
@@ -58,8 +64,8 @@ struct LinkReachPill: View {
         .padding(.leading, showsHint ? DocsSpacing.spaceXS : 10)
         .padding(.trailing, showsHint ? DocsSpacing.spaceSM : 10)
         .padding(.vertical, showsHint ? DocsSpacing.space2xs : 5)
-        .foregroundStyle(Color(hex: style.foregroundHex))
-        .background(Color(hex: style.backgroundHex))
+        .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
+        .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex))
         .clipShape(Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(style.label)

@@ -8,8 +8,10 @@ enum TextFieldState: Equatable {
 }
 
 struct TextFieldStyleHex: Equatable {
-    let borderHex: UInt32
-    let labelHex: UInt32
+    let borderLightHex: UInt32
+    let borderDarkHex: UInt32
+    let labelLightHex: UInt32
+    let labelDarkHex: UInt32
 }
 
 enum TextFieldStyleResolver {
@@ -19,14 +21,22 @@ enum TextFieldStyleResolver {
         // dims the label to preserve the sunk look.
         switch state {
         case .normal:
-            return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textSecondary)
+            return TextFieldStyleHex(
+                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault,
+                labelLightHex: DocsColorHex.textSecondary, labelDarkHex: DocsColorHexDark.textSecondary)
         case .focused:
             // Reference focused border is --border-brand (#5E5CD0 == brandFill); --border-focus is the soft ring.
-            return TextFieldStyleHex(borderHex: DocsColorHex.brandFill, labelHex: DocsColorHex.textSecondary)
+            return TextFieldStyleHex(
+                borderLightHex: DocsColorHex.brandFill, borderDarkHex: DocsColorHexDark.brandFill,
+                labelLightHex: DocsColorHex.textSecondary, labelDarkHex: DocsColorHexDark.textSecondary)
         case .error:
-            return TextFieldStyleHex(borderHex: DocsColorHex.danger, labelHex: DocsColorHex.textSecondary)
+            return TextFieldStyleHex(
+                borderLightHex: DocsColorHex.danger, borderDarkHex: DocsColorHexDark.danger,
+                labelLightHex: DocsColorHex.textSecondary, labelDarkHex: DocsColorHexDark.textSecondary)
         case .disabled:
-            return TextFieldStyleHex(borderHex: DocsColorHex.borderDefault, labelHex: DocsColorHex.textDisabled)
+            return TextFieldStyleHex(
+                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault,
+                labelLightHex: DocsColorHex.textDisabled, labelDarkHex: DocsColorHexDark.textDisabled)
         }
     }
 }
@@ -55,7 +65,7 @@ struct DocsTextField: View {
             if let label, !label.isEmpty {
                 Text(label)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color(hex: style.labelHex))
+                    .foregroundStyle(Color(lightHex: style.labelLightHex, darkHex: style.labelDarkHex))
             }
 
             HStack(spacing: DocsSpacing.spaceXS) {
@@ -76,7 +86,7 @@ struct DocsTextField: View {
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: DocsRadius.sm)
-                    .strokeBorder(Color(hex: style.borderHex), lineWidth: 1)
+                    .strokeBorder(Color(lightHex: style.borderLightHex, darkHex: style.borderDarkHex), lineWidth: 1)
             )
             // Soft brand-400 focus ring sitting just outside the field, matching
             // the reference's 3px glow.

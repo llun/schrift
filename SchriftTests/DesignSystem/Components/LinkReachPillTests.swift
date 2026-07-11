@@ -8,7 +8,8 @@ final class LinkReachPillTests: XCTestCase {
         XCTAssertEqual(
             style,
             LinkReachPillStyleHex(
-                backgroundHex: DocsColorHex.surfaceMuted, foregroundHex: DocsColorHex.textSecondary,
+                backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
+                foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
                 systemImage: "lock.fill", label: "Restricted", hint: "Only invited people"))
     }
 
@@ -17,7 +18,8 @@ final class LinkReachPillTests: XCTestCase {
         XCTAssertEqual(
             style,
             LinkReachPillStyleHex(
-                backgroundHex: DocsColorHex.infoSoft, foregroundHex: DocsColorHex.info650,
+                backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
+                foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
                 systemImage: "network.badge.shield.half.filled", label: "Connected", hint: "Anyone in the org"))
     }
 
@@ -26,7 +28,9 @@ final class LinkReachPillTests: XCTestCase {
         XCTAssertEqual(
             style,
             LinkReachPillStyleHex(
-                backgroundHex: DocsColorHex.brandFillSoft, foregroundHex: DocsColorHex.textBrandSecondary,
+                backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
+                foregroundLightHex: DocsColorHex.textBrandSecondary,
+                foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
                 systemImage: "globe", label: "Public", hint: "Anyone with the link"))
     }
 
