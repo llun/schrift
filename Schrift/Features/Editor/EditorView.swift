@@ -232,6 +232,9 @@ struct EditorView: View {
         ) {
             OptionsSheetView(
                 viewModel: optionsViewModel,
+                client: viewModel.client,
+                documentID: viewModel.documentID,
+                serverHost: serverHost,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
                 markdown: viewModel.currentMarkdown(),
                 onShare: { pendingShareAfterOptions = true },
