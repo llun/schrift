@@ -1,0 +1,23 @@
+Schrift/DesignSystem/Components/Button.swift
+  s_dd62fdd4f50c18::t_7f5c3b240f537f 169,173
+Schrift/DesignSystem/Tokens/HexColor.swift
+  s_dd62fdd4f50c18::t_d4e0d0944bc4c4 41-51
+Schrift/DesignSystem/Components/IconButton.swift
+  s_dd62fdd4f50c18::t_3e43767977b28a 124,128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "57a0652f0d72c749f017dc0c61897752c085d60c",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
