@@ -2,7 +2,7 @@
 
 Project documentation for the Schrift iOS app. These are **living documents** —
 keep them current with the code, in the same change that alters behavior (see the
-"Docs & plans convention" in [`../CLAUDE.md`](../CLAUDE.md)).
+"Docs convention" in [`../CLAUDE.md`](../CLAUDE.md)).
 
 Agent- and contributor-facing conventions, workflow, and safety rules live in
 [`../CLAUDE.md`](../CLAUDE.md), which is the single source of truth for "how we

@@ -763,4 +763,4 @@ XCTest, mirroring the source tree. New/updated:
   "Offline editing/sync queue" non-goal stands — offline *editing* remains out of
   scope; only offline *reading* was added.
 - `README.md` reviewed — it makes no offline/loading claims, so no change.
-- This spec is the point-in-time design record.
+- This document is a living design doc — kept current as behavior changes.

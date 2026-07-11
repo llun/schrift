@@ -58,7 +58,7 @@ names the section with the details.
    - View models: poll with `waitUntil`; cover the error path (friendly
      `errorKey`) and the cached-data silence rules.
    - Build/CI/release: update the living docs in the same change
-     ([Docs & plans convention](#docs--plans-convention)).
+     ([Docs convention](#docs-convention)).
 6. **Definition of done** — a change is finished only when all of these hold
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
    - `swift format --recursive --in-place Schrift SchriftTests` has been run;
