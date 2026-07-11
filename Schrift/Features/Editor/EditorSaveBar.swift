@@ -28,6 +28,8 @@ struct SaveStatusIndicator: View {
     let state: EditorViewModel.SaveState
     var onTap: () -> Void
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         switch state {
         case .idle:
@@ -35,18 +37,18 @@ struct SaveStatusIndicator: View {
 
         case .dirty:
             Button(action: onTap) {
-                Text("Save")
+                Text(loc[.editor_save])
                     .font(DocsFont.footnote.weight(.semibold))
                     .foregroundStyle(DocsColor.textBrand)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Save now")
+            .accessibilityLabel(loc[.editor_save_now_a11y])
 
         case .saving:
             HStack(spacing: DocsSpacing.space3xs) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Saving…")
+                Text(loc[.editor_saving])
                     .font(DocsFont.footnote)
                     .foregroundStyle(DocsColor.textTertiary)
             }
@@ -55,7 +57,7 @@ struct SaveStatusIndicator: View {
             HStack(spacing: DocsSpacing.space3xs) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .semibold))
-                Text("Saved")
+                Text(loc[.editor_saved])
                     .font(DocsFont.footnote)
             }
             .foregroundStyle(DocsColor.textTertiary)
@@ -65,13 +67,13 @@ struct SaveStatusIndicator: View {
                 HStack(spacing: DocsSpacing.space3xs) {
                     Image(systemName: "exclamationmark.circle")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Couldn't save · Retry")
+                    Text(loc[.editor_save_failed])
                         .font(DocsFont.footnote.weight(.semibold))
                 }
                 .foregroundStyle(DocsColor.danger)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Save failed. Retry")
+            .accessibilityLabel(loc[.editor_save_failed_a11y])
         }
     }
 }
@@ -84,4 +86,5 @@ struct SaveStatusIndicator: View {
         EditorSaveBar(saveState: .failed("nope"), onSaveTap: {})
     }
     .background(DocsColor.surfaceSunken)
+    .environment(LocalizationStore())
 }

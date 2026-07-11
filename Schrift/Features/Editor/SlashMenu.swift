@@ -9,7 +9,13 @@ enum SlashMenuAction: Equatable, Sendable {
 
 struct SlashMenuItem: Equatable, Identifiable {
     let id: String
+    /// Stable English label used for search matching (`filteredSlashItems`) and
+    /// tests. Never localized/shown: translating it would silently break
+    /// `/head`-style filtering for non-English users, since the query the user
+    /// types stays in their own language while this string wouldn't track it.
+    /// `titleKey` is the localized label actually shown in the menu.
     let title: String
+    let titleKey: L10nKey
     let systemImage: String
     let action: SlashMenuAction
     let keywords: [String]
@@ -17,40 +23,49 @@ struct SlashMenuItem: Equatable, Identifiable {
 
 let allSlashMenuItems: [SlashMenuItem] = [
     SlashMenuItem(
-        id: "paragraph", title: "Text", systemImage: "text.alignleft", action: .convert(.paragraph),
+        id: "paragraph", title: "Text", titleKey: .editor_slash_text, systemImage: "text.alignleft",
+        action: .convert(.paragraph),
         keywords: ["text", "plain", "paragraph", "p"]),
     SlashMenuItem(
-        id: "heading1", title: "Heading 1", systemImage: "textformat.size.larger",
+        id: "heading1", title: "Heading 1", titleKey: .editor_slash_heading1,
+        systemImage: "textformat.size.larger",
         action: .convert(.heading(level: 1)),
         keywords: ["h1", "heading", "title"]),
     SlashMenuItem(
-        id: "heading2", title: "Heading 2", systemImage: "textformat.size", action: .convert(.heading(level: 2)),
+        id: "heading2", title: "Heading 2", titleKey: .editor_slash_heading2, systemImage: "textformat.size",
+        action: .convert(.heading(level: 2)),
         keywords: ["h2", "heading", "subtitle"]),
     SlashMenuItem(
-        id: "heading3", title: "Heading 3", systemImage: "textformat.size.smaller",
+        id: "heading3", title: "Heading 3", titleKey: .editor_slash_heading3,
+        systemImage: "textformat.size.smaller",
         action: .convert(.heading(level: 3)),
         keywords: ["h3", "heading"]),
     SlashMenuItem(
-        id: "bullet", title: "Bulleted list", systemImage: "list.bullet", action: .convert(.bulletItem),
+        id: "bullet", title: "Bulleted list", titleKey: .editor_slash_bulleted_list, systemImage: "list.bullet",
+        action: .convert(.bulletItem),
         keywords: ["bullet", "list", "ul", "unordered"]),
     SlashMenuItem(
-        id: "numbered", title: "Numbered list", systemImage: "list.number", action: .convert(.numberedItem),
+        id: "numbered", title: "Numbered list", titleKey: .editor_slash_numbered_list,
+        systemImage: "list.number", action: .convert(.numberedItem),
         keywords: ["numbered", "list", "ol", "ordered"]),
     SlashMenuItem(
-        id: "checklist", title: "Checklist", systemImage: "checklist",
+        id: "checklist", title: "Checklist", titleKey: .editor_slash_checklist, systemImage: "checklist",
         action: .convert(.checklistItem(checked: false)),
         keywords: ["todo", "task", "check", "checkbox"]),
     SlashMenuItem(
-        id: "quote", title: "Quote", systemImage: "text.quote", action: .convert(.quote),
+        id: "quote", title: "Quote", titleKey: .editor_slash_quote, systemImage: "text.quote",
+        action: .convert(.quote),
         keywords: ["quote", "blockquote", "citation"]),
     SlashMenuItem(
-        id: "code", title: "Code block", systemImage: "chevron.left.forwardslash.chevron.right",
+        id: "code", title: "Code block", titleKey: .editor_slash_code_block,
+        systemImage: "chevron.left.forwardslash.chevron.right",
         action: .convert(.codeBlock(language: "")), keywords: ["code", "snippet", "fence"]),
     SlashMenuItem(
-        id: "divider", title: "Divider", systemImage: "minus", action: .convert(.divider),
+        id: "divider", title: "Divider", titleKey: .editor_slash_divider, systemImage: "minus",
+        action: .convert(.divider),
         keywords: ["divider", "separator", "rule", "hr", "line"]),
     SlashMenuItem(
-        id: "photo", title: "Photo", systemImage: "photo", action: .insertPhoto,
+        id: "photo", title: "Photo", titleKey: .editor_slash_photo, systemImage: "photo", action: .insertPhoto,
         keywords: ["photo", "image", "picture", "img"]),
 ]
 

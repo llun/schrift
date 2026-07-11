@@ -121,5 +121,89 @@ enum L10nKey: String, CaseIterable, Sendable {
     case share_error_update_role = "share.error.update_role"  // "Couldn't update role. Please try again."
     case share_error_remove_member = "share.error.remove_member"  // "Couldn't remove member. Please try again."
     case share_error_update_link = "share.error.update_link"  // "Couldn't update link settings. Please try again."
+
+    // Editor - save bar
+    case editor_save = "editor.save"  // "Save"
+    case editor_save_now_a11y = "editor.save_now_a11y"  // "Save now"
+    case editor_saving = "editor.saving"  // "Saving…"
+    case editor_saved = "editor.saved"  // "Saved"
+    case editor_save_failed = "editor.save_failed"  // "Couldn't save · Retry"
+    case editor_save_failed_a11y = "editor.save_failed_a11y"  // "Save failed. Retry"
+
+    // Editor - reading surface / chrome
+    case editor_offline_local_copy = "editor.offline_local_copy"  // "Reading the copy saved on this device"
+    case editor_update_available = "editor.update_available"  // "Document updated · tap to refresh"
+    case editor_update_available_a11y = "editor.update_available_a11y"  // "Document updated. Tap to refresh."
+    case editor_uploading_photo = "editor.uploading_photo"  // "Uploading photo…"
+    case editor_uploading_photo_a11y = "editor.uploading_photo_a11y"  // "Uploading photo"
+    case editor_empty_title = "editor.empty_title"  // "Empty document"
+    case editor_empty_body = "editor.empty_body"  // "This document doesn't have any content yet."
+    case editor_start_writing = "editor.start_writing"  // "Start writing"
+    case editor_subpages_title = "editor.subpages_title"  // "Subpages"
+    case editor_subpages_title_count = "editor.subpages_title_count"  // "Subpages · %d"
+    case editor_subpages_empty = "editor.subpages_empty"  // "Organize this document by creating subpages."
+    case editor_add_subpage = "editor.add_subpage"  // "Add a subpage"
+    case editor_action_done = "editor.action.done"  // "Done"
+    case editor_action_pages = "editor.action.pages"  // "Pages"
+    case editor_action_share = "editor.action.share"  // "Share"
+    case editor_action_options = "editor.action.options"  // "Options"
+
+    // Editor - sync caption (reading-surface header)
+    case editor_sync_save_failed = "editor.sync.save_failed"  // "Couldn't save · tap to retry"
+    case editor_sync_save_failed_a11y = "editor.sync.save_failed_a11y"  // "Couldn't save. Tap to retry."
+    case editor_sync_saved_on_device = "editor.sync.saved_on_device"  // "Saved on this device"
+    case editor_sync_edited_just_now = "editor.sync.edited_just_now"  // "Edited just now"
+    case editor_sync_just_now = "editor.sync.just_now"  // "Synced just now"
+    case editor_sync_ago = "editor.sync.ago"  // "Synced %@"
+    case editor_sync_not_synced_yet = "editor.sync.not_synced_yet"  // "Not synced yet"
+
+    // Editor - errors
+    case editor_error_load = "editor.error.load"  // "Couldn't load this document. Pull to refresh to try again."
+    case editor_error_refresh = "editor.error.refresh"  // "Couldn't refresh. Please try again."
+    case editor_error_add_subpage = "editor.error.add_subpage"  // "Couldn't add the subpage. Please try again."
+    case editor_error_open_link = "editor.error.open_link"  // "Couldn't open that link. Please try again."
+    case editor_error_add_photo = "editor.error.add_photo"  // "Couldn't add the photo. Please try again."
+    case editor_unavailable = "editor.unavailable"  // "This document is no longer available."
+    case editor_unavailable_with_draft = "editor.unavailable_with_draft"
+    // "This document is no longer available. Your unsaved changes are kept on this device."
+
+    // Editor - slash menu (display labels; matching/filtering uses the
+    // stable English `SlashMenuItem.title`, never these keys — see SlashMenu.swift)
+    case editor_slash_menu_a11y = "editor.slash.menu_a11y"  // "Block type menu"
+    case editor_slash_text = "editor.slash.text"  // "Text"
+    case editor_slash_heading1 = "editor.slash.heading1"  // "Heading 1"
+    case editor_slash_heading2 = "editor.slash.heading2"  // "Heading 2"
+    case editor_slash_heading3 = "editor.slash.heading3"  // "Heading 3"
+    case editor_slash_bulleted_list = "editor.slash.bulleted_list"  // "Bulleted list"
+    case editor_slash_numbered_list = "editor.slash.numbered_list"  // "Numbered list"
+    case editor_slash_checklist = "editor.slash.checklist"  // "Checklist"
+    case editor_slash_quote = "editor.slash.quote"  // "Quote"
+    case editor_slash_code_block = "editor.slash.code_block"  // "Code block"
+    case editor_slash_divider = "editor.slash.divider"  // "Divider"
+    case editor_slash_photo = "editor.slash.photo"  // "Photo"
+
+    // Editor - formatting bar (icon-only buttons; accessibility labels)
+    case editor_format_add_block = "editor.format.add_block"  // "Add block"
+    case editor_format_bold = "editor.format.bold"  // "Bold"
+    case editor_format_italic = "editor.format.italic"  // "Italic"
+    case editor_format_link = "editor.format.link"  // "Link"
+    case editor_format_bulleted_list = "editor.format.bulleted_list"  // "Bulleted list"
+    case editor_format_checklist = "editor.format.checklist"  // "Checklist"
+    case editor_format_quote = "editor.format.quote"  // "Quote"
+    case editor_format_code_block = "editor.format.code_block"  // "Code block"
+    case editor_format_insert_photo = "editor.format.insert_photo"  // "Insert photo"
+
+    // Editor - link editor sheet
+    case editor_link_add_title = "editor.link.add_title"  // "Add link"
+    case editor_link_edit_title = "editor.link.edit_title"  // "Edit link"
+    case editor_link_text_label = "editor.link.text_label"  // "Text"
+    case editor_link_text_placeholder = "editor.link.text_placeholder"  // "Link text"
+    case editor_link_text_helper = "editor.link.text_helper"  // "Leave empty to show the address itself."
+    case editor_link_address_label = "editor.link.address_label"  // "Address"
+    case editor_link_address_placeholder = "editor.link.address_placeholder"  // "example.com/page"
+    case editor_link_address_error = "editor.link.address_error"  // "That address can't be used as a link."
+    case editor_link_remove = "editor.link.remove"  // "Remove link"
+    case editor_link_save = "editor.link.save"  // "Save"
+    case editor_link_add = "editor.link.add"  // "Add"
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }

@@ -1,21 +1,34 @@
 import PhotosUI
 import SwiftUI
 
+/// Either a fixed localized string, or the "Synced %@" template with the
+/// relative-time portion already resolved by `RelativeDateTimeFormatter` —
+/// which is itself locale-aware (like `documentRowDate`), so it needs no
+/// lookup in `Strings_en`. The view resolves either case to display text via
+/// `LocalizationStore`.
+enum SyncCaptionText: Equatable {
+    case key(L10nKey)
+    case syncedAgo(String)
+}
+
 /// "Synced X ago" caption for the editor header. Pure — `now` is a parameter
 /// (note `documentRowDate` reads `Date()` internally and is untestable; this
-/// one is driven by a `TimelineView` tick so it must not).
-func syncStatusCaption(lastSyncedAt: Date, now: Date) -> String {
+/// one is driven by a `TimelineView` tick so it must not) — and `locale`
+/// mirrors `documentRowDate`'s so the relative-time wording follows the app's
+/// chosen language, not the system's.
+func syncStatusCaption(lastSyncedAt: Date, now: Date, locale: Locale) -> SyncCaptionText {
     if now.timeIntervalSince(lastSyncedAt) < 60 {
-        return "Synced just now"
+        return .key(.editor_sync_just_now)
     }
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated
-    return "Synced \(formatter.localizedString(for: lastSyncedAt, relativeTo: now))"
+    formatter.locale = locale
+    return .syncedAgo(formatter.localizedString(for: lastSyncedAt, relativeTo: now))
 }
 
 /// The editor header's sync caption, and whether it doubles as a retry button.
 struct SyncCaption: Equatable {
-    let text: String
+    let text: SyncCaptionText
     let offersRetry: Bool
 }
 
@@ -31,24 +44,26 @@ func syncCaption(
     isOffline: Bool,
     saveState: EditorViewModel.SaveState,
     lastSyncedAt: Date?,
-    now: Date
+    now: Date,
+    locale: Locale
 ) -> SyncCaption {
     if hasUnsavedLocalContent {
         if case .failed = saveState {
-            return SyncCaption(text: "Couldn't save · tap to retry", offersRetry: true)
+            return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }
-        if isOffline { return SyncCaption(text: "Saved on this device", offersRetry: false) }
+        if isOffline { return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false) }
         switch saveState {
-        case .saving: return SyncCaption(text: "Saving…", offersRetry: false)
-        case .saved: return SyncCaption(text: "Saved", offersRetry: false)
-        case .failed: return SyncCaption(text: "Couldn't save · tap to retry", offersRetry: true)
-        case .dirty, .idle: return SyncCaption(text: "Edited just now", offersRetry: false)
+        case .saving: return SyncCaption(text: .key(.editor_saving), offersRetry: false)
+        case .saved: return SyncCaption(text: .key(.editor_saved), offersRetry: false)
+        case .failed: return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
+        case .dirty, .idle: return SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false)
         }
     }
     if let lastSyncedAt {
-        return SyncCaption(text: syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now), offersRetry: false)
+        return SyncCaption(
+            text: syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now, locale: locale), offersRetry: false)
     }
-    return SyncCaption(text: "Not synced yet", offersRetry: false)
+    return SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false)
 }
 
 struct EditorView: View {
@@ -63,6 +78,7 @@ struct EditorView: View {
     var onOpenDocument: ((Document) -> Void)? = nil
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(LocalizationStore.self) private var loc
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
     @State private var isPresentingTreePanel = false
@@ -108,13 +124,13 @@ struct EditorView: View {
             NavBar(
                 title: viewModel.isEditing ? "" : viewModel.title,
                 largeTitle: !viewModel.isEditing,
-                backTitle: "Schrift",
+                backTitle: loc[.home_title],
                 onBack: onBack,
                 trailingActions: trailingActions
             )
 
             if isOffline, viewModel.hasLocalCopy {
-                OfflineBanner(note: "Reading the copy saved on this device")
+                OfflineBanner(note: loc[.editor_offline_local_copy])
             }
 
             if viewModel.updateAvailable, !viewModel.isEditing {
@@ -124,7 +140,7 @@ struct EditorView: View {
                     HStack(spacing: DocsSpacing.space2xs) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 13))
-                        Text("Document updated · tap to refresh")
+                        Text(loc[.editor_update_available])
                             .font(DocsFont.footnote)
                     }
                     .foregroundStyle(DocsColor.textBrand)
@@ -136,12 +152,12 @@ struct EditorView: View {
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.top, DocsSpacing.spaceXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel("Document updated. Tap to refresh.")
+                .accessibilityLabel(loc[.editor_update_available_a11y])
             }
 
-            if let errorMessage = viewModel.errorMessage {
+            if let errorKey = viewModel.errorKey {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(errorMessage)
+                    Text(loc[errorKey])
                         .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.danger)
                     if let errorDetail = viewModel.errorDetail {
@@ -282,7 +298,7 @@ struct EditorView: View {
     private var uploadingPhotoBanner: some View {
         HStack(spacing: DocsSpacing.spaceXS) {
             ProgressView()
-            Text("Uploading photo…")
+            Text(loc[.editor_uploading_photo])
                 .font(DocsFont.footnote)
                 .foregroundStyle(DocsColor.textSecondary)
         }
@@ -291,7 +307,7 @@ struct EditorView: View {
         .padding(.vertical, DocsSpacing.spaceXS)
         .background(DocsColor.surfaceSunken, in: Capsule())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Uploading photo")
+        .accessibilityLabel(loc[.editor_uploading_photo_a11y])
     }
 
     // MARK: - Reading
@@ -302,7 +318,7 @@ struct EditorView: View {
                 headerBlock
 
                 if viewModel.blocks.isEmpty {
-                    if viewModel.errorMessage == nil {
+                    if viewModel.errorKey == nil {
                         emptyContent
                     }
                 } else {
@@ -360,12 +376,12 @@ struct EditorView: View {
 
     private var emptyContent: some View {
         ContentUnavailableView {
-            Label("Empty document", systemImage: "doc.text")
+            Label(loc[.editor_empty_title], systemImage: "doc.text")
         } description: {
-            Text("This document doesn't have any content yet.")
+            Text(loc[.editor_empty_body])
         } actions: {
             if !isOffline {
-                Button("Start writing") {
+                Button(loc[.editor_start_writing]) {
                     viewModel.startEditing()
                 }
                 .font(DocsFont.body)
@@ -387,14 +403,14 @@ struct EditorView: View {
                     Button {
                         viewModel.saveNow()
                     } label: {
-                        Text(caption.text)
+                        Text(resolvedCaption(caption.text))
                             .font(DocsFont.footnote)
                             .foregroundStyle(DocsColor.textBrand)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Couldn't save. Tap to retry.")
+                    .accessibilityLabel(loc[.editor_sync_save_failed_a11y])
                 } else {
-                    Text(caption.text)
+                    Text(resolvedCaption(caption.text))
                         .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.textTertiary)
                 }
@@ -417,7 +433,8 @@ struct EditorView: View {
                         .accessibilityHidden(true)
                     Text(
                         (viewModel.subpages?.isEmpty ?? true)
-                            ? "Subpages" : "Subpages · \(viewModel.subpages?.count ?? 0)"
+                            ? loc[.editor_subpages_title]
+                            : loc.format(.editor_subpages_title_count, viewModel.subpages?.count ?? 0)
                     )
                     .font(DocsFont.footnote.weight(.semibold))
                     .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
@@ -430,7 +447,7 @@ struct EditorView: View {
 
                 if let subpages = viewModel.subpages {
                     if subpages.isEmpty {
-                        Text("Organize this document by creating subpages.")
+                        Text(loc[.editor_subpages_empty])
                             .font(DocsFont.footnote)
                             .foregroundStyle(DocsColor.textTertiary)
                             .padding(.horizontal, DocsSpacing.spaceXS)
@@ -456,7 +473,7 @@ struct EditorView: View {
                         HStack(spacing: DocsSpacing.spaceXS) {
                             Image(systemName: "plus")
                                 .font(.system(size: 22))
-                            Text("Add a subpage")
+                            Text(loc[.editor_add_subpage])
                                 .font(.system(size: 15, weight: .semibold))
                         }
                         .foregroundStyle(DocsColor.textBrand)
@@ -482,21 +499,34 @@ struct EditorView: View {
             isOffline: isOffline,
             saveState: viewModel.saveState,
             lastSyncedAt: viewModel.lastSyncedAt,
-            now: now
+            now: now,
+            locale: loc.locale
         )
+    }
+
+    private func resolvedCaption(_ text: SyncCaptionText) -> String {
+        switch text {
+        case .key(let key): return loc[key]
+        case .syncedAgo(let ago): return loc.format(.editor_sync_ago, ago)
+        }
     }
 
     private var trailingActions: [NavBarAction] {
         if viewModel.isEditing {
             return [
-                NavBarAction(systemImage: "checkmark", label: "Done", action: { viewModel.finishEditing() })
+                NavBarAction(
+                    systemImage: "checkmark", label: loc[.editor_action_done], action: { viewModel.finishEditing() })
             ]
         }
         return [
-            NavBarAction(systemImage: "list.bullet.indent", label: "Pages", action: { isPresentingTreePanel = true }),
-            NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: { isPresentingShareSheet = true }),
             NavBarAction(
-                systemImage: "ellipsis", label: "Options",
+                systemImage: "list.bullet.indent", label: loc[.editor_action_pages],
+                action: { isPresentingTreePanel = true }),
+            NavBarAction(
+                systemImage: "square.and.arrow.up", label: loc[.editor_action_share],
+                action: { isPresentingShareSheet = true }),
+            NavBarAction(
+                systemImage: "ellipsis", label: loc[.editor_action_options],
                 action: {
                     isPresentingOptionsSheet = true
                 }),

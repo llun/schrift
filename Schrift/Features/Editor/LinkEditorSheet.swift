@@ -17,6 +17,8 @@ struct LinkEditorSheet: View {
     @State private var url: String
     @State private var showsURLError = false
 
+    @Environment(LocalizationStore.self) private var loc
+
     init(
         request: EditorViewModel.LinkEditorRequest,
         onSave: @escaping (String, String) -> Bool,
@@ -37,22 +39,22 @@ struct LinkEditorSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
                 DocsTextField(
-                    label: "Text",
+                    label: loc[.editor_link_text_label],
                     text: $label,
-                    placeholder: "Link text",
-                    helper: "Leave empty to show the address itself."
+                    placeholder: loc[.editor_link_text_placeholder],
+                    helper: loc[.editor_link_text_helper]
                 )
 
                 DocsTextField(
-                    label: "Address",
+                    label: loc[.editor_link_address_label],
                     text: Binding(
                         get: { url },
                         set: {
                             url = $0
                             showsURLError = false
                         }),
-                    placeholder: "example.com/page",
-                    error: showsURLError ? "That address can't be used as a link." : nil
+                    placeholder: loc[.editor_link_address_placeholder],
+                    error: showsURLError ? loc[.editor_link_address_error] : nil
                 )
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -62,7 +64,7 @@ struct LinkEditorSheet: View {
                     Button(role: .destructive) {
                         onRemove()
                     } label: {
-                        Label("Remove link", systemImage: "link.badge.minus")
+                        Label(loc[.editor_link_remove], systemImage: "link.badge.minus")
                             .font(DocsFont.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -73,14 +75,14 @@ struct LinkEditorSheet: View {
             }
             .padding(DocsSpacing.gutter)
             .background(DocsColor.surfacePage)
-            .navigationTitle(isEditingExistingLink ? "Edit link" : "Add link")
+            .navigationTitle(isEditingExistingLink ? loc[.editor_link_edit_title] : loc[.editor_link_add_title])
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button(loc[.common_cancel], action: onCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditingExistingLink ? "Save" : "Add") {
+                    Button(isEditingExistingLink ? loc[.editor_link_save] : loc[.editor_link_add]) {
                         showsURLError = !onSave(label, url)
                     }
                     .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -97,6 +99,7 @@ struct LinkEditorSheet: View {
         onSave: { _, _ in true },
         onCancel: {}
     )
+    .environment(LocalizationStore())
 }
 
 #Preview("Edit") {
@@ -115,4 +118,5 @@ struct LinkEditorSheet: View {
         onRemove: {},
         onCancel: {}
     )
+    .environment(LocalizationStore())
 }

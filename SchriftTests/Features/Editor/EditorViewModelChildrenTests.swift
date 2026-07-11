@@ -333,7 +333,7 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let child = await viewModel.addSubpage()
 
         XCTAssertNil(child)
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the subpage. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_subpage)
     }
 
     /// A rejected sub-page must not tear the open document down the way a 403 on load does.
@@ -375,7 +375,7 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
         _ = await viewModel.addSubpage()
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
 
         MockURLProtocol.stubHandler = { _ in
             .init(
@@ -387,6 +387,6 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let child = await viewModel.addSubpage()
 
         XCTAssertEqual(child?.title, "Untitled subpage")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 }

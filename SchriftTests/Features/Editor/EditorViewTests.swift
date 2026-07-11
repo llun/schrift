@@ -4,18 +4,24 @@ import XCTest
 
 final class EditorViewTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_000_000)
+    private let locale = AppLanguage.english.locale
 
     func testUnderAMinuteIsSyncedJustNow() {
-        XCTAssertEqual(syncStatusCaption(lastSyncedAt: base, now: base), "Synced just now")
-        XCTAssertEqual(syncStatusCaption(lastSyncedAt: base, now: base.addingTimeInterval(59)), "Synced just now")
+        XCTAssertEqual(syncStatusCaption(lastSyncedAt: base, now: base, locale: locale), .key(.editor_sync_just_now))
+        XCTAssertEqual(
+            syncStatusCaption(lastSyncedAt: base, now: base.addingTimeInterval(59), locale: locale),
+            .key(.editor_sync_just_now))
     }
 
     func testOlderThanAMinuteUsesRelativeWording() {
-        let caption = syncStatusCaption(lastSyncedAt: base, now: base.addingTimeInterval(5 * 60))
-        // RelativeDateTimeFormatter output is locale-dependent; pin the shape,
-        // not the exact words.
-        XCTAssertTrue(caption.hasPrefix("Synced "))
-        XCTAssertNotEqual(caption, "Synced just now")
+        let caption = syncStatusCaption(lastSyncedAt: base, now: base.addingTimeInterval(5 * 60), locale: locale)
+        // RelativeDateTimeFormatter output is locale-dependent; pin the shape
+        // (the dynamic case with a non-empty relative string), not the exact words.
+        guard case .syncedAgo(let ago) = caption else {
+            XCTFail("expected .syncedAgo, got \(caption)")
+            return
+        }
+        XCTAssertFalse(ago.isEmpty)
     }
 
     // MARK: - Sync caption + retry affordance
@@ -29,38 +35,42 @@ final class EditorViewTests: XCTestCase {
     func testFailedSaveOffersRetryEvenOffline() {
         let caption = syncCaption(
             hasUnsavedLocalContent: true, isOffline: true, saveState: .failed("x"),
-            lastSyncedAt: now, now: now)
+            lastSyncedAt: now, now: now, locale: locale)
 
-        XCTAssertEqual(caption, SyncCaption(text: "Couldn't save · tap to retry", offersRetry: true))
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true))
     }
 
     func testOfflineWithUnsavedContentReadsAsSavedOnDevice() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: true, saveState: .idle, lastSyncedAt: now, now: now)
+            hasUnsavedLocalContent: true, isOffline: true, saveState: .idle, lastSyncedAt: now, now: now,
+            locale: locale)
 
-        XCTAssertEqual(caption, SyncCaption(text: "Saved on this device", offersRetry: false))
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
     }
 
     func testUnsavedContentWinsOverSyncedCaption() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: false, saveState: .dirty, lastSyncedAt: now, now: now)
+            hasUnsavedLocalContent: true, isOffline: false, saveState: .dirty, lastSyncedAt: now, now: now,
+            locale: locale)
 
-        XCTAssertEqual(caption, SyncCaption(text: "Edited just now", offersRetry: false))
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false))
     }
 
     func testCleanDocumentShowsSyncedCaptionAndNoRetry() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, isOffline: false, saveState: .saved, lastSyncedAt: now, now: now)
+            hasUnsavedLocalContent: false, isOffline: false, saveState: .saved, lastSyncedAt: now, now: now,
+            locale: locale)
 
-        XCTAssertEqual(caption.text, "Synced just now")
+        XCTAssertEqual(caption.text, .key(.editor_sync_just_now))
         XCTAssertFalse(caption.offersRetry)
     }
 
     func testNeverSyncedCleanDocument() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, isOffline: false, saveState: .idle, lastSyncedAt: nil, now: now)
+            hasUnsavedLocalContent: false, isOffline: false, saveState: .idle, lastSyncedAt: nil, now: now,
+            locale: locale)
 
-        XCTAssertEqual(caption, SyncCaption(text: "Not synced yet", offersRetry: false))
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false))
     }
 
     /// `.failed` without unsaved local content only happens once the document is
@@ -68,9 +78,10 @@ final class EditorViewTests: XCTestCase {
     /// nothing to retry, so the caption must not offer one.
     func testFailedSaveWithNoUnsavedContentOffersNoRetry() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, isOffline: false, saveState: .failed("x"), lastSyncedAt: now, now: now)
+            hasUnsavedLocalContent: false, isOffline: false, saveState: .failed("x"), lastSyncedAt: now, now: now,
+            locale: locale)
 
         XCTAssertFalse(caption.offersRetry)
-        XCTAssertEqual(caption.text, "Synced just now")
+        XCTAssertEqual(caption.text, .key(.editor_sync_just_now))
     }
 }

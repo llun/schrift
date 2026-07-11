@@ -117,7 +117,7 @@ final class EditorViewModelLinkTests: XCTestCase {
 
         XCTAssertEqual(document?.title, "Cached child")
         XCTAssertEqual(recorder.methods.count, 0, "a listed sub-page must not cost a round-trip")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     /// The reuse above is a *lookup*, not "are there any sub-pages": a link out of the
@@ -154,7 +154,7 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertNil(document)
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't open that link. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_open_link)
     }
 
     func testOpenLinkedDocumentSurfacesAFriendlyErrorWhenAccessIsDenied() async {
@@ -164,7 +164,7 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertNil(document)
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't open that link. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_open_link)
     }
 
     func testOpenLinkedDocumentSurfacesAFriendlyErrorWhenOffline() async {
@@ -176,7 +176,7 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertNil(document)
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't open that link. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_open_link)
     }
 
     /// The shared client's `onSessionExpired` hook already raised the re-login sheet;
@@ -189,7 +189,7 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertNil(document)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     /// A 404/403 for the *linked* document says nothing about the one being read. Tearing
@@ -208,14 +208,14 @@ final class EditorViewModelLinkTests: XCTestCase {
         XCTAssertFalse(viewModel.isUnavailable)
         XCTAssertTrue(viewModel.hasLoadedContent)
         XCTAssertEqual(viewModel.blocks.map(\.text), loadedBlocks.map(\.text))
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't open that link. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_open_link)
     }
 
     func testASuccessfulLinkClearsAPreviousErrorMessage() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
         _ = await viewModel.openLinkedDocument(linkedID)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
 
         MockURLProtocol.stubHandler = { _ in
             .init(
@@ -227,6 +227,6 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertEqual(document?.title, "Meeting notes")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 }

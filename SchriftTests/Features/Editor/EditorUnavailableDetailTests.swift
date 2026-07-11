@@ -59,7 +59,7 @@ final class EditorUnavailableDetailTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertTrue(viewModel.isUnavailable)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.errorDetail, "HTTP 404: Not found.")
     }
 
@@ -100,7 +100,7 @@ final class EditorUnavailableDetailTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertFalse(viewModel.isUnavailable, "a route 404 must not read as a deletion")
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
     }
 
     /// The detail must quote the document's own response, not the confirmation probe's — the
@@ -123,9 +123,9 @@ final class EditorUnavailableDetailTests: XCTestCase {
         XCTAssertEqual(viewModel.errorDetail, "HTTP 404: the document's own reason")
     }
 
-    /// `errorDetail` is only ever rendered beneath `errorMessage`, so a detail that outlives
-    /// its message is invisible right up until an unrelated later message adopts it — the user
-    /// then reads a stale "HTTP 404" under "Couldn't add the subpage."
+    /// `errorDetail` is only ever rendered beneath `errorKey`'s message, so a detail that
+    /// outlives its message is invisible right up until an unrelated later message adopts it —
+    /// the user then reads a stale "HTTP 404" under "Couldn't add the subpage."
     func testANewErrorMessageNeverInheritsThePreviousDetail() async {
         let viewModel = makeViewModel(diagnostics: APIDiagnosticsLog())
         MockURLProtocol.stubHandler = { _ in
@@ -142,7 +142,7 @@ final class EditorUnavailableDetailTests: XCTestCase {
         }
         _ = await viewModel.addSubpage()
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the subpage. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_subpage)
         XCTAssertNil(viewModel.errorDetail, "the previous failure's detail must not be adopted")
     }
 }

@@ -30,7 +30,8 @@ final class EditorFormattingBarTests: XCTestCase {
     }
 
     private func barWidth(_ viewModel: EditorViewModel, offered column: CGFloat) -> CGFloat {
-        let host = UIHostingController(rootView: EditorFormattingBar(viewModel: viewModel))
+        let host = UIHostingController(
+            rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
         return host.sizeThatFits(in: CGSize(width: column, height: 100)).width
     }
 
@@ -62,7 +63,8 @@ final class EditorFormattingBarTests: XCTestCase {
     /// shared. Guards against "fixing" the overflow by shrinking the row.
     func testTheBarKeepsTheStandardTapHeight() {
         let viewModel = makeViewModel()
-        let host = UIHostingController(rootView: EditorFormattingBar(viewModel: viewModel))
+        let host = UIHostingController(
+            rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
         let height = host.sizeThatFits(in: CGSize(width: 343, height: CGFloat.greatestFiniteMagnitude)).height
         XCTAssertGreaterThanOrEqual(height, DocsSpacing.rowMinHeight)
     }
