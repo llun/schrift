@@ -13,6 +13,7 @@ struct SharedScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
 
     private var scopeIndex: Binding<Int> {
@@ -25,9 +26,9 @@ struct SharedScreen: View {
     private func subtitle(for document: Document) -> String {
         switch viewModel.scope {
         case .withMe:
-            return "Shared · \(documentRowDate(document))"
+            return "Shared · \(documentRowDate(document, locale: loc.locale))"
         case .byMe:
-            return "\(reachLabel(document.linkReach)) · Shared \(documentRowDate(document))"
+            return "\(reachLabel(document.linkReach)) · Shared \(documentRowDate(document, locale: loc.locale))"
         }
     }
 
@@ -113,4 +114,5 @@ struct SharedScreen: View {
         serverHost: "docs.llun.dev",
         onOpenDocument: { _ in }
     )
+    .environment(LocalizationStore())
 }

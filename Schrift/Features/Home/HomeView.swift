@@ -1,8 +1,9 @@
 import SwiftUI
 
-func documentRowDate(_ document: Document) -> String {
+func documentRowDate(_ document: Document, locale: Locale) -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated
+    formatter.locale = locale
     return formatter.localizedString(for: document.updatedAt, relativeTo: Date())
 }
 

@@ -10,6 +10,7 @@ struct DocumentListView: View {
     /// When set, shows a "New doc" nav-bar action that creates and opens a document.
     var onNewDocument: (() -> Void)? = nil
 
+    @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
     @State private var documentPendingFavoriteChoice: Document?
 
@@ -211,7 +212,7 @@ struct DocumentListView: View {
                         title: document.title ?? "Untitled document",
                         pinned: document.isFavorite,
                         reach: document.linkReach,
-                        date: documentRowDate(document),
+                        date: documentRowDate(document, locale: loc.locale),
                         offlineAvailable: isOffline,
                         onOpen: { onSelect(document) },
                         onMore: { documentPendingFavoriteChoice = document }
@@ -229,4 +230,5 @@ struct DocumentListView: View {
         serverHost: "docs.llun.dev",
         onSelect: { _ in }
     )
+    .environment(LocalizationStore())
 }

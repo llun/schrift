@@ -5,6 +5,7 @@ struct SearchScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
 
     private var trimmedQuery: String {
@@ -132,7 +133,7 @@ struct SearchScreen: View {
                     title: document.title ?? "Untitled document",
                     pinned: document.isFavorite,
                     reach: document.linkReach,
-                    date: documentRowDate(document),
+                    date: documentRowDate(document, locale: loc.locale),
                     onOpen: { onOpenDocument(document) }
                 )
             }
@@ -245,4 +246,5 @@ private struct FlowLayout: Layout {
         serverHost: "docs.llun.dev",
         onOpenDocument: { _ in }
     )
+    .environment(LocalizationStore())
 }
