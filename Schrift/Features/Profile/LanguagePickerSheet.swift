@@ -47,7 +47,9 @@ struct LanguagePickerSheet: View {
                 .padding(.bottom, DocsSpacing.spaceSM)
             }
         }
-        .background(DocsColor.surfaceSunken)
+        // White page surface (like the restyled Profile), so the option card is
+        // defined by its hairline border rather than a sunken grey backdrop.
+        .background(DocsColor.surfacePage)
     }
 }
 
