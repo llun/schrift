@@ -20,8 +20,9 @@ func pluralCategory(_ count: Int, language: AppLanguage) -> PluralCategory {
         return .other
     case .slovene:
         // CLDR `sl` (integers, v = 0): one = i%100==1, two = i%100==2,
-        // few = i%100==3..4, other = everything else.
-        switch abs(count) % 100 {
+        // few = i%100==3..4, other = everything else. `magnitude` is the CLDR
+        // operand `n` (absolute value) and can't trap the way `abs(Int.min)` would.
+        switch count.magnitude % 100 {
         case 1: return .one
         case 2: return .two
         case 3, 4: return .few
