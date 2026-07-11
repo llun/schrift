@@ -1,0 +1,19 @@
+Schrift/Features/Profile/AppearancePickerSheet.swift
+  s_6b3fce3494c0ea::t_97fbde392852f6 30-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "e32430541d0a719f3f51b1bab9995973937df4d6",
+  "prompts": {},
+  "sessions": {
+    "s_6b3fce3494c0ea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb8bddce-c545-421a-b4a3-224d1ff27194",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
