@@ -4,7 +4,9 @@ import XCTest
 
 final class VersionEndpointsClientTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
-    private let documentID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+    // Alphabetic hex so the path assertion actually exercises `.lowercased()`:
+    // an all-digit UUID would pass whether or not the endpoint lowercases it.
+    private let documentID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
 
     override func tearDown() {
         MockURLProtocol.reset()
@@ -21,9 +23,11 @@ final class VersionEndpointsClientTests: XCTestCase {
             """#.data(using: .utf8)!
         MockURLProtocol.stubHandler = { request in
             XCTAssertEqual(request.httpMethod, "GET")
+            // Lowercased UUID: the Django backend requires it. The alphabetic
+            // hex here means a dropped `.lowercased()` would fail this assertion.
             XCTAssertTrue(
                 request.url!.absoluteString.hasSuffix(
-                    "/documents/11111111-1111-1111-1111-111111111111/versions/"))
+                    "/documents/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/versions/"))
             return .init(statusCode: 200, headers: [:], body: responseBody, error: nil)
         }
         let client = makeClient()

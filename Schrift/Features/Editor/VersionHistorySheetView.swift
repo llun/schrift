@@ -98,6 +98,7 @@ struct VersionHistorySheetView: View {
                 .font(.system(size: 20))
                 .foregroundStyle(DocsColor.textSecondary)
                 .frame(width: 24)
+                .accessibilityHidden(true)
 
             Text(versionRowDate(version, locale: loc.locale))
                 .font(DocsFont.body)
