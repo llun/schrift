@@ -45,7 +45,7 @@ final class ConnectViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.isPresentingWebLogin)
         XCTAssertEqual(viewModel.pendingServerURL?.absoluteString, "https://docs.llun.dev")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testStartSignInWithInvalidInputShowsErrorAndDoesNotPresent() {
@@ -55,7 +55,7 @@ final class ConnectViewModelTests: XCTestCase {
         viewModel.startSignIn()
 
         XCTAssertFalse(viewModel.isPresentingWebLogin)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .connect_error_invalid_server)
     }
 
     func testHandleLoginCompleteSuccessSignsInAndRecordsRecentServer() async throws {
@@ -71,7 +71,7 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.sessionStore.isAuthenticated)
         XCTAssertEqual(viewModel.sessionStore.serverURL?.absoluteString, "https://docs.llun.dev")
         XCTAssertEqual(viewModel.recentServers.servers.map(\.absoluteString), ["https://docs.llun.dev"])
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testHandleLoginCompleteFailureShowsErrorAndDoesNotSignIn() async throws {
@@ -82,7 +82,7 @@ final class ConnectViewModelTests: XCTestCase {
         await viewModel.handleLoginComplete()
 
         XCTAssertFalse(viewModel.sessionStore.isAuthenticated)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .connect_error_sign_in_failed)
         XCTAssertTrue(viewModel.recentServers.servers.isEmpty)
     }
 

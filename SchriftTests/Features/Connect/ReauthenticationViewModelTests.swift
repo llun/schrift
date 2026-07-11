@@ -61,7 +61,7 @@ final class ReauthenticationViewModelTests: XCTestCase {
 
         await viewModel.handleLoginComplete()
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.sessionStore.needsReauthentication)
         XCTAssertTrue(viewModel.sessionStore.isAuthenticated)
         let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
@@ -75,7 +75,7 @@ final class ReauthenticationViewModelTests: XCTestCase {
 
         await viewModel.handleLoginComplete()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .reauth_error_sign_in_failed)
         XCTAssertTrue(viewModel.sessionStore.needsReauthentication)
         XCTAssertFalse(viewModel.isConfirming)
     }

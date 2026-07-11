@@ -14,6 +14,7 @@ struct ReauthenticationSheetView: View {
     @State private var viewModel: ReauthenticationViewModel
     let onAuthenticated: () -> Void
     let onCancel: () -> Void
+    @Environment(LocalizationStore.self) private var loc
 
     init(
         serverURL: URL,
@@ -35,7 +36,7 @@ struct ReauthenticationSheetView: View {
                     onLoginComplete: {
                         Task {
                             await viewModel.handleLoginComplete()
-                            if viewModel.errorMessage == nil {
+                            if viewModel.errorKey == nil {
                                 onAuthenticated()
                             }
                         }
@@ -47,8 +48,8 @@ struct ReauthenticationSheetView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
+                if let errorKey = viewModel.errorKey {
+                    Text(loc[errorKey])
                         .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.danger)
                         .padding(DocsSpacing.spaceSM)
@@ -56,11 +57,11 @@ struct ReauthenticationSheetView: View {
                         .background(DocsColor.surfacePage)
                 }
             }
-            .navigationTitle("Session expired")
+            .navigationTitle(loc[.reauth_title])
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button(loc[.common_cancel], action: onCancel)
                 }
             }
         }
@@ -75,4 +76,5 @@ struct ReauthenticationSheetView: View {
         onAuthenticated: {},
         onCancel: {}
     )
+    .environment(LocalizationStore())
 }

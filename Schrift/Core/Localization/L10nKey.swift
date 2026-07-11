@@ -56,5 +56,25 @@ enum L10nKey: String, CaseIterable, Sendable {
     case reach_restricted = "reach.restricted"  // "Restricted"
     case reach_connected = "reach.connected"  // "Connected"
     case reach_public = "reach.public"  // "Public"
-    // (screen-specific keys are added by B8–B11, Phase C, Phase F)
+
+    // Connect
+    case connect_hero_title = "connect.hero_title"  // "Welcome to Schrift"
+    case connect_hero_subtitle = "connect.hero_subtitle"
+    // "Connect to any server to write, organize and collaborate — in real time."
+    case connect_server_label = "connect.server_label"  // "Server"
+    case connect_server_placeholder = "connect.server_placeholder"  // "schrift.example.org"
+    case connect_server_helper = "connect.server_helper"
+    // "The app signs in with your existing session — no password stored."
+    case connect_sign_in = "connect.sign_in"  // "Sign in"
+    case connect_sign_in_to = "connect.sign_in_to"  // "Sign in to %@"
+    case connect_recent_servers = "connect.recent_servers"  // "Recent servers"
+    case connect_error_invalid_server = "connect.error.invalid_server"  // "Enter a valid server address."
+    case connect_error_sign_in_failed = "connect.error.sign_in_failed"
+    // "Sign-in could not be confirmed. Please try again."
+
+    // Reauthentication
+    case reauth_title = "reauth.title"  // "Session expired"
+    case reauth_error_sign_in_failed = "reauth.error.sign_in_failed"
+    // "Sign-in could not be confirmed. Please try again."
+    // (screen-specific keys are added by B10–B11, Phase C, Phase F)
 }

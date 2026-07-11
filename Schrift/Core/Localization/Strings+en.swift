@@ -54,5 +54,21 @@ enum Strings_en {
         .reach_restricted: "Restricted",
         .reach_connected: "Connected",
         .reach_public: "Public",
+
+        // Connect
+        .connect_hero_title: "Welcome to Schrift",
+        .connect_hero_subtitle: "Connect to any server to write, organize and collaborate — in real time.",
+        .connect_server_label: "Server",
+        .connect_server_placeholder: "schrift.example.org",
+        .connect_server_helper: "The app signs in with your existing session — no password stored.",
+        .connect_sign_in: "Sign in",
+        .connect_sign_in_to: "Sign in to %@",
+        .connect_recent_servers: "Recent servers",
+        .connect_error_invalid_server: "Enter a valid server address.",
+        .connect_error_sign_in_failed: "Sign-in could not be confirmed. Please try again.",
+
+        // Reauthentication
+        .reauth_title: "Session expired",
+        .reauth_error_sign_in_failed: "Sign-in could not be confirmed. Please try again.",
     ]
 }
