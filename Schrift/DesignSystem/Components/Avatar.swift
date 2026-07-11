@@ -1,11 +1,19 @@
 import SwiftUI
 
 /// The exact `ACCENTS` order the design system's `Avatar` hashes into, so a
-/// given name maps to the same accent color as the reference prototype.
-let avatarColorPalette: [UInt32] = [
-    DocsColorHex.accentBlue1, DocsColorHex.accentGreen, DocsColorHex.accentOrange,
-    DocsColorHex.accentPurple, DocsColorHex.accentPink, DocsColorHex.accentBlue2,
-    DocsColorHex.brandFill, DocsColorHex.accentBrown,
+/// given name maps to the same accent color as the reference prototype. Each
+/// entry pairs its light hex with its dark counterpart: the accent hues are
+/// identical in dark, but `brandFill` differs, so the background must render
+/// through `Color(lightHex:darkHex:)` to stay adaptive.
+let avatarColorPalette: [(light: UInt32, dark: UInt32)] = [
+    (DocsColorHex.accentBlue1, DocsColorHexDark.accentBlue1),
+    (DocsColorHex.accentGreen, DocsColorHexDark.accentGreen),
+    (DocsColorHex.accentOrange, DocsColorHexDark.accentOrange),
+    (DocsColorHex.accentPurple, DocsColorHexDark.accentPurple),
+    (DocsColorHex.accentPink, DocsColorHexDark.accentPink),
+    (DocsColorHex.accentBlue2, DocsColorHexDark.accentBlue2),
+    (DocsColorHex.brandFill, DocsColorHexDark.brandFill),
+    (DocsColorHex.accentBrown, DocsColorHexDark.accentBrown),
 ]
 
 func avatarInitials(for name: String) -> String {
@@ -17,13 +25,19 @@ func avatarInitials(for name: String) -> String {
     return String(first).uppercased()
 }
 
-func avatarColorHex(for name: String) -> UInt32 {
+func avatarColorHexPair(for name: String) -> (light: UInt32, dark: UInt32) {
     // Mirror the prototype: h = (h * 31 + charCode) >>> 0, index = h % count.
     var hash: UInt32 = 0
     for scalar in name.unicodeScalars {
         hash = hash &* 31 &+ scalar.value
     }
     return avatarColorPalette[Int(hash % UInt32(avatarColorPalette.count))]
+}
+
+/// The light hex for a name — the value the light-mode appearance keys off, kept
+/// as a distinct accessor so the palette-index mapping stays testable.
+func avatarColorHex(for name: String) -> UInt32 {
+    avatarColorHexPair(for: name).light
 }
 
 struct Avatar: View {
@@ -50,8 +64,9 @@ struct Avatar: View {
     }
 
     private var initialsView: some View {
-        Circle()
-            .fill(Color(hex: avatarColorHex(for: name)))
+        let colors = avatarColorHexPair(for: name)
+        return Circle()
+            .fill(Color(lightHex: colors.light, darkHex: colors.dark))
             .overlay(
                 Text(avatarInitials(for: name))
                     .font(.system(size: size * 0.4, weight: .semibold))

@@ -13,9 +13,12 @@ enum IconButtonColor {
 }
 
 struct IconButtonStyleHex: Equatable {
-    let backgroundHex: UInt32?
-    let foregroundHex: UInt32
-    let borderHex: UInt32?
+    let backgroundLightHex: UInt32?
+    let backgroundDarkHex: UInt32?
+    let foregroundLightHex: UInt32
+    let foregroundDarkHex: UInt32
+    let borderLightHex: UInt32?
+    let borderDarkHex: UInt32?
 }
 
 enum IconButtonStyleResolver {
@@ -24,32 +27,47 @@ enum IconButtonStyleResolver {
     static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false)
         -> IconButtonStyleHex
     {
-        let foregroundHex: UInt32
-        let softHex: UInt32
+        let foregroundLightHex: UInt32
+        let foregroundDarkHex: UInt32
+        let softLightHex: UInt32
+        let softDarkHex: UInt32
 
         switch color {
         case .neutral:
-            foregroundHex = DocsColorHex.textSecondary
-            softHex = DocsColorHex.surfaceMuted
+            foregroundLightHex = DocsColorHex.textSecondary
+            foregroundDarkHex = DocsColorHexDark.textSecondary
+            softLightHex = DocsColorHex.surfaceMuted
+            softDarkHex = DocsColorHexDark.surfaceMuted
         case .brand:
             // Reference IconButton brand hue is --text-brand.
-            foregroundHex = DocsColorHex.textBrand
-            softHex = DocsColorHex.brandFillSoft
+            foregroundLightHex = DocsColorHex.textBrand
+            foregroundDarkHex = DocsColorHexDark.textBrand
+            softLightHex = DocsColorHex.brandFillSoft
+            softDarkHex = DocsColorHexDark.brandFillSoft
         case .danger:
-            foregroundHex = DocsColorHex.danger
-            softHex = DocsColorHex.dangerSoft
+            foregroundLightHex = DocsColorHex.danger
+            foregroundDarkHex = DocsColorHexDark.danger
+            softLightHex = DocsColorHex.dangerSoft
+            softDarkHex = DocsColorHexDark.dangerSoft
         }
 
         switch variant {
         case .ghost:
-            return IconButtonStyleHex(backgroundHex: nil, foregroundHex: foregroundHex, borderHex: nil)
+            return IconButtonStyleHex(
+                backgroundLightHex: nil, backgroundDarkHex: nil,
+                foregroundLightHex: foregroundLightHex, foregroundDarkHex: foregroundDarkHex,
+                borderLightHex: nil, borderDarkHex: nil)
         case .soft:
-            return IconButtonStyleHex(backgroundHex: softHex, foregroundHex: foregroundHex, borderHex: nil)
+            return IconButtonStyleHex(
+                backgroundLightHex: softLightHex, backgroundDarkHex: softDarkHex,
+                foregroundLightHex: foregroundLightHex, foregroundDarkHex: foregroundDarkHex,
+                borderLightHex: nil, borderDarkHex: nil)
         case .outline:
             // Reference outline = raised surface fill + neutral hairline border + ink glyph.
             return IconButtonStyleHex(
-                backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: foregroundHex,
-                borderHex: DocsColorHex.borderDefault)
+                backgroundLightHex: DocsColorHex.surfaceRaised, backgroundDarkHex: DocsColorHexDark.surfaceRaised,
+                foregroundLightHex: foregroundLightHex, foregroundDarkHex: foregroundDarkHex,
+                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault)
         }
     }
 }
@@ -102,13 +120,13 @@ struct IconButton: View {
                 .font(.system(size: size.glyph))
                 .symbolVariant(filled ? .fill : .none)
                 .frame(width: size.box, height: size.box)
-                .foregroundStyle(Color(hex: style.foregroundHex))
-                .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
+                .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
+                .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)
                 .overlay(
                     RoundedRectangle(cornerRadius: DocsRadius.md)
                         .strokeBorder(
-                            style.borderHex.map { Color(hex: $0) } ?? Color.clear,
-                            lineWidth: style.borderHex == nil ? 0 : 1)
+                            Color(lightHex: style.borderLightHex, darkHex: style.borderDarkHex) ?? .clear,
+                            lineWidth: style.borderLightHex == nil ? 0 : 1)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         }

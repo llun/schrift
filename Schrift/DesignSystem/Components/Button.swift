@@ -14,51 +14,80 @@ enum ButtonColor {
 }
 
 struct ButtonStyleHex: Equatable {
-    let backgroundHex: UInt32?
-    let foregroundHex: UInt32
-    let borderHex: UInt32?
+    let backgroundLightHex: UInt32?
+    let backgroundDarkHex: UInt32?
+    let foregroundLightHex: UInt32
+    let foregroundDarkHex: UInt32
+    let borderLightHex: UInt32?
+    let borderDarkHex: UInt32?
 }
 
 enum ButtonStyleResolver {
     // The disabled look is driven purely by lowering opacity at the view level
     // (matching the reference), so the resolver keeps each variant's own colors.
     static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool = false) -> ButtonStyleHex {
-        let fillHex: UInt32
-        let softHex: UInt32
-        let onFillHex: UInt32
-        let softForegroundHex: UInt32
+        let fillLightHex: UInt32
+        let fillDarkHex: UInt32
+        let softLightHex: UInt32
+        let softDarkHex: UInt32
+        let onFillLightHex: UInt32
+        let onFillDarkHex: UInt32
+        let softForegroundLightHex: UInt32
+        let softForegroundDarkHex: UInt32
 
         switch color {
         case .brand:
-            fillHex = DocsColorHex.brandFill
-            softHex = DocsColorHex.brandFillSoft
-            onFillHex = DocsColorHex.textOnBrand
+            fillLightHex = DocsColorHex.brandFill
+            fillDarkHex = DocsColorHexDark.brandFill
+            softLightHex = DocsColorHex.brandFillSoft
+            softDarkHex = DocsColorHexDark.brandFillSoft
+            onFillLightHex = DocsColorHex.textOnBrand
+            onFillDarkHex = DocsColorHexDark.textOnBrand
             // Reference Button hues use --text-brand as the ink for soft/ghost/outline.
-            softForegroundHex = DocsColorHex.textBrand
+            softForegroundLightHex = DocsColorHex.textBrand
+            softForegroundDarkHex = DocsColorHexDark.textBrand
         case .neutral:
-            fillHex = DocsColorHex.textPrimary
-            softHex = DocsColorHex.surfaceMuted
-            onFillHex = DocsColorHex.textOnBrand
-            softForegroundHex = DocsColorHex.textPrimary
+            fillLightHex = DocsColorHex.textPrimary
+            fillDarkHex = DocsColorHexDark.textPrimary
+            softLightHex = DocsColorHex.surfaceMuted
+            softDarkHex = DocsColorHexDark.surfaceMuted
+            onFillLightHex = DocsColorHex.textOnBrand
+            onFillDarkHex = DocsColorHexDark.textOnBrand
+            softForegroundLightHex = DocsColorHex.textPrimary
+            softForegroundDarkHex = DocsColorHexDark.textPrimary
         case .danger:
-            fillHex = DocsColorHex.danger
-            softHex = DocsColorHex.dangerSoft
-            onFillHex = DocsColorHex.textOnBrand
-            softForegroundHex = DocsColorHex.danger
+            fillLightHex = DocsColorHex.danger
+            fillDarkHex = DocsColorHexDark.danger
+            softLightHex = DocsColorHex.dangerSoft
+            softDarkHex = DocsColorHexDark.dangerSoft
+            onFillLightHex = DocsColorHex.textOnBrand
+            onFillDarkHex = DocsColorHexDark.textOnBrand
+            softForegroundLightHex = DocsColorHex.danger
+            softForegroundDarkHex = DocsColorHexDark.danger
         }
 
         switch variant {
         case .primary:
-            return ButtonStyleHex(backgroundHex: fillHex, foregroundHex: onFillHex, borderHex: nil)
+            return ButtonStyleHex(
+                backgroundLightHex: fillLightHex, backgroundDarkHex: fillDarkHex,
+                foregroundLightHex: onFillLightHex, foregroundDarkHex: onFillDarkHex,
+                borderLightHex: nil, borderDarkHex: nil)
         case .secondary:
-            return ButtonStyleHex(backgroundHex: softHex, foregroundHex: softForegroundHex, borderHex: nil)
+            return ButtonStyleHex(
+                backgroundLightHex: softLightHex, backgroundDarkHex: softDarkHex,
+                foregroundLightHex: softForegroundLightHex, foregroundDarkHex: softForegroundDarkHex,
+                borderLightHex: nil, borderDarkHex: nil)
         case .tertiary:
-            return ButtonStyleHex(backgroundHex: nil, foregroundHex: softForegroundHex, borderHex: nil)
+            return ButtonStyleHex(
+                backgroundLightHex: nil, backgroundDarkHex: nil,
+                foregroundLightHex: softForegroundLightHex, foregroundDarkHex: softForegroundDarkHex,
+                borderLightHex: nil, borderDarkHex: nil)
         case .outline:
             // Reference outline = raised surface fill + neutral hairline border + ink label.
             return ButtonStyleHex(
-                backgroundHex: DocsColorHex.surfaceRaised, foregroundHex: softForegroundHex,
-                borderHex: DocsColorHex.borderDefault)
+                backgroundLightHex: DocsColorHex.surfaceRaised, backgroundDarkHex: DocsColorHexDark.surfaceRaised,
+                foregroundLightHex: softForegroundLightHex, foregroundDarkHex: softForegroundDarkHex,
+                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault)
         }
     }
 }
@@ -136,12 +165,13 @@ struct DocsButton: View {
             .padding(.horizontal, size.horizontalPadding)
             .frame(height: size.height)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .foregroundStyle(Color(hex: style.foregroundHex))
-            .background(style.backgroundHex.map { Color(hex: $0) } ?? Color.clear)
+            .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
+            .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)
             .overlay(
                 RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm)
                     .strokeBorder(
-                        style.borderHex.map { Color(hex: $0) } ?? Color.clear, lineWidth: style.borderHex == nil ? 0 : 1
+                        Color(lightHex: style.borderLightHex, darkHex: style.borderDarkHex) ?? .clear,
+                        lineWidth: style.borderLightHex == nil ? 0 : 1
                     )
             )
             .clipShape(RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm))

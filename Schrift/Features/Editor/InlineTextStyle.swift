@@ -12,8 +12,12 @@ struct InlineTextStyle: Equatable {
     var isMonospaced = false
     var isStruckThrough = false
     var isUnderlined = false
-    /// nil inherits the block's own text color.
-    var foregroundHex: UInt32?
+    /// nil inherits the block's own text color. Both set together (never one
+    /// without the other) so the color stays dark-mode adaptive via
+    /// `Color(lightHex:darkHex:)` — the same optional-pair convention as
+    /// `ButtonStyleHex`/`IconButtonStyleHex`.
+    var foregroundLightHex: UInt32?
+    var foregroundDarkHex: UInt32?
 }
 
 enum InlineTextStyleResolver {
@@ -34,7 +38,8 @@ enum InlineTextStyleResolver {
                 style.isStruckThrough = true
             case .link:
                 style.isUnderlined = true
-                style.foregroundHex = DocsColorHex.textBrand
+                style.foregroundLightHex = DocsColorHex.textBrand
+                style.foregroundDarkHex = DocsColorHexDark.textBrand
             }
         }
         return style
@@ -46,8 +51,8 @@ enum InlineTextStyleResolver {
 func inlineTextAttributes(for marks: [InlineMark], base: UIFont) -> [NSAttributedString.Key: Any] {
     let style = InlineTextStyleResolver.style(for: marks)
     var attributes: [NSAttributedString.Key: Any] = [.font: inlineFont(for: style, base: base)]
-    if let hex = style.foregroundHex {
-        attributes[.foregroundColor] = UIColor(Color(hex: hex))
+    if let color = Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex) {
+        attributes[.foregroundColor] = UIColor(color)
     }
     if style.isUnderlined {
         attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
