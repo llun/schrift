@@ -1,7 +1,6 @@
 // AI-generated translation — pending native-speaker review.
 enum Strings_zhHans {
     static let table: [L10nKey: String] = [
-        .common_done: "完成",
         .common_cancel: "取消",
         .common_close: "关闭",
         .common_retry: "重试",

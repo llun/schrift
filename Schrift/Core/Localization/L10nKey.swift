@@ -5,7 +5,6 @@ import Foundation
 /// as documentation of which screen/purpose each string serves.
 enum L10nKey: String, CaseIterable, Sendable {
     // Common
-    case common_done = "common.done"
     case common_cancel = "common.cancel"
     case common_close = "common.close"  // "Close" — sheet close-button accessibility label
     case common_retry = "common.retry"

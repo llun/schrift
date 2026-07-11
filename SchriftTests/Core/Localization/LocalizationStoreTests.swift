@@ -24,14 +24,14 @@ final class LocalizationStoreTests: XCTestCase {
         store.language = .french
         // French is wired as of B12. Pinned literal (not a re-derived dispatcher call)
         // so this stays a real content check.
-        XCTAssertEqual(store[.common_done], "Terminé")
+        XCTAssertEqual(store[.common_close], "Fermer")
         XCTAssertEqual(store.locale.identifier, "fr")
     }
     func testFallsBackToEnglishForMissingKey() {
         // A key intentionally absent from a non-English table resolves to English.
         let store = LocalizationStore(userDefaults: defaults)
         store.language = .thai
-        let value = store[.common_done]
+        let value = store[.common_close]
         XCTAssertFalse(value.isEmpty)
     }
     func testFormatSubstitutesArgs() {

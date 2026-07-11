@@ -4,7 +4,6 @@ import Foundation
 /// table is generated from and falls back to (see `Strings.table(for:)`).
 enum Strings_en {
     static let table: [L10nKey: String] = [
-        .common_done: "Done",
         .common_cancel: "Cancel",
         .common_close: "Close",
         .common_retry: "Try again",
