@@ -18,6 +18,12 @@ func shareRoleDisplayTitle(_ role: DocumentRole, isPending: Bool, loc: Localizat
     return isPending ? loc.format(.share_role_pending, base) : base
 }
 
+/// Bounds the Share sheet's members list so a long list scrolls internally
+/// instead of pushing the link section and Copy link button off screen.
+enum ShareSheetLayout {
+    static let membersMaxHeight: CGFloat = 208
+}
+
 struct ShareSheetView: View {
     @Bindable var viewModel: ShareViewModel
     var shareURL: URL? = nil
@@ -184,16 +190,22 @@ struct ShareSheetView: View {
             sectionLabel(
                 loc.plural(viewModel.members.count, one: .share_members_one, other: .share_members_other)
             )
-            ForEach(viewModel.members) { member in
-                ShareMemberRow(
-                    name: member.displayName,
-                    // A pending invite has no name, so displayName == email; drop
-                    // the subtitle to avoid printing the email twice.
-                    email: member.displayName == member.email ? "" : member.email,
-                    role: shareRoleDisplayTitle(member.role, isPending: member.isPending, loc: loc),
-                    onTapRole: { memberPendingRoleChange = member }
-                )
+            // Bounded so a long members list scrolls on its own — the invite
+            // field stays pinned above, and the link section + Copy link
+            // button (outside this inner scroll) stay reachable below it.
+            ScrollView {
+                ForEach(viewModel.members) { member in
+                    ShareMemberRow(
+                        name: member.displayName,
+                        // A pending invite has no name, so displayName == email; drop
+                        // the subtitle to avoid printing the email twice.
+                        email: member.displayName == member.email ? "" : member.email,
+                        role: shareRoleDisplayTitle(member.role, isPending: member.isPending, loc: loc),
+                        onTapRole: { memberPendingRoleChange = member }
+                    )
+                }
             }
+            .frame(maxHeight: ShareSheetLayout.membersMaxHeight)
         }
     }
 }
