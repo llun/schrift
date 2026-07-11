@@ -1,0 +1,21 @@
+Schrift/Features/Profile/LanguagePickerSheet.swift
+  s_dd62fdd4f50c18::t_25b2ab477e7136 50-52
+Schrift/Features/Profile/AppearancePickerSheet.swift
+  s_dd62fdd4f50c18::t_1eaa1bebd87a81 70-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9d2311ab88815f04f23de8d25eeb58c79a3daa50",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
