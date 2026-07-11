@@ -19,6 +19,8 @@ with a dated `Revised:` note.
 3. **Language control** — a functional in-app language picker that **switches the
    app UI live** (no relaunch), covering **10 languages**, with the whole app
    localized.
+4. **Version history** — the handoff's version-history sheet + its "Version
+   history" entry in the Options sheet, both absent from the current app (§9).
 
 ## 2. Context (the audit)
 
@@ -464,7 +466,83 @@ dark) and a manual run. Pure helpers are unit-tested where they exist:
 rule (`52` with a leading icon, else `16`), and the sheet detent/`maxHeight`
 constants.
 
-## 9. Cross-cutting integration
+## 9. Part 6 — Version history
+
+The handoff includes a **Version History** sheet (`VersionHistorySheet.jsx`),
+opened from a **"Version history"** row in the Options sheet — the current app has
+**neither**. This part adds both.
+
+### 9.1 UI
+
+- **Options sheet** gains a `ListRow` — `clock.arrow.circlepath` + "Version
+  history" + chevron — that presents the version-history sheet. The existing
+  Options rows (Pin, Copy link, Share, Copy as Markdown, Duplicate, Delete) are
+  **kept** — the handoff's `OptionsSheet.jsx` renders a *simplified* subset but
+  its own comment lists the full DocToolBox set, so this is additive, not a
+  removal. (The handoff's "N people editing" presence banner is **not** added —
+  it needs live-presence data the app doesn't have, same call as the row emojis /
+  avatars in §2.)
+- **Version-history sheet** matches `VersionHistorySheet.jsx`: a bottom sheet
+  (detent + drag indicator, per §8.4) whose **only scrolling region is the
+  version list** (`maxHeight` ≈ 340pt); a flat, chronological list, newest first;
+  each row shows the timestamp (`DocsFont.body`), the newest is labeled **"Current
+  version"** (`success`), older rows carry a **"Restore"** pill
+  (`brandFillSoft` bg / `textBrand`, pill radius). Fully localized + dark-adaptive
+  like everything else.
+
+### 9.2 Data — versions list (the guaranteed deliverable)
+
+- `struct DocumentVersion: Codable, Equatable, Sendable, Identifiable`
+  — `id: String` (the S3 `version_id`), `lastModified: Date`, `isCurrent: Bool`
+  (`decodeIfPresent ?? false`).
+- `extension DocsAPIClient { func documentVersions(documentID:) async throws ->
+  [DocumentVersion] }` → `GET documents/{id}/versions/`, decoding the Docs
+  backend's `{ versions: [...] , … }` wrapper. Trailing slash, lowercase UUID,
+  via the shared `get` primitive.
+- A `VersionHistoryViewModel` (`@MainActor @Observable`) loads best-effort,
+  friendly `errorMessage` on failure, `isLoading` gate. Timestamps render with
+  the current locale (relative or absolute per the design's `when` style).
+- Tests: `DocumentVersionsClientTests` (method/path/decode incl. `is_current`,
+  empty list) via `MockURLProtocol`; VM load + error-path tests.
+
+### 9.3 Restore — verify-gated, funneled through the save path
+
+**Constraint:** the app has a Yjs **encoder only, no decoder**, and it reads
+current content as **server-rendered markdown** (`formatted-content/`). A
+version's stored `content` is **base64 Yjs**, which the app cannot turn into
+markdown. So restore cannot go through the normal markdown → encode save.
+
+**Mechanism (feasible without a decoder):** re-PATCH the version's *own stored
+Yjs bytes* back as the current content — the app never has to understand them:
+
+1. Serialize with `DocumentSaveCoordinator`: require no unsaved local edits
+   (flush/settle any in-flight save first) so restore can't race a save or be
+   clobbered by one.
+2. `GET documents/{id}/versions/{version_id}/` → the version's base64 content.
+3. `PATCH documents/{id}/content/` with those exact bytes (the same primitive the
+   save uses).
+4. Trigger the editor's existing coordinator-aware **reload** (`refresh()`), so
+   the restored content re-renders from `formatted-content/` and the content
+   cache updates through the normal revalidation path (respecting
+   `mayPredateSave`).
+
+This reuses the safe, tested save/reload plumbing and never fabricates Yjs.
+
+**Verification gate:** the exact `versions/` and `versions/{id}/` response shapes
+must be confirmed **on-device against `docs.llun.dev`** (the Simulator's HTTP/3
+quirk notwithstanding) before restore ships, because they are not exercisable
+from unit tests alone. If the retrieve endpoint does **not** return usable
+content bytes, restore is **not shipped this pass**: the sheet ships **read-only**
+(list + "Current version", no Restore pill), and restore-on-the-web is offered
+instead — the list is valuable on its own and carries no risk to the
+full-overwrite save. This split keeps §9.2 unconditional and isolates the only
+uncertain piece.
+
+- Tests: `restoreDocumentVersion` client test (fetch-then-PATCH sequence, order
+  pinned via `RequestRecorder`); VM restore success/failure; a regression test
+  that restore is blocked while `isDirty` / a save is in flight.
+
+## 10. Cross-cutting integration
 
 - **Injection point:** `SchriftApp`/`RootView` own `AppearanceStore` +
   `LocalizationStore` (as `@State`), inject both via `.environment`, apply
@@ -478,7 +556,7 @@ constants.
 - **Formatting/CI:** `swift format --recursive --in-place Schrift SchriftTests`;
   full suite green on iPhone simulator; docs updated in the same change.
 
-## 10. Docs to update in this change
+## 11. Docs to update in this change
 
 - **`CLAUDE.md`** — new conventions: adaptive color tokens
   (`DocsColorHexDark` + `Color(lightHex:darkHex:)`), the resolver light+dark
@@ -492,7 +570,7 @@ constants.
   `Revised:` note pointing at dark mode + localization.
 - A dated implementation plan under `docs/superpowers/plans/` (from writing-plans).
 
-## 11. Risks & mitigations
+## 12. Risks & mitigations
 
 - **Translation quality** (Thai/Chinese/etc. are AI-generated) → flagged for
   native review; completeness + placeholder-parity tests prevent structural
@@ -511,8 +589,14 @@ constants.
 - **Dividerless tab sections may read as under-separated** to some eyes → it is a
   faithful match to the handoff and reversible via one `divided:` flag; validated
   against the screenshots in both color schemes.
+- **Version restore touches the safety-critical save path** and depends on
+  unverified backend response shapes → the versions **list** ships unconditionally
+  (no save-path risk); **restore** is verify-gated on-device, funnels through the
+  coordinator (no in-flight save), re-PATCHes the version's own bytes (never
+  fabricated Yjs), and falls back to read-only + web-restore if the endpoint
+  can't supply usable content (§9.3).
 
-## 12. Definition of done
+## 13. Definition of done
 
 Per `CLAUDE.md`: swift-format run; full suite green locally and on CI
 (`Build & Test`); new behavior test-covered; docs updated in the same change; PR
