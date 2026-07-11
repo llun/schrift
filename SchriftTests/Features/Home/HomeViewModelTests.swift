@@ -154,29 +154,6 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.searchResults.map(\.title), ["Q3 Planning"])
     }
 
-    func testToggleFavoriteCallsSetFavoriteThenReloads() async {
-        let viewModel = makeViewModel()
-        let log = RequestLog()
-        let empty = Self.emptyFixture
-        MockURLProtocol.stubHandler = { request in
-            let url = request.url?.absoluteString ?? ""
-            log.urls.append(url)
-            if url.contains("/favorite/") && !url.contains("favorite_list") {
-                return .init(statusCode: 201, headers: [:], body: Data(), error: nil)
-            }
-            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
-        }
-
-        let documentBody = Self.paginatedFixture(
-            id: "44444444-4444-4444-8444-444444444444", title: "Doc", isFavorite: false)
-        let document = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: documentBody).results[0]
-
-        await viewModel.toggleFavorite(document)
-
-        XCTAssertTrue(log.urls.contains { $0.contains("/favorite/") && !$0.contains("favorite_list") })
-        XCTAssertTrue(log.urls.contains { $0.contains("favorite_list") })
-    }
-
     func testLoadFailureSetsErrorMessage() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
@@ -542,19 +519,6 @@ final class HomeViewModelTests: XCTestCase {
 
         XCTAssertEqual(recorder.methods.count, 0)
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["On Screen"])
-    }
-
-    func testToggleFavoriteFailureDoesNotSetIsOffline() async {
-        let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
-        let documentBody = Self.paginatedFixture(
-            id: "ffffffff-ffff-4fff-8fff-ffffffffffff", title: "Doc", isFavorite: false)
-        let document = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: documentBody).results[0]
-
-        await viewModel.toggleFavorite(document)
-
-        XCTAssertNotNil(viewModel.errorKey)
-        XCTAssertFalse(viewModel.isOffline)
     }
 
     func testWorkOfflineNeverCachedFilterDoesNotClaimEmpty() async {

@@ -46,7 +46,6 @@ struct DocRow: View {
     var date: String = ""
     var offlineAvailable: Bool = false
     var onOpen: (() -> Void)? = nil
-    var onMore: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -82,12 +81,6 @@ struct DocRow: View {
                     .foregroundStyle(DocsColor.textTertiary)
                     .lineLimit(1)
                     .layoutPriority(1)
-            }
-
-            // Only show the more-options control when a handler is wired, so
-            // rows without one (e.g. search results) don't present an inert button.
-            if let onMore {
-                IconButton(icon: .more_horiz, label: loc[.docrow_more_options], size: .small, action: onMore)
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)

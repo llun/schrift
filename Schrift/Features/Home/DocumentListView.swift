@@ -12,7 +12,6 @@ struct DocumentListView: View {
 
     @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
-    @State private var documentPendingFavoriteChoice: Document?
 
     private var isOffline: Bool { viewModel.isOffline || workOffline }
 
@@ -100,18 +99,6 @@ struct DocumentListView: View {
         }
         .onChange(of: viewModel.searchQuery) {
             Task { await viewModel.search() }
-        }
-        .confirmationDialog(
-            loc[.home_document_options],
-            isPresented: Binding(
-                get: { documentPendingFavoriteChoice != nil },
-                set: { if !$0 { documentPendingFavoriteChoice = nil } }
-            ),
-            presenting: documentPendingFavoriteChoice
-        ) { document in
-            Button(document.isFavorite ? loc[.home_unpin] : loc[.home_pin]) {
-                Task { await viewModel.toggleFavorite(document) }
-            }
         }
     }
 
@@ -223,8 +210,7 @@ struct DocumentListView: View {
                         reach: document.linkReach,
                         date: documentRowDate(document, locale: loc.locale),
                         offlineAvailable: isOffline,
-                        onOpen: { onSelect(document) },
-                        onMore: { documentPendingFavoriteChoice = document }
+                        onOpen: { onSelect(document) }
                     )
                 }
             }

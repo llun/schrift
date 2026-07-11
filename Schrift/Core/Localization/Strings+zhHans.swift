@@ -29,15 +29,11 @@ enum Strings_zhHans {
         .home_empty_title: "暂无文档",
         .home_empty_body: "你创建的或与你共享的文档会显示在这里。",
         .home_newdoc: "新建文档",
-        .home_pin: "置顶",
-        .home_unpin: "取消置顶",
         .home_dismiss_error: "忽略错误",
-        .home_document_options: "文档选项",
         .home_select_document: "选择文档",
         .home_error_load: "无法加载文档。下拉刷新以重试。",
         .home_error_search: "搜索失败。请重试。",
         .home_error_create: "无法创建文档。请重试。",
-        .home_error_favorite: "无法更新收藏。请重试。",
 
         // Search
         .search_title: "搜索",
@@ -71,7 +67,6 @@ enum Strings_zhHans {
         .docrow_pinned: "已置顶",
         .docrow_shared_with_organization: "已与组织共享",
         .docrow_public: "公开",
-        .docrow_more_options: "更多选项",
         .docrow_available_offline: "可离线使用",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

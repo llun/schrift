@@ -32,15 +32,11 @@ enum Strings_en {
         .home_empty_title: "No documents yet",
         .home_empty_body: "Documents you create or that are shared with you will appear here.",
         .home_newdoc: "New doc",
-        .home_pin: "Pin",
-        .home_unpin: "Unpin",
         .home_dismiss_error: "Dismiss error",
-        .home_document_options: "Document Options",
         .home_select_document: "Select a Document",
         .home_error_load: "Couldn't load documents. Pull to refresh to try again.",
         .home_error_search: "Search failed. Please try again.",
         .home_error_create: "Couldn't create a document. Please try again.",
-        .home_error_favorite: "Couldn't update favorite. Please try again.",
 
         // Search
         .search_title: "Search",
@@ -74,7 +70,6 @@ enum Strings_en {
         .docrow_pinned: "Pinned",
         .docrow_shared_with_organization: "Shared with organization",
         .docrow_public: "Public",
-        .docrow_more_options: "More options",
         .docrow_available_offline: "Available offline",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

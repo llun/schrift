@@ -31,15 +31,11 @@ enum Strings_th {
         .home_empty_title: "ยังไม่มีเอกสาร",
         .home_empty_body: "เอกสารที่คุณสร้างหรือที่ถูกแชร์กับคุณจะปรากฏที่นี่",
         .home_newdoc: "เอกสารใหม่",
-        .home_pin: "ปักหมุด",
-        .home_unpin: "เลิกปักหมุด",
         .home_dismiss_error: "ปิดข้อผิดพลาด",
-        .home_document_options: "ตัวเลือกเอกสาร",
         .home_select_document: "เลือกเอกสาร",
         .home_error_load: "โหลดเอกสารไม่ได้ ดึงลงเพื่อรีเฟรชแล้วลองอีกครั้ง",
         .home_error_search: "ค้นหาไม่สำเร็จ โปรดลองอีกครั้ง",
         .home_error_create: "สร้างเอกสารไม่ได้ โปรดลองอีกครั้ง",
-        .home_error_favorite: "อัปเดตรายการโปรดไม่ได้ โปรดลองอีกครั้ง",
 
         // Search
         .search_title: "ค้นหา",
@@ -73,7 +69,6 @@ enum Strings_th {
         .docrow_pinned: "ปักหมุดแล้ว",
         .docrow_shared_with_organization: "แชร์กับองค์กร",
         .docrow_public: "สาธารณะ",
-        .docrow_more_options: "ตัวเลือกเพิ่มเติม",
         .docrow_available_offline: "ใช้งานได้แบบออฟไลน์",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

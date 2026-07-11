@@ -37,15 +37,11 @@ enum Strings_sl {
         .home_empty_title: "Še ni dokumentov",
         .home_empty_body: "Dokumenti, ki jih ustvarite ali so deljeni z vami, bodo prikazani tukaj.",
         .home_newdoc: "Nov dokument",
-        .home_pin: "Pripni",
-        .home_unpin: "Odpni",
         .home_dismiss_error: "Skrij napako",
-        .home_document_options: "Možnosti dokumenta",
         .home_select_document: "Izberite dokument",
         .home_error_load: "Dokumentov ni bilo mogoče naložiti. Povlecite za osvežitev in poskusite znova.",
         .home_error_search: "Iskanje ni uspelo. Poskusite znova.",
         .home_error_create: "Dokumenta ni bilo mogoče ustvariti. Poskusite znova.",
-        .home_error_favorite: "Priljubljene ni bilo mogoče posodobiti. Poskusite znova.",
 
         // Search
         .search_title: "Iskanje",
@@ -81,7 +77,6 @@ enum Strings_sl {
         .docrow_pinned: "Pripeto",
         .docrow_shared_with_organization: "Deljeno z organizacijo",
         .docrow_public: "Javno",
-        .docrow_more_options: "Več možnosti",
         .docrow_available_offline: "Na voljo brez povezave",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)
