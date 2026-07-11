@@ -1,0 +1,22 @@
+SchriftTests/Core/Localization/AppLanguageTests.swift
+  s_dd62fdd4f50c18::t_571a36b664c2cd 1-21
+Schrift/Core/Localization/AppLanguage.swift
+  s_dd62fdd4f50c18::t_6022fcfdb38954 1-10,21-26,37-58
+  s_dd62fdd4f50c18::t_7b77809f77e7ba 11-20,27-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "dbc866798b428afdb8a3ab5b5a81578b9a256fb7",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
