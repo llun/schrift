@@ -37,7 +37,11 @@ struct ProfileScreen: View {
                 .padding(.bottom, DocsSpacing.spaceMD)
             }
         }
-        .background(DocsColor.surfaceSunken)
+        // The handoff puts Profile on the plain page surface (white in light mode),
+        // like the other three tabs — with the grouped cards defined by their
+        // hairline border, not by a sunken grey backdrop. (The old iOS-grouped
+        // grey came from the pre-redesign Profile/Account screens.)
+        .background(DocsColor.surfacePage)
         .task { await viewModel.load() }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
