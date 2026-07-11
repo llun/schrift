@@ -1,0 +1,40 @@
+docs/superpowers/specs/2026-06-30-docs-ios-design.md
+  s_dd62fdd4f50c18::t_48e66a0981bc86 198
+  s_dd62fdd4f50c18::t_420b272ea28655 153
+  s_dd62fdd4f50c18::t_8059e4071d87ae 80-83
+  s_dd62fdd4f50c18::t_3fafc775cc78a5 258-261
+  s_dd62fdd4f50c18::t_418a589959b6a1 42-58
+CLAUDE.md
+  s_dd62fdd4f50c18::t_f834f0643e21a0 59
+  s_dd62fdd4f50c18::t_4e5892be9d9ff3 111-127
+  s_dd62fdd4f50c18::t_783f9d7acf65eb 649
+  s_dd62fdd4f50c18::t_acaebef8792809 324-328,341-378,381-386
+  s_dd62fdd4f50c18::t_74b05f7afc05dd 337-340
+  s_dd62fdd4f50c18::t_031be61892310a 379-380
+  s_dd62fdd4f50c18::t_d2f736bb16f2cd 46
+  s_dd62fdd4f50c18::t_6598ede89bd4b4 612-617
+  s_dd62fdd4f50c18::t_207bd2c095115d 633-648,650-654
+  s_dd62fdd4f50c18::t_06471be4a071c0 445-459
+  s_dd62fdd4f50c18::t_f4128f79adf7e5 576-592,601-610
+  s_dd62fdd4f50c18::t_c131e7a93b9568 194-195,201-202,204-206,212,217,224-227,231-233
+  s_dd62fdd4f50c18::t_ce07df6423ea91 329-330
+  s_dd62fdd4f50c18::t_0b561df720f35e 387
+README.md
+  s_dd62fdd4f50c18::t_d7abb38a4e6af2 7-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c8b20c3eecf603c4cbef871aef5bd6a6a14be11a",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
