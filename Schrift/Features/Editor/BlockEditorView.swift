@@ -178,7 +178,9 @@ private struct BlockEditorRow: View {
                 if viewModel.cursorRequest?.token == token {
                     viewModel.cursorRequest = nil
                 }
-            }
+            },
+            editLinkTitle: loc[.editor_link_edit_title],
+            removeLinkTitle: loc[.editor_link_remove]
         )
     }
 
