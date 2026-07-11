@@ -67,8 +67,10 @@ struct VersionHistorySheetView: View {
             .frame(maxHeight: 340)
 
             if let restoreURL {
-                // Pinned below the scrolling list (not part of it), so it keeps a
-                // little bottom breathing room above the home indicator.
+                // Sits directly below the scrolling list, not pinned to the sheet
+                // bottom (the filled VStack leaves page surface below it at the
+                // `.large` detent). The bottom padding keeps it off the home
+                // indicator when content fills the detent.
                 ListRow(
                     icon: .open_in_new,
                     title: loc[.versions_restore_web],

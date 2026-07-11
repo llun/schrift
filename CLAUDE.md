@@ -689,8 +689,8 @@ new code reads like the surrounding code.
   boxes or hairlines. This holds for **every** list-bearing sheet today — Options,
   Share, Version history, Appearance, Language — and for any new one: a sheet that
   shows a list flattens it. **Grouped `ListSection` cards are reserved for the tab
-  screens** (Profile's User/Preferences/Server/About sections, Shared's document
-  list), where the handoff uses them — that is the only place a boxed list
+  screens** (Profile's User/Preferences/Server/About/Sign-out sections, Shared's
+  document list), where the handoff uses them — that is the only place a boxed list
   belongs. Sheets with **no** list (the re-login and link-editor form sheets, the
   web-login sheet) are exempt: they have nothing to flatten and keep their form
   chrome (a `Cancel`/`Save` toolbar is fine there — `SheetHeader`'s title+close is
