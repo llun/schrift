@@ -10,7 +10,7 @@ final class OptionsViewModel {
     var isFavorite: Bool
     var isDuplicating = false
     var isDeleting = false
-    var errorMessage: String?
+    var errorKey: L10nKey?
     private(set) var didDelete = false
 
     private let client: DocsAPIClient
@@ -23,36 +23,36 @@ final class OptionsViewModel {
     }
 
     func toggleFavorite() async {
-        errorMessage = nil
+        errorKey = nil
         do {
             try await client.setFavorite(documentID: documentID, isFavorite: !isFavorite)
             isFavorite.toggle()
         } catch {
-            errorMessage = "Couldn't update favorite. Please try again."
+            errorKey = .options_error_toggle_favorite
         }
     }
 
     @discardableResult
     func duplicate() async -> UUID? {
         isDuplicating = true
-        errorMessage = nil
+        errorKey = nil
         defer { isDuplicating = false }
         do {
             return try await client.duplicateDocument(documentID: documentID)
         } catch {
-            errorMessage = "Couldn't duplicate document. Please try again."
+            errorKey = .options_error_duplicate
             return nil
         }
     }
 
     func delete() async {
         isDeleting = true
-        errorMessage = nil
+        errorKey = nil
         do {
             try await client.deleteDocument(documentID: documentID)
             didDelete = true
         } catch {
-            errorMessage = "Couldn't delete document. Please try again."
+            errorKey = .options_error_delete
         }
         isDeleting = false
     }

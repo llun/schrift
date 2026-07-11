@@ -35,7 +35,7 @@ final class OptionsViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.isFavorite)
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "POST")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testToggleFavoriteFailureKeepsStateAndSetsError() async {
@@ -45,7 +45,7 @@ final class OptionsViewModelTests: XCTestCase {
         await viewModel.toggleFavorite()
 
         XCTAssertFalse(viewModel.isFavorite)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .options_error_toggle_favorite)
     }
 
     func testDuplicateReturnsNewDocumentIDOnSuccess() async {
@@ -57,7 +57,7 @@ final class OptionsViewModelTests: XCTestCase {
 
         XCTAssertEqual(result, UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
         XCTAssertFalse(viewModel.isDuplicating)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testDuplicateFailureSetsErrorAndReturnsNil() async {
@@ -67,7 +67,7 @@ final class OptionsViewModelTests: XCTestCase {
         let result = await viewModel.duplicate()
 
         XCTAssertNil(result)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .options_error_duplicate)
     }
 
     func testDeleteSetsDidDeleteOnSuccess() async {
@@ -78,7 +78,7 @@ final class OptionsViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.didDelete)
         XCTAssertFalse(viewModel.isDeleting)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testDeleteFailureSetsErrorAndDoesNotSetDidDelete() async {
@@ -88,6 +88,6 @@ final class OptionsViewModelTests: XCTestCase {
         await viewModel.delete()
 
         XCTAssertFalse(viewModel.didDelete)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .options_error_delete)
     }
 }

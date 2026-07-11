@@ -516,4 +516,5 @@ struct EditorView: View {
         reach: .restricted,
         serverHost: "docs.llun.dev"
     )
+    .environment(LocalizationStore())
 }

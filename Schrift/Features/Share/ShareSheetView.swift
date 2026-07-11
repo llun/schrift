@@ -1,14 +1,28 @@
 import SwiftUI
 
-func shareRoleDisplayTitle(_ role: DocumentRole, isPending: Bool) -> String {
-    let base = role.rawValue.capitalized
-    return isPending ? "\(base) (Pending)" : base
+/// Maps a role to the localized key that names it. Exhaustive over
+/// `DocumentRole` because a document's owner can appear in the members list.
+func roleTitleKey(_ role: DocumentRole) -> L10nKey {
+    switch role {
+    case .reader: return .share_role_reader
+    case .commenter: return .share_role_commenter
+    case .editor: return .share_role_editor
+    case .administrator: return .share_role_administrator
+    case .owner: return .share_role_owner
+    }
+}
+
+@MainActor
+func shareRoleDisplayTitle(_ role: DocumentRole, isPending: Bool, loc: LocalizationStore) -> String {
+    let base = loc[roleTitleKey(role)]
+    return isPending ? loc.format(.share_role_pending, base) : base
 }
 
 struct ShareSheetView: View {
     @Bindable var viewModel: ShareViewModel
     var shareURL: URL? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(LocalizationStore.self) private var loc
 
     @State private var memberPendingRoleChange: ShareMember?
     @State private var isChoosingLinkReach = false
@@ -17,13 +31,14 @@ struct ShareSheetView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 DocsTextField(
-                    text: $viewModel.searchQuery, placeholder: "Invite by name or email", icon: "person.badge.plus"
+                    text: $viewModel.searchQuery, placeholder: loc[.share_invite_placeholder],
+                    icon: "person.badge.plus"
                 )
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.vertical, DocsSpacing.spaceSM)
 
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
+                if let errorKey = viewModel.errorKey {
+                    Text(loc[errorKey])
                         .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.danger)
                         .padding(.horizontal, DocsSpacing.gutter)
@@ -50,11 +65,11 @@ struct ShareSheetView: View {
                 .refreshable { await viewModel.load() }
             }
             .background(DocsColor.surfacePage)
-            .navigationTitle("Share")
+            .navigationTitle(loc[.share_title])
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button(loc[.common_done]) { dismiss() }
                 }
             }
             .task {
@@ -64,7 +79,7 @@ struct ShareSheetView: View {
                 await viewModel.search()
             }
             .confirmationDialog(
-                "Change Role",
+                loc[.share_change_role],
                 isPresented: Binding(
                     get: { memberPendingRoleChange != nil },
                     set: { if !$0 { memberPendingRoleChange = nil } }
@@ -76,21 +91,23 @@ struct ShareSheetView: View {
                 // be dead UI. Show only "Remove" for invitations.
                 if case .access(let access) = member {
                     ForEach([DocumentRole.reader, .commenter, .editor, .administrator], id: \.self) { role in
-                        Button(role.rawValue.capitalized) {
+                        Button(loc[roleTitleKey(role)]) {
                             Task { await viewModel.updateRole(accessID: access.id, role: role) }
                         }
                     }
                 }
-                Button("Remove", role: .destructive) {
+                Button(loc[.share_remove], role: .destructive) {
                     Task { await viewModel.removeMember(member) }
                 }
             }
-            .confirmationDialog("Link Access", isPresented: $isChoosingLinkReach) {
-                Button("Restricted") { Task { await viewModel.updateLinkConfiguration(reach: .restricted, role: nil) } }
-                Button("Anyone in the organization") {
+            .confirmationDialog(loc[.share_link_access], isPresented: $isChoosingLinkReach) {
+                Button(loc[.reach_restricted]) {
+                    Task { await viewModel.updateLinkConfiguration(reach: .restricted, role: nil) }
+                }
+                Button(loc[.share_reach_authenticated]) {
                     Task { await viewModel.updateLinkConfiguration(reach: .authenticated, role: .reader) }
                 }
-                Button("Anyone with the link") {
+                Button(loc[.share_reach_public]) {
                     Task { await viewModel.updateLinkConfiguration(reach: .public, role: .reader) }
                 }
             }
@@ -108,13 +125,13 @@ struct ShareSheetView: View {
     private var searchResultsSection: some View {
         if viewModel.searchResults.isEmpty {
             // Avoid an empty bordered card while there are no matches.
-            Text("No people found")
+            Text(loc[.share_no_people_found])
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.textTertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DocsSpacing.spaceLG)
         } else {
-            ListSection(header: "Add people") {
+            ListSection(header: loc[.share_add_people]) {
                 VStack(spacing: 0) {
                     ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, user in
                         if index > 0 { ProfileRowDivider() }
@@ -133,8 +150,8 @@ struct ShareSheetView: View {
 
     private var copyLinkButton: some View {
         DocsButton(
-            title: "Copy link", variant: .secondary, color: .brand, size: .large, icon: "link", fullWidth: true,
-            pill: true, isDisabled: shareURL == nil
+            title: loc[.share_copy_link], variant: .secondary, color: .brand, size: .large, icon: "link",
+            fullWidth: true, pill: true, isDisabled: shareURL == nil
         ) {
             guard let shareURL else { return }
             UIPasteboard.general.string = shareURL.absoluteString
@@ -145,7 +162,7 @@ struct ShareSheetView: View {
 
     private var linkSection: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-            sectionLabel("Link parameters")
+            sectionLabel(loc[.share_link_parameters])
             HStack {
                 LinkReachPill(reach: viewModel.linkReach, showsHint: true)
                 Spacer()
@@ -158,20 +175,22 @@ struct ShareSheetView: View {
             .onTapGesture { isChoosingLinkReach = true }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Change link access")
+            .accessibilityLabel(loc[.share_change_link_access])
         }
     }
 
     private var membersSection: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-            sectionLabel("Shared with \(viewModel.members.count) \(viewModel.members.count == 1 ? "person" : "people")")
+            sectionLabel(
+                loc.plural(viewModel.members.count, one: .share_members_one, other: .share_members_other)
+            )
             ForEach(viewModel.members) { member in
                 ShareMemberRow(
                     name: member.displayName,
                     // A pending invite has no name, so displayName == email; drop
                     // the subtitle to avoid printing the email twice.
                     email: member.displayName == member.email ? "" : member.email,
-                    role: shareRoleDisplayTitle(member.role, isPending: member.isPending),
+                    role: shareRoleDisplayTitle(member.role, isPending: member.isPending, loc: loc),
                     onTapRole: { memberPendingRoleChange = member }
                 )
             }
@@ -188,4 +207,5 @@ struct ShareSheetView: View {
             linkRole: nil
         )
     )
+    .environment(LocalizationStore())
 }

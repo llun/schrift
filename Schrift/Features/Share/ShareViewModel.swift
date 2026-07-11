@@ -9,7 +9,7 @@ final class ShareViewModel {
     var searchQuery: String = ""
     var searchResults: [UserSearchResult] = []
     var isLoading = false
-    var errorMessage: String?
+    var errorKey: L10nKey?
 
     private let client: DocsAPIClient
     private let documentID: UUID
@@ -23,7 +23,7 @@ final class ShareViewModel {
 
     func load() async {
         isLoading = true
-        errorMessage = nil
+        errorKey = nil
         do {
             async let accessesPage = client.listAccesses(documentID: documentID)
             async let invitationsPage = client.listInvitations(documentID: documentID)
@@ -31,7 +31,7 @@ final class ShareViewModel {
             let invitations = try await invitationsPage.results
             members = shareMembers(accesses: accesses, invitations: invitations)
         } catch {
-            errorMessage = "Couldn't load members. Pull to refresh to try again."
+            errorKey = .share_error_load
         }
         isLoading = false
     }
@@ -52,7 +52,7 @@ final class ShareViewModel {
             searchResults = results
         } catch {
             if Task.isCancelled { return }
-            errorMessage = "Search failed. Please try again."
+            errorKey = .share_error_search
         }
     }
 
@@ -63,7 +63,7 @@ final class ShareViewModel {
             searchResults = []
             await load()
         } catch {
-            errorMessage = "Couldn't add member. Please try again."
+            errorKey = .share_error_invite
         }
     }
 
@@ -72,7 +72,7 @@ final class ShareViewModel {
             _ = try await client.updateAccess(documentID: documentID, accessID: accessID, role: role)
             await load()
         } catch {
-            errorMessage = "Couldn't update role. Please try again."
+            errorKey = .share_error_update_role
         }
     }
 
@@ -86,7 +86,7 @@ final class ShareViewModel {
             }
             await load()
         } catch {
-            errorMessage = "Couldn't remove member. Please try again."
+            errorKey = .share_error_remove_member
         }
     }
 
@@ -96,7 +96,7 @@ final class ShareViewModel {
             linkReach = result.linkReach
             linkRole = result.linkRole
         } catch {
-            errorMessage = "Couldn't update link settings. Please try again."
+            errorKey = .share_error_update_link
         }
     }
 }
