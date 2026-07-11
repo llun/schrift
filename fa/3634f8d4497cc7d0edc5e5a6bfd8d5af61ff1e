@@ -1,0 +1,25 @@
+docs/superpowers/specs/2026-07-11-ios-design-update-design.md
+  s_dd62fdd4f50c18::t_e98692190449b4 22-23
+  s_dd62fdd4f50c18::t_dbbf6b547c5fef 599
+  s_dd62fdd4f50c18::t_ccde700e7c8507 573
+  s_dd62fdd4f50c18::t_e766fdf6f74159 469-545
+  s_dd62fdd4f50c18::t_8377f8b14b2436 592-597
+  s_dd62fdd4f50c18::t_d9b9c07ffb2201 559
+  s_dd62fdd4f50c18::t_e32f64c571e38e 598
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "fa3634f8d4497cc7d0edc5e5a6bfd8d5af61ff1e",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
