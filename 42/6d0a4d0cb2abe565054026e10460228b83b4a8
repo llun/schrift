@@ -1,0 +1,41 @@
+Schrift/Core/Localization/L10nKey.swift
+  s_dd62fdd4f50c18::t_40c28c8b5c6757 79
+  s_dd62fdd4f50c18::t_25223acb1c7218 59-78
+Schrift/Features/Connect/ConnectViewModel.swift
+  s_dd62fdd4f50c18::t_73eb26736f0037 9
+  s_dd62fdd4f50c18::t_c78a8185c1cdb1 30,33,39,49,59
+Schrift/Features/Connect/ReauthenticationSheetView.swift
+  s_dd62fdd4f50c18::t_7d9bf23856ea14 17
+  s_dd62fdd4f50c18::t_b94605293ca546 39,51-52,60,64,79
+Schrift/Core/Localization/Strings+en.swift
+  s_dd62fdd4f50c18::t_f8abc431e91426 57-72
+SchriftTests/Features/Connect/ConnectViewModelTests.swift
+  s_dd62fdd4f50c18::t_809926b8787c09 48,58
+  s_dd62fdd4f50c18::t_c65a81d9d97b52 74,85
+Schrift/Features/Connect/ReauthenticationViewModel.swift
+  s_dd62fdd4f50c18::t_0f4b1225754f18 12
+  s_dd62fdd4f50c18::t_11f0ce83d71a28 35,44
+SchriftTests/Features/Connect/ReauthenticationViewModelTests.swift
+  s_dd62fdd4f50c18::t_ed405585bc1307 78
+  s_dd62fdd4f50c18::t_027f2585e27a5e 64
+Schrift/Features/Connect/ConnectView.swift
+  s_dd62fdd4f50c18::t_0fbefa347352d3 5,19,22,35,37,39-40
+  s_dd62fdd4f50c18::t_74d68c4f0538cf 84
+  s_dd62fdd4f50c18::t_7ec36f697db9a5 122,124,130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "426d0a4d0cb2abe565054026e10460228b83b4a8",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
