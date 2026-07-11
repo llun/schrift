@@ -1,0 +1,23 @@
+SchriftTests/Core/Localization/PluralRuleTests.swift
+  s_dd62fdd4f50c18::t_042d0e3c3a5f58 1-16
+Schrift/Core/Localization/PluralRule.swift
+  s_dd62fdd4f50c18::t_137efb8f49ad6c 1-16
+Schrift/Core/Localization/LocalizationStore.swift
+  s_dd62fdd4f50c18::t_2a80973e265560 42-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9501ccdc94b610b14b2e0eeb74d90248531a98a9",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
