@@ -22,11 +22,10 @@ final class LocalizationStoreTests: XCTestCase {
     func testResolvesCurrentLanguage() {
         let store = LocalizationStore(userDefaults: defaults)
         store.language = .french
-        // Strings_fr doesn't exist until Task B12; Strings.table(for:) currently
-        // maps every non-English language to Strings_en.table, so compare
-        // against the dispatcher rather than a not-yet-existing per-language
-        // table. This assertion stays valid once B12 wires the real tables in.
-        XCTAssertEqual(store[.common_done], Strings.table(for: .french)[.common_done])
+        // French isn't wired until B12, so it currently resolves via the English fallback.
+        // Pinned literal (not a re-derived dispatcher call) so this stays a real content
+        // check now and forces B12 to update it to the real French value.
+        XCTAssertEqual(store[.common_done], "Done")
         XCTAssertEqual(store.locale.identifier, "fr")
     }
     func testFallsBackToEnglishForMissingKey() {
