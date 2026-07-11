@@ -15,7 +15,7 @@ func navBarShowsTopRow(largeTitle: Bool, hasBack: Bool, hasLeading: Bool) -> Boo
 }
 
 struct NavBarAction {
-    let systemImage: String
+    let icon: MaterialIcon
     let label: String
     var color: IconButtonColor = .neutral
     var filled: Bool = false
@@ -47,7 +47,7 @@ struct NavBar: View {
         HStack(spacing: DocsSpacing.space4xs) {
             ForEach(Array(trailingActions.enumerated()), id: \.offset) { _, action in
                 IconButton(
-                    systemImage: action.systemImage,
+                    icon: action.icon,
                     label: action.label,
                     color: action.color,
                     filled: action.filled,
@@ -64,10 +64,9 @@ struct NavBar: View {
                     if let backTitle, let onBack {
                         Button(action: onBack) {
                             HStack(spacing: DocsSpacing.space4xs) {
-                                Image(systemName: "chevron.left")
-                                    // Reference back glyph is larger than its 17pt label
-                                    // (26px arrow_back_ios_new).
-                                    .font(.system(size: 20, weight: .semibold))
+                                // Handoff back glyph: Material `arrow_back_ios_new`,
+                                // larger than its 17pt label.
+                                MaterialSymbol(.arrow_back_ios_new, size: 20)
                                 Text(backTitle)
                                     .font(DocsFont.body)
                             }
@@ -171,7 +170,7 @@ struct NavBar: View {
         NavBar(
             title: "Schrift", subtitle: "docs.example.org", largeTitle: true,
             trailingActions: [
-                NavBarAction(systemImage: "plus", label: "New", action: {})
+                NavBarAction(icon: .add, label: "New", action: {})
             ], showsBorder: false)
         // Large title, no back, no trailing actions (Search/Shared/Profile):
         // top row collapses, no dead space above the title.
@@ -182,16 +181,16 @@ struct NavBar: View {
         NavBar(
             title: "Getting started", largeTitle: true, backTitle: "Home", onBack: {},
             trailingActions: [
-                NavBarAction(systemImage: "list.bullet.indent", label: "Pages", action: {}),
-                NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {}),
-                NavBarAction(systemImage: "ellipsis", label: "Options", action: {}),
+                NavBarAction(icon: .account_tree, label: "Pages", action: {}),
+                NavBarAction(icon: .share, label: "Share", action: {}),
+                NavBarAction(icon: .more_horiz, label: "Options", action: {}),
             ])
         // Standard (non-large) mode, unchanged: centered title, back
         // button and trailing actions both in the 44pt top row.
         NavBar(
             title: "Docs", backTitle: "Docs", onBack: {},
             trailingActions: [
-                NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {})
+                NavBarAction(icon: .share, label: "Share", action: {})
             ])
         Spacer()
     }

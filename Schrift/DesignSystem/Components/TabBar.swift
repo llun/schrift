@@ -1,25 +1,9 @@
 import SwiftUI
-import UIKit
-
-/// The symbol name a tab-bar item should render for the given selection state.
-///
-/// Selected tabs use the filled variant of the symbol for emphasis. A few SF
-/// Symbols — notably `magnifyingglass` (the Search tab) — have **no** `.fill`
-/// variant, and asking `Image(systemName:)` for a symbol that doesn't exist
-/// renders an *empty* image. That made the Search tab's magnifying glass vanish
-/// the moment it was selected. Fall back to the base symbol whenever the filled
-/// variant isn't a real SF Symbol so selecting a tab never blanks its icon;
-/// selection stays legible via the brand tint and heavier weight.
-func tabBarIconName(baseSystemImage: String, isSelected: Bool) -> String {
-    guard isSelected else { return baseSystemImage }
-    let filled = "\(baseSystemImage).fill"
-    return UIImage(systemName: filled) != nil ? filled : baseSystemImage
-}
 
 struct TabBarItem {
     let value: String
     let label: String
-    let systemImage: String
+    let icon: MaterialIcon
 }
 
 struct TabBar: View {
@@ -33,8 +17,11 @@ struct TabBar: View {
                 let isSelected = item.value == selection
                 Button(action: { selection = item.value }) {
                     VStack(spacing: DocsSpacing.space4xs) {
-                        Image(systemName: tabBarIconName(baseSystemImage: item.systemImage, isSelected: isSelected))
-                            .font(.system(size: 25, weight: isSelected ? .medium : .regular))
+                        // Selected tabs use the filled Material Symbols variant
+                        // (FILL axis) for emphasis — the bundled font always
+                        // carries it, so there is no missing-variant fallback to
+                        // worry about the way SF Symbols required.
+                        MaterialSymbol(item.icon, size: 25, fill: isSelected)
                         Text(item.label)
                             .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
                     }
@@ -72,10 +59,10 @@ struct TabBar: View {
         Spacer()
         TabBar(
             items: [
-                TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
-                TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
-                TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
-                TabBarItem(value: "me", label: "Profile", systemImage: "person.crop.circle"),
+                TabBarItem(value: "docs", label: "Docs", icon: .description),
+                TabBarItem(value: "search", label: "Search", icon: .search),
+                TabBarItem(value: "shared", label: "Shared", icon: .group),
+                TabBarItem(value: "me", label: "Profile", icon: .account_circle),
             ], selection: $selection)
     }
 }

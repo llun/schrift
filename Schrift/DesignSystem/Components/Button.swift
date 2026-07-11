@@ -145,7 +145,7 @@ struct DocsButton: View {
     var variant: ButtonVariant = .primary
     var color: ButtonColor = .brand
     var size: ButtonSize = .medium
-    var icon: String? = nil
+    var icon: MaterialIcon? = nil
     var fullWidth: Bool = false
     var pill: Bool = false
     var isDisabled: Bool = false
@@ -156,8 +156,7 @@ struct DocsButton: View {
         Button(action: action) {
             HStack(spacing: size.iconGap) {
                 if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: size.iconSize, weight: .medium))
+                    MaterialSymbol(icon, size: size.iconSize)
                 }
                 Text(title)
                     .font(.system(size: size.fontSize, weight: .semibold))

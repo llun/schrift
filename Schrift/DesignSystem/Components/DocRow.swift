@@ -1,10 +1,10 @@
 import SwiftUI
 
-func docRowReachIndicatorSystemImage(reach: LinkReach) -> String? {
+func docRowReachIndicatorIcon(reach: LinkReach) -> MaterialIcon? {
     switch reach {
     case .restricted: return nil
-    case .authenticated: return "network.badge.shield.half.filled"
-    case .public: return "globe"
+    case .authenticated: return .vpn_lock
+    case .public: return .public
     }
 }
 
@@ -62,9 +62,8 @@ struct DocRow: View {
                     .foregroundStyle(DocsColor.textPrimary)
                     .lineLimit(1)
 
-                if let indicatorImage = docRowReachIndicatorSystemImage(reach: reach) {
-                    Image(systemName: indicatorImage)
-                        .font(.system(size: 16))
+                if let indicatorIcon = docRowReachIndicatorIcon(reach: reach) {
+                    MaterialSymbol(indicatorIcon, size: 16)
                         .foregroundStyle(DocsColor.textTertiary)
                 }
             }
@@ -72,8 +71,7 @@ struct DocRow: View {
             Spacer(minLength: DocsSpacing.spaceXS)
 
             if offlineAvailable {
-                Image(systemName: "checkmark.icloud.fill")
-                    .font(.system(size: 16))
+                MaterialSymbol(.cloud_done, size: 16)
                     .foregroundStyle(DocsColor.gray350)
                     .accessibilityLabel(loc[.docrow_available_offline])
             }
@@ -89,7 +87,7 @@ struct DocRow: View {
             // Only show the more-options control when a handler is wired, so
             // rows without one (e.g. search results) don't present an inert button.
             if let onMore {
-                IconButton(systemImage: "ellipsis", label: loc[.docrow_more_options], size: .small, action: onMore)
+                IconButton(icon: .more_horiz, label: loc[.docrow_more_options], size: .small, action: onMore)
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)

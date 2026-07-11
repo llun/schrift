@@ -35,7 +35,7 @@ struct ConnectView: View {
                     label: loc[.connect_server_label],
                     text: $viewModel.serverURLInput,
                     placeholder: loc[.connect_server_placeholder],
-                    icon: "cloud",
+                    icon: .cloud,
                     helper: loc[.connect_server_helper],
                     error: viewModel.errorKey.map { loc[$0] }
                 )
@@ -47,7 +47,7 @@ struct ConnectView: View {
                 .keyboardType(.URL)
 
                 DocsButton(
-                    title: signInTitle, size: .large, icon: "rectangle.portrait.and.arrow.right", fullWidth: true,
+                    title: signInTitle, size: .large, icon: .login, fullWidth: true,
                     pill: true, isDisabled: viewModel.isSigningIn
                 ) {
                     viewModel.startSignIn()
@@ -93,15 +93,13 @@ struct ConnectView: View {
                     viewModel.selectRecentServer(server)
                 } label: {
                     HStack(spacing: DocsSpacing.space2xs + DocsSpacing.space3xs) {
-                        Image(systemName: "server.rack")
-                            .font(.system(size: 20))
+                        MaterialSymbol(.dns, size: 20)
                             .foregroundStyle(DocsColor.textTertiary)
                         Text(server.host ?? server.absoluteString)
                             .font(DocsFont.subhead)
                             .foregroundStyle(DocsColor.textPrimary)
                         Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 18))
+                        MaterialSymbol(.chevron_right, size: 18)
                             .foregroundStyle(DocsColor.gray300)
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)

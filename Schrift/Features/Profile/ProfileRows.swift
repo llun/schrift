@@ -3,21 +3,20 @@ import SwiftUI
 /// A bespoke row matching ListRow styling, but with a custom trailing view
 /// (Switch / Badge / etc.) that ListRow does not support.
 struct ProfileTrailingRow<Trailing: View>: View {
-    var systemImage: String? = nil
+    var icon: MaterialIcon? = nil
     let title: String
     let trailing: Trailing
 
-    init(systemImage: String? = nil, title: String, @ViewBuilder trailing: () -> Trailing) {
-        self.systemImage = systemImage
+    init(icon: MaterialIcon? = nil, title: String, @ViewBuilder trailing: () -> Trailing) {
+        self.icon = icon
         self.title = title
         self.trailing = trailing()
     }
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 24))
+            if let icon {
+                MaterialSymbol(icon, size: 24)
                     .foregroundStyle(DocsColor.textSecondary)
                     .frame(width: 24)
             }

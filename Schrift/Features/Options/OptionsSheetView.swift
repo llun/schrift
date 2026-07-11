@@ -49,7 +49,7 @@ struct OptionsSheetView: View {
                     VStack(spacing: DocsSpacing.spaceBase) {
                         ListSection {
                             ListRow(
-                                systemImage: viewModel.isFavorite ? "pin.slash" : "pin",
+                                icon: .push_pin,
                                 title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
                                 value: viewModel.isFavorite ? loc[.options_pinned] : nil,
                                 action: { Task { await viewModel.toggleFavorite() } }
@@ -57,11 +57,11 @@ struct OptionsSheetView: View {
                         }
 
                         ListSection {
-                            ListRow(systemImage: "link", title: loc[.options_copy_link], action: { copyLink() })
+                            ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })
                             if onShare != nil {
                                 ProfileRowDivider()
                                 ListRow(
-                                    systemImage: "person.2", title: loc[.options_share], showsChevron: true,
+                                    icon: .group, title: loc[.options_share], showsChevron: true,
                                     action: {
                                         onShare?()
                                         dismiss()
@@ -69,20 +69,20 @@ struct OptionsSheetView: View {
                             }
                             ProfileRowDivider()
                             ListRow(
-                                systemImage: "doc.plaintext", title: loc[.options_copy_markdown],
+                                icon: .description, title: loc[.options_copy_markdown],
                                 action: { copyMarkdown() })
                         }
 
                         ListSection {
                             ListRow(
-                                systemImage: "clock.arrow.circlepath", title: loc[.versions_title],
+                                icon: .history, title: loc[.versions_title],
                                 showsChevron: true,
                                 action: { isPresentingVersionHistory = true })
                         }
 
                         ListSection {
                             ListRow(
-                                systemImage: "doc.on.doc", title: loc[.options_duplicate],
+                                icon: .content_copy, title: loc[.options_duplicate],
                                 action: {
                                     Task {
                                         await viewModel.duplicate()
@@ -93,7 +93,7 @@ struct OptionsSheetView: View {
 
                         ListSection {
                             ListRow(
-                                systemImage: "trash", title: loc[.options_delete_document], isDestructive: true,
+                                icon: .delete, title: loc[.options_delete_document], isDestructive: true,
                                 action: { isConfirmingDelete = true })
                         }
                     }

@@ -38,7 +38,7 @@ struct ShareSheetView: View {
             VStack(spacing: 0) {
                 DocsTextField(
                     text: $viewModel.searchQuery, placeholder: loc[.share_invite_placeholder],
-                    icon: "person.badge.plus"
+                    icon: .person_add
                 )
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.vertical, DocsSpacing.spaceSM)
@@ -156,7 +156,7 @@ struct ShareSheetView: View {
 
     private var copyLinkButton: some View {
         DocsButton(
-            title: loc[.share_copy_link], variant: .secondary, color: .brand, size: .large, icon: "link",
+            title: loc[.share_copy_link], variant: .secondary, color: .brand, size: .large, icon: .link,
             fullWidth: true, pill: true, isDisabled: shareURL == nil
         ) {
             guard let shareURL else { return }
@@ -172,8 +172,7 @@ struct ShareSheetView: View {
             HStack {
                 LinkReachPill(reach: viewModel.linkReach, showsHint: true)
                 Spacer()
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 22))
+                MaterialSymbol(.unfold_more, size: 22)
                     .foregroundStyle(DocsColor.gray300)
             }
             .frame(minHeight: DocsSpacing.rowMinHeight)

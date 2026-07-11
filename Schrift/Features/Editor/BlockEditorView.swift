@@ -137,8 +137,7 @@ private struct BlockEditorRow: View {
             Button {
                 viewModel.toggleChecklist(blockID: block.id)
             } label: {
-                Image(systemName: checked ? "checkmark.square.fill" : "square")
-                    .font(DocsFont.body)
+                MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: 17)
                     .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
             }
             .buttonStyle(.plain)

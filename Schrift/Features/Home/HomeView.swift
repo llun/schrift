@@ -39,10 +39,10 @@ struct HomeView: View {
 
                 TabBar(
                     items: [
-                        TabBarItem(value: "docs", label: loc[.home_title], systemImage: "doc.text"),
-                        TabBarItem(value: "search", label: loc[.search_title], systemImage: "magnifyingglass"),
-                        TabBarItem(value: "shared", label: loc[.shared_title], systemImage: "person.2"),
-                        TabBarItem(value: "me", label: loc[.common_profile], systemImage: "person.crop.circle"),
+                        TabBarItem(value: "docs", label: loc[.home_title], icon: .description),
+                        TabBarItem(value: "search", label: loc[.search_title], icon: .search),
+                        TabBarItem(value: "shared", label: loc[.shared_title], icon: .group),
+                        TabBarItem(value: "me", label: loc[.common_profile], icon: .account_circle),
                     ], selection: $selectedTab)
             }
             .background(DocsColor.surfacePage)

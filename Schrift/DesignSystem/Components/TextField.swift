@@ -45,7 +45,7 @@ struct DocsTextField: View {
     var label: String? = nil
     @Binding var text: String
     var placeholder: String = ""
-    var icon: String? = nil
+    var icon: MaterialIcon? = nil
     var helper: String? = nil
     var error: String? = nil
     var isDisabled: Bool = false
@@ -70,8 +70,7 @@ struct DocsTextField: View {
 
             HStack(spacing: DocsSpacing.spaceXS) {
                 if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 20))
+                    MaterialSymbol(icon, size: 20)
                         .foregroundStyle(DocsColor.textTertiary)
                 }
                 TextField(placeholder, text: $text)
@@ -113,7 +112,7 @@ struct DocsTextField: View {
 #Preview {
     @Previewable @State var text = ""
     DocsTextField(
-        label: "Docs server", text: $text, placeholder: "docs.example.org", icon: "cloud",
+        label: "Docs server", text: $text, placeholder: "docs.example.org", icon: .cloud,
         helper: "The app signs in with your existing session."
     )
     .padding()

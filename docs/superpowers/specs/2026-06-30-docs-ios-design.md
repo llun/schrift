@@ -56,6 +56,13 @@ out of scope (restore is a "Restore on the web" link instead — see §9.3 of
 that spec for why: the app has a Yjs encoder but no decoder, and the
 restore-response shape couldn't be verified end-to-end in a headless
 environment before this pass shipped).
+Revised: 2026-07-11 (later) — the **Material Symbols vs SF Symbols** decision
+below is now made: the app **bundles the exact Material Symbols font** (a ~18KB
+Apache-2.0 subset of the 77 glyphs used, FILL axis only), rendered via
+`MaterialIcon`/`MaterialSymbol`, so the iconography matches the handoff exactly.
+An earlier pass had approximated the glyphs with SF Symbols; that was a visible
+deviation and is gone. See
+`docs/superpowers/plans/2026-07-11-material-icons.md`.
 
 ## Summary
 
@@ -210,7 +217,7 @@ Ported from `tokens/*.css` in the handoff bundle into a `DesignSystem/Tokens` mo
 - Typography: Inter (system fallback), iOS HIG scale mapped ~1:1 to SwiftUI `.largeTitle/.title/.title2/.headline/.body/.callout/.subheadline/.footnote/.caption`
 - Spacing: 4px base unit scale (`2xs`…`5xl`)
 - Radius: 4px (controls) → 8px → 12px (badges/cards) → 16–24px (sheets/modals) → pill (avatars/segmented control)
-- Icons: Google Material Symbols Outlined — evaluate bundling the variable font vs. mapping each glyph name to an SF Symbols equivalent during implementation (design system assumes the Material font; SF Symbols would be more native but is a visual deviation worth a deliberate call when we get there).
+- Icons: Google Material Symbols Outlined — **shipped 2026-07-11 by bundling the variable font** (a ~18KB Apache-2.0 subset of the 77 glyphs used, FILL axis only), referenced by the typed `MaterialIcon` enum and rendered by `MaterialSymbol`. An earlier pass mapped each glyph to an approximate SF Symbol, but that was a visible deviation from the handoff, so the app now ships the exact Material glyphs. See `docs/superpowers/plans/2026-07-11-material-icons.md`.
 
 Static assets (logo, illustrations, doc-type icons) are copied from the handoff's `assets/` folder into the Xcode project's asset catalog during the scaffold PR.
 
@@ -254,7 +261,7 @@ High-level phases; the implementation plan will break each into small, separatel
 - Save is a full-content overwrite with no conflict detection — concurrent edits in the web app can be clobbered.
 - WebView-based login means periodic re-auth; no silent token refresh.
 - Save depends on the on-device Yjs encoder (`Core/Yjs`) producing bytes the backend's Yjs content-validator accepts and BlockNote can interpret. If the backend's Yjs/BlockNote schema changes, saves could break — worth verifying against the target server and surfacing a clear error if the server rejects the content. (Byte-exact golden tests against the real Yjs library guard the encoder itself.)
-- Material Symbols vs SF Symbols decision deferred to implementation (visual fidelity vs native idiom trade-off).
+- ~~Material Symbols vs SF Symbols decision deferred to implementation (visual fidelity vs native idiom trade-off).~~ **Resolved 2026-07-11** — the app bundles the exact Material Symbols font (see the `Revised:` note above and the Icons bullet); no longer open.
 - Download/export remains explicitly deferred past v1. Version history
   **browsing** shipped 2026-07-11 (read-only); **restoring** a version is still
   deferred — see the `Revised:` note above and

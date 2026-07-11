@@ -15,12 +15,12 @@ enum AppAppearance: String, CaseIterable, Sendable {
         }
     }
 
-    /// SF Symbol name representing this appearance in pickers/toggles.
-    var iconName: String {
+    /// Material icon representing this appearance in pickers/toggles.
+    var icon: MaterialIcon {
         switch self {
-        case .system: "circle.lefthalf.filled"
-        case .light: "sun.max"
-        case .dark: "moon"
+        case .system: .contrast
+        case .light: .light_mode
+        case .dark: .dark_mode
         }
     }
 }

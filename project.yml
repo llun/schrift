@@ -49,6 +49,17 @@ targets:
           - th
           - zh-Hans
           - zh-Hant
+        # The app's icon set is Google Material Symbols Outlined (the exact glyphs
+        # the design handoff specifies), bundled as a 17KB subset of just the ~69
+        # glyphs used, with only the FILL axis kept (0 = outlined, 1 = filled for
+        # active/selected states). Registered here by filename (iOS resolves it in
+        # the bundle regardless of the Resources/Fonts/ subfolder). Like
+        # CFBundleLocalizations, UIAppFonts is an array Xcode's Info.plist
+        # synthesis can't take via INFOPLIST_KEY_*, so it lives in this template.
+        # Rendered by DesignSystem/Tokens/MaterialIcon.swift. Apache-2.0
+        # (Resources/Fonts/MaterialSymbols-LICENSE.txt).
+        UIAppFonts:
+          - MaterialSymbolsOutlined-Icons.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift

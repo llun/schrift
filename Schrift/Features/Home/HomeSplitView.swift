@@ -32,8 +32,14 @@ struct HomeSplitView: View {
                 )
                 .id(selectedDocument.id)
             } else {
-                ContentUnavailableView(loc[.home_select_document], systemImage: "doc.text")
-                    .background(DocsColor.surfacePage)
+                ContentUnavailableView {
+                    Label {
+                        Text(loc[.home_select_document])
+                    } icon: {
+                        MaterialSymbol(.description, size: 52)
+                    }
+                }
+                .background(DocsColor.surfacePage)
             }
         }
     }

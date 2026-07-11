@@ -14,8 +14,7 @@ struct OfflineBanner: View {
 
     var body: some View {
         HStack(spacing: DocsSpacing.space2xs) {
-            Image(systemName: "checkmark.icloud.fill")
-                .font(.system(size: 17))
+            MaterialSymbol(.cloud_done, size: 17, fill: true)
                 .foregroundStyle(DocsColor.gray450)
             Text(loc[.offline_status])
                 .font(DocsFont.caption.weight(.semibold))

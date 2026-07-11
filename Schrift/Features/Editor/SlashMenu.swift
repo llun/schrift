@@ -16,56 +16,56 @@ struct SlashMenuItem: Equatable, Identifiable {
     /// `titleKey` is the localized label actually shown in the menu.
     let title: String
     let titleKey: L10nKey
-    let systemImage: String
+    let icon: MaterialIcon
     let action: SlashMenuAction
     let keywords: [String]
 }
 
 let allSlashMenuItems: [SlashMenuItem] = [
     SlashMenuItem(
-        id: "paragraph", title: "Text", titleKey: .editor_slash_text, systemImage: "text.alignleft",
+        id: "paragraph", title: "Text", titleKey: .editor_slash_text, icon: .subject,
         action: .convert(.paragraph),
         keywords: ["text", "plain", "paragraph", "p"]),
     SlashMenuItem(
         id: "heading1", title: "Heading 1", titleKey: .editor_slash_heading1,
-        systemImage: "textformat.size.larger",
+        icon: .format_h1,
         action: .convert(.heading(level: 1)),
         keywords: ["h1", "heading", "title"]),
     SlashMenuItem(
-        id: "heading2", title: "Heading 2", titleKey: .editor_slash_heading2, systemImage: "textformat.size",
+        id: "heading2", title: "Heading 2", titleKey: .editor_slash_heading2, icon: .format_h2,
         action: .convert(.heading(level: 2)),
         keywords: ["h2", "heading", "subtitle"]),
     SlashMenuItem(
         id: "heading3", title: "Heading 3", titleKey: .editor_slash_heading3,
-        systemImage: "textformat.size.smaller",
+        icon: .format_h3,
         action: .convert(.heading(level: 3)),
         keywords: ["h3", "heading"]),
     SlashMenuItem(
-        id: "bullet", title: "Bulleted list", titleKey: .editor_slash_bulleted_list, systemImage: "list.bullet",
+        id: "bullet", title: "Bulleted list", titleKey: .editor_slash_bulleted_list, icon: .format_list_bulleted,
         action: .convert(.bulletItem),
         keywords: ["bullet", "list", "ul", "unordered"]),
     SlashMenuItem(
         id: "numbered", title: "Numbered list", titleKey: .editor_slash_numbered_list,
-        systemImage: "list.number", action: .convert(.numberedItem),
+        icon: .format_list_numbered, action: .convert(.numberedItem),
         keywords: ["numbered", "list", "ol", "ordered"]),
     SlashMenuItem(
-        id: "checklist", title: "Checklist", titleKey: .editor_slash_checklist, systemImage: "checklist",
+        id: "checklist", title: "Checklist", titleKey: .editor_slash_checklist, icon: .checklist,
         action: .convert(.checklistItem(checked: false)),
         keywords: ["todo", "task", "check", "checkbox"]),
     SlashMenuItem(
-        id: "quote", title: "Quote", titleKey: .editor_slash_quote, systemImage: "text.quote",
+        id: "quote", title: "Quote", titleKey: .editor_slash_quote, icon: .format_quote,
         action: .convert(.quote),
         keywords: ["quote", "blockquote", "citation"]),
     SlashMenuItem(
         id: "code", title: "Code block", titleKey: .editor_slash_code_block,
-        systemImage: "chevron.left.forwardslash.chevron.right",
+        icon: .data_object,
         action: .convert(.codeBlock(language: "")), keywords: ["code", "snippet", "fence"]),
     SlashMenuItem(
-        id: "divider", title: "Divider", titleKey: .editor_slash_divider, systemImage: "minus",
+        id: "divider", title: "Divider", titleKey: .editor_slash_divider, icon: .horizontal_rule,
         action: .convert(.divider),
         keywords: ["divider", "separator", "rule", "hr", "line"]),
     SlashMenuItem(
-        id: "photo", title: "Photo", titleKey: .editor_slash_photo, systemImage: "photo", action: .insertPhoto,
+        id: "photo", title: "Photo", titleKey: .editor_slash_photo, icon: .image, action: .insertPhoto,
         keywords: ["photo", "image", "picture", "img"]),
 ]
 

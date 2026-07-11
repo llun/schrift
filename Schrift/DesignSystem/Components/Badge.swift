@@ -53,7 +53,7 @@ enum BadgeStyleResolver {
 struct Badge: View {
     let text: String
     var tone: BadgeTone = .neutral
-    var icon: String? = nil
+    var icon: MaterialIcon? = nil
     /// Leading status dot (used by the Profile "• Connected" server badge).
     var dot: Bool = false
 
@@ -67,8 +67,7 @@ struct Badge: View {
                     .frame(width: 6, height: 6)
             }
             if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
+                MaterialSymbol(icon, size: 14)
             }
             Text(text)
                 .font(DocsFont.caption.weight(.semibold))
@@ -85,7 +84,7 @@ struct Badge: View {
     HStack(spacing: DocsSpacing.spaceXS) {
         Badge(text: "Admin", tone: .accent)
         Badge(text: "3", tone: .neutral)
-        Badge(text: "Failed", tone: .danger, icon: "xmark.circle")
+        Badge(text: "Failed", tone: .danger, icon: .cancel)
         Badge(text: "Active", tone: .success)
         Badge(text: "Pending", tone: .warning)
         Badge(text: "Info", tone: .info)
@@ -97,7 +96,7 @@ struct Badge: View {
     HStack(spacing: DocsSpacing.spaceXS) {
         Badge(text: "Admin", tone: .accent)
         Badge(text: "3", tone: .neutral)
-        Badge(text: "Failed", tone: .danger, icon: "xmark.circle")
+        Badge(text: "Failed", tone: .danger, icon: .cancel)
         Badge(text: "Active", tone: .success)
         Badge(text: "Pending", tone: .warning)
         Badge(text: "Info", tone: .info)

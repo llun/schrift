@@ -25,10 +25,10 @@ final class AppearanceStoreTests: XCTestCase {
         XCTAssertEqual(AppAppearance.dark.colorScheme, .dark)
     }
 
-    func testIconNames() {
-        XCTAssertEqual(AppAppearance.system.iconName, "circle.lefthalf.filled")
-        XCTAssertEqual(AppAppearance.light.iconName, "sun.max")
-        XCTAssertEqual(AppAppearance.dark.iconName, "moon")
+    func testIcons() {
+        XCTAssertEqual(AppAppearance.system.icon, .contrast)
+        XCTAssertEqual(AppAppearance.light.icon, .light_mode)
+        XCTAssertEqual(AppAppearance.dark.icon, .dark_mode)
     }
     func testPersistsSelection() {
         let store = AppearanceStore(userDefaults: defaults)

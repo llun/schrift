@@ -157,8 +157,7 @@ struct EditorView: View {
                     viewModel.applyPendingUpdate()
                 } label: {
                     HStack(spacing: DocsSpacing.space2xs) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 13))
+                        MaterialSymbol(.sync, size: 13)
                         Text(loc[.editor_update_available])
                             .font(DocsFont.footnote)
                     }
@@ -382,7 +381,11 @@ struct EditorView: View {
 
     private var emptyContent: some View {
         ContentUnavailableView {
-            Label(loc[.editor_empty_title], systemImage: "doc.text")
+            Label {
+                Text(loc[.editor_empty_title])
+            } icon: {
+                MaterialSymbol(.description, size: 20)
+            }
         } description: {
             Text(loc[.editor_empty_body])
         } actions: {
@@ -445,8 +448,7 @@ struct EditorView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space2xs) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 16))
+                    MaterialSymbol(.account_tree, size: 16)
                         .accessibilityHidden(true)
                     Text(
                         (viewModel.subpages?.isEmpty ?? true)
@@ -488,8 +490,7 @@ struct EditorView: View {
                         }
                     } label: {
                         HStack(spacing: DocsSpacing.spaceXS) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 22))
+                            MaterialSymbol(.add, size: 22)
                             Text(loc[.editor_add_subpage])
                                 .font(.system(size: 15, weight: .semibold))
                         }
@@ -533,19 +534,19 @@ struct EditorView: View {
             switch action {
             case .edit:
                 return NavBarAction(
-                    systemImage: "square.and.pencil", label: loc[.editor_action_edit],
+                    icon: .edit, label: loc[.editor_action_edit],
                     action: { viewModel.startEditing() })
             case .share:
                 return NavBarAction(
-                    systemImage: "point.3.connected.trianglepath.dotted", label: loc[.editor_action_share],
+                    icon: .share, label: loc[.editor_action_share],
                     action: { isPresentingShareSheet = true })
             case .options:
                 return NavBarAction(
-                    systemImage: "ellipsis", label: loc[.editor_action_options],
+                    icon: .more_horiz, label: loc[.editor_action_options],
                     action: { isPresentingOptionsSheet = true })
             case .done:
                 return NavBarAction(
-                    systemImage: "checkmark", label: loc[.editor_action_done],
+                    icon: .check, label: loc[.editor_action_done],
                     action: { viewModel.finishEditing() })
             }
         }

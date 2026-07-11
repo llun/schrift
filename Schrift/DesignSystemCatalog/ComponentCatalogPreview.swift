@@ -24,10 +24,10 @@ struct ComponentCatalogPreview: View {
                 catalogSection("Icon Buttons") {
                     HStack(spacing: DocsSpacing.spaceSM) {
                         IconButton(
-                            systemImage: "magnifyingglass", label: "Search", variant: .ghost, color: .neutral,
+                            icon: .search, label: "Search", variant: .ghost, color: .neutral,
                             action: {})
-                        IconButton(systemImage: "plus", label: "Add", variant: .soft, color: .brand, action: {})
-                        IconButton(systemImage: "trash", label: "Delete", variant: .outline, color: .danger, action: {})
+                        IconButton(icon: .add, label: "Add", variant: .soft, color: .brand, action: {})
+                        IconButton(icon: .delete, label: "Delete", variant: .outline, color: .danger, action: {})
                     }
                 }
 
@@ -35,7 +35,7 @@ struct ComponentCatalogPreview: View {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         Badge(text: "Admin", tone: .accent)
                         Badge(text: "3", tone: .neutral)
-                        Badge(text: "Failed", tone: .danger, icon: "xmark.circle")
+                        Badge(text: "Failed", tone: .danger, icon: .cancel)
                         Badge(text: "Active", tone: .success)
                     }
                 }
@@ -77,7 +77,7 @@ struct ComponentCatalogPreview: View {
 
                 catalogSection("Text Field") {
                     DocsTextField(
-                        label: "Docs server", text: $textFieldValue, placeholder: "docs.example.org", icon: "cloud",
+                        label: "Docs server", text: $textFieldValue, placeholder: "docs.example.org", icon: .cloud,
                         helper: "The app signs in with your existing session.")
                 }
 
@@ -86,12 +86,12 @@ struct ComponentCatalogPreview: View {
                         NavBar(
                             title: "Docs", subtitle: "docs.example.org", largeTitle: true,
                             trailingActions: [
-                                NavBarAction(systemImage: "magnifyingglass", label: "Search", action: {})
+                                NavBarAction(icon: .search, label: "Search", action: {})
                             ])
                         NavBar(
                             title: "Docs", backTitle: "Docs", onBack: {},
                             trailingActions: [
-                                NavBarAction(systemImage: "square.and.arrow.up", label: "Share", action: {})
+                                NavBarAction(icon: .share, label: "Share", action: {})
                             ])
                     }
                 }
@@ -99,16 +99,16 @@ struct ComponentCatalogPreview: View {
                 catalogSection("Tab Bar") {
                     TabBar(
                         items: [
-                            TabBarItem(value: "docs", label: "Docs", systemImage: "doc.text"),
-                            TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
-                            TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
+                            TabBarItem(value: "docs", label: "Docs", icon: .description),
+                            TabBarItem(value: "search", label: "Search", icon: .search),
+                            TabBarItem(value: "shared", label: "Shared", icon: .group),
                         ], selection: $catalogTab, showsSafeArea: false)
                 }
 
                 catalogSection("List Row / List Section") {
                     ListSection(header: "Document", footer: "These actions apply to the current document.") {
-                        ListRow(systemImage: "pin", title: "Pin", value: "Pinned", action: {})
-                        ListRow(systemImage: "link", title: "Copy link", showsChevron: true, action: {})
+                        ListRow(icon: .push_pin, title: "Pin", value: "Pinned", action: {})
+                        ListRow(icon: .link, title: "Copy link", showsChevron: true, action: {})
                         ListRow(title: "Delete document", isDestructive: true, action: {})
                     }
                 }

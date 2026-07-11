@@ -18,8 +18,7 @@ struct SlashMenuView: View {
                             onSelect(item)
                         } label: {
                             HStack(spacing: DocsSpacing.spaceSM) {
-                                Image(systemName: item.systemImage)
-                                    .font(DocsFont.subhead)
+                                MaterialSymbol(item.icon, size: 20)
                                     .foregroundStyle(DocsColor.textSecondary)
                                     .frame(width: 24)
                                 Text(loc[item.titleKey])

@@ -41,10 +41,9 @@ struct AppearancePickerSheet: View {
                         store.selected = option
                         dismiss()
                     } label: {
-                        ProfileTrailingRow(systemImage: option.iconName, title: loc[appearanceValueKey(option)]) {
+                        ProfileTrailingRow(icon: option.icon, title: loc[appearanceValueKey(option)]) {
                             if option == store.selected {
-                                Image(systemName: "checkmark")
-                                    .font(DocsFont.body)
+                                MaterialSymbol(.check, size: 17)
                                     .foregroundStyle(DocsColor.brandFill)
                                     // The glyph carries no meaning to VoiceOver; the
                                     // row's .isSelected trait announces the state.
