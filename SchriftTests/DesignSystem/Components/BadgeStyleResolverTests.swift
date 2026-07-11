@@ -6,7 +6,9 @@ final class BadgeStyleResolverTests: XCTestCase {
     func testAccentToneUsesBrandSoftColors() {
         let s = BadgeStyleResolver.style(tone: .accent)
         XCTAssertEqual(s.backgroundLightHex, DocsColorHex.brandFillSoft)
+        XCTAssertEqual(s.backgroundDarkHex, DocsColorHexDark.brandFillSoft)
         XCTAssertEqual(s.foregroundLightHex, DocsColorHex.textBrandSecondary)
+        XCTAssertEqual(s.foregroundDarkHex, DocsColorHexDark.textBrandSecondary)
     }
 
     func testNeutralToneFlipsForegroundLightInDark() {
@@ -20,7 +22,9 @@ final class BadgeStyleResolverTests: XCTestCase {
     func testDangerToneUsesDangerSoftWithStrongInk() {
         let s = BadgeStyleResolver.style(tone: .danger)
         XCTAssertEqual(s.backgroundLightHex, DocsColorHex.dangerSoft)
+        XCTAssertEqual(s.backgroundDarkHex, DocsColorHexDark.dangerSoft)
         XCTAssertEqual(s.foregroundLightHex, DocsColorHex.dangerStrong)
+        XCTAssertEqual(s.foregroundDarkHex, DocsColorHexDark.dangerStrong)
     }
 
     func testSuccessToneCarriesLightAndDark() {
@@ -34,12 +38,16 @@ final class BadgeStyleResolverTests: XCTestCase {
     func testWarningToneUsesWarningSoftWith650Ink() {
         let s = BadgeStyleResolver.style(tone: .warning)
         XCTAssertEqual(s.backgroundLightHex, DocsColorHex.warningSoft)
+        XCTAssertEqual(s.backgroundDarkHex, DocsColorHexDark.warningSoft)
         XCTAssertEqual(s.foregroundLightHex, DocsColorHex.warning650)
+        XCTAssertEqual(s.foregroundDarkHex, DocsColorHexDark.warning650)
     }
 
     func testInfoToneUsesInfoSoftWith650Ink() {
         let s = BadgeStyleResolver.style(tone: .info)
         XCTAssertEqual(s.backgroundLightHex, DocsColorHex.infoSoft)
+        XCTAssertEqual(s.backgroundDarkHex, DocsColorHexDark.infoSoft)
         XCTAssertEqual(s.foregroundLightHex, DocsColorHex.info650)
+        XCTAssertEqual(s.foregroundDarkHex, DocsColorHexDark.info650)
     }
 }
