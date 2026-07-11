@@ -8,12 +8,11 @@ struct LanguagePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-            Text(loc[.profile_language])
-                .font(DocsFont.headline)
-                .foregroundStyle(DocsColor.textPrimary)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceSM)
+        // A flat, boxless list under the shared `SheetHeader` (handoff): the long,
+        // scrollable language list reads cleaner without the card/border/dividers
+        // the shorter Appearance picker keeps.
+        VStack(spacing: 0) {
+            SheetHeader(title: loc[.profile_language], closeLabel: loc[.common_close], onClose: { dismiss() })
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -36,18 +35,10 @@ struct LanguagePickerSheet: View {
                         .accessibilityAddTraits(language == loc.language ? .isSelected : [])
                     }
                 }
-                .background(DocsColor.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DocsRadius.lg)
-                        .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-                )
-                .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.bottom, DocsSpacing.spaceSM)
             }
         }
-        // White page surface (like the restyled Profile), so the option card is
-        // defined by its hairline border rather than a sunken grey backdrop.
+        // White page surface (like the restyled Profile), matching the handoff.
         .background(DocsColor.surfacePage)
     }
 }
