@@ -30,10 +30,14 @@ struct LanguagePickerSheet: View {
                                     Image(systemName: "checkmark")
                                         .font(DocsFont.body)
                                         .foregroundStyle(DocsColor.brandFill)
+                                        // The glyph carries no meaning to VoiceOver; the
+                                        // row's .isSelected trait announces the state.
+                                        .accessibilityHidden(true)
                                 }
                             }
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(language == loc.language ? .isSelected : [])
                     }
                 }
                 .background(DocsColor.surfaceRaised)
