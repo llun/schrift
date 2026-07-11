@@ -16,6 +16,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     // Search results plural
     case search_results_one = "search.results.one"  // "%d result"
     case search_results_other = "search.results.other"  // "%d results"
+    // Slovene dual/few forms (see PluralRule); only the Slovene table defines these.
+    case search_results_two = "search.results.two"  // "%d rezultata"
+    case search_results_few = "search.results.few"  // "%d rezultati"
 
     // Offline banner (common chrome)
     case offline_status = "offline.status"  // "Offline"
@@ -62,6 +65,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case shared_by_me = "shared.by_me"  // "Shared by me"
     case shared_count_one = "shared.count.one"  // "%d document"
     case shared_count_other = "shared.count.other"  // "%d documents"
+    // Slovene dual/few forms (see PluralRule); only the Slovene table defines these.
+    case shared_count_two = "shared.count.two"  // "%d dokumenta"
+    case shared_count_few = "shared.count.few"  // "%d dokumenti"
     case shared_subtitle_with = "shared.subtitle_with"  // "Shared · %@"
     case shared_subtitle_by = "shared.subtitle_by"  // "%@ · Shared %@"
     case shared_footer_with = "shared.footer_with"
@@ -129,6 +135,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case share_invite_placeholder = "share.invite_placeholder"  // "Invite by name or email"
     case share_members_one = "share.members.one"  // "Shared with %d person"
     case share_members_other = "share.members.other"  // "Shared with %d people"
+    // Slovene dual/few forms (see PluralRule); only the Slovene table defines these.
+    case share_members_two = "share.members.two"  // "Deljeno z %d osebama"
+    case share_members_few = "share.members.few"  // "Deljeno s %d osebami"
     case share_add_people = "share.add_people"  // "Add people"
     case share_no_people_found = "share.no_people_found"  // "No people found"
     case share_link_parameters = "share.link_parameters"  // "Link parameters"

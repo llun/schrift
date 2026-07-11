@@ -78,7 +78,8 @@ struct SharedScreen: View {
                     } else if viewModel.showsDocumentList {
                         ListSection(
                             header: loc.plural(
-                                viewModel.documents.count, one: .shared_count_one, other: .shared_count_other)
+                                viewModel.documents.count, one: .shared_count_one, other: .shared_count_other,
+                                two: .shared_count_two, few: .shared_count_few)
                         ) {
                             ForEach(viewModel.documents) { document in
                                 SharedRow(

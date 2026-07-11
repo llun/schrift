@@ -37,7 +37,7 @@
 2. **Appearance control** — a functional Light / Dark / System toggle in Profile,
    backed by a **complete adaptive dark theme** for the whole app.
 3. **Language control** — a functional in-app language picker that **switches the
-   app UI live** (no relaunch), covering **10 languages**, with the whole app
+   app UI live** (no relaunch), covering **11 languages**, with the whole app
    localized.
 4. **Version history** — the handoff's version-history sheet + its "Version
    history" entry in the Options sheet, both absent from the current app (§9).
@@ -204,7 +204,7 @@ lighten while their soft backgrounds darken; the neutral badge foreground
 
 ---
 
-## 5. Part 2 — Localization (full app, 10 languages, live switching)
+## 5. Part 2 — Localization (full app, 11 languages, live switching)
 
 ### 5.1 Languages
 
@@ -217,6 +217,7 @@ lighten while their soft backgrounds darken; the neutral badge foreground
 | italian | `it` | Italiano |
 | dutch | `nl` | Nederlands |
 | portuguese | `pt` | Português |
+| slovene | `sl` | Slovenščina |
 | thai | `th` | ไทย |
 | chineseSimplified | `zh-Hans` | 简体中文 |
 | chineseTraditional | `zh-Hant` | 繁體中文 |
@@ -264,15 +265,19 @@ friction), makes **live switching trivial**, and makes **completeness testable**
 ### 5.4 Default language selection
 
 First launch only: pick the best match of `Locale.preferredLanguages` against the
-10 supported codes (script-aware for `zh-Hans`/`zh-Hant`), else English.
+11 supported codes (script-aware for `zh-Hans`/`zh-Hant`), else English.
 The user's explicit choice persists thereafter and always wins.
 
 ### 5.5 Plurals
 
-Explicit `.one` / `.other` key variants plus a small per-language plural selector
-(`enum PluralRule`): `zh-Hans`, `zh-Hant`, `th` are **other-only**; the remaining
-seven are one/other. Applies to the handful of counted strings (search results
-count, "N documents").
+Explicit `.one` / `.other` key variants (plus Slovene-only `.two` / `.few`) and a
+small per-language plural selector (`enum PluralRule`): `zh-Hans`, `zh-Hant`, `th`
+are **other-only**; **Slovene** uses the full CLDR `one`/`two`/`few`/`other` set
+(including the dual — `i%100`: 1→one, 2→two, 3–4→few, else other); the rest are
+one/other. `plural(_:one:other:two:few:)` takes `two`/`few` as optional keys that
+only Slovene resolves and otherwise fall back to `other`, so only the Slovene table
+defines those forms. Applies to the handful of counted strings (search results
+count, "N documents", "Shared with N people").
 
 ### 5.6 String extraction inventory
 
@@ -342,7 +347,7 @@ option rows with leading icon + title + trailing checkmark on the current
 choice; selecting closes):
 - **Appearance sheet** — Light (`sun.max`), Dark (`moon`), System
   (`circle.lefthalf.filled`). Writes `AppearanceStore`.
-- **Language sheet** — 10 languages by autonym, checkmark on current. Writes
+- **Language sheet** — 11 languages by autonym, checkmark on current. Writes
   `LocalizationStore`; the whole app re-renders live.
 - Presented with SwiftUI `.sheet` + `.presentationDetents([.medium])` (matching
   the app's existing sheet convention), each a small reusable view

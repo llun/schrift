@@ -101,7 +101,9 @@ struct SearchScreen: View {
     }
 
     private var resultsCountLabel: String {
-        loc.plural(viewModel.results.count, one: .search_results_one, other: .search_results_other)
+        loc.plural(
+            viewModel.results.count, one: .search_results_one, other: .search_results_other,
+            two: .search_results_two, few: .search_results_few)
     }
 
     private var emptyState: some View {

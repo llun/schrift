@@ -187,7 +187,9 @@ struct ShareSheetView: View {
     private var membersSection: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
             sectionLabel(
-                loc.plural(viewModel.members.count, one: .share_members_one, other: .share_members_other)
+                loc.plural(
+                    viewModel.members.count, one: .share_members_one, other: .share_members_other,
+                    two: .share_members_two, few: .share_members_few)
             )
             // Bounded so a long members list scrolls on its own — the invite
             // field stays pinned above, and the link section + Copy link
