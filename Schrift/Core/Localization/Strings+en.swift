@@ -246,5 +246,31 @@ enum Strings_en {
         .editor_divider_a11y: "Divider",
         .editor_checklist_done_a11y: "Mark as done",
         .editor_checklist_not_done_a11y: "Mark as not done",
+
+        // Profile
+        .profile_title: "Profile",
+        .profile_user: "User",
+        .profile_prefs: "Preferences",
+        .profile_prefs_footer: "When on, documents you've opened stay readable on this device without a connection.",
+        .profile_appearance: "Appearance",
+        .profile_language: "Language",
+        .profile_notifications: "Notifications",
+        .profile_work_offline: "Work offline",
+        .profile_server: "Server",
+        .profile_server_footer: "The app connects to any Schrift server using your existing web session.",
+        .profile_connected: "Connected",
+        .profile_offline: "Offline",
+        .profile_server_version: "Server version",
+        .profile_about: "About",
+        .profile_version: "Version",
+        .profile_sign_out: "Sign out",
+        .profile_disconnect_title: "Disconnect from %@?",
+        .profile_disconnect: "Disconnect",
+        .profile_disconnect_body: "You'll need to sign in again to reconnect.",
+
+        // Appearance picker
+        .appearance_system: "System",
+        .appearance_light: "Light",
+        .appearance_dark: "Dark",
     ]
 }

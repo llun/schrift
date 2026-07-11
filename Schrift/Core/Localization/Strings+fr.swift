@@ -247,5 +247,33 @@ enum Strings_fr {
         .editor_divider_a11y: "Séparateur",
         .editor_checklist_done_a11y: "Marquer comme terminé",
         .editor_checklist_not_done_a11y: "Marquer comme non terminé",
+
+        // Profile
+        .profile_title: "Profil",
+        .profile_user: "Utilisateur",
+        .profile_prefs: "Préférences",
+        .profile_prefs_footer:
+            "Lorsque cette option est activée, les documents que vous avez ouverts restent lisibles sur cet appareil sans connexion.",
+        .profile_appearance: "Apparence",
+        .profile_language: "Langue",
+        .profile_notifications: "Notifications",
+        .profile_work_offline: "Travailler hors ligne",
+        .profile_server: "Serveur",
+        .profile_server_footer:
+            "L’application se connecte à n’importe quel serveur Schrift à l’aide de votre session Web existante.",
+        .profile_connected: "Connecté",
+        .profile_offline: "Hors ligne",
+        .profile_server_version: "Version du serveur",
+        .profile_about: "À propos",
+        .profile_version: "Version",
+        .profile_sign_out: "Se déconnecter",
+        .profile_disconnect_title: "Se déconnecter de %@ ?",
+        .profile_disconnect: "Déconnecter",
+        .profile_disconnect_body: "Vous devrez vous reconnecter pour rétablir la connexion.",
+
+        // Appearance picker
+        .appearance_system: "Système",
+        .appearance_light: "Clair",
+        .appearance_dark: "Sombre",
     ]
 }

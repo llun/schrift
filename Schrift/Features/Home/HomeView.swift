@@ -115,4 +115,5 @@ struct HomeView: View {
         serverHost: "docs.llun.dev"
     )
     .environment(LocalizationStore())
+    .environment(AppearanceStore())
 }

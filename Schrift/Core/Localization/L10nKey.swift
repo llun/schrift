@@ -255,5 +255,33 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_divider_a11y = "editor.divider_a11y"  // "Divider"
     case editor_checklist_done_a11y = "editor.checklist.done_a11y"  // "Mark as done"
     case editor_checklist_not_done_a11y = "editor.checklist.not_done_a11y"  // "Mark as not done"
+
+    // Profile
+    case profile_title = "profile.title"  // "Profile"
+    case profile_user = "profile.user"  // "User"
+    case profile_prefs = "profile.prefs"  // "Preferences"
+    case profile_prefs_footer = "profile.prefs_footer"
+    // "When on, documents you've opened stay readable on this device without a connection."
+    case profile_appearance = "profile.appearance"  // "Appearance"
+    case profile_language = "profile.language"  // "Language"
+    case profile_notifications = "profile.notifications"  // "Notifications"
+    case profile_work_offline = "profile.work_offline"  // "Work offline"
+    case profile_server = "profile.server"  // "Server"
+    case profile_server_footer = "profile.server_footer"
+    // "The app connects to any Schrift server using your existing web session."
+    case profile_connected = "profile.connected"  // "Connected"
+    case profile_offline = "profile.offline"  // "Offline"
+    case profile_server_version = "profile.server_version"  // "Server version"
+    case profile_about = "profile.about"  // "About"
+    case profile_version = "profile.version"  // "Version"
+    case profile_sign_out = "profile.sign_out"  // "Sign out"
+    case profile_disconnect_title = "profile.disconnect_title"  // "Disconnect from %@?"
+    case profile_disconnect = "profile.disconnect"  // "Disconnect"
+    case profile_disconnect_body = "profile.disconnect_body"  // "You'll need to sign in again to reconnect."
+
+    // Appearance picker (values shared by the Profile row and the sheet)
+    case appearance_system = "appearance.system"  // "System"
+    case appearance_light = "appearance.light"  // "Light"
+    case appearance_dark = "appearance.dark"  // "Dark"
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }

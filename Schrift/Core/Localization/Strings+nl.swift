@@ -247,5 +247,32 @@ enum Strings_nl {
         .editor_divider_a11y: "Scheidingslijn",
         .editor_checklist_done_a11y: "Markeren als voltooid",
         .editor_checklist_not_done_a11y: "Markeren als niet voltooid",
+
+        // Profile
+        .profile_title: "Profiel",
+        .profile_user: "Gebruiker",
+        .profile_prefs: "Voorkeuren",
+        .profile_prefs_footer:
+            "Indien ingeschakeld, blijven geopende documenten op dit apparaat leesbaar zonder verbinding.",
+        .profile_appearance: "Weergave",
+        .profile_language: "Taal",
+        .profile_notifications: "Meldingen",
+        .profile_work_offline: "Offline werken",
+        .profile_server: "Server",
+        .profile_server_footer: "De app maakt verbinding met elke Schrift-server via uw bestaande websessie.",
+        .profile_connected: "Verbonden",
+        .profile_offline: "Offline",
+        .profile_server_version: "Serverversie",
+        .profile_about: "Over",
+        .profile_version: "Versie",
+        .profile_sign_out: "Afmelden",
+        .profile_disconnect_title: "Verbinding met %@ verbreken?",
+        .profile_disconnect: "Verbreken",
+        .profile_disconnect_body: "U moet opnieuw inloggen om weer verbinding te maken.",
+
+        // Appearance picker
+        .appearance_system: "Systeem",
+        .appearance_light: "Licht",
+        .appearance_dark: "Donker",
     ]
 }

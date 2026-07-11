@@ -246,5 +246,32 @@ enum Strings_pt {
         .editor_divider_a11y: "Divisor",
         .editor_checklist_done_a11y: "Marcar como concluído",
         .editor_checklist_not_done_a11y: "Marcar como não concluído",
+
+        // Profile
+        .profile_title: "Perfil",
+        .profile_user: "Usuário",
+        .profile_prefs: "Preferências",
+        .profile_prefs_footer:
+            "Quando ativado, os documentos que você abriu continuam legíveis neste dispositivo sem conexão.",
+        .profile_appearance: "Aparência",
+        .profile_language: "Idioma",
+        .profile_notifications: "Notificações",
+        .profile_work_offline: "Trabalhar offline",
+        .profile_server: "Servidor",
+        .profile_server_footer: "O aplicativo se conecta a qualquer servidor Schrift usando sua sessão web existente.",
+        .profile_connected: "Conectado",
+        .profile_offline: "Offline",
+        .profile_server_version: "Versão do servidor",
+        .profile_about: "Sobre",
+        .profile_version: "Versão",
+        .profile_sign_out: "Sair",
+        .profile_disconnect_title: "Desconectar de %@?",
+        .profile_disconnect: "Desconectar",
+        .profile_disconnect_body: "Você precisará entrar novamente para se reconectar.",
+
+        // Appearance picker
+        .appearance_system: "Sistema",
+        .appearance_light: "Claro",
+        .appearance_dark: "Escuro",
     ]
 }

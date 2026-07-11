@@ -10,6 +10,11 @@ struct ProfileScreen: View {
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
 
     @State private var isConfirmingDisconnect = false
+    @State private var showAppearanceSheet = false
+    @State private var showLanguageSheet = false
+
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(AppearanceStore.self) private var appearance
 
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -17,14 +22,14 @@ struct ProfileScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Profile", largeTitle: true)
+            NavBar(title: loc[.profile_title], largeTitle: true)
 
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
-                    emailRow
+                    userSection
                     preferencesSection
                     serverSection
-                    supportSection
+                    aboutSection
                     signOutSection
                 }
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -34,25 +39,32 @@ struct ProfileScreen: View {
         }
         .background(DocsColor.surfaceSunken)
         .task { await viewModel.load() }
+        .sheet(isPresented: $showAppearanceSheet) {
+            AppearancePickerSheet()
+                .presentationDetents([.height(280)])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showLanguageSheet) {
+            LanguagePickerSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .confirmationDialog(
-            "Disconnect from \(serverHost)?",
+            loc.format(.profile_disconnect_title, serverHost),
             isPresented: $isConfirmingDisconnect,
             titleVisibility: .visible
         ) {
-            Button("Disconnect", role: .destructive) { onSignOut() }
+            Button(loc[.profile_disconnect], role: .destructive) { onSignOut() }
         } message: {
-            Text("You'll need to sign in again to reconnect.")
+            Text(loc[.profile_disconnect_body])
         }
     }
 
     // MARK: - 1) User
 
-    // Placeholder: the account banner (and its pushed detail screen) is gone
-    // per the new design. Task C2 rebuilds this section; for now show a
-    // minimal, non-interactive email row so the User section isn't empty.
-    private var emailRow: some View {
-        ListSection {
-            ListRow(systemImage: "person.crop.circle", title: viewModel.user?.email ?? "—")
+    private var userSection: some View {
+        ListSection(header: loc[.profile_user]) {
+            ListRow(systemImage: "person.circle", title: viewModel.user?.email ?? "—")
         }
     }
 
@@ -60,31 +72,30 @@ struct ProfileScreen: View {
 
     private var preferencesSection: some View {
         ListSection(
-            header: "Preferences",
-            footer: "When on, documents you've opened stay readable on this device without a connection."
+            header: loc[.profile_prefs],
+            footer: loc[.profile_prefs_footer]
         ) {
-            // The palette has no dark variant yet, so appearance follows the
-            // system. Show it as a static value rather than a cycler that changes
-            // nothing (matching the reference's static "System").
             ListRow(
                 systemImage: "moon",
-                title: "Appearance",
-                value: "System",
-                showsChevron: true
+                title: loc[.profile_appearance],
+                value: loc[appearanceValueKey(appearance.selected)],
+                showsChevron: true,
+                action: { showAppearanceSheet = true }
             )
             ProfileRowDivider()
             ListRow(
                 systemImage: "translate",
-                title: "Language",
-                value: viewModel.user?.languageLabel ?? "—",
-                showsChevron: true
+                title: loc[.profile_language],
+                value: loc.language.autonym,
+                showsChevron: true,
+                action: { showLanguageSheet = true }
             )
             ProfileRowDivider()
-            ProfileTrailingRow(systemImage: "bell", title: "Notifications") {
+            ProfileTrailingRow(systemImage: "bell", title: loc[.profile_notifications]) {
                 Switch(isOn: $notificationsEnabled)
             }
             ProfileRowDivider()
-            ProfileTrailingRow(systemImage: "icloud.slash", title: "Work offline") {
+            ProfileTrailingRow(systemImage: "icloud.slash", title: loc[.profile_work_offline]) {
                 Switch(isOn: $workOffline)
             }
         }
@@ -96,14 +107,14 @@ struct ProfileScreen: View {
 
     private var serverSection: some View {
         ListSection(
-            header: "Server",
-            footer: "The app connects to any Schrift server using your existing web session."
+            header: loc[.profile_server],
+            footer: loc[.profile_server_footer]
         ) {
             Button(action: { isConfirmingDisconnect = true }) {
                 ProfileTrailingRow(systemImage: "server.rack", title: serverHost) {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         Badge(
-                            text: isOfflineOrForced ? "Offline" : "Connected",
+                            text: isOfflineOrForced ? loc[.profile_offline] : loc[.profile_connected],
                             tone: isOfflineOrForced ? .neutral : .success,
                             dot: true
                         )
@@ -117,20 +128,11 @@ struct ProfileScreen: View {
         }
     }
 
-    // MARK: - 4) Support
+    // MARK: - 4) About
 
-    private var supportSection: some View {
-        ListSection(header: "Support") {
-            ListRow(systemImage: "questionmark.circle", title: "Help & feedback", showsChevron: true)
-            ProfileRowDivider()
-            ListRow(systemImage: "shield", title: "Privacy policy", showsChevron: true)
-            ProfileRowDivider()
-            ListRow(
-                systemImage: "info.circle",
-                title: "About Schrift",
-                value: appVersion,
-                showsChevron: true
-            )
+    private var aboutSection: some View {
+        ListSection(header: loc[.profile_about]) {
+            ListRow(title: loc[.profile_version], value: appVersion)
         }
     }
 
@@ -139,7 +141,7 @@ struct ProfileScreen: View {
     private var signOutSection: some View {
         ListSection {
             ListRow(
-                systemImage: "rectangle.portrait.and.arrow.right", title: "Sign out", isDestructive: true,
+                systemImage: "rectangle.portrait.and.arrow.right", title: loc[.profile_sign_out], isDestructive: true,
                 action: onSignOut)
         }
     }
@@ -151,4 +153,6 @@ struct ProfileScreen: View {
         serverHost: "docs.llun.dev",
         onSignOut: {}
     )
+    .environment(LocalizationStore())
+    .environment(AppearanceStore())
 }
