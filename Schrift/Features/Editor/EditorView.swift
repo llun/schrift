@@ -66,6 +66,28 @@ func syncCaption(
     return SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false)
 }
 
+/// The editor nav bar's trailing actions, as an ordered list of intents. Pure
+/// so the offline/edit gating is unit-testable without SwiftUI — the view maps
+/// each case to a `NavBarAction`. Reading mode exposes **Edit only when
+/// online**: offline is read-only, matching the reading surface's other editing
+/// gates (the block tap, "Start writing", and "Add a subpage" all guard on
+/// `!isOffline`). Editing mode shows Done.
+enum EditorToolbarAction: Equatable {
+    case edit
+    case share
+    case options
+    case done
+}
+
+func editorToolbarActions(isEditing: Bool, isOffline: Bool) -> [EditorToolbarAction] {
+    if isEditing { return [.done] }
+    var actions: [EditorToolbarAction] = []
+    if !isOffline { actions.append(.edit) }
+    actions.append(.share)
+    actions.append(.options)
+    return actions
+}
+
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
@@ -507,25 +529,26 @@ struct EditorView: View {
     }
 
     private var trailingActions: [NavBarAction] {
-        if viewModel.isEditing {
-            return [
-                NavBarAction(
-                    systemImage: "checkmark", label: loc[.editor_action_done], action: { viewModel.finishEditing() })
-            ]
+        editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline).map { action in
+            switch action {
+            case .edit:
+                return NavBarAction(
+                    systemImage: "square.and.pencil", label: loc[.editor_action_edit],
+                    action: { viewModel.startEditing() })
+            case .share:
+                return NavBarAction(
+                    systemImage: "point.3.connected.trianglepath.dotted", label: loc[.editor_action_share],
+                    action: { isPresentingShareSheet = true })
+            case .options:
+                return NavBarAction(
+                    systemImage: "ellipsis", label: loc[.editor_action_options],
+                    action: { isPresentingOptionsSheet = true })
+            case .done:
+                return NavBarAction(
+                    systemImage: "checkmark", label: loc[.editor_action_done],
+                    action: { viewModel.finishEditing() })
+            }
         }
-        return [
-            NavBarAction(
-                systemImage: "square.and.pencil", label: loc[.editor_action_edit],
-                action: { viewModel.startEditing() }),
-            NavBarAction(
-                systemImage: "point.3.connected.trianglepath.dotted", label: loc[.editor_action_share],
-                action: { isPresentingShareSheet = true }),
-            NavBarAction(
-                systemImage: "ellipsis", label: loc[.editor_action_options],
-                action: {
-                    isPresentingOptionsSheet = true
-                }),
-        ]
     }
 }
 
