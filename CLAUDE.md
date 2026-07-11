@@ -370,8 +370,10 @@ new code reads like the surrounding code.
   `AppLanguage` covers 10 languages (`en fr es de it nl pt th zh-Hans zh-Hant`);
   first-launch default is the best match of `Locale.preferredLanguages` against
   those codes, else English, but the user's explicit choice always wins
-  thereafter. Translations beyond English/French are AI-generated and flagged
-  as needing native-speaker review — don't treat them as authoritative copy.
+  thereafter. **English is the one reviewed source**; every other table —
+  French included — carries the "AI-generated translation — pending
+  native-speaker review" header, so don't treat any non-English string as
+  authoritative copy.
 - **Language is a local app-UI preference, never a server write.** Picking a
   language does not `PATCH` the server user's `language` field (that governs
   server emails / rendered content and would be a surprising side effect) —
@@ -638,12 +640,17 @@ new code reads like the surrounding code.
   case, not in the row above it. A screen with a back button or a leading view
   keeps the standard 44pt row unchanged. Get this wrong and either dead space
   reappears above the title, or a back-button screen loses its bar.
-- **`ListSection` rows on the four tab screens are dividerless** (`divided:
-  false`) — Shared's document list and Profile's Preferences/Server sections
-  render flat, matching the handoff; only single-row sections and the Options/
-  Share "Add people" menus keep `ProfileRowDivider()`. Don't reintroduce
-  inter-row hairlines on a tab screen without checking the handoff first — it's
-  a deliberate, reversible (one `divided:` flag) design match, not an oversight.
+- **Inter-row hairlines are opt-in per call site, not a `ListSection`
+  parameter.** There is no `divided:` flag in the Swift code (that's the React
+  handoff's prop) — a section draws separators only where its own body
+  interleaves `ProfileRowDivider()` between rows (a 1pt `borderDefault`
+  rectangle inset 52pt past the leading icon). The four tab screens'
+  multi-row sections (Shared's document list, Profile's Preferences/Server
+  sections) simply **omit** those calls and render flat, matching the handoff;
+  only the Options and Share/Version sheets still interleave them where grouped
+  separators read well. Don't add `ProfileRowDivider()` calls back onto a tab
+  screen without checking the handoff first — the flatness is deliberate, and
+  reverting it is just re-adding the calls, not flipping a flag.
 - **Sheets use `.presentationDetents` + `.presentationDragIndicator(.visible)`**
   (Share, Options, Version history, the Appearance/Language pickers) instead of
   an un-detented full-height `.sheet`, so a long scrollable list can't push a
