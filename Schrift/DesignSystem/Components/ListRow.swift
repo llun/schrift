@@ -1,7 +1,15 @@
 import SwiftUI
 
-func listRowTitleColorHex(isDestructive: Bool) -> UInt32 {
-    isDestructive ? DocsColorHex.danger : DocsColorHex.textPrimary
+/// Which adaptive token colors a row's title. A case, not a raw hex, so the
+/// title stays dark-mode adaptive via `DocsColor` — resolving to a raw hex
+/// here would lock the title to light mode via the non-adaptive `Color(hex:)`.
+enum ListRowTitleColor: Equatable {
+    case primary
+    case danger
+}
+
+func listRowTitleColor(isDestructive: Bool) -> ListRowTitleColor {
+    isDestructive ? .danger : .primary
 }
 
 struct ListRow: View {
@@ -37,7 +45,9 @@ struct ListRow: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
                     .font(DocsFont.body)
-                    .foregroundStyle(Color(hex: listRowTitleColorHex(isDestructive: isDestructive)))
+                    .foregroundStyle(
+                        listRowTitleColor(isDestructive: isDestructive) == .danger
+                            ? DocsColor.danger : DocsColor.textPrimary)
                 if let subtitle {
                     Text(subtitle)
                         .font(DocsFont.footnote)

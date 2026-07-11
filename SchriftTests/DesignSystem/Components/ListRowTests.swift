@@ -3,11 +3,11 @@ import XCTest
 @testable import Schrift
 
 final class ListRowTests: XCTestCase {
-    func testNormalRowUsesTextPrimary() {
-        XCTAssertEqual(listRowTitleColorHex(isDestructive: false), DocsColorHex.textPrimary)
+    func testNormalRowUsesPrimaryColor() {
+        XCTAssertEqual(listRowTitleColor(isDestructive: false), .primary)
     }
 
-    func testDestructiveRowUsesDanger() {
-        XCTAssertEqual(listRowTitleColorHex(isDestructive: true), DocsColorHex.danger)
+    func testDestructiveRowUsesDangerColor() {
+        XCTAssertEqual(listRowTitleColor(isDestructive: true), .danger)
     }
 }
