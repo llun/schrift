@@ -114,6 +114,13 @@ struct NavBar: View {
                                 .font(DocsFont.largeTitle)
                                 .tracking(DocsTypographySpec.largeTitle.size * DocsTracking.tight)
                                 .foregroundStyle(DocsColor.textPrimary)
+                                // Handoff large title is single-line with ellipsis
+                                // (nowrap/overflow-hidden/text-overflow-ellipsis) —
+                                // a long doc title (editor reading mode, where the
+                                // title shares the row with trailing icons) must
+                                // truncate, not wrap and grow the header.
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                             if let titleBadge {
                                 titleBadge
                             }
