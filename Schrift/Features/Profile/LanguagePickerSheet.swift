@@ -8,9 +8,8 @@ struct LanguagePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        // A flat, boxless list under the shared `SheetHeader` (handoff): the long,
-        // scrollable language list reads cleaner without the card/border/dividers
-        // the shorter Appearance picker keeps.
+        // A flat, boxless list under the shared `SheetHeader` (handoff) — no card,
+        // border, or dividers — matching the Appearance picker.
         VStack(spacing: 0) {
             SheetHeader(title: loc[.profile_language], closeLabel: loc[.common_close], onClose: { dismiss() })
 

@@ -27,46 +27,38 @@ struct AppearancePickerSheet: View {
     private let options = appearanceOptions()
 
     var body: some View {
-        // Shared `SheetHeader` (handoff), then — unlike the flat Language picker —
-        // the short three-option list keeps its boxed card below (matching the
-        // handoff's Appearance sheet).
+        // A flat, boxless list under the shared `SheetHeader` (handoff), matching
+        // the Language picker — no card, border, or dividers. The ScrollView keeps
+        // the short list from clipping at large Dynamic Type sizes.
         VStack(spacing: 0) {
             SheetHeader(title: loc[.profile_appearance], closeLabel: loc[.common_close], onClose: { dismiss() })
 
-            VStack(spacing: 0) {
-                ForEach(options.indices, id: \.self) { index in
-                    let option = options[index]
-                    Button {
-                        store.selected = option
-                        dismiss()
-                    } label: {
-                        ProfileTrailingRow(icon: option.icon, title: loc[appearanceValueKey(option)]) {
-                            if option == store.selected {
-                                MaterialSymbol(.check, size: 17)
-                                    .foregroundStyle(DocsColor.brandFill)
-                                    // The glyph carries no meaning to VoiceOver; the
-                                    // row's .isSelected trait announces the state.
-                                    .accessibilityHidden(true)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(options.indices, id: \.self) { index in
+                        let option = options[index]
+                        Button {
+                            store.selected = option
+                            dismiss()
+                        } label: {
+                            ProfileTrailingRow(icon: option.icon, title: loc[appearanceValueKey(option)]) {
+                                if option == store.selected {
+                                    MaterialSymbol(.check, size: 17)
+                                        .foregroundStyle(DocsColor.brandFill)
+                                        // The glyph carries no meaning to VoiceOver; the
+                                        // row's .isSelected trait announces the state.
+                                        .accessibilityHidden(true)
+                                }
                             }
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(option == store.selected ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(option == store.selected ? .isSelected : [])
                 }
+                .padding(.bottom, DocsSpacing.spaceSM)
             }
-            .background(DocsColor.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .overlay(
-                RoundedRectangle(cornerRadius: DocsRadius.lg)
-                    .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-            )
-            .padding(.horizontal, DocsSpacing.gutter)
-
-            Spacer(minLength: 0)
         }
-        .padding(.bottom, DocsSpacing.spaceSM)
-        // White page surface (like the restyled Profile), so the option card is
-        // defined by its hairline border rather than a sunken grey backdrop.
+        // White page surface (like the restyled Profile), matching the handoff.
         .background(DocsColor.surfacePage)
     }
 }
