@@ -1,10 +1,16 @@
-# Instant Local Document Content + Background Sync — Design Spec
+# Instant Local Document Content + Background Sync
+
+> **Living design document** for Schrift's offline reading and background-sync
+> model — the on-device content cache, the list caches, and the rules that keep a
+> full-overwrite save from ever eating content. Kept current with the shipped
+> app; update it in place when behavior changes. See also
+> [`architecture.md`](architecture.md) for the overall architecture and
+> [`CLAUDE.md`](../CLAUDE.md) for the operational conventions.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section and Pages tree, and the Shared tab) now follow this same
 > seed-synchronously / revalidate-silently pattern via `DocumentCacheStore`
-> and the new `DocumentChildrenCacheStore`. See
-> [`../plans/2026-07-03-instant-local-doc-lists.md`](../plans/2026-07-03-instant-local-doc-lists.md).
+> and the new `DocumentChildrenCacheStore`.
 > This supersedes the "No caching of the subpage list" non-goal and the
 > §Subpages deferral below: sub-page lists are cached in
 > `DocumentChildrenCacheStore` (restored synchronously in `load()`, written
@@ -14,8 +20,7 @@
 > **Amendment (2026-07-04):** a `.sessionExpired` revalidation failure is still
 > transient for the cache (kept, readable), but the shared API client's
 > `onSessionExpired` hook now also presents the app-level re-login sheet; the
-> editor itself is unchanged and recovers on its next refresh or save (see
-> [`../plans/2026-07-04-persist-session-cookies-and-reauth.md`](../plans/2026-07-04-persist-session-cookies-and-reauth.md)).
+> editor itself is unchanged and recovers on its next refresh or save.
 >
 > **Amendment (2026-07-08):** the "never swap clean content on a passive open"
 > rule below is **withdrawn**. It made a document edited on the web show its new
@@ -35,8 +40,7 @@
 > mid-session save failure leaves `.clean` on screen with the draft behind it),
 > and a response to a fetch that **raced one of our own saves** is never
 > installed or cached (the server may answer it from the pre-save state, and the
-> next full-overwrite save would push that resurrected body back). See
-> [`../plans/2026-07-08-remote-doc-content-sync.md`](../plans/2026-07-08-remote-doc-content-sync.md).
+> next full-overwrite save would push that resurrected body back).
 >
 > **Revised (2026-07-10):** the Markdown editing mode was removed — the block
 > editor is the only editing surface. `install(...)` no longer computes
@@ -46,8 +50,7 @@
 > `rawMarkdown` is retained as the authoritative reading-mode source: a fetch
 > installs it, and `finishEditing` re-syncs it to the edited blocks **only when
 > they diverged** from that source, so a photo upload that lands after the
-> editing session still preserves an untouched non-round-tripping document. See
-> [`../plans/2026-07-10-remove-markdown-editing-mode.md`](../plans/2026-07-10-remove-markdown-editing-mode.md).
+> editing session still preserves an untouched non-round-tripping document.
 
 Date: 2026-07-03
 Status: Implemented (shipped 2026-07-03, PR #36; rev 2 — revised the same day
@@ -754,11 +757,10 @@ XCTest, mirroring the source tree. New/updated:
   section; add `DocumentContentCacheStore` to the persistence-stores list (with
   the file-based/backup-excluded/sign-out-cleared posture) and the repo-layout
   map.
-- `docs/superpowers/specs/2026-06-30-docs-ios-design.md` — following the existing
-  "Revised: 2026-07-02" precedent, add a dated revision note amending the error
-  handling line "no offline queue/cache in v1": previously-opened documents are
-  now cached on disk and readable offline with background revalidation (see this
-  spec). Clarify (don't remove) the "Offline editing/sync queue" non-goal —
-  offline *editing* remains out of scope; only offline *reading* was added.
+- [`architecture.md`](architecture.md) — the error-handling line "no offline
+  queue/cache in v1" is superseded: previously-opened documents are now cached on
+  disk and readable offline with background revalidation (see this doc). The
+  "Offline editing/sync queue" non-goal stands — offline *editing* remains out of
+  scope; only offline *reading* was added.
 - `README.md` reviewed — it makes no offline/loading claims, so no change.
 - This spec is the point-in-time design record.
