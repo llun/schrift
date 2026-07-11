@@ -39,5 +39,13 @@ final class LocalizationStore {
         String(format: self[key], locale: locale, arguments: args)
     }
 
+    /// Resolves the correct plural form for `count` in the current language
+    /// (see `pluralCategory(_:language:)`) and substitutes it into the
+    /// matching key's format string.
+    func plural(_ count: Int, one: L10nKey, other: L10nKey) -> String {
+        let key = pluralCategory(count, language: language) == .one ? one : other
+        return String(format: self[key], locale: locale, arguments: [count])
+    }
+
     var locale: Locale { language.locale }
 }
