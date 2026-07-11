@@ -15,6 +15,19 @@
 > phrasing below as "English is primary" for the shipped state; the §5.7 body
 > is kept as the original plan of record.
 
+> **Revised: 2026-07-12 (Options sheet → flat menu).** The document **Options
+> sheet** was redesigned to the handoff's updated `OptionsSheet`: a **flat,
+> boxless, dividerless** list under a `SheetHeader` (inline `title2` title + a
+> circular close button), replacing the grouped `ListSection` cards + `Done`
+> nav bar. This **supersedes** the "keep dividers on the Options/Share menus"
+> note in §8.3 and the "keep all rows / no presence banner / no close chrome"
+> plan in §9.1: the sheet now shows only **Pin · Copy link · Share · Version
+> history · Delete** (matching the handoff exactly), and **Copy as Markdown**
+> and **Duplicate** — plus the `duplicateDocument` endpoint that backed the
+> latter — were removed. The new `SheetHeader` component + the flat-sheet
+> pattern are documented in [`CLAUDE.md`](../CLAUDE.md); the Share and
+> Version-history sheets still use grouped separators and are unchanged.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match
@@ -429,8 +442,10 @@ deliberate match to the design system and the screenshots; it is reversible by a
 single `divided:` flag if a later review prefers iOS-style separators.
 `ListSection` card styling (surface-raised, 1pt border, `radius-lg`, header
 padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved. The
-`ProfileRowDivider` component stays for the Options / Share "Add people" menus,
-where grouped separators are appropriate (and unchanged by this work).
+`ProfileRowDivider` component stays for the Share / Version-history sheets, where
+grouped separators are appropriate. (The **Options sheet** was later flattened to
+a boxless, dividerless menu — see the 2026-07-12 amendment at the top and the
+flat-sheet pattern in [`CLAUDE.md`](../CLAUDE.md).)
 
 ### 8.4 Sheets & scrolling (the "share dialog scroll" fix)
 
@@ -482,13 +497,13 @@ opened from a **"Version history"** row in the Options sheet — the current app
 ### 9.1 UI
 
 - **Options sheet** gains a `ListRow` — `clock.arrow.circlepath` + "Version
-  history" + chevron — that presents the version-history sheet. The existing
-  Options rows (Pin, Copy link, Share, Copy as Markdown, Duplicate, Delete) are
-  **kept** — the handoff's `OptionsSheet.jsx` renders a *simplified* subset but
-  its own comment lists the full DocToolBox set, so this is additive, not a
-  removal. (The handoff's "N people editing" presence banner is **not** added —
-  it needs live-presence data the app doesn't have, same call as the row emojis /
-  avatars in §2.)
+  history" + chevron — that presents the version-history sheet. *(Superseded by
+  the 2026-07-12 amendment: the Options sheet was later flattened to the
+  handoff's `OptionsSheet` — a boxless, dividerless list of only Pin, Copy link,
+  Share, Version history, and Delete; Copy as Markdown and Duplicate were
+  removed. The "N people editing" presence banner is still **not** added — it
+  needs live-presence data the app doesn't have, same call as the row emojis /
+  avatars in §2.)*
 - **Version-history sheet** matches `VersionHistorySheet.jsx`: a bottom sheet
   (detent + drag indicator, per §8.4) whose **only scrolling region is the
   version list** (`maxHeight` ≈ 340pt); a flat, chronological list, newest first;
