@@ -5,7 +5,15 @@ enum Strings {
     static func table(for language: AppLanguage) -> [L10nKey: String] {
         switch language {
         case .english: Strings_en.table
-        default: Strings_en.table  // replaced by real tables in Task B12
+        case .french: Strings_fr.table
+        case .spanish: Strings_es.table
+        case .german: Strings_de.table
+        case .italian: Strings_it.table
+        case .dutch: Strings_nl.table
+        case .portuguese: Strings_pt.table
+        case .thai: Strings_th.table
+        case .chineseSimplified: Strings_zhHans.table
+        case .chineseTraditional: Strings_zhHant.table
         }
     }
 }

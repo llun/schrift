@@ -22,10 +22,9 @@ final class LocalizationStoreTests: XCTestCase {
     func testResolvesCurrentLanguage() {
         let store = LocalizationStore(userDefaults: defaults)
         store.language = .french
-        // French isn't wired until B12, so it currently resolves via the English fallback.
-        // Pinned literal (not a re-derived dispatcher call) so this stays a real content
-        // check now and forces B12 to update it to the real French value.
-        XCTAssertEqual(store[.common_done], "Done")
+        // French is wired as of B12. Pinned literal (not a re-derived dispatcher call)
+        // so this stays a real content check.
+        XCTAssertEqual(store[.common_done], "Terminé")
         XCTAssertEqual(store.locale.identifier, "fr")
     }
     func testFallsBackToEnglishForMissingKey() {
