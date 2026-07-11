@@ -34,88 +34,80 @@ struct ShareSheetView: View {
     @State private var isChoosingLinkReach = false
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                DocsTextField(
-                    text: $viewModel.searchQuery, placeholder: loc[.share_invite_placeholder],
-                    icon: .person_add
-                )
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.vertical, DocsSpacing.spaceSM)
+        // A flat, boxless sheet (handoff `Sheet`): a pinned `SheetHeader` over the
+        // invite field and the scrollable body — no `NavigationStack`/"Done" nav
+        // bar, no `ListSection` card, and no inter-row/section dividers, matching
+        // the Options sheet. Section-label eyebrows carry the structure instead.
+        VStack(spacing: 0) {
+            SheetHeader(title: loc[.share_title], closeLabel: loc[.common_close], onClose: { dismiss() })
 
-                if let errorKey = viewModel.errorKey {
-                    Text(loc[errorKey])
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.danger)
-                        .padding(.horizontal, DocsSpacing.gutter)
+            DocsTextField(
+                text: $viewModel.searchQuery, placeholder: loc[.share_invite_placeholder],
+                icon: .person_add
+            )
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.vertical, DocsSpacing.spaceSM)
+
+            if let errorKey = viewModel.errorKey {
+                Text(loc[errorKey])
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.danger)
+                    .padding(.horizontal, DocsSpacing.gutter)
+            }
+
+            ScrollView {
+                if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    searchResultsSection
+                } else {
+                    VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
+                        membersSection
+                        linkSection
+                        copyLinkButton
+                    }
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.top, DocsSpacing.space3xs)
                 }
-
-                ScrollView {
-                    if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        searchResultsSection
-                    } else {
-                        VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
-                            membersSection
-
-                            Rectangle()
-                                .fill(DocsColor.borderDefault)
-                                .frame(height: 1)
-
-                            linkSection
-                            copyLinkButton
-                        }
-                        .padding(.horizontal, DocsSpacing.gutter)
-                        .padding(.top, DocsSpacing.space3xs)
+            }
+            .refreshable { await viewModel.load() }
+        }
+        .background(DocsColor.surfacePage)
+        .task {
+            await viewModel.load()
+        }
+        .task(id: viewModel.searchQuery) {
+            await viewModel.search()
+        }
+        .confirmationDialog(
+            loc[.share_change_role],
+            isPresented: Binding(
+                get: { memberPendingRoleChange != nil },
+                set: { if !$0 { memberPendingRoleChange = nil } }
+            ),
+            presenting: memberPendingRoleChange
+        ) { member in
+            // Role changes only apply to existing accesses; pending invitations
+            // have no update-role endpoint, so offering role buttons there would
+            // be dead UI. Show only "Remove" for invitations.
+            if case .access(let access) = member {
+                ForEach([DocumentRole.reader, .commenter, .editor, .administrator], id: \.self) { role in
+                    Button(loc[roleTitleKey(role)]) {
+                        Task { await viewModel.updateRole(accessID: access.id, role: role) }
                     }
                 }
-                .refreshable { await viewModel.load() }
             }
-            .background(DocsColor.surfacePage)
-            .navigationTitle(loc[.share_title])
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(loc[.common_done]) { dismiss() }
-                }
+            Button(loc[.share_remove], role: .destructive) {
+                Task { await viewModel.removeMember(member) }
             }
-            .task {
-                await viewModel.load()
+        }
+        .confirmationDialog(loc[.share_link_access], isPresented: $isChoosingLinkReach) {
+            Button(loc[.reach_restricted]) {
+                Task { await viewModel.updateLinkConfiguration(reach: .restricted, role: nil) }
             }
-            .task(id: viewModel.searchQuery) {
-                await viewModel.search()
+            Button(loc[.share_reach_authenticated]) {
+                Task { await viewModel.updateLinkConfiguration(reach: .authenticated, role: .reader) }
             }
-            .confirmationDialog(
-                loc[.share_change_role],
-                isPresented: Binding(
-                    get: { memberPendingRoleChange != nil },
-                    set: { if !$0 { memberPendingRoleChange = nil } }
-                ),
-                presenting: memberPendingRoleChange
-            ) { member in
-                // Role changes only apply to existing accesses; pending invitations
-                // have no update-role endpoint, so offering role buttons there would
-                // be dead UI. Show only "Remove" for invitations.
-                if case .access(let access) = member {
-                    ForEach([DocumentRole.reader, .commenter, .editor, .administrator], id: \.self) { role in
-                        Button(loc[roleTitleKey(role)]) {
-                            Task { await viewModel.updateRole(accessID: access.id, role: role) }
-                        }
-                    }
-                }
-                Button(loc[.share_remove], role: .destructive) {
-                    Task { await viewModel.removeMember(member) }
-                }
-            }
-            .confirmationDialog(loc[.share_link_access], isPresented: $isChoosingLinkReach) {
-                Button(loc[.reach_restricted]) {
-                    Task { await viewModel.updateLinkConfiguration(reach: .restricted, role: nil) }
-                }
-                Button(loc[.share_reach_authenticated]) {
-                    Task { await viewModel.updateLinkConfiguration(reach: .authenticated, role: .reader) }
-                }
-                Button(loc[.share_reach_public]) {
-                    Task { await viewModel.updateLinkConfiguration(reach: .public, role: .reader) }
-                }
+            Button(loc[.share_reach_public]) {
+                Task { await viewModel.updateLinkConfiguration(reach: .public, role: .reader) }
             }
         }
     }
@@ -130,26 +122,28 @@ struct ShareSheetView: View {
     @ViewBuilder
     private var searchResultsSection: some View {
         if viewModel.searchResults.isEmpty {
-            // Avoid an empty bordered card while there are no matches.
             Text(loc[.share_no_people_found])
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.textTertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DocsSpacing.spaceLG)
         } else {
-            ListSection(header: loc[.share_add_people]) {
-                VStack(spacing: 0) {
-                    ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, user in
-                        if index > 0 { ProfileRowDivider() }
-                        ListRow(
-                            title: user.fullName, subtitle: user.email,
-                            action: {
-                                Task { await viewModel.invite(user: user, role: .reader) }
-                            })
-                    }
+            // A flat, boxless list (like the Options sheet): the eyebrow label,
+            // then `ListRow`s drawn directly on the page surface — no card, no
+            // inter-row dividers. `ListRow` supplies its own gutter, so only the
+            // label is padded.
+            VStack(alignment: .leading, spacing: 0) {
+                sectionLabel(loc[.share_add_people])
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.bottom, DocsSpacing.spaceXS)
+                ForEach(viewModel.searchResults, id: \.id) { user in
+                    ListRow(
+                        title: user.fullName, subtitle: user.email,
+                        action: {
+                            Task { await viewModel.invite(user: user, role: .reader) }
+                        })
                 }
             }
-            .padding(.horizontal, DocsSpacing.gutter)
             .padding(.top, DocsSpacing.space3xs)
         }
     }
