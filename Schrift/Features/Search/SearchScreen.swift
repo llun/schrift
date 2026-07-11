@@ -14,7 +14,7 @@ struct SearchScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.search_title], subtitle: serverHost, largeTitle: true)
+            NavBar(title: loc[.search_title], subtitle: serverHost, largeTitle: true, showsBorder: false)
 
             if workOffline { OfflineBanner(note: loc[.offline_note]) }
 

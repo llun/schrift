@@ -22,7 +22,7 @@ struct ProfileScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.profile_title], largeTitle: true)
+            NavBar(title: loc[.profile_title], largeTitle: true, showsBorder: false)
 
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
