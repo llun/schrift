@@ -67,11 +67,14 @@ struct VersionHistorySheetView: View {
             .frame(maxHeight: 340)
 
             if let restoreURL {
+                // Pinned below the scrolling list (not part of it), so it keeps a
+                // little bottom breathing room above the home indicator.
                 ListRow(
                     icon: .open_in_new,
                     title: loc[.versions_restore_web],
                     action: { openURL(restoreURL) }
                 )
+                .padding(.bottom, DocsSpacing.spaceSM)
             }
         }
         .background(DocsColor.surfacePage)
