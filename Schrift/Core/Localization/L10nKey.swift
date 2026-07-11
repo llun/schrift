@@ -40,5 +40,21 @@ enum L10nKey: String, CaseIterable, Sendable {
     case search_quick_empty = "search.quick_empty"  // "Pinned documents will appear here."
     case search_empty_title = "search.empty.title"  // "No documents found"
     case search_empty_body = "search.empty.body"  // "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword."
-    // (screen-specific keys are added by B7–B11, Phase C, Phase F)
+
+    // Shared
+    case shared_title = "shared.title"  // "Shared"
+    case shared_with_me = "shared.with_me"  // "Shared with me"
+    case shared_by_me = "shared.by_me"  // "Shared by me"
+    case shared_count_one = "shared.count.one"  // "%d document"
+    case shared_count_other = "shared.count.other"  // "%d documents"
+    case shared_subtitle_with = "shared.subtitle_with"  // "Shared · %@"
+    case shared_subtitle_by = "shared.subtitle_by"  // "%@ · Shared %@"
+    case shared_footer_with = "shared.footer_with"
+    // "Documents other people have invited you to. Your access depends on your role on each one."
+    case shared_footer_by = "shared.footer_by"
+    // "Documents you own or have shared. Manage who can see them from each document’s share sheet."
+    case reach_restricted = "reach.restricted"  // "Restricted"
+    case reach_connected = "reach.connected"  // "Connected"
+    case reach_public = "reach.public"  // "Public"
+    // (screen-specific keys are added by B8–B11, Phase C, Phase F)
 }

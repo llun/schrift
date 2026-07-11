@@ -38,5 +38,21 @@ enum Strings_en {
         .search_quick_empty: "Pinned documents will appear here.",
         .search_empty_title: "No documents found",
         .search_empty_body: "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword.",
+
+        // Shared
+        .shared_title: "Shared",
+        .shared_with_me: "Shared with me",
+        .shared_by_me: "Shared by me",
+        .shared_count_one: "%d document",
+        .shared_count_other: "%d documents",
+        .shared_subtitle_with: "Shared · %@",
+        .shared_subtitle_by: "%@ · Shared %@",
+        .shared_footer_with:
+            "Documents other people have invited you to. Your access depends on your role on each one.",
+        .shared_footer_by:
+            "Documents you own or have shared. Manage who can see them from each document’s share sheet.",
+        .reach_restricted: "Restricted",
+        .reach_connected: "Connected",
+        .reach_public: "Public",
     ]
 }

@@ -1,10 +1,10 @@
 import SwiftUI
 
-private func reachLabel(_ reach: LinkReach) -> String {
+private func reachLabel(_ reach: LinkReach) -> L10nKey {
     switch reach {
-    case .restricted: return "Restricted"
-    case .authenticated: return "Connected"
-    case .public: return "Public"
+    case .restricted: return .reach_restricted
+    case .authenticated: return .reach_connected
+    case .public: return .reach_public
     }
 }
 
@@ -26,31 +26,33 @@ struct SharedScreen: View {
     private func subtitle(for document: Document) -> String {
         switch viewModel.scope {
         case .withMe:
-            return "Shared · \(documentRowDate(document, locale: loc.locale))"
+            return loc.format(.shared_subtitle_with, documentRowDate(document, locale: loc.locale))
         case .byMe:
-            return "\(reachLabel(document.linkReach)) · Shared \(documentRowDate(document, locale: loc.locale))"
+            return loc.format(
+                .shared_subtitle_by, loc[reachLabel(document.linkReach)], documentRowDate(document, locale: loc.locale)
+            )
         }
     }
 
     private var footerText: String {
         switch viewModel.scope {
         case .withMe:
-            return "Documents other people have invited you to. Your access depends on your role on each one."
+            return loc[.shared_footer_with]
         case .byMe:
-            return "Documents you own or have shared. Manage who can see them from each document's share sheet."
+            return loc[.shared_footer_by]
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Shared", subtitle: serverHost, largeTitle: true)
+            NavBar(title: loc[.shared_title], subtitle: serverHost, largeTitle: true)
 
             if workOffline || viewModel.isOffline { OfflineBanner() }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
                     SegmentedControl(
-                        segments: ["Shared with me", "Shared by me"],
+                        segments: [loc[.shared_with_me], loc[.shared_by_me]],
                         selectedIndex: scopeIndex
                     )
                     .padding(.horizontal, DocsSpacing.gutter)
@@ -74,13 +76,16 @@ struct SharedScreen: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, DocsSpacing.spaceBase)
                     } else if viewModel.showsDocumentList {
-                        ListSection(header: "\(viewModel.documents.count) documents") {
+                        ListSection(
+                            header: loc.plural(
+                                viewModel.documents.count, one: .shared_count_one, other: .shared_count_other)
+                        ) {
                             ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
                                 if index > 0 {
                                     ProfileRowDivider()
                                 }
                                 SharedRow(
-                                    title: document.title ?? "Untitled document",
+                                    title: document.title ?? loc[.common_untitled],
                                     subtitle: subtitle(for: document),
                                     onTap: { onOpenDocument(document) }
                                 )
