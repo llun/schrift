@@ -14,7 +14,7 @@ final class SharedViewModel {
     /// A network load is in flight. Whether that shows as a placeholder is a
     /// per-scope decision — see `showsLoadingPlaceholder`.
     var isLoading = false
-    var errorMessage: String?
+    var errorKey: L10nKey?
     var isOffline = false
 
     let client: DocsAPIClient
@@ -68,7 +68,7 @@ final class SharedViewModel {
     }
 
     func load(userInitiated: Bool = false) async {
-        errorMessage = nil
+        errorKey = nil
         loadGeneration += 1
         let generation = loadGeneration
 
@@ -131,7 +131,7 @@ final class SharedViewModel {
         if withMeFailed || byMeFailed,
             userInitiated || (withMeFailed && !hadWithMeCache) || (byMeFailed && !hadByMeCache)
         {
-            errorMessage = "Could not load shared documents. Check your connection and try again."
+            errorKey = .shared_error_load
         }
         if generation == loadGeneration {
             isLoading = false

@@ -9,8 +9,8 @@ final class HomeViewModel {
     var recentDocuments: [Document] = []
     var searchResults: [Document] = []
     var isLoading = false
-    var errorMessage: String?
-    /// The server's own words about the failure behind `errorMessage`, when it had any —
+    var errorKey: L10nKey?
+    /// The server's own words about the failure behind `errorKey`, when it had any —
     /// `DocsAPIError` collapses a CSRF 403, a validation 400, and a decoding bug into the
     /// same sentence, and a self-hoster needs to tell them apart without a debugger.
     var errorDetail: String?
@@ -128,7 +128,7 @@ final class HomeViewModel {
             // pinned rows are no evidence for it — or an explicit
             // pull-to-refresh.
             if failed, userInitiated || !hasCachedList {
-                errorMessage = "Couldn't load documents. Pull to refresh to try again."
+                errorKey = .home_error_load
                 errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             }
         }
@@ -166,7 +166,7 @@ final class HomeViewModel {
             let page = try await client.searchDocuments(query: trimmed)
             searchResults = page.results
         } catch {
-            errorMessage = "Search failed. Please try again."
+            errorKey = .home_error_search
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
         }
     }
@@ -196,7 +196,7 @@ final class HomeViewModel {
             }
             return document
         } catch {
-            errorMessage = "Couldn't create a document. Please try again."
+            errorKey = .home_error_create
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             return nil
         }
@@ -209,7 +209,7 @@ final class HomeViewModel {
             try await client.setFavorite(documentID: document.id, isFavorite: !document.isFavorite)
             await load()
         } catch {
-            errorMessage = "Couldn't update favorite. Please try again."
+            errorKey = .home_error_favorite
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
         }
     }
@@ -224,7 +224,7 @@ final class HomeViewModel {
     }
 
     private func clearError() {
-        errorMessage = nil
+        errorKey = nil
         errorDetail = nil
     }
 

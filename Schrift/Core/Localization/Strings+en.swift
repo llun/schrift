@@ -8,8 +8,14 @@ enum Strings_en {
         .common_cancel: "Cancel",
         .common_retry: "Try again",
         .common_untitled: "Untitled document",
+        .common_profile: "Profile",
+        .common_clear_search: "Clear search",
         .search_results_one: "%d result",
         .search_results_other: "%d results",
+
+        // Offline banner (common chrome)
+        .offline_status: "Offline",
+        .offline_note: "All documents saved on this device",
 
         // Home
         .home_title: "Schrift",
@@ -29,6 +35,11 @@ enum Strings_en {
         .home_unpin: "Unpin",
         .home_dismiss_error: "Dismiss error",
         .home_document_options: "Document Options",
+        .home_select_document: "Select a Document",
+        .home_error_load: "Couldn't load documents. Pull to refresh to try again.",
+        .home_error_search: "Search failed. Please try again.",
+        .home_error_create: "Couldn't create a document. Please try again.",
+        .home_error_favorite: "Couldn't update favorite. Please try again.",
 
         // Search
         .search_title: "Search",
@@ -38,6 +49,8 @@ enum Strings_en {
         .search_quick_empty: "Pinned documents will appear here.",
         .search_empty_title: "No documents found",
         .search_empty_body: "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword.",
+        .search_error_quick: "Couldn't load quick access. Please try again.",
+        .search_error_search: "Search failed. Please try again.",
 
         // Shared
         .shared_title: "Shared",
@@ -51,9 +64,26 @@ enum Strings_en {
             "Documents other people have invited you to. Your access depends on your role on each one.",
         .shared_footer_by:
             "Documents you own or have shared. Manage who can see them from each document’s share sheet.",
+        .shared_error_load: "Could not load shared documents. Check your connection and try again.",
         .reach_restricted: "Restricted",
         .reach_connected: "Connected",
         .reach_public: "Public",
+
+        // DocRow (design-system component)
+        .docrow_pinned: "Pinned",
+        .docrow_shared_with_organization: "Shared with organization",
+        .docrow_public: "Public",
+        .docrow_more_options: "More options",
+        .docrow_available_offline: "Available offline",
+
+        // LinkReachPill hints (design-system component; labels reuse reach.*)
+        .linkreach_hint_restricted: "Only invited people",
+        .linkreach_hint_authenticated: "Anyone in the org",
+        .linkreach_hint_public: "Anyone with the link",
+
+        // ShareMemberRow (design-system component)
+        .sharemember_role_a11y: "Role: %@",
+        .sharemember_role_hint: "Double tap to change role",
 
         // Connect
         .connect_hero_title: "Welcome to Schrift",

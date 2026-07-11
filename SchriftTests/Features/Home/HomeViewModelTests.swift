@@ -111,7 +111,7 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.pinnedDocuments.map(\.title), ["Pinned Doc"])
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Recent Doc"])
         XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testSelectFilterUpdatesQueryParametersForRecentList() async {
@@ -183,7 +183,7 @@ final class HomeViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isLoading)
     }
 
@@ -268,7 +268,7 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.selectFilter(.shared)
 
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Shared Doc"])
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testLoadFailureKeepsCachedDocumentsVisibleAndStaysSilent() async {
@@ -293,7 +293,7 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.pinnedDocuments.map(\.title), ["Offline Pinned"])
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Offline Recent"])
         // Passive revalidation failures stay silent behind cached rows.
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
         XCTAssertFalse(viewModel.isLoading)
     }
@@ -313,7 +313,7 @@ final class HomeViewModelTests: XCTestCase {
 
         // Pull-to-refresh is the explicit "give me fresh data" path — failures
         // surface even though cached rows stay visible.
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Offline Recent"])
     }
 
@@ -372,7 +372,7 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertFalse(viewModel.isOffline)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Doc"])
     }
 
@@ -398,7 +398,7 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.refresh()
 
         XCTAssertFalse(viewModel.isOffline)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testLoadSuccessKeepsIsOfflineFalse() async {
@@ -447,7 +447,7 @@ final class HomeViewModelTests: XCTestCase {
         // evidence for it, so a total failure must not be silent.
         await viewModel.selectFilter(.shared)
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
     }
 
@@ -553,7 +553,7 @@ final class HomeViewModelTests: XCTestCase {
 
         await viewModel.toggleFavorite(document)
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isOffline)
     }
 
@@ -576,7 +576,7 @@ final class HomeViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isCurrentListKnown, "a never-fetched list must not masquerade as empty")
         XCTAssertTrue(viewModel.recentDocuments.isEmpty)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
 
         await viewModel.selectFilter(.all)
@@ -608,7 +608,7 @@ final class HomeViewModelTests: XCTestCase {
         gate.signal()
         await load.value
         XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNotNil(viewModel.errorMessage, "first-ever .pinned load failed with nothing visible")
+        XCTAssertNotNil(viewModel.errorKey, "first-ever .pinned load failed with nothing visible")
     }
 
     // MARK: - Create-document failure reporting
@@ -625,7 +625,7 @@ final class HomeViewModelTests: XCTestCase {
         let document = await viewModel.createDocument()
 
         XCTAssertNil(document)
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't create a document. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .home_error_create)
         XCTAssertEqual(viewModel.errorDetail, "HTTP 403: CSRF Failed: CSRF token missing.")
     }
 
@@ -641,7 +641,7 @@ final class HomeViewModelTests: XCTestCase {
 
         _ = await viewModel.createDocument()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertNil(viewModel.errorDetail)
     }
 
@@ -652,11 +652,11 @@ final class HomeViewModelTests: XCTestCase {
         let viewModel = makeViewModel(diagnostics: diagnostics)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
         _ = await viewModel.createDocument()
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
 
         viewModel.dismissError()
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertNil(viewModel.errorDetail)
     }
 
@@ -664,7 +664,7 @@ final class HomeViewModelTests: XCTestCase {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
         _ = await viewModel.createDocument()
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
 
         // Now the create succeeds, and the load() it triggers answers with an empty page.
         MockURLProtocol.stubHandler = { request in
@@ -676,7 +676,7 @@ final class HomeViewModelTests: XCTestCase {
         let document = await viewModel.createDocument()
 
         XCTAssertNotNil(document)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertNil(viewModel.errorDetail)
     }
 

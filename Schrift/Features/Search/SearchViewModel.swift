@@ -8,7 +8,7 @@ final class SearchViewModel {
     var quickAccess: [Document] = []
     var recentSearches: [String] = []
     var isSearching = false
-    var errorMessage: String?
+    var errorKey: L10nKey?
 
     let client: DocsAPIClient
     private let store: RecentSearchesStore
@@ -24,7 +24,7 @@ final class SearchViewModel {
             let page = try await client.favoriteDocuments()
             quickAccess = page.results
         } catch {
-            errorMessage = "Couldn't load quick access. Please try again."
+            errorKey = .search_error_quick
         }
     }
 
@@ -42,14 +42,14 @@ final class SearchViewModel {
         if Task.isCancelled { return }
 
         isSearching = true
-        errorMessage = nil
+        errorKey = nil
         do {
             let page = try await client.searchDocuments(query: trimmed)
             if Task.isCancelled { return }
             results = page.results
         } catch {
             if Task.isCancelled { return }
-            errorMessage = "Search failed. Please try again."
+            errorKey = .search_error_search
         }
         isSearching = false
     }

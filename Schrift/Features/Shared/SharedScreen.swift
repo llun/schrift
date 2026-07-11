@@ -47,7 +47,7 @@ struct SharedScreen: View {
         VStack(spacing: 0) {
             NavBar(title: loc[.shared_title], subtitle: serverHost, largeTitle: true)
 
-            if workOffline || viewModel.isOffline { OfflineBanner() }
+            if workOffline || viewModel.isOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
@@ -59,8 +59,8 @@ struct SharedScreen: View {
                     // 18pt gap below the control, matching Home/Search and the reference.
                     .padding(.bottom, DocsSpacing.space4xs)
 
-                    if let errorMessage = viewModel.errorMessage {
-                        Text(errorMessage)
+                    if let errorKey = viewModel.errorKey {
+                        Text(loc[errorKey])
                             .font(DocsFont.footnote)
                             .foregroundStyle(DocsColor.danger)
                             .padding(.horizontal, DocsSpacing.gutter)

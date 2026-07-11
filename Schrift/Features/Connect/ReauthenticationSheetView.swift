@@ -8,7 +8,7 @@ import SwiftUI
 struct ReauthenticationSheetView: View {
     // Built once in init and held in @State so a parent body re-evaluation
     // while the sheet is open (e.g. an iPad size-class change mid-login) can't
-    // rebuild the VM and reset its transient isConfirming/errorMessage or the
+    // rebuild the VM and reset its transient isConfirming/errorKey or the
     // embedded WebLoginView's progress. Dismiss removes the view, so the next
     // 401 re-presents with a fresh VM.
     @State private var viewModel: ReauthenticationViewModel

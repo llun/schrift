@@ -11,6 +11,8 @@ struct ShareMemberRow: View {
     var isCurrentUser: Bool = false
     var onTapRole: (() -> Void)? = nil
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
             Avatar(name: name, size: 40)
@@ -50,8 +52,8 @@ struct ShareMemberRow: View {
                 .frame(minHeight: DocsSpacing.rowMinHeight)
                 .contentShape(Rectangle())
             }
-            .accessibilityLabel("Role: \(role)")
-            .accessibilityHint("Double tap to change role")
+            .accessibilityLabel(loc.format(.sharemember_role_a11y, role))
+            .accessibilityHint(loc[.sharemember_role_hint])
         }
         .padding(.horizontal, DocsSpacing.space3xs)
         .padding(.vertical, DocsSpacing.spaceXS)
@@ -64,4 +66,5 @@ struct ShareMemberRow: View {
         ShareMemberRow(name: "Alfredo Levin", email: "alfredo.levin@test.gouv.fr", role: "Editor")
         ShareMemberRow(name: "Desirae Dokidis", email: "desirae.dokidis@gmail.com", role: "Reader")
     }
+    .environment(LocalizationStore())
 }

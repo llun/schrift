@@ -38,7 +38,7 @@ struct DocumentListView: View {
             )
 
             if isOffline {
-                OfflineBanner()
+                OfflineBanner(note: loc[.offline_note])
             }
 
             ScrollView {
@@ -58,10 +58,10 @@ struct DocumentListView: View {
                     )
                     .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
 
-                    if let errorMessage = viewModel.errorMessage {
+                    if let errorKey = viewModel.errorKey {
                         HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
                             VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                                Text(errorMessage)
+                                Text(loc[errorKey])
                                     .font(DocsFont.footnote)
                                     .foregroundStyle(DocsColor.danger)
                                 if let errorDetail = viewModel.errorDetail {
@@ -144,7 +144,7 @@ struct DocumentListView: View {
                 .padding(.top, DocsSpacing.spaceBase)
         } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if viewModel.searchResults.isEmpty {
-                if viewModel.errorMessage == nil {
+                if viewModel.errorKey == nil {
                     ContentUnavailableView.search(text: viewModel.searchQuery)
                 }
             } else {
@@ -157,7 +157,7 @@ struct DocumentListView: View {
             // claim "No documents yet" for a *known* list — a never-fetched
             // filter (e.g. first visited under Work Offline) shows nothing;
             // the offline banner or error text above conveys the state.
-            if viewModel.errorMessage == nil && viewModel.isCurrentListKnown {
+            if viewModel.errorKey == nil && viewModel.isCurrentListKnown {
                 ContentUnavailableView(
                     loc[.home_empty_title],
                     systemImage: "doc.text",

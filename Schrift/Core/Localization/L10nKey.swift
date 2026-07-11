@@ -9,9 +9,15 @@ enum L10nKey: String, CaseIterable, Sendable {
     case common_cancel = "common.cancel"
     case common_retry = "common.retry"
     case common_untitled = "common.untitled_document"
+    case common_profile = "common.profile"  // "Profile"
+    case common_clear_search = "common.clear_search"  // "Clear search"
     // Search results plural
     case search_results_one = "search.results.one"  // "%d result"
     case search_results_other = "search.results.other"  // "%d results"
+
+    // Offline banner (common chrome)
+    case offline_status = "offline.status"  // "Offline"
+    case offline_note = "offline.note"  // "All documents saved on this device"
 
     // Home
     case home_title = "home.title"  // "Schrift"
@@ -31,6 +37,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case home_unpin = "home.unpin"  // "Unpin"
     case home_dismiss_error = "home.dismiss_error"  // "Dismiss error"
     case home_document_options = "home.document_options"  // "Document Options"
+    case home_select_document = "home.select_document"  // "Select a Document"
+    case home_error_load = "home.error.load"  // "Couldn't load documents. Pull to refresh to try again."
+    case home_error_search = "home.error.search"  // "Search failed. Please try again."
+    case home_error_create = "home.error.create"  // "Couldn't create a document. Please try again."
+    case home_error_favorite = "home.error.favorite"  // "Couldn't update favorite. Please try again."
 
     // Search
     case search_title = "search.title"  // "Search"
@@ -40,6 +51,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case search_quick_empty = "search.quick_empty"  // "Pinned documents will appear here."
     case search_empty_title = "search.empty.title"  // "No documents found"
     case search_empty_body = "search.empty.body"  // "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword."
+    case search_error_quick = "search.error.quick"  // "Couldn't load quick access. Please try again."
+    case search_error_search = "search.error.search"  // "Search failed. Please try again."
 
     // Shared
     case shared_title = "shared.title"  // "Shared"
@@ -53,9 +66,27 @@ enum L10nKey: String, CaseIterable, Sendable {
     // "Documents other people have invited you to. Your access depends on your role on each one."
     case shared_footer_by = "shared.footer_by"
     // "Documents you own or have shared. Manage who can see them from each document’s share sheet."
+    case shared_error_load = "shared.error.load"
+    // "Could not load shared documents. Check your connection and try again."
     case reach_restricted = "reach.restricted"  // "Restricted"
     case reach_connected = "reach.connected"  // "Connected"
     case reach_public = "reach.public"  // "Public"
+
+    // DocRow (design-system component)
+    case docrow_pinned = "docrow.pinned"  // "Pinned"
+    case docrow_shared_with_organization = "docrow.shared_with_organization"  // "Shared with organization"
+    case docrow_public = "docrow.public"  // "Public"
+    case docrow_more_options = "docrow.more_options"  // "More options"
+    case docrow_available_offline = "docrow.available_offline"  // "Available offline"
+
+    // LinkReachPill hints (design-system component; labels reuse reach.*)
+    case linkreach_hint_restricted = "linkreach.hint.restricted"  // "Only invited people"
+    case linkreach_hint_authenticated = "linkreach.hint.authenticated"  // "Anyone in the org"
+    case linkreach_hint_public = "linkreach.hint.public"  // "Anyone with the link"
+
+    // ShareMemberRow (design-system component)
+    case sharemember_role_a11y = "sharemember.role_a11y"  // "Role: %@"
+    case sharemember_role_hint = "sharemember.role_hint"  // "Double tap to change role"
 
     // Connect
     case connect_hero_title = "connect.hero_title"  // "Welcome to Schrift"

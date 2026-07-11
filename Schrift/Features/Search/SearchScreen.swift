@@ -16,7 +16,7 @@ struct SearchScreen: View {
         VStack(spacing: 0) {
             NavBar(title: loc[.search_title], subtitle: serverHost, largeTitle: true)
 
-            if workOffline { OfflineBanner() }
+            if workOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -82,9 +82,9 @@ struct SearchScreen: View {
                 Spacer()
             }
             .padding(.vertical, DocsSpacing.spaceLG)
-        } else if let errorMessage = viewModel.errorMessage {
+        } else if let errorKey = viewModel.errorKey {
             // A failed request isn't "no matches" — surface the error instead.
-            Text(errorMessage)
+            Text(loc[errorKey])
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.danger)
                 .multilineTextAlignment(.center)

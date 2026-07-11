@@ -8,18 +8,29 @@ func docRowReachIndicatorSystemImage(reach: LinkReach) -> String? {
     }
 }
 
-func docRowAccessibilityLabel(title: String, reach: LinkReach, date: String, pinned: Bool) -> String {
+/// Pure and testable: the *localized* label strings are resolved by the caller
+/// (from `LocalizationStore`) and passed in, so this only owns the branching/
+/// ordering logic, not the translation lookup.
+func docRowAccessibilityLabel(
+    title: String,
+    reach: LinkReach,
+    date: String,
+    pinned: Bool,
+    pinnedLabel: String,
+    sharedWithOrganizationLabel: String,
+    publicLabel: String
+) -> String {
     var parts = [title]
     if pinned {
-        parts.append("Pinned")
+        parts.append(pinnedLabel)
     }
     switch reach {
     case .restricted:
         break
     case .authenticated:
-        parts.append("Shared with organization")
+        parts.append(sharedWithOrganizationLabel)
     case .public:
-        parts.append("Public")
+        parts.append(publicLabel)
     }
     if !date.isEmpty {
         parts.append(date)
@@ -36,6 +47,8 @@ struct DocRow: View {
     var offlineAvailable: Bool = false
     var onOpen: (() -> Void)? = nil
     var onMore: (() -> Void)? = nil
+
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
@@ -62,7 +75,7 @@ struct DocRow: View {
                 Image(systemName: "checkmark.icloud.fill")
                     .font(.system(size: 16))
                     .foregroundStyle(DocsColor.gray350)
-                    .accessibilityLabel("Available offline")
+                    .accessibilityLabel(loc[.docrow_available_offline])
             }
 
             if !date.isEmpty {
@@ -76,7 +89,7 @@ struct DocRow: View {
             // Only show the more-options control when a handler is wired, so
             // rows without one (e.g. search results) don't present an inert button.
             if let onMore {
-                IconButton(systemImage: "ellipsis", label: "More options", size: .small, action: onMore)
+                IconButton(systemImage: "ellipsis", label: loc[.docrow_more_options], size: .small, action: onMore)
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
@@ -88,7 +101,14 @@ struct DocRow: View {
         // otherwise the child Texts/glyphs stay separately focusable and the
         // label is never applied.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(docRowAccessibilityLabel(title: title, reach: reach, date: date, pinned: pinned))
+        .accessibilityLabel(
+            docRowAccessibilityLabel(
+                title: title, reach: reach, date: date, pinned: pinned,
+                pinnedLabel: loc[.docrow_pinned],
+                sharedWithOrganizationLabel: loc[.docrow_shared_with_organization],
+                publicLabel: loc[.docrow_public]
+            )
+        )
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -99,4 +119,5 @@ struct DocRow: View {
         DocRow(emoji: "📊", title: "Roadmap", reach: .authenticated, date: "Yesterday")
         DocRow(title: "Public notes", reach: .public, date: "Last week")
     }
+    .environment(LocalizationStore())
 }

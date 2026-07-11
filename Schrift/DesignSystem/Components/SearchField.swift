@@ -9,6 +9,7 @@ struct SearchField: View {
     var autoFocus: Bool = false
 
     @FocusState private var isFocused: Bool
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceXS) {
@@ -27,7 +28,7 @@ struct SearchField: View {
                         .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
                         .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Clear search")
+                .accessibilityLabel(loc[.common_clear_search])
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
@@ -48,4 +49,5 @@ struct SearchField: View {
     @Previewable @State var text = ""
     SearchField(text: $text)
         .padding()
+        .environment(LocalizationStore())
 }
