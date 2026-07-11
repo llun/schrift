@@ -1,21 +1,36 @@
 import SwiftUI
 
-/// Editing-session header: live save status, right-aligned. The block editor is
-/// the only editing surface, so there is no mode toggle — this bar exists to keep
-/// the Save / Saving… / Saved / Retry feedback visible while editing.
+/// Editing-session header. Editing hides the reading-mode nav bar (its back
+/// button left the whole document, and its border stacked with this bar's into a
+/// double hairline), so this is the *only* bar while editing: the live save
+/// status on the left (Save / Saving… / Saved / Retry) and a **Done** button on
+/// the right that ends the session. Its background fills the top safe area white
+/// like `NavBar`, since it now sits directly under the status bar.
 struct EditorSaveBar: View {
     let saveState: EditorViewModel.SaveState
     var onSaveTap: () -> Void
+    var onDone: () -> Void
+
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
+            SaveStatusIndicator(state: saveState, onTap: onSaveTap)
+
             Spacer(minLength: DocsSpacing.spaceXS)
 
-            SaveStatusIndicator(state: saveState, onTap: onSaveTap)
+            IconButton(
+                icon: .check,
+                label: loc[.editor_action_done],
+                color: .brand,
+                action: onDone
+            )
         }
         .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.vertical, DocsSpacing.space3xs)
-        .background(DocsColor.surfacePage)
+        .frame(minHeight: DocsSpacing.navBarHeight)
+        // Solid, opaque fill extended up through the status-bar strip — the same
+        // treatment `NavBar` uses — so there is no gray/white seam above the bar.
+        .background(DocsColor.surfacePage.ignoresSafeArea(edges: .top))
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(DocsColor.borderDefault)
@@ -78,10 +93,11 @@ struct SaveStatusIndicator: View {
 
 #Preview {
     VStack(spacing: DocsSpacing.spaceBase) {
-        EditorSaveBar(saveState: .dirty, onSaveTap: {})
-        EditorSaveBar(saveState: .saving, onSaveTap: {})
-        EditorSaveBar(saveState: .saved, onSaveTap: {})
-        EditorSaveBar(saveState: .failed("nope"), onSaveTap: {})
+        EditorSaveBar(saveState: .idle, onSaveTap: {}, onDone: {})
+        EditorSaveBar(saveState: .dirty, onSaveTap: {}, onDone: {})
+        EditorSaveBar(saveState: .saving, onSaveTap: {}, onDone: {})
+        EditorSaveBar(saveState: .saved, onSaveTap: {}, onDone: {})
+        EditorSaveBar(saveState: .failed("nope"), onSaveTap: {}, onDone: {})
     }
     .background(DocsColor.surfaceSunken)
     .environment(LocalizationStore())

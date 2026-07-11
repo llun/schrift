@@ -138,15 +138,26 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // The document title lives in the reading canvas as a large content
-            // header (see `headerBlock`), not in the bar — matching the handoff.
-            // The bar stays the compact form in both reading and editing modes:
-            // a back button, no center title, and the trailing actions.
-            NavBar(
-                backTitle: loc[.home_title],
-                onBack: onBack,
-                trailingActions: trailingActions
-            )
+            // Reading mode draws the compact nav bar (back button + trailing
+            // actions); the document title lives in the reading canvas as a large
+            // content header (see `headerBlock`), not in the bar. Editing mode
+            // replaces the nav bar with the editing header (`EditorSaveBar`): the
+            // nav bar's back button popped the document to the list instead of
+            // ending the edit, and its border stacked with the save bar's into a
+            // double hairline. The editing header carries Done instead.
+            if viewModel.isEditing {
+                EditorSaveBar(
+                    saveState: viewModel.saveState,
+                    onSaveTap: { viewModel.saveNow() },
+                    onDone: { viewModel.finishEditing() }
+                )
+            } else {
+                NavBar(
+                    backTitle: loc[.home_title],
+                    onBack: onBack,
+                    trailingActions: trailingActions
+                )
+            }
 
             if isOffline, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
@@ -250,11 +261,9 @@ struct EditorView: View {
 
     private var editingSurface: some View {
         VStack(spacing: 0) {
-            EditorSaveBar(
-                saveState: viewModel.saveState,
-                onSaveTap: { viewModel.saveNow() }
-            )
-
+            // The save status and Done button live in the editing header
+            // (`EditorSaveBar`, rendered above in `body`), so the surface is
+            // just the block canvas.
             BlockEditorView(viewModel: viewModel)
                 .safeAreaInset(edge: .bottom) {
                     VStack(spacing: DocsSpacing.spaceXS) {
