@@ -7,7 +7,6 @@ import Foundation
 // (see PluralRule and LocalizationStore.plural).
 enum Strings_sl {
     static let table: [L10nKey: String] = [
-        .common_done: "Končano",
         .common_cancel: "Prekliči",
         .common_close: "Zapri",
         .common_retry: "Poskusi znova",
