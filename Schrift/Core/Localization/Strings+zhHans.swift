@@ -3,6 +3,7 @@ enum Strings_zhHans {
     static let table: [L10nKey: String] = [
         .common_done: "完成",
         .common_cancel: "取消",
+        .common_close: "关闭",
         .common_retry: "重试",
         .common_untitled: "无标题文档",
         .common_profile: "个人资料",
@@ -106,13 +107,10 @@ enum Strings_zhHans {
         .options_pinned: "已置顶",
         .options_copy_link: "复制链接",
         .options_share: "分享",
-        .options_copy_markdown: "复制为 Markdown",
-        .options_duplicate: "创建副本",
         .options_delete_document: "删除文档",
         .options_delete_confirm_title: "删除此文档？",
         .options_delete: "删除",
         .options_error_toggle_favorite: "无法更新收藏。请重试。",
-        .options_error_duplicate: "无法创建文档副本。请重试。",
         .options_error_delete: "无法删除文档。请重试。",
 
         // Share sheet

@@ -5,6 +5,7 @@ enum Strings_nl {
     static let table: [L10nKey: String] = [
         .common_done: "Gereed",
         .common_cancel: "Annuleren",
+        .common_close: "Sluiten",
         .common_retry: "Opnieuw proberen",
         .common_untitled: "Naamloos document",
         .common_profile: "Profiel",
@@ -110,13 +111,10 @@ enum Strings_nl {
         .options_pinned: "Vastgezet",
         .options_copy_link: "Link kopiëren",
         .options_share: "Delen",
-        .options_copy_markdown: "Kopiëren als Markdown",
-        .options_duplicate: "Dupliceren",
         .options_delete_document: "Document verwijderen",
         .options_delete_confirm_title: "Dit document verwijderen?",
         .options_delete: "Verwijderen",
         .options_error_toggle_favorite: "Kan favoriet niet bijwerken. Probeer het opnieuw.",
-        .options_error_duplicate: "Kan document niet dupliceren. Probeer het opnieuw.",
         .options_error_delete: "Kan document niet verwijderen. Probeer het opnieuw.",
 
         // Share sheet

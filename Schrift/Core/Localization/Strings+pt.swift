@@ -5,6 +5,7 @@ enum Strings_pt {
     static let table: [L10nKey: String] = [
         .common_done: "Concluído",
         .common_cancel: "Cancelar",
+        .common_close: "Fechar",
         .common_retry: "Tentar novamente",
         .common_untitled: "Documento sem título",
         .common_profile: "Perfil",
@@ -109,13 +110,10 @@ enum Strings_pt {
         .options_pinned: "Fixado",
         .options_copy_link: "Copiar link",
         .options_share: "Partilhar",
-        .options_copy_markdown: "Copiar como Markdown",
-        .options_duplicate: "Duplicar",
         .options_delete_document: "Eliminar documento",
         .options_delete_confirm_title: "Eliminar este documento?",
         .options_delete: "Eliminar",
         .options_error_toggle_favorite: "Não foi possível atualizar o favorito. Tente novamente.",
-        .options_error_duplicate: "Não foi possível duplicar o documento. Tente novamente.",
         .options_error_delete: "Não foi possível eliminar o documento. Tente novamente.",
 
         // Share sheet

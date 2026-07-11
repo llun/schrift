@@ -247,7 +247,6 @@ struct EditorView: View {
                 documentID: viewModel.documentID,
                 serverHost: serverHost,
                 shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
-                markdown: viewModel.currentMarkdown(),
                 onShare: { pendingShareAfterOptions = true },
                 onDeleted: {
                     viewModel.handleDidDelete()

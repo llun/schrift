@@ -48,28 +48,6 @@ final class OptionsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .options_error_toggle_favorite)
     }
 
-    func testDuplicateReturnsNewDocumentIDOnSuccess() async {
-        let viewModel = makeViewModel()
-        let body = #"{"id": "22222222-2222-4222-8222-222222222222"}"#.data(using: .utf8)!
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: body, error: nil) }
-
-        let result = await viewModel.duplicate()
-
-        XCTAssertEqual(result, UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
-        XCTAssertFalse(viewModel.isDuplicating)
-        XCTAssertNil(viewModel.errorKey)
-    }
-
-    func testDuplicateFailureSetsErrorAndReturnsNil() async {
-        let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
-
-        let result = await viewModel.duplicate()
-
-        XCTAssertNil(result)
-        XCTAssertEqual(viewModel.errorKey, .options_error_duplicate)
-    }
-
     func testDeleteSetsDidDeleteOnSuccess() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }

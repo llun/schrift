@@ -3,6 +3,7 @@ enum Strings_zhHant {
     static let table: [L10nKey: String] = [
         .common_done: "完成",
         .common_cancel: "取消",
+        .common_close: "關閉",
         .common_retry: "再試一次",
         .common_untitled: "未命名文件",
         .common_profile: "個人檔案",
@@ -106,13 +107,10 @@ enum Strings_zhHant {
         .options_pinned: "已釘選",
         .options_copy_link: "複製連結",
         .options_share: "分享",
-        .options_copy_markdown: "複製為 Markdown",
-        .options_duplicate: "製作複本",
         .options_delete_document: "刪除文件",
         .options_delete_confirm_title: "要刪除此文件嗎？",
         .options_delete: "刪除",
         .options_error_toggle_favorite: "無法更新最愛。請再試一次。",
-        .options_error_duplicate: "無法製作文件複本。請再試一次。",
         .options_error_delete: "無法刪除文件。請再試一次。",
 
         // Share sheet

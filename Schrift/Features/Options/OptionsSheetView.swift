@@ -3,7 +3,6 @@ import SwiftUI
 struct OptionsSheetView: View {
     @Bindable var viewModel: OptionsViewModel
     let shareURL: URL?
-    let markdown: String
     var onShare: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
 
@@ -20,13 +19,11 @@ struct OptionsSheetView: View {
         documentID: UUID,
         serverHost: String,
         shareURL: URL?,
-        markdown: String,
         onShare: (() -> Void)? = nil,
         onDeleted: (() -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.shareURL = shareURL
-        self.markdown = markdown
         self.onShare = onShare
         self.onDeleted = onDeleted
         self.restoreURL = documentShareURL(serverHost: serverHost, documentID: documentID)
@@ -35,98 +32,69 @@ struct OptionsSheetView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if let errorKey = viewModel.errorKey {
-                    Text(loc[errorKey])
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.danger)
-                        .padding(.horizontal, DocsSpacing.gutter)
-                        .padding(.top, DocsSpacing.spaceSM)
-                }
+        // A flat, boxless list (handoff `OptionsSheet`): a pinned `SheetHeader`
+        // over `ListRow`s drawn directly on the page surface — no `ListSection`
+        // card and no `ProfileRowDivider`.
+        VStack(spacing: 0) {
+            SheetHeader(title: loc[.options_title], closeLabel: loc[.common_close], onClose: { dismiss() })
 
-                ScrollView {
-                    VStack(spacing: DocsSpacing.spaceBase) {
-                        ListSection {
-                            ListRow(
-                                icon: .push_pin,
-                                title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
-                                value: viewModel.isFavorite ? loc[.options_pinned] : nil,
-                                action: { Task { await viewModel.toggleFavorite() } }
-                            )
-                        }
-
-                        ListSection {
-                            ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })
-                            if onShare != nil {
-                                ProfileRowDivider()
-                                ListRow(
-                                    icon: .group, title: loc[.options_share], showsChevron: true,
-                                    action: {
-                                        onShare?()
-                                        dismiss()
-                                    })
-                            }
-                            ProfileRowDivider()
-                            ListRow(
-                                icon: .description, title: loc[.options_copy_markdown],
-                                action: { copyMarkdown() })
-                        }
-
-                        ListSection {
-                            ListRow(
-                                icon: .history, title: loc[.versions_title],
-                                showsChevron: true,
-                                action: { isPresentingVersionHistory = true })
-                        }
-
-                        ListSection {
-                            ListRow(
-                                icon: .content_copy, title: loc[.options_duplicate],
-                                action: {
-                                    Task {
-                                        await viewModel.duplicate()
-                                        dismiss()
-                                    }
-                                })
-                        }
-
-                        ListSection {
-                            ListRow(
-                                icon: .delete, title: loc[.options_delete_document], isDestructive: true,
-                                action: { isConfirmingDelete = true })
-                        }
-                    }
+            if let errorKey = viewModel.errorKey {
+                Text(loc[errorKey])
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.top, DocsSpacing.space3xs)
+                    .padding(.bottom, DocsSpacing.spaceXS)
+            }
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ListRow(
+                        icon: .push_pin,
+                        title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
+                        value: viewModel.isFavorite ? loc[.options_pinned] : nil,
+                        action: { Task { await viewModel.toggleFavorite() } }
+                    )
+
+                    ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })
+
+                    if onShare != nil {
+                        ListRow(
+                            icon: .group, title: loc[.options_share], showsChevron: true,
+                            action: {
+                                onShare?()
+                                dismiss()
+                            })
+                    }
+
+                    ListRow(
+                        icon: .history, title: loc[.versions_title], showsChevron: true,
+                        action: { isPresentingVersionHistory = true })
+
+                    ListRow(
+                        icon: .delete, title: loc[.options_delete_document], isDestructive: true,
+                        action: { isConfirmingDelete = true })
                 }
             }
-            .background(DocsColor.surfacePage)
-            .navigationTitle(loc[.options_title])
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(loc[.common_done]) { dismiss() }
-                }
-            }
-            .confirmationDialog(
-                loc[.options_delete_confirm_title], isPresented: $isConfirmingDelete, titleVisibility: .visible
-            ) {
-                Button(loc[.options_delete], role: .destructive) {
-                    Task {
-                        await viewModel.delete()
-                        if viewModel.didDelete {
-                            dismiss()
-                            onDeleted?()
-                        }
+        }
+        .background(DocsColor.surfacePage)
+        .confirmationDialog(
+            loc[.options_delete_confirm_title], isPresented: $isConfirmingDelete, titleVisibility: .visible
+        ) {
+            Button(loc[.options_delete], role: .destructive) {
+                Task {
+                    await viewModel.delete()
+                    if viewModel.didDelete {
+                        dismiss()
+                        onDeleted?()
                     }
                 }
             }
-            .sheet(isPresented: $isPresentingVersionHistory) {
-                VersionHistorySheetView(viewModel: versionHistoryViewModel, restoreURL: restoreURL)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
+        }
+        .sheet(isPresented: $isPresentingVersionHistory) {
+            VersionHistorySheetView(viewModel: versionHistoryViewModel, restoreURL: restoreURL)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -134,11 +102,6 @@ struct OptionsSheetView: View {
         if let shareURL {
             UIPasteboard.general.string = shareURL.absoluteString
         }
-        dismiss()
-    }
-
-    private func copyMarkdown() {
-        UIPasteboard.general.string = markdown
         dismiss()
     }
 }
@@ -151,8 +114,7 @@ struct OptionsSheetView: View {
         client: client,
         documentID: documentID,
         serverHost: "docs.llun.dev",
-        shareURL: URL(string: "https://docs.llun.dev/docs/abc/"),
-        markdown: "# Sample"
+        shareURL: URL(string: "https://docs.llun.dev/docs/abc/")
     )
     .environment(LocalizationStore())
 }
