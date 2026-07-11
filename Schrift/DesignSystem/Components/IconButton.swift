@@ -96,15 +96,6 @@ enum IconButtonSize {
     }
 }
 
-/// Builds an adaptive `Color` from a paired light/dark hex, or `.clear` when
-/// the pair is absent (e.g. the ghost variant has no background/border). The
-/// resolver always sets both halves of a pair together, so a nil light hex
-/// implies a nil dark hex.
-private func optionalAdaptiveColor(lightHex: UInt32?, darkHex: UInt32?) -> Color {
-    guard let lightHex, let darkHex else { return .clear }
-    return Color(lightHex: lightHex, darkHex: darkHex)
-}
-
 struct IconButton: View {
     let systemImage: String
     let label: String
@@ -130,11 +121,11 @@ struct IconButton: View {
                 .symbolVariant(filled ? .fill : .none)
                 .frame(width: size.box, height: size.box)
                 .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
-                .background(optionalAdaptiveColor(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex))
+                .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)
                 .overlay(
                     RoundedRectangle(cornerRadius: DocsRadius.md)
                         .strokeBorder(
-                            optionalAdaptiveColor(lightHex: style.borderLightHex, darkHex: style.borderDarkHex),
+                            Color(lightHex: style.borderLightHex, darkHex: style.borderDarkHex) ?? .clear,
                             lineWidth: style.borderLightHex == nil ? 0 : 1)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))

@@ -38,4 +38,15 @@ extension Color {
                 return UIColor(red: c.red, green: c.green, blue: c.blue, alpha: opacity)
             })
     }
+
+    /// Adaptive color for a paired **optional** light/dark hex, or `nil` when
+    /// the pair is absent (e.g. a button variant with no background/border).
+    /// Callers that resolve a pair always set both halves together, so a nil
+    /// light hex implies a nil dark hex; this is the shared home for that
+    /// both-or-neither pattern (previously duplicated in Button.swift and
+    /// IconButton.swift).
+    init?(lightHex: UInt32?, darkHex: UInt32?, opacity: Double = 1) {
+        guard let lightHex, let darkHex else { return nil }
+        self.init(lightHex: lightHex, darkHex: darkHex, opacity: opacity)
+    }
 }
