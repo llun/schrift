@@ -1,0 +1,50 @@
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 168
+Schrift/Core/Localization/Strings+de.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 174
+Schrift/Core/Localization/L10nKey.swift
+  s_dd62fdd4f50c18::t_114b16842d0314 179
+Schrift/Core/Localization/Strings+fr.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 172
+Schrift/Core/Localization/Strings+it.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 170
+Schrift/Core/Localization/Strings+pt.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 171
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 168
+Schrift/Features/Editor/EditorView.swift
+  s_dd62fdd4f50c18::t_87b266248d89fd 426
+  s_dd62fdd4f50c18::t_8ab2e890a4c5a0 119-122
+  s_dd62fdd4f50c18::t_9fb882ff33dc68 378-381,383-405,408,412
+  s_dd62fdd4f50c18::t_73cb349137fa22 518-519
+Schrift/Core/Localization/Strings+en.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 171
+docs/superpowers/specs/2026-06-30-docs-ios-design.md
+  s_dd62fdd4f50c18::t_bf690dcbf50508 196
+docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md
+  s_dd62fdd4f50c18::t_ce5c88ef31d141 630-632
+Schrift/Core/Localization/Strings+es.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 174
+Schrift/Core/Localization/Strings+th.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 170
+Schrift/Core/Localization/Strings+nl.swift
+  s_dd62fdd4f50c18::t_64344c3b57a28f 172
+Schrift/Features/Editor/SubpageRow.swift
+  s_dd62fdd4f50c18::t_c5750c6ddb9df1 20-24,30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "fe4f80a8ca062ce28e5d06b41f759827382ef0c5",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
