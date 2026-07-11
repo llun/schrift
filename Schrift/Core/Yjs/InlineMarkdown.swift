@@ -11,8 +11,8 @@ import Foundation
 // source into the characters the reader sees (`spans`) and the markdown
 // punctuation that produces them (`syntax`). `parse(_:)` is a projection of
 // that same result, so the block editor's styling and the save path can never
-// disagree about what a `*` means — they are one engine, not two. See
-// `docs/superpowers/plans/2026-07-10-editor-inline-link-rendering.md`.
+// disagree about what a `*` means — they are one engine, not two. See the
+// "Editor & the on-device save" section in `CLAUDE.md`.
 
 /// An inline mark carried by a span of text. `key`/`valueJSON` are the exact
 /// BlockNote wire values the Yjs encoder emits; changing either changes the
