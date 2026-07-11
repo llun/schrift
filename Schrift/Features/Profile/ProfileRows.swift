@@ -25,6 +25,10 @@ struct ProfileTrailingRow<Trailing: View>: View {
             Text(title)
                 .font(DocsFont.body)
                 .foregroundStyle(DocsColor.textPrimary)
+                // A long value (e.g. the server host) truncates with an ellipsis
+                // rather than wrapping to a second line, matching the handoff.
+                .lineLimit(1)
+                .truncationMode(.tail)
 
             Spacer()
 
