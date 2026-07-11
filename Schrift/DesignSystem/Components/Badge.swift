@@ -92,3 +92,16 @@ struct Badge: View {
     }
     .padding()
 }
+
+#Preview("Dark") {
+    HStack(spacing: DocsSpacing.spaceXS) {
+        Badge(text: "Admin", tone: .accent)
+        Badge(text: "3", tone: .neutral)
+        Badge(text: "Failed", tone: .danger, icon: "xmark.circle")
+        Badge(text: "Active", tone: .success)
+        Badge(text: "Pending", tone: .warning)
+        Badge(text: "Info", tone: .info)
+    }
+    .padding()
+    .preferredColorScheme(.dark)
+}
