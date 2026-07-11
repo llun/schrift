@@ -1,0 +1,19 @@
+CLAUDE.md
+  s_3f4d1d739d1182::t_1d5d13ec1bd95a 707-709
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "3cb9944d6b633b9651b2aaca41b8038f4d534eb6",
+  "prompts": {},
+  "sessions": {
+    "s_3f4d1d739d1182": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4e87b2f-0419-43ff-9454-69eaf93cc296",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
