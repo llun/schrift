@@ -77,6 +77,10 @@ struct VersionHistorySheetView: View {
                 .padding(.bottom, DocsSpacing.spaceSM)
             }
         }
+        // Fill the sheet so the flat page surface reaches the edges at the
+        // `.large` detent, rather than the content-sized VStack leaving the
+        // system sheet background showing below the capped list.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(DocsColor.surfacePage)
         .task {
             await viewModel.load()
