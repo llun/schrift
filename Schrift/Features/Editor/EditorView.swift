@@ -71,16 +71,18 @@ func syncCaption(
 /// each case to a `NavBarAction`. Reading mode exposes **Edit only when
 /// online**: offline is read-only, matching the reading surface's other editing
 /// gates (the block tap, "Start writing", and "Add a subpage" all guard on
-/// `!isOffline`). Editing mode shows Done.
+/// `!isOffline`). Editing mode hides the whole nav bar (its back button popped
+/// the document to the list, and its border stacked with the save bar's into a
+/// double hairline), so it exposes **no** trailing actions — Done lives in the
+/// editing header (`EditorSaveBar`) instead.
 enum EditorToolbarAction: Equatable {
     case edit
     case share
     case options
-    case done
 }
 
 func editorToolbarActions(isEditing: Bool, isOffline: Bool) -> [EditorToolbarAction] {
-    if isEditing { return [.done] }
+    if isEditing { return [] }
     var actions: [EditorToolbarAction] = []
     if !isOffline { actions.append(.edit) }
     actions.append(.share)
@@ -553,10 +555,6 @@ struct EditorView: View {
                 return NavBarAction(
                     icon: .more_horiz, label: loc[.editor_action_options],
                     action: { isPresentingOptionsSheet = true })
-            case .done:
-                return NavBarAction(
-                    icon: .check, label: loc[.editor_action_done],
-                    action: { viewModel.finishEditing() })
             }
         }
     }
