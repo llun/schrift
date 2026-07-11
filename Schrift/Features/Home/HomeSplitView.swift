@@ -40,5 +40,7 @@ struct HomeSplitView: View {
 #Preview {
     HomeSplitView(
         viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
-        serverHost: "docs.llun.dev")
+        serverHost: "docs.llun.dev"
+    )
+    .environment(LocalizationStore())
 }

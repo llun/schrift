@@ -84,4 +84,5 @@ struct RootView: View {
 
 #Preview {
     RootView()
+        .environment(LocalizationStore())
 }
