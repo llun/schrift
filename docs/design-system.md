@@ -26,7 +26,30 @@
 > and **Duplicate** — plus the `duplicateDocument` endpoint that backed the
 > latter — were removed. The new `SheetHeader` component + the flat-sheet
 > pattern are documented in [`CLAUDE.md`](../CLAUDE.md); the Share and
-> Version-history sheets still use grouped separators and are unchanged.
+> Version-history sheets were flattened onto the same pattern shortly after —
+> see the next amendment.
+
+> **Revised: 2026-07-12 (Share & Version-history sheets → flat menu).** The
+> **Share** and **Version-history** sheets were migrated onto the same flat
+> chrome: a `SheetHeader` (inline `title2` title + circular close) over a
+> **boxless** body drawn on `surfacePage`, dropping the `NavigationStack` +
+> `Done` toolbar, the `ListSection` cards, and every `ProfileRowDivider` /
+> section divider. Kept: their section-label eyebrows, Share's **bounded members
+> list** (`ShareSheetLayout.membersMaxHeight`) and confirmation dialogs, and
+> Version-history's pinned **"Restore on the web"** row. This **supersedes**
+> §8.3's "`ProfileRowDivider` stays for Share/Version-history" note (rewritten
+> inline) and §8.4's present-tense description of these sheets as `NavigationStack`
+> + "Done" wrappers. **Every menu/action/picker sheet now uses `SheetHeader`**
+> (Options, Share, Version history, Appearance, Language); the two **form** sheets
+> (Link editor, Re-auth) keep a `NavigationStack` + Cancel/Save toolbar — they
+> host a form, not a list.
+> `ProfileRowDivider` consequently has **no remaining call sites** (retained as
+> the grouped-separator primitive), and the now-orphaned `common.done` L10n key
+> was removed — both sheets use `common.close` for the accessibility label. This
+> is now a **standing rule**: *every list inside a sheet/dialog is flat* (boxless,
+> dividerless, on `surfacePage` under a `SheetHeader`); grouped `ListSection`
+> cards are reserved for the **tab screens** (Profile, Shared). See
+> [`CLAUDE.md`](../CLAUDE.md).
 
 ## 1. Goals
 
@@ -446,20 +469,23 @@ So after this change no tab screen draws inter-row hairlines. This is a
 deliberate match to the design system and the screenshots; it is reversible by a
 single `divided:` flag if a later review prefers iOS-style separators.
 `ListSection` card styling (surface-raised, 1pt border, `radius-lg`, header
-padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved. The
-`ProfileRowDivider` component stays for the Share / Version-history sheets, where
-grouped separators are appropriate. (The **Options sheet** was later flattened to
-a boxless, dividerless menu — see the 2026-07-12 amendment at the top and the
-flat-sheet pattern in [`CLAUDE.md`](../CLAUDE.md).)
+padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved (still
+used by the Shared and Profile tab screens). (The **Options, Share, and
+Version-history sheets** were later flattened to boxless, dividerless menus under
+a `SheetHeader` — see the 2026-07-12 amendments at the top and the flat-sheet
+pattern in [`CLAUDE.md`](../CLAUDE.md); `ProfileRowDivider` consequently has no
+remaining call sites.)
 
 ### 8.4 Sheets & scrolling (the "share dialog scroll" fix)
 
 Handoff sheets (`chrome.jsx` `Sheet`) are **bottom sheets** with a grabber, an
 inline title, a scrollable body bounded by a **detent**, and bottom padding for
-the home indicator. The current Share / Options / Version sheets present as
-full-height `.sheet`s (no detent, no drag indicator) wrapping a `NavigationStack`
-+ "Done", with all content in one scroll view — so a long member list pushes the
-primary **Copy link** action below the fold.
+the home indicator. *(Superseded "before" snapshot — the state this part fixed:)*
+the Share / Options / Version sheets originally presented as full-height
+`.sheet`s (no detent, no drag indicator) wrapping a `NavigationStack` + "Done",
+with all content in one scroll view — so a long member list pushed the primary
+**Copy link** action below the fold. (They now use `.presentationDetents` + a
+`SheetHeader`; see the 2026-07-12 amendments at the top.)
 
 Target:
 

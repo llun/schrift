@@ -3,7 +3,6 @@ import Foundation
 // AI-generated translation — pending native-speaker review.
 enum Strings_pt {
     static let table: [L10nKey: String] = [
-        .common_done: "Concluído",
         .common_cancel: "Cancelar",
         .common_close: "Fechar",
         .common_retry: "Tentar novamente",

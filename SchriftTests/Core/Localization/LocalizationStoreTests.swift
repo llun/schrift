@@ -24,14 +24,17 @@ final class LocalizationStoreTests: XCTestCase {
         store.language = .french
         // French is wired as of B12. Pinned literal (not a re-derived dispatcher call)
         // so this stays a real content check.
-        XCTAssertEqual(store[.common_done], "Terminé")
+        XCTAssertEqual(store[.common_close], "Fermer")
         XCTAssertEqual(store.locale.identifier, "fr")
     }
-    func testFallsBackToEnglishForMissingKey() {
-        // A key intentionally absent from a non-English table resolves to English.
+    func testResolvesAKeyForANonEnglishLanguage() {
+        // A real key resolves to a non-empty string in a non-English language.
+        // (The subscript's `?? Strings_en.table[key]` fallback can't be reached
+        // via a real key — StringsCompletenessTests forbids any key being absent
+        // from a table — so this exercises resolution, not the fallback branch.)
         let store = LocalizationStore(userDefaults: defaults)
         store.language = .thai
-        let value = store[.common_done]
+        let value = store[.common_close]
         XCTAssertFalse(value.isEmpty)
     }
     func testFormatSubstitutesArgs() {

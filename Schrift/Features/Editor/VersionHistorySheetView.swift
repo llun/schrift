@@ -24,71 +24,68 @@ struct VersionHistorySheetView: View {
     @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if let errorKey = viewModel.errorKey {
-                    Text(loc[errorKey])
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.danger)
-                        .padding(.horizontal, DocsSpacing.gutter)
-                        .padding(.top, DocsSpacing.spaceSM)
-                }
+        // A flat, boxless sheet (handoff `Sheet`): a pinned `SheetHeader` over the
+        // version list drawn directly on the page surface — no `ListSection` card
+        // and no `ProfileRowDivider`, matching the Options sheet. The version list
+        // is the only scrolling region; the "Restore on the web" row is pinned
+        // below it so it stays reachable.
+        VStack(spacing: 0) {
+            SheetHeader(title: loc[.versions_title], closeLabel: loc[.common_close], onClose: { dismiss() })
 
-                ScrollView {
-                    Group {
-                        if viewModel.isLoading {
-                            ProgressView()
+            if let errorKey = viewModel.errorKey {
+                Text(loc[errorKey])
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.bottom, DocsSpacing.spaceXS)
+            }
+
+            ScrollView {
+                Group {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, DocsSpacing.spaceLG)
+                    } else if viewModel.versions.isEmpty {
+                        if viewModel.errorKey == nil {
+                            Text(loc[.versions_empty])
+                                .font(DocsFont.footnote)
+                                .foregroundStyle(DocsColor.textTertiary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, DocsSpacing.spaceLG)
-                        } else if viewModel.versions.isEmpty {
-                            if viewModel.errorKey == nil {
-                                Text(loc[.versions_empty])
-                                    .font(DocsFont.footnote)
-                                    .foregroundStyle(DocsColor.textTertiary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.top, DocsSpacing.spaceLG)
-                            }
-                        } else {
-                            ListSection {
-                                ForEach(Array(viewModel.versions.enumerated()), id: \.element.id) {
-                                    index, version in
-                                    if index > 0 {
-                                        ProfileRowDivider()
-                                    }
-                                    versionRow(version)
-                                }
+                        }
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(viewModel.versions) { version in
+                                versionRow(version)
                             }
                         }
                     }
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.top, DocsSpacing.space3xs)
                 }
-                .frame(maxHeight: 340)
+            }
+            .frame(maxHeight: 340)
 
-                if let restoreURL {
-                    ListSection {
-                        ListRow(
-                            icon: .open_in_new,
-                            title: loc[.versions_restore_web],
-                            action: { openURL(restoreURL) }
-                        )
-                    }
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.top, DocsSpacing.spaceSM)
-                    .padding(.bottom, DocsSpacing.spaceSM)
-                }
+            if let restoreURL {
+                // Sits directly below the scrolling list, not pinned to the sheet
+                // bottom (the filled VStack leaves page surface below it at the
+                // `.large` detent). The bottom padding keeps it off the home
+                // indicator when content fills the detent.
+                ListRow(
+                    icon: .open_in_new,
+                    title: loc[.versions_restore_web],
+                    action: { openURL(restoreURL) }
+                )
+                .padding(.bottom, DocsSpacing.spaceSM)
             }
-            .background(DocsColor.surfacePage)
-            .navigationTitle(loc[.versions_title])
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(loc[.common_done]) { dismiss() }
-                }
-            }
-            .task {
-                await viewModel.load()
-            }
+        }
+        // Fill the sheet so the flat page surface reaches the edges at the
+        // `.large` detent, rather than the content-sized VStack leaving the
+        // system sheet background showing below the capped list.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(DocsColor.surfacePage)
+        .task {
+            await viewModel.load()
         }
     }
 
