@@ -1,0 +1,24 @@
+Schrift/Features/Profile/ProfileScreen.swift
+  s_dd62fdd4f50c18::t_4a6e7055273e7a 128-131
+Schrift/Features/Profile/ProfileViewModel.swift
+  s_dd62fdd4f50c18::t_519239c6420766 24
+  s_dd62fdd4f50c18::t_598ae23238dfcd 7,20-23
+SchriftTests/Features/Profile/ProfileViewModelTests.swift
+  s_dd62fdd4f50c18::t_82229f648ab951 65-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "1cd82b9a0c63268491c46edb51ea076160b734d6",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
