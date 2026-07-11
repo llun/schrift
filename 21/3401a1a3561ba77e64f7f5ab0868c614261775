@@ -1,0 +1,30 @@
+docs/superpowers/plans/2026-07-11-ios-design-update.md
+  s_dd62fdd4f50c18::t_88ac146d61b682 1055-1059,1061,1063-1064,1066,1070,1077
+  s_dd62fdd4f50c18::t_16cf74774d0476 488-490,501-775,778-865,882-890,892,895-931
+  s_dd62fdd4f50c18::t_58ca0dd24b1a80 1-263,265-487
+  s_dd62fdd4f50c18::t_2b10ef7bc4f814 264
+  s_dd62fdd4f50c18::t_90aac1910a327c 1210-1215,1225-1227,1231
+  s_dd62fdd4f50c18::t_fbaa1a3c4d593e 491-500
+  s_dd62fdd4f50c18::t_97f00f2975191f 1279,1282,1284
+  s_dd62fdd4f50c18::t_2644e9411c2d3e 1260,1266-1269
+  s_dd62fdd4f50c18::t_eb13e6fb4c6f61 1264,1271
+  s_dd62fdd4f50c18::t_6c060d157bd0a7 866-881,891,893-894
+  s_dd62fdd4f50c18::t_08584833b18c39 776-777
+  s_dd62fdd4f50c18::t_4058ce01106b82 932-1054,1060,1062,1065,1067-1069,1071-1076,1078-1209,1216-1224,1228-1230,1232-1259,1261-1263,1265,1270,1272-1278,1280-1281,1283,1285-1342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "213401a1a3561ba77e64f7f5ab0868c614261775",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
