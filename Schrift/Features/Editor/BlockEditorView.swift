@@ -5,12 +5,14 @@ import SwiftUI
 struct BlockEditorView: View {
     @Bindable var viewModel: EditorViewModel
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
                     TextField(
-                        "Untitled document",
+                        loc[.common_untitled],
                         text: Binding(
                             get: { viewModel.title },
                             set: { viewModel.updateTitle($0) }
@@ -34,7 +36,7 @@ struct BlockEditorView: View {
                         .onTapGesture {
                             viewModel.appendParagraphAtEnd()
                         }
-                        .accessibilityLabel("Add paragraph at end")
+                        .accessibilityLabel(loc[.editor_add_paragraph_a11y])
                 }
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.top, DocsSpacing.spaceSM)
@@ -55,6 +57,8 @@ private struct BlockEditorRow: View {
     let block: EditorBlock
     let index: Int
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         if case .divider = block.kind {
             Rectangle()
@@ -63,7 +67,7 @@ private struct BlockEditorRow: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DocsSpacing.spaceXS)
                 .contentShape(Rectangle())
-                .accessibilityLabel("Divider")
+                .accessibilityLabel(loc[.editor_divider_a11y])
         } else if case .image(let alt, let url) = block.kind {
             // An image is a non-editable leaf, like a divider: it has no text
             // view. Backspace at the start of the following block deletes it as
@@ -138,7 +142,7 @@ private struct BlockEditorRow: View {
                     .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(checked ? "Mark as not done" : "Mark as done")
+            .accessibilityLabel(checked ? loc[.editor_checklist_not_done_a11y] : loc[.editor_checklist_done_a11y])
 
         default:
             EmptyView()

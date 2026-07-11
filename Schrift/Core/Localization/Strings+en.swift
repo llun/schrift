@@ -229,5 +229,22 @@ enum Strings_en {
         .editor_link_remove: "Remove link",
         .editor_link_save: "Save",
         .editor_link_add: "Add",
+
+        // Editor - document tree panel (DocTreePanel)
+        .editor_tree_pages: "Pages",
+        .editor_tree_close: "Close pages",
+        .editor_tree_empty: "No subpages yet. Add one to organize this document.",
+        .editor_tree_new_page: "New page",
+
+        // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_a11y: "Image",
+        .editor_image_loading_a11y: "Loading image",
+        .editor_image_loading_named_a11y: "Loading image: %@",
+
+        // Editor - block canvas accessibility labels (BlockEditorView)
+        .editor_add_paragraph_a11y: "Add paragraph at end",
+        .editor_divider_a11y: "Divider",
+        .editor_checklist_done_a11y: "Mark as done",
+        .editor_checklist_not_done_a11y: "Mark as not done",
     ]
 }

@@ -237,5 +237,23 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_link_remove = "editor.link.remove"  // "Remove link"
     case editor_link_save = "editor.link.save"  // "Save"
     case editor_link_add = "editor.link.add"  // "Add"
+
+    // Editor - document tree panel (DocTreePanel)
+    case editor_tree_pages = "editor.tree.pages"  // "Pages"
+    case editor_tree_close = "editor.tree.close"  // "Close pages"
+    case editor_tree_empty = "editor.tree.empty"  // "No subpages yet. Add one to organize this document."
+    case editor_tree_new_page = "editor.tree.new_page"  // "New page"
+
+    // Editor - inline image (MarkdownImageView; accessibility labels only —
+    // the image alt text is document content and is never localized)
+    case editor_image_a11y = "editor.image.a11y"  // "Image"
+    case editor_image_loading_a11y = "editor.image.loading_a11y"  // "Loading image"
+    case editor_image_loading_named_a11y = "editor.image.loading_named_a11y"  // "Loading image: %@"
+
+    // Editor - block canvas accessibility labels (BlockEditorView)
+    case editor_add_paragraph_a11y = "editor.add_paragraph_a11y"  // "Add paragraph at end"
+    case editor_divider_a11y = "editor.divider_a11y"  // "Divider"
+    case editor_checklist_done_a11y = "editor.checklist.done_a11y"  // "Mark as done"
+    case editor_checklist_not_done_a11y = "editor.checklist.not_done_a11y"  // "Mark as not done"
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }
