@@ -82,7 +82,6 @@ struct ProfileScreen: View {
                 showsChevron: true,
                 action: { showAppearanceSheet = true }
             )
-            ProfileRowDivider()
             ListRow(
                 systemImage: "translate",
                 title: loc[.profile_language],
@@ -90,11 +89,9 @@ struct ProfileScreen: View {
                 showsChevron: true,
                 action: { showLanguageSheet = true }
             )
-            ProfileRowDivider()
             ProfileTrailingRow(systemImage: "bell", title: loc[.profile_notifications]) {
                 Switch(isOn: $notificationsEnabled)
             }
-            ProfileRowDivider()
             ProfileTrailingRow(systemImage: "icloud.slash", title: loc[.profile_work_offline]) {
                 Switch(isOn: $workOffline)
             }
@@ -126,7 +123,6 @@ struct ProfileScreen: View {
             }
             .buttonStyle(.plain)
             if let serverVersion = viewModel.serverVersion {
-                ProfileRowDivider()
                 ListRow(systemImage: "shippingbox", title: loc[.profile_server_version], value: serverVersion)
             }
         }

@@ -80,10 +80,7 @@ struct SharedScreen: View {
                             header: loc.plural(
                                 viewModel.documents.count, one: .shared_count_one, other: .shared_count_other)
                         ) {
-                            ForEach(Array(viewModel.documents.enumerated()), id: \.element.id) { index, document in
-                                if index > 0 {
-                                    ProfileRowDivider()
-                                }
+                            ForEach(viewModel.documents) { document in
                                 SharedRow(
                                     title: document.title ?? loc[.common_untitled],
                                     subtitle: subtitle(for: document),
