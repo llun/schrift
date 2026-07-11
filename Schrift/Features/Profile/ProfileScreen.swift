@@ -4,7 +4,6 @@ struct ProfileScreen: View {
     @Bindable var viewModel: ProfileViewModel
     let serverHost: String
     var isOffline: Bool = false
-    var onOpenAccount: () -> Void
     var onSignOut: () -> Void
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
@@ -22,7 +21,7 @@ struct ProfileScreen: View {
 
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
-                    accountBanner
+                    emailRow
                     preferencesSection
                     serverSection
                     supportSection
@@ -46,43 +45,15 @@ struct ProfileScreen: View {
         }
     }
 
-    // MARK: - 1) Account banner
+    // MARK: - 1) User
 
-    private var accountBanner: some View {
-        Button(action: onOpenAccount) {
-            HStack(spacing: DocsSpacing.spaceSM + DocsSpacing.space4xs) {
-                Avatar(name: viewModel.user?.displayName ?? "Account", size: 56)
-
-                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(viewModel.user?.displayName ?? "Account")
-                        .font(DocsFont.headline)
-                        .foregroundStyle(DocsColor.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let email = viewModel.user?.email {
-                        Text(email)
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 18))
-                    .foregroundStyle(DocsColor.gray300)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, DocsSpacing.spaceBase)
-            .background(DocsColor.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .overlay(
-                RoundedRectangle(cornerRadius: DocsRadius.lg)
-                    .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-            )
+    // Placeholder: the account banner (and its pushed detail screen) is gone
+    // per the new design. Task C2 rebuilds this section; for now show a
+    // minimal, non-interactive email row so the User section isn't empty.
+    private var emailRow: some View {
+        ListSection {
+            ListRow(systemImage: "person.crop.circle", title: viewModel.user?.email ?? "—")
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - 2) Preferences
@@ -178,7 +149,6 @@ struct ProfileScreen: View {
     ProfileScreen(
         viewModel: ProfileViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
-        onOpenAccount: {},
         onSignOut: {}
     )
 }
