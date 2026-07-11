@@ -1,0 +1,78 @@
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_dd62fdd4f50c18::t_e467e996d39319 1011-1012
+  s_dd62fdd4f50c18::t_52b80840e6ba95 833
+  s_dd62fdd4f50c18::t_e4aeb3b77924bc 144,154,176,252,265,282,515,570,584,736,852,891,1047,1108
+  s_dd62fdd4f50c18::t_01631ecf4a2e6a 1034-1035
+  s_dd62fdd4f50c18::t_7c272e5499bb36 553
+Schrift/Features/Editor/SlashMenuView.swift
+  s_dd62fdd4f50c18::t_e2beae63bd31bd 25
+  s_dd62fdd4f50c18::t_acfedff86c9fa0 47,59
+  s_dd62fdd4f50c18::t_ed56e6adf8d49d 9-10
+SchriftTests/Features/Editor/EditorUnavailableDetailTests.swift
+  s_dd62fdd4f50c18::t_c8df10060ed524 145
+  s_dd62fdd4f50c18::t_d7d3388fae3d35 62,103
+  s_dd62fdd4f50c18::t_ed2765587f008a 126-128
+Schrift/Core/Localization/Strings+en.swift
+  s_dd62fdd4f50c18::t_d8062610fb3bab 117-200
+Schrift/Features/Editor/EditorSaveBar.swift
+  s_dd62fdd4f50c18::t_41db29c7e09984 31-32,40,45,51,60,70,76,89
+SchriftTests/Features/Editor/EditorViewModelLinkTests.swift
+  s_dd62fdd4f50c18::t_b2d3f0a286b29b 120,157,167,179,192,211,218,230
+Schrift/Features/Editor/EditorView.swift
+  s_dd62fdd4f50c18::t_73ecd7e4949c61 301,310
+  s_dd62fdd4f50c18::t_95931bf65723a3 406,411,413
+  s_dd62fdd4f50c18::t_bdf62a83ea7492 379,381,384
+  s_dd62fdd4f50c18::t_aad41f570f017d 502-503,507-513,523-529
+  s_dd62fdd4f50c18::t_096b7519997cb7 321
+  s_dd62fdd4f50c18::t_4d1a8fc1655755 4-13,16-19,21,25-26,31,47-48,52,54,56-59,63-64,66
+  s_dd62fdd4f50c18::t_7a61ee310da685 127,133,143,155,158,160
+  s_dd62fdd4f50c18::t_5fcd04120e2d95 476
+  s_dd62fdd4f50c18::t_5e6c9f0496fbb4 517-518
+  s_dd62fdd4f50c18::t_7807337df50b94 436-437,450
+  s_dd62fdd4f50c18::t_a2af3c4616ee24 81
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_dd62fdd4f50c18::t_ab7f9f190bbe07 33-34
+  s_dd62fdd4f50c18::t_377e787cce6113 66-67
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_dd62fdd4f50c18::t_7ea4db85ed0024 336,378,390
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_dd62fdd4f50c18::t_f90927d8b15431 131,224,251,293,320,335,363,389,395,400,419,424,429,442,497,521,547,559,571,581,593,606,620
+Schrift/Core/Localization/L10nKey.swift
+  s_dd62fdd4f50c18::t_60986e866b2587 124-207
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_dd62fdd4f50c18::t_54f495beadfc2a 10-11,19,22,30,34,39,42,45,48,54
+SchriftTests/Features/Editor/EditorViewTests.swift
+  s_dd62fdd4f50c18::t_811f1721cfd8f7 7,10-13,17-24,38,40,45-46,48,53-54,56,61-62,64,70-71,73,81-82,85
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dd62fdd4f50c18::t_ab05d61efaf470 436
+  s_dd62fdd4f50c18::t_1365452d1fa036 147
+  s_dd62fdd4f50c18::t_30aae3352ab904 747
+  s_dd62fdd4f50c18::t_22476c1615b17f 788
+  s_dd62fdd4f50c18::t_41ef9330df3acd 176,180-181,186
+  s_dd62fdd4f50c18::t_b21f434782896c 365
+  s_dd62fdd4f50c18::t_1663743aeaea2f 1213
+  s_dd62fdd4f50c18::t_5e5c894b1129ab 386,388-389
+  s_dd62fdd4f50c18::t_2b7fc6359b58ac 61-62
+  s_dd62fdd4f50c18::t_ed99432d4cd042 323,325
+Schrift/Features/Editor/SlashMenu.swift
+  s_dd62fdd4f50c18::t_eb9370922912c4 12-16,18,26-27,30-31,35-36,39-40,44-45,48-49,52,56-57,60-61,64-65,68
+Schrift/Features/Editor/LinkEditorSheet.swift
+  s_dd62fdd4f50c18::t_edd4fb095bd093 20-21
+  s_dd62fdd4f50c18::t_b4b72461ddbe96 42,44-45,49,56-57,67,78,82,85,102,121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "84ac6d59ac1cb7623d4b48a11d32e1d18ecdbba7",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
