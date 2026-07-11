@@ -12,6 +12,10 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
+# XcodeGen-generated Info.plist template (see project.yml's `info:` block) — like
+# the .xcodeproj, this is fully reproduced from project.yml by `xcodegen generate`.
+/Generated/
+
 # Swift Package Manager
 .swiftpm/
 Package.resolved

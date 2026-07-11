@@ -233,6 +233,13 @@ enum Strings_zhHans {
         .editor_tree_empty: "暂无子页面。添加一个以整理此文档。",
         .editor_tree_new_page: "新建页面",
 
+        // Editor - version history
+        .versions_title: "版本历史",
+        .versions_current: "当前版本",
+        .versions_restore_web: "在网页端恢复",
+        .versions_error: "无法加载版本。请重试。",
+        .versions_empty: "暂无早期版本。",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "图片",
         .editor_image_loading_a11y: "正在加载图片",

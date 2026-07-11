@@ -244,6 +244,14 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_tree_empty = "editor.tree.empty"  // "No subpages yet. Add one to organize this document."
     case editor_tree_new_page = "editor.tree.new_page"  // "New page"
 
+    // Editor - version history (VersionHistorySheetView). Read-only: no
+    // in-app restore, hence "Restore on the web" rather than a "Restore" pill.
+    case versions_title = "versions.title"  // "Version history"
+    case versions_current = "versions.current"  // "Current version"
+    case versions_restore_web = "versions.restore_web"  // "Restore on the web"
+    case versions_error = "versions.error"  // "Couldn't load versions. Please try again."
+    case versions_empty = "versions.empty"  // "No earlier versions yet."
+
     // Editor - inline image (MarkdownImageView; accessibility labels only —
     // the image alt text is document content and is never localized)
     case editor_image_a11y = "editor.image.a11y"  // "Image"

@@ -233,6 +233,13 @@ enum Strings_zhHant {
         .editor_tree_empty: "尚無子頁面。新增一個來整理此文件。",
         .editor_tree_new_page: "新頁面",
 
+        // Editor - version history
+        .versions_title: "版本歷史",
+        .versions_current: "目前版本",
+        .versions_restore_web: "在網頁上還原",
+        .versions_error: "無法載入版本。請再試一次。",
+        .versions_empty: "尚無較早的版本。",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "圖片",
         .editor_image_loading_a11y: "正在載入圖片",

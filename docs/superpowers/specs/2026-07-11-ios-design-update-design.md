@@ -8,6 +8,14 @@ This spec covers a design-system refresh handed off from Claude Design
 *living* design spec: when the behavior it describes changes, update it in place
 with a dated `Revised:` note.
 
+> **Revised: 2026-07-11 (post-implementation).** §3 and §5.7 below plan for
+> **English and French** as primary/reviewed translations. As shipped, only
+> **English** is the reviewed source: `Strings+fr.swift` carries the same
+> "AI-generated translation — pending native-speaker review" header as the
+> other eight non-English tables. Read every "English/French are primary"
+> phrasing below as "English is primary" for the shipped state; the §5.7 body
+> is kept as the original plan of record.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match

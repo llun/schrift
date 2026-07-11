@@ -10,6 +10,29 @@ struct OptionsSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(LocalizationStore.self) private var loc
     @State private var isConfirmingDelete = false
+    @State private var isPresentingVersionHistory = false
+    @State private var versionHistoryViewModel: VersionHistoryViewModel
+    private let restoreURL: URL?
+
+    init(
+        viewModel: OptionsViewModel,
+        client: DocsAPIClient,
+        documentID: UUID,
+        serverHost: String,
+        shareURL: URL?,
+        markdown: String,
+        onShare: (() -> Void)? = nil,
+        onDeleted: (() -> Void)? = nil
+    ) {
+        self.viewModel = viewModel
+        self.shareURL = shareURL
+        self.markdown = markdown
+        self.onShare = onShare
+        self.onDeleted = onDeleted
+        self.restoreURL = documentShareURL(serverHost: serverHost, documentID: documentID)
+        _versionHistoryViewModel = State(
+            initialValue: VersionHistoryViewModel(client: client, documentID: documentID))
+    }
 
     var body: some View {
         NavigationStack {
@@ -48,6 +71,13 @@ struct OptionsSheetView: View {
                             ListRow(
                                 systemImage: "doc.plaintext", title: loc[.options_copy_markdown],
                                 action: { copyMarkdown() })
+                        }
+
+                        ListSection {
+                            ListRow(
+                                systemImage: "clock.arrow.circlepath", title: loc[.versions_title],
+                                showsChevron: true,
+                                action: { isPresentingVersionHistory = true })
                         }
 
                         ListSection {
@@ -92,6 +122,11 @@ struct OptionsSheetView: View {
                     }
                 }
             }
+            .sheet(isPresented: $isPresentingVersionHistory) {
+                VersionHistorySheetView(viewModel: versionHistoryViewModel, restoreURL: restoreURL)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
         }
     }
 
@@ -109,12 +144,13 @@ struct OptionsSheetView: View {
 }
 
 #Preview {
+    let client = DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)
+    let documentID = UUID()
     OptionsSheetView(
-        viewModel: OptionsViewModel(
-            client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!),
-            documentID: UUID(),
-            isFavorite: false
-        ),
+        viewModel: OptionsViewModel(client: client, documentID: documentID, isFavorite: false),
+        client: client,
+        documentID: documentID,
+        serverHost: "docs.llun.dev",
         shareURL: URL(string: "https://docs.llun.dev/docs/abc/"),
         markdown: "# Sample"
     )

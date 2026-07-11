@@ -39,6 +39,23 @@ is downscaled and re-encoded to JPEG on device, and the `.image` block is
 inserted only on upload success. Entry points: the slash-menu "Photo" item and a
 formatting-bar button. See
 `docs/superpowers/plans/2026-07-07-photo-upload-insert.md`.
+Revised: 2026-07-11 — a design-system refresh shipped four features this spec
+predates: a **complete adaptive dark theme** (`DocsColorHexDark`, a Light/Dark/
+System picker in Profile); **in-app localization** covering 10 languages with
+live switching (an in-code catalog, not `.lproj` — see `CLAUDE.md`); a
+**Profile restructure** (the appearance/language pickers, the removal of
+`AccountScreen` in favor of a static email row, and a server-version row from
+`GET /config/`); layout fidelity work (nav-bar large-title collapse,
+dividerless tab-screen list sections, sheet detents); and **read-only version
+history browsing** (a "Version history" row in the Options sheet, `GET
+documents/{id}/versions/`) — see the "Non-goals" and "Screens" reconciliation
+notes below and
+`docs/superpowers/specs/2026-07-11-ios-design-update-design.md` for the full
+design. Document content translation and in-app version **restore** remain
+out of scope (restore is a "Restore on the web" link instead — see §9.3 of
+that spec for why: the app has a Yjs encoder but no decoder, and the
+restore-response shape couldn't be verified end-to-end in a headless
+environment before this pass shipped).
 
 ## Summary
 
@@ -60,7 +77,10 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
 - AI features (proxy/transform/translate endpoints exist server-side but are out of scope).
-- Document version history browsing/restore.
+- ~~Document version history browsing/restore.~~ **Superseded 2026-07-11 for
+  browsing**: a read-only version-history list shipped (see the 2026-07-11
+  `Revised:` note above). **Restore** remains a non-goal — it hands off to the
+  web app instead.
 - File download/export (PDF/Word/ODT).
 - Multiple simultaneous logged-in accounts/servers.
 
@@ -130,7 +150,7 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 
 | Purpose | Endpoint |
 |---|---|
-| Bootstrap config | `GET /config/` *(planned; never implemented — the app bootstraps from `GET /users/me/` alone)* |
+| Bootstrap config | `GET /config/` *(the app still bootstraps from `GET /users/me/` alone — but as of 2026-07-11 this endpoint **is** called, best-effort, for the Profile server-version row (`RELEASE_VERSION`) — see `ServerConfig`/`serverConfig()`; it is not part of app bootstrap)* |
 | Current user | `GET /users/me/` |
 | Document list | `GET /documents/?is_favorite=&is_creator_me=&title=&ordering=&page=&page_size=` |
 | Document detail | `GET /documents/{id}/` |
@@ -172,10 +192,10 @@ This is the part with no direct backend support, so it's called out explicitly:
 From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views using the DesignSystem components, not copied HTML/JS:
 
 - **Connect** — logo, "Welcome to Docs", server URL `TextField`, recent servers list, "Sign in to {host}" button → WebView login.
-- **Home** — `NavBar` (large title, subtitle = server host, new-doc action), `SearchField`, `SegmentedControl` (All/Shared/Pinned), Pinned + Recent sections of `DocRow`s, `TabBar` (Docs/Search/Shared/Profile — all four tabs are fully implemented: Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared with/by me with an offline metadata cache, Profile shows the current user via `GET /users/me/` with an Account screen, sign-out, and the Work Offline toggle).
+- **Home** — `NavBar` (large title, subtitle = server host, new-doc action), `SearchField`, `SegmentedControl` (All/Shared/Pinned), Pinned + Recent sections of `DocRow`s, `TabBar` (Docs/Search/Shared/Profile — all four tabs are fully implemented: Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared with/by me with an offline metadata cache, Profile shows the current user via `GET /users/me/` as a static email row (the tappable Account screen was removed 2026-07-11 — see the `Revised:` note at the top), with the appearance/language pickers, server + server-version rows, sign-out, and the Work Offline toggle).
 - **Editor** — large-title `NavBar` (document title, back, Pages/Share/Options actions); `LinkReachPill` + a live "Synced X ago" caption above the rendered/editable blocks; a Subpages section; floating formatting toolbar (add block/bold/italic/bulleted list/checklist/quote/code block). The mock's collaborator `AvatarGroup` and emoji were not implemented (the component exists in the DesignSystem but is unused by features).
 - **Share sheet** — invite by name/email (`GET /users/?q=`), member list (`ShareMemberRow` with role picker: Reader/Commenter/Editor/Administrator/Owner — Commenter included even though the mock only shows Admin/Editor/Reader, since it's a real backend role), link reach picker (Restricted/Authenticated/Public via `LinkReachPill`), Copy link.
-- **Options sheet** — Pin/Unpin, Copy link, Share, Copy as Markdown, Duplicate, Delete. *Deferred to a later iteration*: Download (PDF/Word/ODT — no mobile-appropriate endpoint investigated yet), Version history, Present.
+- **Options sheet** — Pin/Unpin, Copy link, Share, Copy as Markdown, Duplicate, Delete, ~~Version history~~ **Version history shipped 2026-07-11** (read-only list + "Restore on the web"; see the `Revised:` note above). *Still deferred to a later iteration*: Download (PDF/Word/ODT — no mobile-appropriate endpoint investigated yet), Present.
 
 **iPad**: `NavigationSplitView` (document list sidebar + detail/editor pane) instead of the iPhone single-column stack — extrapolated from the design's tokens/components since the handoff only mocked iPhone (390×844) layouts. iOS layout constants (status bar 54px, nav bar 44px, tab bar 49px, home indicator 34px, row min-height 44px, gutters 16/20px) are implemented as native safe-area-driven layout, not hardcoded pixel values, since real devices vary.
 
@@ -235,4 +255,7 @@ High-level phases; the implementation plan will break each into small, separatel
 - WebView-based login means periodic re-auth; no silent token refresh.
 - Save depends on the on-device Yjs encoder (`Core/Yjs`) producing bytes the backend's Yjs content-validator accepts and BlockNote can interpret. If the backend's Yjs/BlockNote schema changes, saves could break — worth verifying against the target server and surfacing a clear error if the server rejects the content. (Byte-exact golden tests against the real Yjs library guard the encoder itself.)
 - Material Symbols vs SF Symbols decision deferred to implementation (visual fidelity vs native idiom trade-off).
-- Download/export and version history are explicitly deferred past v1.
+- Download/export remains explicitly deferred past v1. Version history
+  **browsing** shipped 2026-07-11 (read-only); **restoring** a version is still
+  deferred — see the `Revised:` note above and
+  `docs/superpowers/specs/2026-07-11-ios-design-update-design.md` §9.3.

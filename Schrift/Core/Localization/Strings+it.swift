@@ -235,6 +235,13 @@ enum Strings_it {
         .editor_tree_empty: "Nessuna sottopagina. Aggiungine una per organizzare questo documento.",
         .editor_tree_new_page: "Nuova pagina",
 
+        // Editor - version history
+        .versions_title: "Cronologia versioni",
+        .versions_current: "Versione corrente",
+        .versions_restore_web: "Ripristina sul web",
+        .versions_error: "Impossibile caricare le versioni. Riprova.",
+        .versions_empty: "Nessuna versione precedente.",
+
         // Editor - inline image (MarkdownImageView; accessibility labels only)
         .editor_image_a11y: "Immagine",
         .editor_image_loading_a11y: "Caricamento immagine",

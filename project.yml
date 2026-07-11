@@ -21,6 +21,34 @@ targets:
       Release: Signing.xcconfig
     sources:
       - path: Schrift
+    # Advertises the in-code-localized languages (Core/Localization) to the OS —
+    # there are no per-language .lproj resource bundles, so Xcode can't infer this
+    # from disk the way it does for string-table localizations, and there is no
+    # INFOPLIST_KEY_CFBundleLocalizations synthesis (verified: Xcode's Info.plist
+    # generation silently drops that key — CFBundleLocalizations is apparently not
+    # on its curated list of build-setting-synthesizable keys, unlike scalar/flag
+    # keys such as INFOPLIST_KEY_UISupportedInterfaceOrientations_* below). The only
+    # way to emit it is a template merged in via INFOPLIST_FILE +
+    # GENERATE_INFOPLIST_FILE: true (Xcode overlays the INFOPLIST_KEY_* synthesized
+    # keys onto this template rather than replacing it). XcodeGen writes that
+    # template to `info.path` below — like the .xcodeproj itself, this file is
+    # entirely reproduced from this spec by `xcodegen generate` and is git-ignored;
+    # never hand-edit or commit it.
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations:
+          - en
+          - fr
+          - es
+          - de
+          - it
+          - nl
+          - pt
+          - th
+          - zh-Hans
+          - zh-Hant
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift
