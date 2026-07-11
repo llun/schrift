@@ -125,6 +125,10 @@ struct ProfileScreen: View {
                 }
             }
             .buttonStyle(.plain)
+            if let serverVersion = viewModel.serverVersion {
+                ProfileRowDivider()
+                ListRow(systemImage: "shippingbox", title: loc[.profile_server_version], value: serverVersion)
+            }
         }
     }
 

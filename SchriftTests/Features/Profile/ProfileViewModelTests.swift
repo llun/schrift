@@ -62,4 +62,36 @@ final class ProfileViewModelTests: XCTestCase {
         let user = CurrentUser(language: "de")
         XCTAssertEqual(user.languageLabel, "de")
     }
+
+    func testLoadSetsServerVersionFromConfig() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { request in
+            if request.url!.absoluteString.contains("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: #"{"RELEASE_VERSION":"5.4.1"}"#.data(using: .utf8)!,
+                    error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Self.userFixture, error: nil)
+        }
+
+        await viewModel.load()
+
+        await waitUntil { viewModel.serverVersion == "5.4.1" }
+        XCTAssertEqual(viewModel.user?.email, "ada@example.org")
+    }
+
+    func testLoadToleratesConfigFailureWhileStillLoadingUser() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { request in
+            if request.url!.absoluteString.contains("/config/") {
+                return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Self.userFixture, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertNil(viewModel.serverVersion)
+        XCTAssertEqual(viewModel.user?.email, "ada@example.org")
+    }
 }
