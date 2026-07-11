@@ -6,6 +6,8 @@ struct HomeSplitView: View {
 
     @State private var selectedDocument: Document?
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         NavigationSplitView {
             DocumentListView(viewModel: viewModel, serverHost: serverHost, onSelect: { selectedDocument = $0 })
@@ -14,7 +16,7 @@ struct HomeSplitView: View {
                 EditorScreen(
                     client: viewModel.client,
                     documentID: selectedDocument.id,
-                    title: selectedDocument.title ?? "Untitled document",
+                    title: selectedDocument.title ?? loc[.common_untitled],
                     saveCoordinator: viewModel.saveCoordinator,
                     diagnostics: viewModel.diagnostics,
                     reach: selectedDocument.linkReach,
@@ -30,7 +32,7 @@ struct HomeSplitView: View {
                 )
                 .id(selectedDocument.id)
             } else {
-                ContentUnavailableView("Select a Document", systemImage: "doc.text")
+                ContentUnavailableView(loc[.home_select_document], systemImage: "doc.text")
                     .background(DocsColor.surfacePage)
             }
         }
@@ -40,5 +42,7 @@ struct HomeSplitView: View {
 #Preview {
     HomeSplitView(
         viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
-        serverHost: "docs.llun.dev")
+        serverHost: "docs.llun.dev"
+    )
+    .environment(LocalizationStore())
 }

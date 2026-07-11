@@ -9,7 +9,7 @@ import Foundation
 @Observable
 final class ReauthenticationViewModel {
     var isConfirming = false
-    var errorMessage: String?
+    var errorKey: L10nKey?
 
     let serverURL: URL
     let sessionStore: SessionStore
@@ -32,7 +32,7 @@ final class ReauthenticationViewModel {
 
     func handleLoginComplete() async {
         isConfirming = true
-        errorMessage = nil
+        errorKey = nil
         defer { isConfirming = false }
 
         struct Me: Decodable {}
@@ -41,7 +41,7 @@ final class ReauthenticationViewModel {
             let _: Me = try await client.get("users/me/")
             try sessionStore.signIn(serverURL: serverURL)
         } catch {
-            errorMessage = "Sign-in could not be confirmed. Please try again."
+            errorKey = .reauth_error_sign_in_failed
         }
     }
 }

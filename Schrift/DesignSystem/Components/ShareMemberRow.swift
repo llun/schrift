@@ -1,7 +1,11 @@
 import SwiftUI
 
-func shareMemberDisplaySuffix(isCurrentUser: Bool) -> String? {
-    isCurrentUser ? "(you)" : nil
+/// Pure and testable: the *localized* "(you)" label is resolved by the caller
+/// (from `LocalizationStore`) and passed in, so this only owns the
+/// current-user branching, not the translation lookup — mirrors
+/// `docRowAccessibilityLabel`.
+func shareMemberDisplaySuffix(isCurrentUser: Bool, youLabel: String) -> String? {
+    isCurrentUser ? youLabel : nil
 }
 
 struct ShareMemberRow: View {
@@ -10,6 +14,8 @@ struct ShareMemberRow: View {
     var role: String = "Reader"
     var isCurrentUser: Bool = false
     var onTapRole: (() -> Void)? = nil
+
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
@@ -22,7 +28,7 @@ struct ShareMemberRow: View {
                         .foregroundStyle(DocsColor.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser) {
+                    if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser, youLabel: loc[.common_you]) {
                         Text(suffix)
                             .font(DocsFont.caption)
                             .foregroundStyle(DocsColor.textTertiary)
@@ -50,8 +56,8 @@ struct ShareMemberRow: View {
                 .frame(minHeight: DocsSpacing.rowMinHeight)
                 .contentShape(Rectangle())
             }
-            .accessibilityLabel("Role: \(role)")
-            .accessibilityHint("Double tap to change role")
+            .accessibilityLabel(loc.format(.sharemember_role_a11y, role))
+            .accessibilityHint(loc[.sharemember_role_hint])
         }
         .padding(.horizontal, DocsSpacing.space3xs)
         .padding(.vertical, DocsSpacing.spaceXS)
@@ -64,4 +70,5 @@ struct ShareMemberRow: View {
         ShareMemberRow(name: "Alfredo Levin", email: "alfredo.levin@test.gouv.fr", role: "Editor")
         ShareMemberRow(name: "Desirae Dokidis", email: "desirae.dokidis@gmail.com", role: "Reader")
     }
+    .environment(LocalizationStore())
 }

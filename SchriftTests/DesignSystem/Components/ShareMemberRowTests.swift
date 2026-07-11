@@ -4,10 +4,10 @@ import XCTest
 
 final class ShareMemberRowTests: XCTestCase {
     func testCurrentUserGetsYouSuffix() {
-        XCTAssertEqual(shareMemberDisplaySuffix(isCurrentUser: true), "(you)")
+        XCTAssertEqual(shareMemberDisplaySuffix(isCurrentUser: true, youLabel: "(you)"), "(you)")
     }
 
     func testOtherUserGetsNoSuffix() {
-        XCTAssertNil(shareMemberDisplaySuffix(isCurrentUser: false))
+        XCTAssertNil(shareMemberDisplaySuffix(isCurrentUser: false, youLabel: "(you)"))
     }
 }

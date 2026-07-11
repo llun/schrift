@@ -84,7 +84,7 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["With Me Doc"])
         XCTAssertEqual(viewModel.sharedByMe.map(\.title), ["By Me Doc"])
         XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isOffline)
     }
 
@@ -114,7 +114,7 @@ final class SharedViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertTrue(viewModel.isOffline)
     }
@@ -132,7 +132,7 @@ final class SharedViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertFalse(viewModel.isOffline)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached Shared Doc"])
     }
 
@@ -176,7 +176,7 @@ final class SharedViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertFalse(viewModel.isOffline)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.sharedByMe.map(\.title), ["Fresh By Me"])
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached With Me"])
     }
@@ -188,7 +188,7 @@ final class SharedViewModelTests: XCTestCase {
         await viewModel.refresh()
 
         XCTAssertFalse(viewModel.isOffline)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testInitSeedsBothScopesFromCache() {
@@ -240,7 +240,7 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Offline With Me"])
         XCTAssertEqual(viewModel.sharedByMe.map(\.title), ["Offline By Me"])
         // Passive revalidation failures stay silent behind cached rows.
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
     }
 
@@ -266,7 +266,7 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["Fresh With Me"])
         XCTAssertEqual(viewModel.sharedByMe.map(\.title), ["Cached By Me"])
         XCTAssertTrue(viewModel.isOffline)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testFailureOfNeverCachedScopeIsLoudDespiteOtherScopesCache() async {
@@ -288,7 +288,7 @@ final class SharedViewModelTests: XCTestCase {
         // "Shared by me" has never been fetched: its failure must not be
         // silenced by the other scope's cache, or the empty list masquerades
         // as a real result.
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
     }
 
@@ -417,7 +417,7 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Cached With Me"])
         XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["Cached With Me"])
         XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testRefreshFailureWithCachedDocumentsSetsErrorMessage() async {
@@ -429,7 +429,7 @@ final class SharedViewModelTests: XCTestCase {
 
         await viewModel.refresh()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.sharedWithMe.map(\.title), ["Offline With Me"])
     }
 

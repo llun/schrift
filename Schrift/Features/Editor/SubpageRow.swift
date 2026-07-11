@@ -4,9 +4,11 @@ struct SubpageRow: View {
     let document: Document
     var onOpen: (() -> Void)? = nil
 
+    @Environment(LocalizationStore.self) private var loc
+
     private var displayTitle: String {
         let trimmed = document.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Untitled document" : trimmed
+        return trimmed.isEmpty ? loc[.common_untitled] : trimmed
     }
 
     private var summary: String? {
@@ -81,4 +83,5 @@ struct SubpageRow: View {
         )
     }
     .padding()
+    .environment(LocalizationStore())
 }

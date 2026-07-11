@@ -6,6 +6,8 @@ struct SlashMenuView: View {
     let query: String
     var onSelect: (SlashMenuItem) -> Void
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         let items = filteredSlashItems(query: query)
         if !items.isEmpty {
@@ -20,7 +22,7 @@ struct SlashMenuView: View {
                                     .font(DocsFont.subhead)
                                     .foregroundStyle(DocsColor.textSecondary)
                                     .frame(width: 24)
-                                Text(item.title)
+                                Text(loc[item.titleKey])
                                     .font(DocsFont.body)
                                     .foregroundStyle(DocsColor.textPrimary)
                                 Spacer()
@@ -42,7 +44,7 @@ struct SlashMenuView: View {
                     .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
             )
             .shadow(color: DocsColor.textPrimary.opacity(0.12), radius: 12, x: 0, y: 4)
-            .accessibilityLabel("Block type menu")
+            .accessibilityLabel(loc[.editor_slash_menu_a11y])
         }
     }
 }
@@ -54,4 +56,5 @@ struct SlashMenuView: View {
     }
     .padding()
     .background(DocsColor.surfaceSunken)
+    .environment(LocalizationStore())
 }

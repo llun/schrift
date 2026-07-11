@@ -10,6 +10,7 @@ struct DocumentListView: View {
     /// When set, shows a "New doc" nav-bar action that creates and opens a document.
     var onNewDocument: (() -> Void)? = nil
 
+    @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
     @State private var documentPendingFavoriteChoice: Document?
 
@@ -21,7 +22,8 @@ struct DocumentListView: View {
         // the in-page search field (which `onSearchTap` still drives on phone)
         // and the Search tab.
         if let onNewDocument {
-            actions.append(NavBarAction(systemImage: "plus", label: "New doc", color: .brand, action: onNewDocument))
+            actions.append(
+                NavBarAction(systemImage: "plus", label: loc[.home_newdoc], color: .brand, action: onNewDocument))
         }
         return actions
     }
@@ -29,14 +31,14 @@ struct DocumentListView: View {
     var body: some View {
         VStack(spacing: 0) {
             NavBar(
-                title: "Schrift",
+                title: loc[.home_title],
                 subtitle: serverHost,
                 largeTitle: true,
                 trailingActions: trailingActions
             )
 
             if isOffline {
-                OfflineBanner()
+                OfflineBanner(note: loc[.offline_note])
             }
 
             ScrollView {
@@ -45,7 +47,7 @@ struct DocumentListView: View {
                         .padding(.bottom, DocsSpacing.spaceSM)
 
                     SegmentedControl(
-                        segments: HomeFilter.allCases.map(\.title),
+                        segments: HomeFilter.allCases.map { loc[$0.titleKey] },
                         selectedIndex: Binding(
                             get: { viewModel.selectedFilter.rawValue },
                             set: { newValue in
@@ -56,10 +58,10 @@ struct DocumentListView: View {
                     )
                     .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
 
-                    if let errorMessage = viewModel.errorMessage {
+                    if let errorKey = viewModel.errorKey {
                         HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
                             VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                                Text(errorMessage)
+                                Text(loc[errorKey])
                                     .font(DocsFont.footnote)
                                     .foregroundStyle(DocsColor.danger)
                                 if let errorDetail = viewModel.errorDetail {
@@ -76,7 +78,7 @@ struct DocumentListView: View {
                                     .font(DocsFont.footnote)
                                     .foregroundStyle(DocsColor.textSecondary)
                             }
-                            .accessibilityLabel("Dismiss error")
+                            .accessibilityLabel(loc[.home_dismiss_error])
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, DocsSpacing.spaceXS)
@@ -100,14 +102,14 @@ struct DocumentListView: View {
             Task { await viewModel.search() }
         }
         .confirmationDialog(
-            "Document Options",
+            loc[.home_document_options],
             isPresented: Binding(
                 get: { documentPendingFavoriteChoice != nil },
                 set: { if !$0 { documentPendingFavoriteChoice = nil } }
             ),
             presenting: documentPendingFavoriteChoice
         ) { document in
-            Button(document.isFavorite ? "Unpin" : "Pin") {
+            Button(document.isFavorite ? loc[.home_unpin] : loc[.home_pin]) {
                 Task { await viewModel.toggleFavorite(document) }
             }
         }
@@ -117,16 +119,16 @@ struct DocumentListView: View {
     private var searchField: some View {
         if let onSearchTap {
             Button(action: onSearchTap) {
-                SearchField(text: .constant(""), placeholder: "Search \(serverHost)")
+                SearchField(text: .constant(""), placeholder: loc.format(.home_search_placeholder, serverHost))
                     .allowsHitTesting(false)
             }
             .buttonStyle(.plain)
             // Announce one actionable button, not the inert editable field inside.
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Search \(serverHost)")
+            .accessibilityLabel(loc.format(.home_search_placeholder, serverHost))
             .accessibilityAddTraits(.isButton)
         } else {
-            SearchField(text: $viewModel.searchQuery, placeholder: "Search documents")
+            SearchField(text: $viewModel.searchQuery, placeholder: loc[.home_search_documents])
         }
     }
 
@@ -142,11 +144,11 @@ struct DocumentListView: View {
                 .padding(.top, DocsSpacing.spaceBase)
         } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if viewModel.searchResults.isEmpty {
-                if viewModel.errorMessage == nil {
+                if viewModel.errorKey == nil {
                     ContentUnavailableView.search(text: viewModel.searchQuery)
                 }
             } else {
-                documentSection(title: "Results", documents: viewModel.searchResults)
+                documentSection(title: loc[.home_results], documents: viewModel.searchResults)
             }
         } else if !viewModel.showsPinnedSection && viewModel.recentDocuments.isEmpty {
             // Keyed to what will actually render (the pinned section is hidden
@@ -155,16 +157,17 @@ struct DocumentListView: View {
             // claim "No documents yet" for a *known* list — a never-fetched
             // filter (e.g. first visited under Work Offline) shows nothing;
             // the offline banner or error text above conveys the state.
-            if viewModel.errorMessage == nil && viewModel.isCurrentListKnown {
+            if viewModel.errorKey == nil && viewModel.isCurrentListKnown {
                 ContentUnavailableView(
-                    "No documents yet",
+                    loc[.home_empty_title],
                     systemImage: "doc.text",
-                    description: Text("Documents you create or that are shared with you will appear here.")
+                    description: Text(loc[.home_empty_body])
                 )
             }
         } else {
             if viewModel.showsPinnedSection {
-                documentSection(title: "Pinned", icon: "pin.fill", documents: viewModel.pinnedDocuments)
+                documentSection(
+                    title: loc[.home_section_pinned], icon: "pin.fill", documents: viewModel.pinnedDocuments)
             }
             documentSection(
                 title: mainSectionTitle,
@@ -179,9 +182,9 @@ struct DocumentListView: View {
     /// rather than the default "Recent".
     private var mainSectionTitle: String {
         switch viewModel.selectedFilter {
-        case .shared: return "Shared with me"
-        case .pinned: return "Pinned"
-        default: return "Recent"
+        case .shared: return loc[.home_section_shared]
+        case .pinned: return loc[.home_section_pinned]
+        default: return loc[.home_section_recent]
         }
     }
 
@@ -208,10 +211,10 @@ struct DocumentListView: View {
                 ForEach(documents) { document in
                     DocRow(
                         emoji: nil,
-                        title: document.title ?? "Untitled document",
+                        title: document.title ?? loc[.common_untitled],
                         pinned: document.isFavorite,
                         reach: document.linkReach,
-                        date: documentRowDate(document),
+                        date: documentRowDate(document, locale: loc.locale),
                         offlineAvailable: isOffline,
                         onOpen: { onSelect(document) },
                         onMore: { documentPendingFavoriteChoice = document }
@@ -229,4 +232,5 @@ struct DocumentListView: View {
         serverHost: "docs.llun.dev",
         onSelect: { _ in }
     )
+    .environment(LocalizationStore())
 }

@@ -3,15 +3,21 @@ import SwiftUI
 /// A slim, subtle status strip shown below the nav bar when there's no
 /// connection. Reassures that listed documents are cached on the device —
 /// deliberately NOT an error style.
+///
+/// `note` has no default: callers pass an explicit, already-resolved string
+/// (usually `loc[.offline_note]`) so this component doesn't need to guess a
+/// caller-appropriate default from inside an environment-less initializer.
 struct OfflineBanner: View {
-    var note: String = "All documents saved on this device"
+    var note: String
+
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         HStack(spacing: DocsSpacing.space2xs) {
             Image(systemName: "checkmark.icloud.fill")
                 .font(.system(size: 17))
                 .foregroundStyle(DocsColor.gray450)
-            Text("Offline")
+            Text(loc[.offline_status])
                 .font(DocsFont.caption.weight(.semibold))
                 .tracking(DocsTypographySpec.caption.size * DocsTracking.wide)
                 .foregroundStyle(DocsColor.textSecondary)
@@ -33,14 +39,15 @@ struct OfflineBanner: View {
                 .frame(height: 0.5)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Offline. \(note)")
+        .accessibilityLabel("\(loc[.offline_status]). \(note)")
     }
 }
 
 #Preview {
     VStack(spacing: 0) {
-        OfflineBanner()
+        OfflineBanner(note: "All documents saved on this device")
         OfflineBanner(note: "Editing the copy saved on this device")
         Spacer()
     }
+    .environment(LocalizationStore())
 }

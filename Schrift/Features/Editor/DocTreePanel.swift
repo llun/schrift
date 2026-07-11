@@ -77,6 +77,7 @@ struct DocTreePanel: View {
 
     private let panelWidth: CGFloat = 306
     @State private var model: DocTreeModel
+    @Environment(LocalizationStore.self) private var loc
 
     init(
         rootTitle: String,
@@ -131,11 +132,13 @@ struct DocTreePanel: View {
     private var panel: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Pages")
+                Text(loc[.editor_tree_pages])
                     .font(DocsFont.headline)
                     .foregroundStyle(DocsColor.textPrimary)
                 Spacer()
-                IconButton(systemImage: "sidebar.left", label: "Close pages", variant: .ghost, color: .neutral) {
+                IconButton(
+                    systemImage: "sidebar.left", label: loc[.editor_tree_close], variant: .ghost, color: .neutral
+                ) {
                     onClose()
                 }
             }
@@ -171,7 +174,7 @@ struct DocTreePanel: View {
                     }
 
                     if model.isLoaded(rootID), model.children(of: rootID).isEmpty {
-                        Text("No subpages yet. Add one to organize this document.")
+                        Text(loc[.editor_tree_empty])
                             .font(DocsFont.footnote)
                             .foregroundStyle(DocsColor.textTertiary)
                             .padding(.horizontal, DocsSpacing.spaceSM)
@@ -188,7 +191,10 @@ struct DocTreePanel: View {
                         .fill(DocsColor.borderDefault)
                         .frame(height: 1)
                     HStack {
-                        DocsButton(title: "New page", variant: .tertiary, color: .brand, size: .small, icon: "plus") {
+                        DocsButton(
+                            title: loc[.editor_tree_new_page], variant: .tertiary, color: .brand, size: .small,
+                            icon: "plus"
+                        ) {
                             onNewPage()
                         }
                         Spacer()
@@ -217,6 +223,8 @@ private struct DocTreeNode: View {
     let currentID: UUID
     var onOpen: (Document) -> Void
     var onClose: () -> Void
+
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -250,7 +258,7 @@ private struct DocTreeNode: View {
 
     private func displayTitle(_ document: Document) -> String {
         let trimmed = document.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Untitled document" : trimmed
+        return trimmed.isEmpty ? loc[.common_untitled] : trimmed
     }
 }
 
@@ -320,4 +328,5 @@ private struct DocTreeRow: View {
         onOpen: { _ in },
         onClose: {}
     )
+    .environment(LocalizationStore())
 }

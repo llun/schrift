@@ -128,7 +128,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { photo })
 
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isUploadingPhoto)
     }
 
@@ -221,7 +221,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, blocksBefore), "the blocks must be untouched")
         // Not `isDirty`: the buggy path's `markDirty()` is followed by the `defer`'d
         // `flushPendingChanges()`, which clears the flag before the test can see it.
@@ -248,7 +248,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
     }
 
@@ -290,7 +290,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertEqual(viewModel.rawMarkdown, "Notes\n```", "the loaded source must survive untouched")
         XCTAssertFalse(
             viewModel.rawMarkdown.contains("```\n```"), "we must not invent an empty code block to make room")
@@ -317,7 +317,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertEqual(viewModel.rawMarkdown, before, "the swallowed insert must not be committed")
     }
 
@@ -332,7 +332,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) },
             "the appended markdown must parse back to an .image block, not literal text")
@@ -360,7 +360,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.rawMarkdown.hasPrefix("* a\n* b"), "the original `*` bullets survive the late insert")
         XCTAssertTrue(
             parseEditorBlocks(viewModel.rawMarkdown).contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
@@ -386,18 +386,18 @@ final class EditorPhotoInsertionTests: XCTestCase {
     }
 
     /// Every sibling async intent (`load`, `refresh`, `startEditing`) clears
-    /// `errorMessage` on entry. Without it a successful retry leaves the red banner
+    /// `errorKey` on entry. Without it a successful retry leaves the red banner
     /// on screen — it renders in every mode, and only `finishEditing()` clears it.
     func testASuccessfulRetryClearsThePreviousPhotoError() async throws {
         stubUploadPipeline(uploadStatus: 400)
         let viewModel = await makeEditingViewModel()
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
 
         stubUploadPipeline()  // retry succeeds
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
     }
 
@@ -416,17 +416,17 @@ final class EditorPhotoInsertionTests: XCTestCase {
         // The document is revoked or deleted elsewhere; revalidation 404s.
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
         await viewModel.load()
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable)
         XCTAssertFalse(viewModel.hasLoadedContent)
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        // Without the `canInsertPhoto` gate, `insertPhoto`'s entry `errorMessage = nil`
+        // Without the `canInsertPhoto` gate, `insertPhoto`'s entry `errorKey = nil`
         // wipes the terminal message and nothing restores it: the upload 404s, and
         // `reportPhotoFailure()` then declines on its own `hasLoadedContent` guard —
         // which `becomeUnavailable()` has already set false. The user is left with a
         // dead document and no explanation at all.
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable)
     }
 
     /// Deleting leaves `hasLoadedContent` true, so this exercises the *other* clause:
@@ -439,7 +439,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testInsertPhotoAfterDeleteDoesNotResurrectTheDocument() async throws {
@@ -494,7 +494,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "media-check"), 5)
         // …and the upload already succeeded, so the URL must never be lost.
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     /// The upload succeeded but the response carried a path we can't derive a key
@@ -518,7 +518,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertFalse(viewModel.blocks.contains { if case .image = $0.kind { return true } else { return false } })
     }
 
@@ -544,7 +544,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         XCTAssertTrue(viewModel.blocks.contains { $0.kind == .image(alt: "", url: expectedMediaURL) })
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     // MARK: - Failure and cancellation
@@ -556,7 +556,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertEqual(viewModel.blocks.count, blockCountBefore)
         XCTAssertFalse(viewModel.blocks.contains { if case .image = $0.kind { return true } else { return false } })
         XCTAssertFalse(viewModel.isUploadingPhoto)
@@ -568,7 +568,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
     }
 
     func testInsertPhotoWithUndecodableDataSetsErrorAndUploadsNothing() async throws {
@@ -578,7 +578,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { Data([0x00, 0x01, 0x02]) })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
     }
 
@@ -590,7 +590,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { nil })
 
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.blocks.count, blockCountBefore)
         XCTAssertFalse(viewModel.isUploadingPhoto)
         XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
@@ -603,7 +603,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         await viewModel.insertPhoto(loadingData: { throw PickerFailure() })
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't add the photo. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
         XCTAssertFalse(viewModel.isUploadingPhoto)
     }
 
@@ -617,7 +617,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
         await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
 
         XCTAssertTrue(viewModel.blocks.isEmpty)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
     }
 

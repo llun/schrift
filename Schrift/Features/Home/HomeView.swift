@@ -1,8 +1,9 @@
 import SwiftUI
 
-func documentRowDate(_ document: Document) -> String {
+func documentRowDate(_ document: Document, locale: Locale) -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated
+    formatter.locale = locale
     return formatter.localizedString(for: document.updatedAt, relativeTo: Date())
 }
 
@@ -18,6 +19,8 @@ struct HomeView: View {
 
     @State private var selectedTab = "docs"
     @State private var path = NavigationPath()
+
+    @Environment(LocalizationStore.self) private var loc
 
     // Retained across tab switches so recent searches / loaded state survive.
     @State private var searchViewModel: SearchViewModel
@@ -41,10 +44,10 @@ struct HomeView: View {
 
                 TabBar(
                     items: [
-                        TabBarItem(value: "docs", label: "Schrift", systemImage: "doc.text"),
-                        TabBarItem(value: "search", label: "Search", systemImage: "magnifyingglass"),
-                        TabBarItem(value: "shared", label: "Shared", systemImage: "person.2"),
-                        TabBarItem(value: "me", label: "Profile", systemImage: "person.crop.circle"),
+                        TabBarItem(value: "docs", label: loc[.home_title], systemImage: "doc.text"),
+                        TabBarItem(value: "search", label: loc[.search_title], systemImage: "magnifyingglass"),
+                        TabBarItem(value: "shared", label: loc[.shared_title], systemImage: "person.2"),
+                        TabBarItem(value: "me", label: loc[.common_profile], systemImage: "person.crop.circle"),
                     ], selection: $selectedTab)
             }
             .background(DocsColor.surfacePage)
@@ -54,7 +57,7 @@ struct HomeView: View {
                 EditorScreen(
                     client: viewModel.client,
                     documentID: document.id,
-                    title: document.title ?? "Untitled document",
+                    title: document.title ?? loc[.common_untitled],
                     saveCoordinator: viewModel.saveCoordinator,
                     diagnostics: viewModel.diagnostics,
                     reach: document.linkReach,
@@ -122,5 +125,7 @@ struct HomeView: View {
 #Preview {
     HomeView(
         viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
-        serverHost: "docs.llun.dev")
+        serverHost: "docs.llun.dev"
+    )
+    .environment(LocalizationStore())
 }

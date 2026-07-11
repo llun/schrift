@@ -50,7 +50,7 @@ final class ShareViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.members.count, 2)
         XCTAssertFalse(viewModel.members[0].isPending)
         XCTAssertTrue(viewModel.members[1].isPending)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testSearchWithEmptyQueryClearsResults() async {
@@ -88,7 +88,7 @@ final class ShareViewModelTests: XCTestCase {
 
         XCTAssertTrue(log.requests.contains { $0.httpMethod == "POST" })
         XCTAssertTrue(log.requests.contains { $0.httpMethod == "GET" })
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testRemoveMemberDeletesAccessThenReloads() async {
@@ -123,7 +123,7 @@ final class ShareViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.linkReach, .authenticated)
         XCTAssertEqual(viewModel.linkRole, .reader)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testLoadFailureSetsErrorMessage() async {
@@ -132,7 +132,7 @@ final class ShareViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.errorKey, .share_error_load)
         XCTAssertFalse(viewModel.isLoading)
     }
 }

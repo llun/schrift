@@ -8,13 +8,14 @@ struct OptionsSheetView: View {
     var onDeleted: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(LocalizationStore.self) private var loc
     @State private var isConfirmingDelete = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
+                if let errorKey = viewModel.errorKey {
+                    Text(loc[errorKey])
                         .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.danger)
                         .padding(.horizontal, DocsSpacing.gutter)
@@ -26,30 +27,32 @@ struct OptionsSheetView: View {
                         ListSection {
                             ListRow(
                                 systemImage: viewModel.isFavorite ? "pin.slash" : "pin",
-                                title: viewModel.isFavorite ? "Unpin" : "Pin",
-                                value: viewModel.isFavorite ? "Pinned" : nil,
+                                title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
+                                value: viewModel.isFavorite ? loc[.options_pinned] : nil,
                                 action: { Task { await viewModel.toggleFavorite() } }
                             )
                         }
 
                         ListSection {
-                            ListRow(systemImage: "link", title: "Copy link", action: { copyLink() })
+                            ListRow(systemImage: "link", title: loc[.options_copy_link], action: { copyLink() })
                             if onShare != nil {
                                 ProfileRowDivider()
                                 ListRow(
-                                    systemImage: "person.2", title: "Share", showsChevron: true,
+                                    systemImage: "person.2", title: loc[.options_share], showsChevron: true,
                                     action: {
                                         onShare?()
                                         dismiss()
                                     })
                             }
                             ProfileRowDivider()
-                            ListRow(systemImage: "doc.plaintext", title: "Copy as Markdown", action: { copyMarkdown() })
+                            ListRow(
+                                systemImage: "doc.plaintext", title: loc[.options_copy_markdown],
+                                action: { copyMarkdown() })
                         }
 
                         ListSection {
                             ListRow(
-                                systemImage: "doc.on.doc", title: "Duplicate",
+                                systemImage: "doc.on.doc", title: loc[.options_duplicate],
                                 action: {
                                     Task {
                                         await viewModel.duplicate()
@@ -60,7 +63,7 @@ struct OptionsSheetView: View {
 
                         ListSection {
                             ListRow(
-                                systemImage: "trash", title: "Delete document", isDestructive: true,
+                                systemImage: "trash", title: loc[.options_delete_document], isDestructive: true,
                                 action: { isConfirmingDelete = true })
                         }
                     }
@@ -69,15 +72,17 @@ struct OptionsSheetView: View {
                 }
             }
             .background(DocsColor.surfacePage)
-            .navigationTitle("Options")
+            .navigationTitle(loc[.options_title])
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button(loc[.common_done]) { dismiss() }
                 }
             }
-            .confirmationDialog("Delete this document?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
-                Button("Delete", role: .destructive) {
+            .confirmationDialog(
+                loc[.options_delete_confirm_title], isPresented: $isConfirmingDelete, titleVisibility: .visible
+            ) {
+                Button(loc[.options_delete], role: .destructive) {
                     Task {
                         await viewModel.delete()
                         if viewModel.didDelete {
@@ -113,4 +118,5 @@ struct OptionsSheetView: View {
         shareURL: URL(string: "https://docs.llun.dev/docs/abc/"),
         markdown: "# Sample"
     )
+    .environment(LocalizationStore())
 }

@@ -157,4 +157,5 @@ struct ComponentCatalogPreview: View {
 
 #Preview {
     ComponentCatalogPreview()
+        .environment(LocalizationStore())
 }

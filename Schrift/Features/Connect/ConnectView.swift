@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConnectView: View {
     @Bindable var viewModel: ConnectViewModel
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,10 +16,10 @@ struct ConnectView: View {
                     .shadow(color: DocsColor.brandLogo.opacity(0.28), radius: 12, x: 0, y: 8)
                     .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
                     .accessibilityHidden(true)
-                Text("Welcome to Schrift")
+                Text(loc[.connect_hero_title])
                     .font(DocsFont.title1)
                     .foregroundStyle(DocsColor.textPrimary)
-                Text("Connect to any server to write, organize and collaborate — in real time.")
+                Text(loc[.connect_hero_subtitle])
                     .font(DocsFont.callout)
                     .foregroundStyle(DocsColor.textSecondary)
                     .multilineTextAlignment(.center)
@@ -31,12 +32,12 @@ struct ConnectView: View {
             // Form group — pinned to the bottom.
             VStack(spacing: 14) {
                 DocsTextField(
-                    label: "Server",
+                    label: loc[.connect_server_label],
                     text: $viewModel.serverURLInput,
-                    placeholder: "schrift.example.org",
+                    placeholder: loc[.connect_server_placeholder],
                     icon: "cloud",
-                    helper: "The app signs in with your existing session — no password stored.",
-                    error: viewModel.errorMessage
+                    helper: loc[.connect_server_helper],
+                    error: viewModel.errorKey.map { loc[$0] }
                 )
                 // Without this, iOS capitalizes the first letter and offers to autocorrect
                 // the hostname. `normalizedServerURL` lowercases it anyway, but the user
@@ -80,7 +81,7 @@ struct ConnectView: View {
 
     private var recentServers: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-            Text("Recent servers")
+            Text(loc[.connect_recent_servers])
                 .font(DocsFont.caption)
                 .textCase(.uppercase)
                 .tracking(DocsTypographySpec.caption.size * DocsTracking.eyebrow)
@@ -118,12 +119,13 @@ struct ConnectView: View {
 
     private var signInTitle: String {
         if let host = normalizedServerURL(from: viewModel.serverURLInput)?.host {
-            return "Sign in to \(host)"
+            return loc.format(.connect_sign_in_to, host)
         }
-        return "Sign in"
+        return loc[.connect_sign_in]
     }
 }
 
 #Preview {
     ConnectView(viewModel: ConnectViewModel(sessionStore: SessionStore(), recentServers: RecentServersStore()))
+        .environment(LocalizationStore())
 }

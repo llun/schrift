@@ -12,8 +12,8 @@ struct LinkReachPillStyleHex: Equatable {
     let foregroundLightHex: UInt32
     let foregroundDarkHex: UInt32
     let systemImage: String
-    let label: String
-    let hint: String
+    let labelKey: L10nKey
+    let hintKey: L10nKey
 }
 
 enum LinkReachPillStyleResolver {
@@ -23,19 +23,20 @@ enum LinkReachPillStyleResolver {
             return LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
                 foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
-                systemImage: "lock.fill", label: "Restricted", hint: "Only invited people")
+                systemImage: "lock.fill", labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted)
         case .authenticated:
             // Reference uses `vpn_lock` (a lock over a globe) for the org-gated state.
             return LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
                 foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
-                systemImage: "network.badge.shield.half.filled", label: "Connected", hint: "Anyone in the org")
+                systemImage: "network.badge.shield.half.filled", labelKey: .reach_connected,
+                hintKey: .linkreach_hint_authenticated)
         case .public:
             return LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
                 foregroundLightHex: DocsColorHex.textBrandSecondary,
                 foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
-                systemImage: "globe", label: "Public", hint: "Anyone with the link")
+                systemImage: "globe", labelKey: .reach_public, hintKey: .linkreach_hint_public)
         }
     }
 }
@@ -44,16 +45,18 @@ struct LinkReachPill: View {
     let reach: LinkReach
     var showsHint: Bool = false
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         let style = LinkReachPillStyleResolver.style(reach: reach)
         HStack(spacing: DocsSpacing.space2xs) {
             Image(systemName: style.systemImage)
                 .font(.system(size: 18))
             VStack(alignment: .leading, spacing: 0) {
-                Text(style.label)
+                Text(loc[style.labelKey])
                     .font(.system(size: 14, weight: .semibold))
                 if showsHint {
-                    Text(style.hint)
+                    Text(loc[style.hintKey])
                         .font(DocsFont.caption)
                         .opacity(0.8)
                 }
@@ -68,8 +71,8 @@ struct LinkReachPill: View {
         .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex))
         .clipShape(Capsule())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(style.label)
-        .accessibilityHint(showsHint ? style.hint : "")
+        .accessibilityLabel(loc[style.labelKey])
+        .accessibilityHint(showsHint ? loc[style.hintKey] : "")
     }
 }
 
@@ -80,4 +83,5 @@ struct LinkReachPill: View {
         LinkReachPill(reach: .public)
     }
     .padding()
+    .environment(LocalizationStore())
 }

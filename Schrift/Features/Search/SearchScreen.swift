@@ -5,6 +5,7 @@ struct SearchScreen: View {
     let serverHost: String
     var onOpenDocument: (Document) -> Void
 
+    @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
 
     private var trimmedQuery: String {
@@ -13,13 +14,13 @@ struct SearchScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: "Search", subtitle: serverHost, largeTitle: true)
+            NavBar(title: loc[.search_title], subtitle: serverHost, largeTitle: true)
 
-            if workOffline { OfflineBanner() }
+            if workOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    SearchField(text: $viewModel.query, placeholder: "Search all documents", autoFocus: true)
+                    SearchField(text: $viewModel.query, placeholder: loc[.search_placeholder], autoFocus: true)
                         .onSubmit {
                             viewModel.recordSearch()
                         }
@@ -50,7 +51,7 @@ struct SearchScreen: View {
     private var emptyQueryContent: some View {
         if !viewModel.recentSearches.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                sectionLabel("Recent searches", icon: "clock.arrow.circlepath")
+                sectionLabel(loc[.search_recent], icon: "clock.arrow.circlepath")
                 RecentSearchesFlow(terms: viewModel.recentSearches) { term in
                     viewModel.selectRecent(term)
                 }
@@ -59,9 +60,9 @@ struct SearchScreen: View {
         }
 
         VStack(alignment: .leading, spacing: 0) {
-            sectionLabel("Quick access", icon: "pin.fill")
+            sectionLabel(loc[.search_quick], icon: "pin.fill")
             if viewModel.quickAccess.isEmpty {
-                Text("Pinned documents will appear here.")
+                Text(loc[.search_quick_empty])
                     .font(DocsFont.subhead)
                     .foregroundStyle(DocsColor.textTertiary)
             } else {
@@ -81,9 +82,9 @@ struct SearchScreen: View {
                 Spacer()
             }
             .padding(.vertical, DocsSpacing.spaceLG)
-        } else if let errorMessage = viewModel.errorMessage {
+        } else if let errorKey = viewModel.errorKey {
             // A failed request isn't "no matches" — surface the error instead.
-            Text(errorMessage)
+            Text(loc[errorKey])
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.danger)
                 .multilineTextAlignment(.center)
@@ -100,8 +101,7 @@ struct SearchScreen: View {
     }
 
     private var resultsCountLabel: String {
-        let count = viewModel.results.count
-        return count == 1 ? "1 result" : "\(count) results"
+        loc.plural(viewModel.results.count, one: .search_results_one, other: .search_results_other)
     }
 
     private var emptyState: some View {
@@ -109,10 +109,10 @@ struct SearchScreen: View {
             Image(systemName: "exclamationmark.magnifyingglass")
                 .font(.system(size: 44))
                 .foregroundStyle(DocsColor.gray300)
-            Text("No documents found")
+            Text(loc[.search_empty_title])
                 .font(DocsFont.headline)
                 .foregroundStyle(DocsColor.textPrimary)
-            Text("Nothing matches \u{201C}\(trimmedQuery)\u{201D}. Try another title or keyword.")
+            Text(loc.format(.search_empty_body, trimmedQuery))
                 .font(DocsFont.subhead)
                 .foregroundStyle(DocsColor.textTertiary)
                 .multilineTextAlignment(.center)
@@ -129,10 +129,10 @@ struct SearchScreen: View {
         VStack(spacing: 0) {
             ForEach(documents) { document in
                 DocRow(
-                    title: document.title ?? "Untitled document",
+                    title: document.title ?? loc[.common_untitled],
                     pinned: document.isFavorite,
                     reach: document.linkReach,
-                    date: documentRowDate(document),
+                    date: documentRowDate(document, locale: loc.locale),
                     onOpen: { onOpenDocument(document) }
                 )
             }
@@ -245,4 +245,5 @@ private struct FlowLayout: Layout {
         serverHost: "docs.llun.dev",
         onOpenDocument: { _ in }
     )
+    .environment(LocalizationStore())
 }

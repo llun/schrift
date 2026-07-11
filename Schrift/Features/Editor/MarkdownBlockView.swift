@@ -168,6 +168,8 @@ struct MarkdownImageView: View {
     let alt: String
     let url: URL
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         AsyncImage(url: url) { phase in
             switch phase {
@@ -177,7 +179,7 @@ struct MarkdownImageView: View {
                     .scaledToFit()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-                    .accessibilityLabel(alt.isEmpty ? "Image" : alt)
+                    .accessibilityLabel(alt.isEmpty ? loc[.editor_image_a11y] : alt)
             case .failure:
                 fallbackLink
             case .empty:
@@ -194,7 +196,8 @@ struct MarkdownImageView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 160)
             .overlay { ProgressView() }
-            .accessibilityLabel(alt.isEmpty ? "Loading image" : "Loading image: \(alt)")
+            .accessibilityLabel(
+                alt.isEmpty ? loc[.editor_image_loading_a11y] : loc.format(.editor_image_loading_named_a11y, alt))
     }
 
     private var fallbackLink: some View {
@@ -229,4 +232,5 @@ struct MarkdownImageView: View {
         }
         .padding()
     }
+    .environment(LocalizationStore())
 }

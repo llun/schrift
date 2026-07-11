@@ -141,7 +141,7 @@ final class EditorViewModelTests: XCTestCase {
                 ]))
         XCTAssertEqual(viewModel.title, "Doc")
         XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testLoadWithNullContentProducesNoBlocks() async {
@@ -151,7 +151,7 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertTrue(viewModel.blocks.isEmpty)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testLoadKeepsOriginalTitleWhenServerTitleIsNull() async {
@@ -173,7 +173,7 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertTrue(viewModel.blocks.isEmpty)
     }
@@ -249,7 +249,7 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertFalse(viewModel.blocks.isEmpty)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.hasLocalCopy)
         XCTAssertFalse(viewModel.isLoading)
     }
@@ -262,7 +262,7 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't load this document. Pull to refresh to try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_load)
         XCTAssertFalse(viewModel.hasLocalCopy)
     }
 
@@ -279,7 +279,7 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.displaySource, .draft)
         XCTAssertEqual(viewModel.title, "Draft Doc")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testFirstFetchWritesCacheSoNextOpenIsInstant() async {
@@ -512,7 +512,7 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertNil(contentCache.content(for: documentID))
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable)
         XCTAssertFalse(viewModel.hasLocalCopy)
         XCTAssertNil(viewModel.lastSyncedAt)
         viewModel.startEditing()
@@ -550,7 +550,7 @@ final class EditorViewModelTests: XCTestCase {
             "the in-flight edit is persisted, not discarded and not emptied")
         XCTAssertFalse(viewModel.isEditing, "the editing session ends with the document")
         XCTAssertFalse(viewModel.isDirty)
-        XCTAssertTrue(viewModel.errorMessage?.contains("no longer available") ?? false)
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable_with_draft, "the write-ahead flush left a draft")
 
         // A later autosave / .onDisappear / scenePhase flush must not empty it.
         viewModel.flushPendingChanges()
@@ -567,7 +567,7 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertNil(contentCache.content(for: documentID))
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable)
     }
 
     func testRevalidate401KeepsCacheReadable() async {
@@ -581,7 +581,7 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertNotNil(contentCache.content(for: documentID))
         XCTAssertFalse(viewModel.blocks.isEmpty)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
     }
 
     func testStaleDraftLosesToNewerServerCopy() async {
@@ -733,7 +733,7 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.rawMarkdown, "# Mine", "unsaved work is never clobbered")
         XCTAssertEqual(viewModel.displaySource, .draft)
         XCTAssertNotNil(draftStore.draft(for: documentID))
-        XCTAssertNil(viewModel.errorMessage, "a protected draft is a deliberate, silent no-op")
+        XCTAssertNil(viewModel.errorKey, "a protected draft is a deliberate, silent no-op")
     }
 
     /// A draft left behind by a *failed* save is unsaved work no matter which
@@ -830,9 +830,7 @@ final class EditorViewModelTests: XCTestCase {
 
         // The draft is kept (a 403 revokes access, it doesn't delete), and the
         // terminal message says so rather than letting the work vanish silently.
-        XCTAssertEqual(
-            viewModel.errorMessage,
-            "This document is no longer available. Your unsaved changes are kept on this device.")
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable_with_draft)
         XCTAssertNotNil(draftStore.draft(for: documentID))
         XCTAssertFalse(viewModel.hasUnsavedLocalContent, "nothing is on screen to be unsaved")
     }
@@ -851,7 +849,7 @@ final class EditorViewModelTests: XCTestCase {
         stubLoad(content: "# Back")  // the 404 was transient
         await viewModel.refresh()
         XCTAssertTrue(viewModel.hasLoadedContent, "the document is back on screen")
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
 
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Back edited")
@@ -890,7 +888,7 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isUnavailable, "a 200 means the document is back")
         XCTAssertTrue(viewModel.hasLoadedContent)
-        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.blocks.first?.text, "Mine edited", "the user's only copy is back on screen")
         XCTAssertTrue(viewModel.hasLocalCopy)
     }
@@ -1010,8 +1008,8 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.refresh()
 
         XCTAssertFalse(viewModel.hasLoadedContent, "nothing was installed")
-        XCTAssertTrue(
-            viewModel.errorMessage?.contains("no longer available") ?? false,
+        XCTAssertEqual(
+            viewModel.errorKey, .editor_unavailable_with_draft,
             "a response apply() ignored must not clear the terminal message")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
@@ -1033,8 +1031,8 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.blocks.isEmpty, "revoked content is never re-rendered from disk")
         XCTAssertFalse(viewModel.hasLoadedContent)
-        XCTAssertTrue(
-            viewModel.errorMessage?.contains("no longer available") ?? false,
+        XCTAssertEqual(
+            viewModel.errorKey, .editor_unavailable_with_draft,
             "the terminal message survives a transient failure")
     }
 
@@ -1046,7 +1044,7 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.errorMessage, "This document is no longer available.")
+        XCTAssertEqual(viewModel.errorKey, .editor_unavailable)
     }
 
     /// The unchanged branch drops a stash unconditionally: if the server has
@@ -1107,7 +1105,7 @@ final class EditorViewModelTests: XCTestCase {
         }
         await viewModel.refresh()
 
-        XCTAssertEqual(viewModel.errorMessage, "Couldn't refresh. Please try again.")
+        XCTAssertEqual(viewModel.errorKey, .editor_error_refresh)
         XCTAssertFalse(viewModel.blocks.isEmpty, "content stays readable")
     }
 

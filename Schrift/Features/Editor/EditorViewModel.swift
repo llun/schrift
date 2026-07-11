@@ -58,8 +58,8 @@ final class EditorViewModel {
     var updatedAt: Date? = nil
     var mode: Mode = .reading
     var isLoading = false
-    var errorMessage: String?
-    /// The server's own words about the failure behind `errorMessage`, when it had any.
+    var errorKey: L10nKey?
+    /// The server's own words about the failure behind `errorKey`, when it had any.
     /// Every 404 maps to `.notFound` and reads as "deleted", so a missing route or a proxy
     /// hiccup is indistinguishable from a deletion without this.
     var errorDetail: String?
@@ -144,7 +144,7 @@ final class EditorViewModel {
     private static let mediaCheckMaxAttempts = 5
 
     /// Friendly copy for every failure in the photo-insert pipeline.
-    private static let photoErrorMessage = "Couldn't add the photo. Please try again."
+    private static let photoErrorKey: L10nKey = .editor_error_add_photo
 
     init(
         client: DocsAPIClient,
@@ -173,17 +173,17 @@ final class EditorViewModel {
 
     // MARK: - Error state
 
-    /// `errorMessage` and `errorDetail` must move together. The detail is only ever rendered
+    /// `errorKey` and `errorDetail` must move together. The detail is only ever rendered
     /// beneath its message, so a detail that outlives one is invisible right up until some
     /// unrelated later message adopts it — a stale "HTTP 500" from a background revalidation
     /// appearing under "Couldn't add the subpage."
-    private func showError(_ message: String, detail: String? = nil) {
-        errorMessage = message
+    private func showError(_ key: L10nKey, detail: String? = nil) {
+        errorKey = key
         errorDetail = detail
     }
 
     private func clearError() {
-        errorMessage = nil
+        errorKey = nil
         errorDetail = nil
     }
 
@@ -320,9 +320,9 @@ final class EditorViewModel {
             // over a local copy must not leave a detail behind for a later message to adopt.
             let detail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
             if isUnavailable {
-                showError(unavailableMessage, detail: detail)
+                showError(unavailableMessageKey, detail: detail)
             } else if displaySource == .none {
-                showError("Couldn't load this document. Pull to refresh to try again.", detail: detail)
+                showError(.editor_error_load, detail: detail)
             }
         }
     }
@@ -362,7 +362,7 @@ final class EditorViewModel {
         } catch {
             guard generation == revalidationGeneration else { return }
             showError(
-                "Couldn't refresh. Please try again.",
+                .editor_error_refresh,
                 detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics))
         }
     }
@@ -383,10 +383,10 @@ final class EditorViewModel {
 
     /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
     /// never promises changes that were never written.
-    private var unavailableMessage: String {
+    private var unavailableMessageKey: L10nKey {
         saveCoordinator.storedDraft(documentID: documentID) != nil
-            ? "This document is no longer available. Your unsaved changes are kept on this device."
-            : "This document is no longer available."
+            ? .editor_unavailable_with_draft
+            : .editor_unavailable
     }
 
     /// Definitive 404/403: the document is gone or access was revoked. Purge
@@ -433,7 +433,7 @@ final class EditorViewModel {
         displayedSourceMarkdown = ""
         displaySource = .none
         hasLoadedContent = false  // startEditing guards on this
-        errorMessage = unavailableMessage
+        errorKey = unavailableMessageKey
         errorDetail = nil
     }
 
@@ -744,7 +744,7 @@ final class EditorViewModel {
             // here means "you may not add children to this document", not "this document
             // was taken away from you". Tearing the editor down would discard the user's
             // open document over a failed sub-page.
-            showError("Couldn't add the subpage. Please try again.")
+            showError(.editor_error_add_subpage)
             return nil
         }
         // Any in-flight children fetch predates this child — invalidate it.
@@ -785,7 +785,7 @@ final class EditorViewModel {
             // 404/403 here is about the *linked* document and says nothing about the one on
             // screen. Tearing that down would discard it — and any unsaved edit — over a
             // dead link.
-            showError("Couldn't open that link. Please try again.")
+            showError(.editor_error_open_link)
             return nil
         }
     }
@@ -1210,7 +1210,7 @@ final class EditorViewModel {
     /// disabled button can't perform.
     private func reportPhotoFailure() {
         guard hasLoadedContent, !isDocumentDiscarded else { return }
-        showError(Self.photoErrorMessage)
+        showError(Self.photoErrorKey)
     }
 
     /// Polls media-check until the attachment is ready and returns the absolute

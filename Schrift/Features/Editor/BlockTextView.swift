@@ -269,6 +269,11 @@ struct BlockTextView: UIViewRepresentable {
     let cursorRequest: EditorViewModel.CursorRequest?
     var onEvent: (BlockTextEvent) -> Void
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
+    /// Pre-resolved link-menu titles, passed down from the SwiftUI layer (which
+    /// owns `LocalizationStore`). The coordinator never sees the store — it just
+    /// reads these plain strings when building the `UIEditMenuInteraction` menu.
+    var editLinkTitle: String = "Edit link"
+    var removeLinkTitle: String = "Remove link"
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -433,11 +438,11 @@ struct BlockTextView: UIViewRepresentable {
             // The suggested actions are the text view's own cut/copy/paste, which
             // make no sense for a tap that selected nothing.
             return UIMenu(children: [
-                UIAction(title: "Edit link", image: UIImage(systemName: "link")) { [weak self] _ in
+                UIAction(title: parent.editLinkTitle, image: UIImage(systemName: "link")) { [weak self] _ in
                     self?.parent.onEvent(.editLink(span))
                 },
                 UIAction(
-                    title: "Remove link", image: UIImage(systemName: "link.badge.minus"),
+                    title: parent.removeLinkTitle, image: UIImage(systemName: "link.badge.minus"),
                     attributes: .destructive
                 ) { [weak self] _ in
                     self?.parent.onEvent(.removeLink(span))

@@ -6,7 +6,7 @@ final class ConnectViewModel {
     var serverURLInput: String = ""
     var isPresentingWebLogin = false
     var isSigningIn = false
-    var errorMessage: String?
+    var errorKey: L10nKey?
     private(set) var pendingServerURL: URL?
 
     let sessionStore: SessionStore
@@ -27,16 +27,16 @@ final class ConnectViewModel {
 
     func startSignIn() {
         guard let url = normalizedServerURL(from: serverURLInput) else {
-            errorMessage = "Enter a valid server address."
+            errorKey = .connect_error_invalid_server
             return
         }
-        errorMessage = nil
+        errorKey = nil
         pendingServerURL = url
         isPresentingWebLogin = true
     }
 
     func selectRecentServer(_ url: URL) {
-        errorMessage = nil
+        errorKey = nil
         pendingServerURL = url
         isPresentingWebLogin = true
     }
@@ -46,7 +46,7 @@ final class ConnectViewModel {
         guard let serverURL = pendingServerURL else { return }
 
         isSigningIn = true
-        errorMessage = nil
+        errorKey = nil
         defer { isSigningIn = false }
 
         struct Me: Decodable {}
@@ -56,7 +56,7 @@ final class ConnectViewModel {
             try sessionStore.signIn(serverURL: serverURL)
             recentServers.addServer(serverURL)
         } catch {
-            errorMessage = "Sign-in could not be confirmed. Please try again."
+            errorKey = .connect_error_sign_in_failed
         }
     }
 }

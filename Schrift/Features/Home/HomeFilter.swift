@@ -5,11 +5,11 @@ enum HomeFilter: Int, CaseIterable {
     case shared = 1
     case pinned = 2
 
-    var title: String {
+    var titleKey: L10nKey {
         switch self {
-        case .all: return "All"
-        case .shared: return "Shared"
-        case .pinned: return "Pinned"
+        case .all: return .home_filter_all
+        case .shared: return .home_filter_shared
+        case .pinned: return .home_filter_pinned
         }
     }
 }
