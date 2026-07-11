@@ -1,0 +1,41 @@
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_112e44db865b07::t_d4ec98f33ddae4 6
+Schrift/Core/Localization/L10nKey.swift
+  s_112e44db865b07::t_a8137f17382acd 10
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_112e44db865b07::t_15cbf1edde2975 6
+Schrift/Core/Localization/Strings+th.swift
+  s_112e44db865b07::t_4d496db8bc2895 8
+Schrift/Core/Localization/Strings+pt.swift
+  s_112e44db865b07::t_3cd891954f90a5 8
+Schrift/Core/Localization/Strings+fr.swift
+  s_112e44db865b07::t_c8c561be70be8b 8
+Schrift/Core/Localization/Strings+it.swift
+  s_112e44db865b07::t_fc3c96fcf81f3f 8
+Schrift/Core/Localization/Strings+nl.swift
+  s_112e44db865b07::t_3a44e02eacc189 8
+Schrift/Core/Localization/Strings+en.swift
+  s_112e44db865b07::t_d3de741a9b6d01 9
+Schrift/Core/Localization/Strings+de.swift
+  s_112e44db865b07::t_94eba36de0cd08 8
+Schrift/Core/Localization/Strings+es.swift
+  s_112e44db865b07::t_14e5e562e37b96 8
+Schrift/Features/Options/OptionsSheetView.swift
+  s_112e44db865b07::t_3b35ca31bbda9d 35-39,41-48,50-57,59,61-67,69-76,79-89,93-97,117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "bacf484e8b1b84623b85817814ec64c1acd7e86d",
+  "prompts": {},
+  "sessions": {
+    "s_112e44db865b07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ad38435-14c2-4426-b998-0ddd4748debd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
