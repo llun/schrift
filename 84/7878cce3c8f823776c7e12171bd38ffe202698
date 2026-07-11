@@ -1,0 +1,26 @@
+Schrift/Core/Localization/AppLanguage.swift
+  s_c7ab8ecfba031c::t_848ec9e51aedc7 35
+  s_c7ab8ecfba031c::t_1deeb21511c02d 4
+  s_c7ab8ecfba031c::t_653c658860ab4d 18
+project.yml
+  s_c7ab8ecfba031c::t_1a39abbf3b88f0 49
+Schrift/Core/Localization/Strings+sl.swift
+  s_c7ab8ecfba031c::t_8f4dd06d410385 1-98,101-262,265-286
+  s_c7ab8ecfba031c::t_0e11be05574a7f 99-100,263-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "847878cce3c8f823776c7e12171bd38ffe202698",
+  "prompts": {},
+  "sessions": {
+    "s_c7ab8ecfba031c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09410f27-cec4-4a12-89b6-2ce248d0480a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
