@@ -43,6 +43,7 @@ names the section with the details.
    | A screen + view model | `Schrift/Features/Shared/` (cached list) or `Schrift/Features/Options/` (sheet) |
    | A UserDefaults store | `Schrift/Features/Search/RecentSearchesStore.swift` |
    | An offline cache store | `Schrift/Features/Editor/DocumentChildrenCacheStore.swift` |
+   | A new localized string | `Schrift/Core/Localization/L10nKey.swift` + `Strings+en.swift` (English only — see [Localization & appearance](#localization--appearance)) |
 
 4. **Work test-first.** Every behavior change lands with tests in the same
    change ([Testing conventions](#testing-conventions)); iterate with
@@ -55,7 +56,7 @@ names the section with the details.
    - Networking: assert method, path (trailing slash, lowercase UUID), and
      body via `MockURLProtocol`; mutating endpoints go through `send`/`sendVoid`.
    - View models: poll with `waitUntil`; cover the error path (friendly
-     `errorMessage`) and the cached-data silence rules.
+     `errorKey`) and the cached-data silence rules.
    - Build/CI/release: update the living docs in the same change
      ([Docs & plans convention](#docs--plans-convention)).
 6. **Definition of done** — a change is finished only when all of these hold
@@ -107,8 +108,23 @@ names the section with the details.
   this stall.)
 - All build configuration (bundle ids, deployment target, `SWIFT_VERSION`,
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
-  (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`, not
-  by adding an Info.plist file.
+  (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`
+  first; never hand-author or commit an Info.plist file. **One key can't go
+  through `INFOPLIST_KEY_*`**: `CFBundleLocalizations` (the array the OS reads
+  to advertise supported languages — see
+  [Localization & appearance](#localization--appearance)) is silently dropped
+  by Xcode's Info.plist synthesis no matter what you set
+  `INFOPLIST_KEY_CFBundleLocalizations` to (verified empirically — the build
+  setting reaches the `.pbxproj` fine, the key just never reaches the built
+  Info.plist). The only way to emit it is a template merged in via
+  `INFOPLIST_FILE` + `GENERATE_INFOPLIST_FILE: true` together (Xcode overlays
+  the synthesized `INFOPLIST_KEY_*` keys onto the template rather than
+  replacing it) — `project.yml`'s target `info:` block generates that template
+  to `Generated/Info.plist` from the spec on every `xcodegen generate`, exactly
+  like the `.xcodeproj` itself: git-ignored, fully reproducible, never
+  hand-edited or committed. Don't add a second hand-maintained Info.plist for
+  anything else without the same "no `INFOPLIST_KEY_*` route exists" check
+  first — most keys do have one.
 - **Formatting**: Swift sources are formatted with Apple's **swift-format**
   (the one bundled with the Xcode/Swift 6 toolchain — zero third-party tools),
   configured by [`.swift-format`](.swift-format) at the repo root (4-space
@@ -175,37 +191,46 @@ names the section with the details.
 ```
 Schrift/
 ├── App/                 app entry (SchriftApp), root navigation (RootView),
-│                        swipe-back restorer (InteractivePopGesture)
+│                        swipe-back restorer (InteractivePopGesture),
+│                        AppAppearance + AppearanceStore (dark-mode preference)
 ├── Core/
 │   ├── Auth/            SessionStore (persists session cookies in the Keychain and
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
+│   ├── Localization/    in-code catalog: AppLanguage (10 langs), L10nKey,
+│   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
-│   │                    (incl. AttachmentEndpoints: multipart upload + media-check),
-│   │                    Codable models, DocsAPIError, CSRF
+│   │                    (incl. AttachmentEndpoints: multipart upload + media-check;
+│   │                    VersionEndpoints: read-only version list), Codable models,
+│   │                    DocsAPIError, CSRF
 │   └── Yjs/             on-device Markdown→BlockNote→Yjs encoder that builds the
 │                        base64 content payload for saves (MarkdownYjs,
 │                        BlockNoteDocument, InlineMarkdown, YjsUpdateEncoder)
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
-│   │                    DocsSpacing, DocsRadius, HexColor
+│   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive)
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
 │                        IconButton, LinkReachPill, ListRow, ListSection, NavBar,
 │                        OfflineBanner, SearchField, SegmentedControl,
 │                        ShareMemberRow, Switch, TabBar, TextField
-│                        (SwiftUI + style resolvers)
+│                        (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry
 │   │                    re-login sheet (ReauthenticationSheetView +
 │   │                    ReauthenticationViewModel), RecentServersStore
 │   ├── Home/            document list, filters, offline metadata cache
-│   ├── Search/ Shared/ Profile/ Options/ Share/
+│   ├── Search/ Shared/  the other tabs; Profile also hosts the Appearance/Language
+│   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet)
+│   │                    and the server-version row (ServerConfig)
+│   ├── Options/ Share/
 │   └── Editor/          block editor, save coordinator, drafts, content cache,
 │                        photo insert (ImagePreparation), in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
-│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet)
+│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
+│                        read-only version history (VersionHistoryViewModel,
+│                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
 docs/                    living docs (ci.md, testflight-setup.md) + specs and dated
@@ -296,14 +321,69 @@ new code reads like the surrounding code.
   once to its root content to bring swipe-back back; the swapped delegate keeps
   the gesture disabled at the stack root and during transitions.
 - Async VM methods **catch errors internally** and set a user-facing
-  `var errorMessage: String?` with friendly copy of the form
-  `"Couldn't <do X>. Please try again."` — they don't rethrow or surface raw
-  errors. Loading state is a `var isLoading` (or a named flag like
+  `var errorKey: L10nKey?` — a friendly copy key of the form
+  `"Couldn't <do X>. Please try again."` (`Strings+en.swift`), resolved by the
+  view via `loc[errorKey]` — they don't rethrow, surface raw errors, or store a
+  pre-resolved `String`. (This superseded a plain `var errorMessage: String?`
+  when localization landed; see
+  [Localization & appearance](#localization--appearance).) Loading state is a
+  `var isLoading` (or a named flag like
   `isSigningIn`/`isDuplicating`). Simple one-shot methods reset it with
   `defer { isLoading = false }`; generation-guarded list/content loads must
   **not** use `defer` — they reset explicitly, gated on
   `generation == loadGeneration` (HomeViewModel, SharedViewModel), so a
   superseded load can never clear a newer load's spinner.
+
+### Localization & appearance
+
+`Core/Localization/` (the catalog + `LocalizationStore`) and
+`App/AppAppearance.swift` (`AppAppearance` + `AppearanceStore`):
+
+- **Both are `@MainActor @Observable` stores injected once at the app root**
+  (`SchriftApp`) via `.environment(appearanceStore)` / `.environment(localizationStore)`,
+  plus `.preferredColorScheme(appearanceStore.selected.colorScheme)` and
+  `.environment(\.locale, localizationStore.locale)` so date/relative-time
+  formatting re-localizes too. Screens read them with
+  `@Environment(LocalizationStore.self)` / `@Environment(AppearanceStore.self)`;
+  reading inside a view's `body` makes `@Observable` track the dependency, so
+  switching language or appearance re-renders the whole app live — no relaunch.
+  **Any `#Preview` of a view that reads either environment must inject it**
+  (`.environment(LocalizationStore())`, `.environment(AppearanceStore())`) or the
+  preview canvas fatal-errors; this is transitive to every parent view that
+  embeds it (`HomeView`/`HomeSplitView` embed the tab screens, `RootView` embeds
+  `HomeView`) — `grep -rn "<ViewName>(" Schrift` to find embedders after adding
+  the environment read to a view.
+- **The localization catalog is in-code, not `.lproj`/String Catalog**: an
+  `enum L10nKey: String, CaseIterable` of dot-separated keys, one
+  `Strings_<lang>.swift` table (`[L10nKey: String]`) per language under
+  `Core/Localization/`, dispatched by `Strings.table(for:)`.
+  `LocalizationStore.subscript(_:)` resolves `table[key] ?? Strings_en.table[key]
+  ?? key.rawValue` (English is the guaranteed fallback) — `format(_:_:)` for
+  `String(format:)` args, `plural(_:one:other:)` for count-driven strings
+  (`PluralRule` picks the language's plural category; `zh-Hans`/`zh-Hant`/`th`
+  are other-only). `StringsCompletenessTests` gates **every** `L10nKey` present
+  in **every** language table (non-empty) and **placeholder/format-specifier
+  parity** with English (same `%@`/`%d` count per key) — add a key to
+  `L10nKey.swift` + `Strings+en.swift` first (English-only is fine to land;
+  other languages are filled in by a translation pass), then that test tells
+  you if a table is left stale.
+  `AppLanguage` covers 10 languages (`en fr es de it nl pt th zh-Hans zh-Hant`);
+  first-launch default is the best match of `Locale.preferredLanguages` against
+  those codes, else English, but the user's explicit choice always wins
+  thereafter. Translations beyond English/French are AI-generated and flagged
+  as needing native-speaker review — don't treat them as authoritative copy.
+- **Language is a local app-UI preference, never a server write.** Picking a
+  language does not `PATCH` the server user's `language` field (that governs
+  server emails / rendered content and would be a surprising side effect) —
+  it only sets `LocalizationStore.language` (persisted `schrift.language`).
+  **Document content is never translated** — server-authored titles/body render
+  exactly as authored; localization covers app chrome only.
+- `AppAppearance` (`system`/`light`/`dark`) persists as `schrift.appearance`;
+  `.preferredColorScheme(nil)` for `.system` lets the OS decide. Both stores
+  follow the `schrift.` `@AppStorage`-prefix convention from
+  [Persistence](#persistence-store-types) even though they're hand-rolled
+  `UserDefaults` stores, not `@AppStorage`, because they need `@Observable` +
+  injectability.
 
 ### Dependency injection & testability
 
@@ -362,6 +442,21 @@ new code reads like the surrounding code.
   it. The uploaded bytes must be a real JPEG named `photo.jpg`: the backend
   magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
   never renders inline.
+- **Version history is read-only; in-app restore is deferred.**
+  `VersionEndpoints.swift`'s `documentVersions(documentID:)` is
+  `GET documents/{id}/versions/`, decoding the backend's `{versions: [...]}`
+  wrapper into `[DocumentVersion]` (`isCurrent` via `decodeIfPresent ?? false`).
+  `VersionHistoryViewModel` loads it best-effort into the read-only
+  `VersionHistorySheetView` (Options sheet → "Version history"): newest first,
+  the current version labeled, and a **"Restore on the web"** row that hands
+  off to `documentShareURL` instead of restoring in-app. Restoring would mean
+  re-PATCHing a version's own stored Yjs bytes back as the content — feasible
+  without a Yjs *decoder* since the app never has to interpret them — but it
+  touches the safety-critical full-overwrite save path (see
+  [Editor & the on-device save](#editor--the-on-device-save-coreyjs)) and the
+  exact `versions/{id}/` response shape couldn't be verified end-to-end in this
+  headless environment. Don't wire up a "Restore" button without that
+  on-device verification first.
 - One error type `DocsAPIError`; status is translated centrally by
   `DocsAPIErrorMapper` (401→`sessionExpired`, 403→`forbidden`, 404→`notFound` **or
   `routeNotFound`**, 429→`rateLimited(retryAfter:)`, else `server`). Wrap
@@ -478,12 +573,23 @@ new code reads like the surrounding code.
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.tracking(size * DocsTracking.tight)`),
   `DocsSpacing`, `DocsRadius`). Adding a color means adding it to
-  `DocsColorHex` (raw `UInt32`); add a matching `DocsColor` entry only when
-  views use it directly as a SwiftUI `Color` — hues consumed only by style
-  resolvers (the accent palette, the `-650` feedback foregrounds, parts of the
-  gray ramp) stay hex-only. Add a value assertion in `DocsColorHexTests`
-  (tokens added after the original spec currently lack assertions — extend the
-  tests when you touch them).
+  `DocsColorHex` (raw `UInt32`) **and** its dark counterpart in
+  `DocsColorHexDark` (same name, one entry per light token — see the adaptive-
+  color bullet below); add a matching `DocsColor` entry only when views use it
+  directly as a SwiftUI `Color` — hues consumed only by style resolvers (the
+  accent palette, the `-650` feedback foregrounds, parts of the gray ramp) stay
+  hex-only. Add a value assertion in `DocsColorHexTests` (tokens added after
+  the original spec currently lack assertions — extend the tests when you
+  touch them).
+- **Every color is adaptive — there is no light-only token.** `DocsColor.*`
+  pairs each `DocsColorHex.<name>` with its `DocsColorHexDark.<name>` via
+  `Color(lightHex:darkHex:)` (`HexColor.swift`), backed by
+  `UIColor(dynamicProvider:)` reading `traitCollection.userInterfaceStyle` —
+  the pure `resolvedHex(lightHex:darkHex:isDark:)` selector is the tested
+  primitive underneath it. Because nearly the whole app consumes `DocsColor.*`
+  directly, this is dark-mode support with **zero call-site changes** at most
+  screens. Appearance itself is applied once at the app root — see
+  [Localization & appearance](#localization--appearance).
 - Views **never** use raw color/hex/font literals — always tokens. (One-off
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
@@ -492,12 +598,23 @@ new code reads like the surrounding code.
   the axes → an `Equatable` `XStyleHex` struct of **raw** values → a caseless
   `enum XStyleResolver { static func style(...) -> XStyleHex }`. The view converts
   hex→`Color` only at render time. Never return `Color`/`Font` from a resolver —
-  keep results `Equatable` and testable.
+  keep results `Equatable` and testable. **A resolver's `XStyleHex` carries
+  both a light and a dark raw field per color** (`backgroundLightHex` /
+  `backgroundDarkHex`, …) — never a single hex, because the same light hex can
+  map to *different* darks depending on what it means in context (`#FFFFFF` is
+  `surfacePage` **and** `surfaceRaised` **and** `textOnBrand`, which need
+  different darks — a global hex→hex table can't express that). The resolver
+  fills both halves (light from `DocsColorHex`, dark from `DocsColorHexDark`);
+  the view renders via `Color(lightHex:darkHex:)`. `Badge`, `Button`,
+  `IconButton`, `TextField`, `LinkReachPill` follow this; their resolver tests
+  assert both fields.
 - Every component file ends with a `#Preview` **catalog** of all meaningful
-  variants/states. Icon-only and composite controls must set
-  `.accessibilityLabel` / appropriate traits (produced by the component's pure
-  helper function); purely decorative components whose meaning is carried by
-  adjacent text (Avatar, DocIcon) are instead marked `.accessibilityHidden(true)`.
+  variants/states, checked in **both light and dark** (`.preferredColorScheme`)
+  since adding a token doesn't guarantee its dark half looks right. Icon-only
+  and composite controls must set `.accessibilityLabel` / appropriate traits
+  (produced by the component's pure helper function); purely decorative
+  components whose meaning is carried by adjacent text (Avatar, DocIcon) are
+  instead marked `.accessibilityHidden(true)`.
 - A component view that would shadow a SwiftUI type takes a `Docs` prefix
   (`DocsButton`, `DocsTextField`); everything else keeps the bare name.
 - **A hard minimum size does not compress, and inside a `safeAreaInset` it is not
@@ -513,6 +630,28 @@ new code reads like the surrounding code.
   it is offered on the narrowest supported devices, so a tenth button fails a
   test rather than a screen. Measure a row of fixed-minimum controls against the
   narrowest device before adding to it.
+- **`NavBar`'s large-title top row collapses when there's nothing to put in
+  it.** The pure helper `navBarShowsTopRow(largeTitle:hasBack:hasLeading:)`
+  returns `false` (no 44pt row at all) exactly when `largeTitle && !hasBack &&
+  !hasLeading` — the four tab roots (Home/Search/Shared/Profile). Trailing
+  actions (Home's "+") render **inline with the large title itself** in that
+  case, not in the row above it. A screen with a back button or a leading view
+  keeps the standard 44pt row unchanged. Get this wrong and either dead space
+  reappears above the title, or a back-button screen loses its bar.
+- **`ListSection` rows on the four tab screens are dividerless** (`divided:
+  false`) — Shared's document list and Profile's Preferences/Server sections
+  render flat, matching the handoff; only single-row sections and the Options/
+  Share "Add people" menus keep `ProfileRowDivider()`. Don't reintroduce
+  inter-row hairlines on a tab screen without checking the handoff first — it's
+  a deliberate, reversible (one `divided:` flag) design match, not an oversight.
+- **Sheets use `.presentationDetents` + `.presentationDragIndicator(.visible)`**
+  (Share, Options, Version history, the Appearance/Language pickers) instead of
+  an un-detented full-height `.sheet`, so a long scrollable list can't push a
+  primary action below the fold. Where a sheet has both a pinned action and a
+  potentially-long list (Share's invite field + member list), bound the list's
+  own height instead of letting it grow the sheet — `ShareSheetLayout
+  .membersMaxHeight` (208pt) is that pattern; copy it rather than wrapping the
+  whole sheet body in one unbounded `ScrollView`.
 
 ### Editor & the on-device save (`Core/Yjs`)
 
