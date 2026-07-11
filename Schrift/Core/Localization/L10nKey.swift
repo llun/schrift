@@ -7,6 +7,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     // Common
     case common_done = "common.done"
     case common_cancel = "common.cancel"
+    case common_close = "common.close"  // "Close" — sheet close-button accessibility label
     case common_retry = "common.retry"
     case common_untitled = "common.untitled_document"
     case common_profile = "common.profile"  // "Profile"
@@ -116,14 +117,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case options_pinned = "options.pinned"  // "Pinned"
     case options_copy_link = "options.copy_link"  // "Copy link"
     case options_share = "options.share"  // "Share"
-    case options_copy_markdown = "options.copy_markdown"  // "Copy as Markdown"
-    case options_duplicate = "options.duplicate"  // "Duplicate"
     case options_delete_document = "options.delete_document"  // "Delete document"
     case options_delete_confirm_title = "options.delete_confirm_title"  // "Delete this document?"
     case options_delete = "options.delete"  // "Delete"
     case options_error_toggle_favorite = "options.error.toggle_favorite"
     // "Couldn't update favorite. Please try again."
-    case options_error_duplicate = "options.error.duplicate"  // "Couldn't duplicate document. Please try again."
     case options_error_delete = "options.error.delete"  // "Couldn't delete document. Please try again."
 
     // Share sheet

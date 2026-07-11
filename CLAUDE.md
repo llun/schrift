@@ -663,8 +663,9 @@ new code reads like the surrounding code.
   rectangle inset 52pt past the leading icon). The four tab screens'
   multi-row sections (Shared's document list, Profile's Preferences/Server
   sections) simply **omit** those calls and render flat, matching the handoff;
-  only the Options and Share/Version sheets still interleave them where grouped
-  separators read well. Don't add `ProfileRowDivider()` calls back onto a tab
+  only the Share and Version-history sheets still interleave them where grouped
+  separators read well (the **Options** sheet is a flat, boxless menu — see the
+  next bullet). Don't add `ProfileRowDivider()` calls back onto a tab
   screen without checking the handoff first — the flatness is deliberate, and
   reverting it is just re-adding the calls, not flipping a flag.
 - **Sheets use `.presentationDetents` + `.presentationDragIndicator(.visible)`**
@@ -675,6 +676,19 @@ new code reads like the surrounding code.
   own height instead of letting it grow the sheet — `ShareSheetLayout
   .membersMaxHeight` (208pt) is that pattern; copy it rather than wrapping the
   whole sheet body in one unbounded `ScrollView`.
+- **A menu/options sheet is a flat, boxless list under a `SheetHeader`, not a
+  grouped card.** The document Options sheet (`OptionsSheetView`) matches the
+  handoff `OptionsSheet`: a pinned **`SheetHeader`** (an inline `DocsFont.title2`
+  title + a 30pt **circular close button** — `surfaceMuted` disc,
+  `MaterialIcon.close` glyph 20pt in `textSecondary`, floated to a 44pt tap
+  target) over `ListRow`s rendered **directly on `DocsColor.surfacePage`** — no
+  `ListSection` card, no `ProfileRowDivider`, and **no `NavigationStack`/"Done"
+  toolbar**. Reuse `SheetHeader` for new sheet chrome rather than re-adding a nav
+  bar; the grabber is `.presentationDragIndicator(.visible)` and the close button
+  is wired to `@Environment(\.dismiss)`. The header pads `4 / 16 / 10` (the
+  app's 16pt sheet gutter, not the prototype's 18); rows keep `ListRow`'s own
+  16pt so the title and the row icons align. This is the pattern for future
+  action/menu sheets.
 
 ### Editor & the on-device save (`Core/Yjs`)
 

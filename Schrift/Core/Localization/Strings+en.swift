@@ -6,6 +6,7 @@ enum Strings_en {
     static let table: [L10nKey: String] = [
         .common_done: "Done",
         .common_cancel: "Cancel",
+        .common_close: "Close",
         .common_retry: "Try again",
         .common_untitled: "Untitled document",
         .common_profile: "Profile",
@@ -109,13 +110,10 @@ enum Strings_en {
         .options_pinned: "Pinned",
         .options_copy_link: "Copy link",
         .options_share: "Share",
-        .options_copy_markdown: "Copy as Markdown",
-        .options_duplicate: "Duplicate",
         .options_delete_document: "Delete document",
         .options_delete_confirm_title: "Delete this document?",
         .options_delete: "Delete",
         .options_error_toggle_favorite: "Couldn't update favorite. Please try again.",
-        .options_error_duplicate: "Couldn't duplicate document. Please try again.",
         .options_error_delete: "Couldn't delete document. Please try again.",
 
         // Share sheet

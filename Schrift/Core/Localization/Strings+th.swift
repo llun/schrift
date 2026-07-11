@@ -5,6 +5,7 @@ enum Strings_th {
     static let table: [L10nKey: String] = [
         .common_done: "เสร็จ",
         .common_cancel: "ยกเลิก",
+        .common_close: "ปิด",
         .common_retry: "ลองอีกครั้ง",
         .common_untitled: "เอกสารไม่มีชื่อ",
         .common_profile: "โปรไฟล์",
@@ -108,13 +109,10 @@ enum Strings_th {
         .options_pinned: "ปักหมุดแล้ว",
         .options_copy_link: "คัดลอกลิงก์",
         .options_share: "แชร์",
-        .options_copy_markdown: "คัดลอกเป็น Markdown",
-        .options_duplicate: "ทำสำเนา",
         .options_delete_document: "ลบเอกสาร",
         .options_delete_confirm_title: "ลบเอกสารนี้ใช่หรือไม่",
         .options_delete: "ลบ",
         .options_error_toggle_favorite: "อัปเดตรายการโปรดไม่ได้ โปรดลองอีกครั้ง",
-        .options_error_duplicate: "ทำสำเนาเอกสารไม่ได้ โปรดลองอีกครั้ง",
         .options_error_delete: "ลบเอกสารไม่ได้ โปรดลองอีกครั้ง",
 
         // Share sheet
