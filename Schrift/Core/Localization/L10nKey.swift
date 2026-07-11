@@ -31,5 +31,14 @@ enum L10nKey: String, CaseIterable, Sendable {
     case home_unpin = "home.unpin"  // "Unpin"
     case home_dismiss_error = "home.dismiss_error"  // "Dismiss error"
     case home_document_options = "home.document_options"  // "Document Options"
-    // (screen-specific keys are added by B6–B11, Phase C, Phase F)
+
+    // Search
+    case search_title = "search.title"  // "Search"
+    case search_placeholder = "search.placeholder"  // "Search all documents"
+    case search_recent = "search.recent"  // "Recent searches"
+    case search_quick = "search.quick"  // "Quick access"
+    case search_quick_empty = "search.quick_empty"  // "Pinned documents will appear here."
+    case search_empty_title = "search.empty.title"  // "No documents found"
+    case search_empty_body = "search.empty.body"  // "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword."
+    // (screen-specific keys are added by B7–B11, Phase C, Phase F)
 }

@@ -29,5 +29,14 @@ enum Strings_en {
         .home_unpin: "Unpin",
         .home_dismiss_error: "Dismiss error",
         .home_document_options: "Document Options",
+
+        // Search
+        .search_title: "Search",
+        .search_placeholder: "Search all documents",
+        .search_recent: "Recent searches",
+        .search_quick: "Quick access",
+        .search_quick_empty: "Pinned documents will appear here.",
+        .search_empty_title: "No documents found",
+        .search_empty_body: "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword.",
     ]
 }
