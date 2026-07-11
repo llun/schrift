@@ -11,7 +11,9 @@ with a dated `Revised:` note.
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match
-   the handoff design and the four provided screenshots.
+   the handoff design and the four provided screenshots — including **layout
+   fidelity** (header/nav-bar spacing, section gaps, grouped-list dividers, sheet
+   scroll & detents), not just components and colors (see §8, Part 5).
 2. **Appearance control** — a functional Light / Dark / System toggle in Profile,
    backed by a **complete adaptive dark theme** for the whole app.
 3. **Language control** — a functional in-app language picker that **switches the
@@ -352,7 +354,117 @@ no split-view route cleanup is needed beyond the shared injection.
 
 ---
 
-## 8. Cross-cutting integration
+## 8. Part 5 — Layout & interaction fidelity
+
+Matching the handoff is as much about spacing, scroll behavior and list styling
+as it is about tokens. All numbers below are lifted from the handoff JSX (the
+authoritative source per the bundle README) and the `tokens/spacing.css` /
+`radius.css` scales. The four inline screenshots are renders of this same JSX, so
+JSX and screenshots agree; where a value differs from the current app it is a
+fix.
+
+### 8.1 Header / nav-bar spacing (all four tabs)
+
+The current `NavBar` always renders a fixed **44pt top row**, even in large-title
+mode with no back button and no leading view. Result: Search/Shared/Profile carry
+~44pt of dead space above the large title, and Home's "+" sits in that empty bar
+instead of beside the title. The handoff collapses that row and lays the large
+title out compactly. Target (from `NavBar.jsx`):
+
+- **Collapse the top row** when `largeTitle && back == nil && leading == nil`
+  (all four tabs): it contributes **0** height. Keep the 44pt row only when a
+  back button or leading view exists (standard mode is unchanged).
+- **Trailing actions render inline with the large title**, right-aligned, in the
+  same row — not in a bar above it. Gap **12pt** between the title and the
+  trailing group; **2pt** within the group. (Home's "+" `IconButton`; the other
+  three tabs have none.)
+- Large-title block padding **`10 / 16 / 10`** (top / sides / bottom) when there
+  is no back/leading; **`2 / 16 / 10`** when there is. Title
+  `DocsFont.largeTitle` (34pt) with `DocsTracking.tight`. Subtitle
+  `DocsFont.subhead`, `textTertiary`, **2pt** above it.
+- **No bottom border** on the tab nav bars: all four screens pass `border={false}`
+  in the handoff, so `showsBorder: false`. (The app's **solid-white** bar fill is
+  a deliberate, documented anti-seam choice and is *kept* — we do **not**
+  reintroduce the frosted-glass translucency.)
+- `NavBar` gains a pure helper `navBarShowsTopRow(largeTitle:hasBack:hasLeading:)`
+  so the collapse rule is unit-testable, and a `largeTitleTrailingActions` path
+  so trailing actions move into the title row in large-title mode.
+
+The two large-title-with-back users (`AccountScreen`) are being removed (§6), so
+the only large-title screens after this change are the four tabs — all
+back-less — and they all get the compact header.
+
+### 8.2 Screen content spacing
+
+Already matches the handoff and is preserved: scroll-content inset **`4 / 16 /
+16`**; **12pt** below the search field; **18pt** below the segmented control;
+section header padding **`0 / 8 / 4`**; grouped-list side gutter **20pt**
+(`gutterGrouped`). Any ≤2pt drift found while implementing is aligned to these
+values; no structural change.
+
+### 8.3 Grouped lists & dividers (the "no divider between items" fix)
+
+The handoff `ListSection` defaults to `divided={true}` (a 1pt `border-default`
+hairline between rows, inset **52pt** when the row has a leading icon, else
+**16pt**), but **every multi-row section on the tab screens turns it off**:
+
+- **Shared** documents list — `divided={false}`. The current app inserts a
+  `ProfileRowDivider()` between every shared row → **remove them** (flat rows).
+- **Profile** — Preferences and Server sections are `divided={false}` in the
+  handoff → **remove** their inter-row `ProfileRowDivider()`s. (Single-row
+  sections — User, About, Sign out — have no dividers regardless.)
+- **Home** document sections are already flat (correct — keep).
+
+So after this change no tab screen draws inter-row hairlines. This is a
+deliberate match to the design system and the screenshots; it is reversible by a
+single `divided:` flag if a later review prefers iOS-style separators.
+`ListSection` card styling (surface-raised, 1pt border, `radius-lg`, header
+padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved. The
+`ProfileRowDivider` component stays for the Options / Share "Add people" menus,
+where grouped separators are appropriate (and unchanged by this work).
+
+### 8.4 Sheets & scrolling (the "share dialog scroll" fix)
+
+Handoff sheets (`chrome.jsx` `Sheet`) are **bottom sheets** with a grabber, an
+inline title, a scrollable body bounded by a **detent**, and bottom padding for
+the home indicator. The current Share / Options / Version sheets present as
+full-height `.sheet`s (no detent, no drag indicator) wrapping a `NavigationStack`
++ "Done", with all content in one scroll view — so a long member list pushes the
+primary **Copy link** action below the fold.
+
+Target:
+
+- Present Share, Options, and Version-history sheets with **`.presentationDetents`**
+  + **`.presentationDragIndicator(.visible)`** (the grabber). Detents mirror the
+  handoff: Share ≈ `.large`, Options ≈ `.medium`, Versions ≈ `.medium`
+  (`.fraction` used where a closer match is wanted). This is SwiftUI-native — no
+  hand-built grabber/close chrome — matching the handoff's *behavior* while
+  staying on-platform.
+- **Share sheet keeps its primary action reachable.** The invite field stays
+  pinned at the top; the **members list scrolls in a bounded region**
+  (`maxHeight` ≈ 208pt like the handoff, via an inner scroll / `.frame(maxHeight:)`),
+  so "Link parameters" and the **Copy link** pill remain visible without
+  scrolling the whole sheet. This is the concrete scroll fix.
+- Sheet bodies respect the **bottom safe area** (home indicator) so no control
+  sits under the indicator.
+- The new **Appearance** and **Language** picker sheets follow the same pattern:
+  drag indicator + inline title + scrollable option list, with a **fitted**
+  detent for Appearance (3 rows) and `.medium` for Language (10 rows, scrolls).
+
+### 8.5 Tab bar
+
+`TabBar` height 49pt + home-indicator safe area already matches the handoff and is
+unchanged; it inherits the adaptive dark tokens automatically.
+
+### 8.6 Layout tests
+
+Layout is verified primarily via the component `#Preview` catalogs (light **and**
+dark) and a manual run. Pure helpers are unit-tested where they exist:
+`navBarShowsTopRow(largeTitle:hasBack:hasLeading:)`, the divider leading-inset
+rule (`52` with a leading icon, else `16`), and the sheet detent/`maxHeight`
+constants.
+
+## 9. Cross-cutting integration
 
 - **Injection point:** `SchriftApp`/`RootView` own `AppearanceStore` +
   `LocalizationStore` (as `@State`), inject both via `.environment`, apply
@@ -366,19 +478,21 @@ no split-view route cleanup is needed beyond the shared injection.
 - **Formatting/CI:** `swift format --recursive --in-place Schrift SchriftTests`;
   full suite green on iPhone simulator; docs updated in the same change.
 
-## 9. Docs to update in this change
+## 10. Docs to update in this change
 
 - **`CLAUDE.md`** — new conventions: adaptive color tokens
   (`DocsColorHexDark` + `Color(lightHex:darkHex:)`), the resolver light+dark
   contract, the `AppearanceStore`/`LocalizationStore` injection rule, the in-code
-  localization catalog + completeness test, and the "language is a local app
-  preference, content is never translated" rule.
+  localization catalog + completeness test, the "language is a local app
+  preference, content is never translated" rule, and the layout rules from §8
+  (large-title header collapses its top row and inlines trailing actions;
+  tab sections are dividerless; sheets use detents + a bounded member list).
 - **`README.md`** — mention dark mode + language support.
 - **Living spec** `docs/superpowers/specs/2026-06-30-docs-ios-design.md` — dated
   `Revised:` note pointing at dark mode + localization.
 - A dated implementation plan under `docs/superpowers/plans/` (from writing-plans).
 
-## 10. Risks & mitigations
+## 11. Risks & mitigations
 
 - **Translation quality** (Thai/Chinese/etc. are AI-generated) → flagged for
   native review; completeness + placeholder-parity tests prevent structural
@@ -390,8 +504,15 @@ no split-view route cleanup is needed beyond the shared injection.
   re-evaluation; covered by manual verification and store tests.
 - **Big diff** (every string touched) → landed test-first, screen by screen; the
   translation fan-out is mechanical over a frozen English key set.
+- **Shared `NavBar` change** touches every large-title screen → after §6 only the
+  four back-less tabs remain large-title, so the collapse rule applies uniformly;
+  the standard (non-large, with-back) path is left untouched and its `#Preview`
+  guards it.
+- **Dividerless tab sections may read as under-separated** to some eyes → it is a
+  faithful match to the handoff and reversible via one `divided:` flag; validated
+  against the screenshots in both color schemes.
 
-## 11. Definition of done
+## 12. Definition of done
 
 Per `CLAUDE.md`: swift-format run; full suite green locally and on CI
 (`Build & Test`); new behavior test-covered; docs updated in the same change; PR
