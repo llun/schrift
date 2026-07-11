@@ -27,7 +27,7 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   pipeline, and photos can be inserted from the library (uploaded, then embedded
   on success).
 - **Design-system refresh.** A complete adaptive dark theme, in-app localization
-  across 10 languages with live switching, a restructured Profile, layout-fidelity
+  across 11 languages with live switching, a restructured Profile, layout-fidelity
   work, and read-only version history browsing. In-app version *restore* and
   document-content translation remain out of scope (restore is a "Restore on the
   web" link). See [`design-system.md`](design-system.md).

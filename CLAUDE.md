@@ -198,7 +198,7 @@ Schrift/
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
-│   ├── Localization/    in-code catalog: AppLanguage (10 langs), L10nKey,
+│   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
 │   │                    (incl. AttachmentEndpoints: multipart upload + media-check;
@@ -360,15 +360,17 @@ new code reads like the surrounding code.
   `Core/Localization/`, dispatched by `Strings.table(for:)`.
   `LocalizationStore.subscript(_:)` resolves `table[key] ?? Strings_en.table[key]
   ?? key.rawValue` (English is the guaranteed fallback) — `format(_:_:)` for
-  `String(format:)` args, `plural(_:one:other:)` for count-driven strings
-  (`PluralRule` picks the language's plural category; `zh-Hans`/`zh-Hant`/`th`
-  are other-only). `StringsCompletenessTests` gates **every** `L10nKey` present
+  `String(format:)` args, `plural(_:one:other:two:few:)` for count-driven
+  strings (`PluralRule` picks the language's plural category; `zh-Hans`/`zh-Hant`/`th`
+  are other-only, Slovene uses the full CLDR `one`/`two`/`few`/`other` set
+  including the dual, the rest are one/other — `two`/`few` are optional keys
+  only Slovene resolves and otherwise fall back to `other`). `StringsCompletenessTests` gates **every** `L10nKey` present
   in **every** language table (non-empty) and **placeholder/format-specifier
   parity** with English (same `%@`/`%d` count per key) — add a key to
   `L10nKey.swift` + `Strings+en.swift` first (English-only is fine to land;
   other languages are filled in by a translation pass), then that test tells
   you if a table is left stale.
-  `AppLanguage` covers 10 languages (`en fr es de it nl pt th zh-Hans zh-Hant`);
+  `AppLanguage` covers 11 languages (`en fr es de it nl pt sl th zh-Hans zh-Hant`);
   first-launch default is the best match of `Locale.preferredLanguages` against
   those codes, else English, but the user's explicit choice always wins
   thereafter. **English is the one reviewed source**; every other table —
