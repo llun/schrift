@@ -24,11 +24,12 @@ supports the FILL axis for active/selected states.
   uses and instanced (`fontTools.varLib.instancer`) to pin `wght=400 GRAD=0 opsz=24`,
   keeping only the **FILL** axis (0 outlined / 1 filled). ~18KB. License text bundled
   alongside (`MaterialSymbols-LICENSE.txt`).
-- **Glyph set:** the handoff's 69 + 6 further Material Symbols the iOS app needs that
+- **Glyph set:** the handoff's 69 + 8 further Material Symbols the iOS app needs that
   the mockups didn't surface (`horizontal_rule` divider, `link_off` remove-link,
   `format_h3`, `subject` for the "Text" block, `sync` for the update banner,
-  `schedule` for version timestamps) = **75 glyphs**. To add another glyph you must
-  re-subset the font (the codepoint must be in the `.ttf`), not just name it.
+  `schedule` for version timestamps, and `check_box` / `check_box_outline_blank` for
+  checklist items) = **77 glyphs**. To add another glyph you must re-subset the font
+  (the codepoint must be in the `.ttf`), not just name it.
 - **Registration:** `UIAppFonts` in `project.yml`'s `info.properties` (the
   `Generated/Info.plist` template) — arrays can't go through `INFOPLIST_KEY_*`, same
   constraint as `CFBundleLocalizations`.
@@ -50,9 +51,9 @@ supports the FILL axis for active/selected states.
 
 ## Tests / verification
 
-- `MaterialIconTests` — 75 cases, known codepoints, every glyph has a valid scalar,
+- `MaterialIconTests` — 77 cases, known codepoints, every glyph has a valid scalar,
   and the bundled font is registered (`UIFont(name:)` non-nil).
-- A temporary snapshot probe rendered all 75 glyphs (outline + a few FILL=1) to confirm
+- A temporary snapshot probe rendered all 77 glyphs (outline + a few FILL=1) to confirm
   the font loads and the glyphs are correct, then the migrated screens light + dark.
 - Full suite green; PR review loop; CI `Build & Test` green.
 
