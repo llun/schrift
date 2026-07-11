@@ -423,7 +423,7 @@ struct EditorView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space2xs) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                    Image(systemName: "arrow.triangle.branch")
                         .font(.system(size: 16))
                         .accessibilityHidden(true)
                     Text(
@@ -518,7 +518,7 @@ struct EditorView: View {
                 systemImage: "square.and.pencil", label: loc[.editor_action_edit],
                 action: { viewModel.startEditing() }),
             NavBarAction(
-                systemImage: "square.and.arrow.up", label: loc[.editor_action_share],
+                systemImage: "point.3.connected.trianglepath.dotted", label: loc[.editor_action_share],
                 action: { isPresentingShareSheet = true }),
             NavBarAction(
                 systemImage: "ellipsis", label: loc[.editor_action_options],

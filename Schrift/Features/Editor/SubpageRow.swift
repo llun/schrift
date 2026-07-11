@@ -27,7 +27,7 @@ struct SubpageRow: View {
 
                 if document.numchild > 0 {
                     HStack(spacing: DocsSpacing.space4xs) {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                        Image(systemName: "arrow.triangle.branch")
                         Text("\(document.numchild)")
                     }
                     .font(DocsFont.caption)
