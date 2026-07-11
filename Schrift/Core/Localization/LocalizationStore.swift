@@ -11,6 +11,7 @@ enum Strings {
         case .italian: Strings_it.table
         case .dutch: Strings_nl.table
         case .portuguese: Strings_pt.table
+        case .slovene: Strings_sl.table
         case .thai: Strings_th.table
         case .chineseSimplified: Strings_zhHans.table
         case .chineseTraditional: Strings_zhHant.table
@@ -50,8 +51,21 @@ final class LocalizationStore {
     /// Resolves the correct plural form for `count` in the current language
     /// (see `pluralCategory(_:language:)`) and substitutes it into the
     /// matching key's format string.
-    func plural(_ count: Int, one: L10nKey, other: L10nKey) -> String {
-        let key = pluralCategory(count, language: language) == .one ? one : other
+    ///
+    /// `two` and `few` are the dual/few forms that only Slovene resolves; they
+    /// are optional and fall back to `other`, so callers whose phrase has no
+    /// distinct dual/few form — and every non-Slovene language — need only
+    /// pass `one`/`other`.
+    func plural(_ count: Int, one: L10nKey, other: L10nKey, two: L10nKey? = nil, few: L10nKey? = nil)
+        -> String
+    {
+        let key: L10nKey
+        switch pluralCategory(count, language: language) {
+        case .one: key = one
+        case .two: key = two ?? other
+        case .few: key = few ?? other
+        case .other: key = other
+        }
         return String(format: self[key], locale: locale, arguments: [count])
     }
 
