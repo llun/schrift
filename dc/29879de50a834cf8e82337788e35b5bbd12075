@@ -1,0 +1,21 @@
+project.yml
+  s_dd62fdd4f50c18::t_501d2266bda4a1 24-51
+.gitignore
+  s_dd62fdd4f50c18::t_0852af068c0b56 15-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "dc29879de50a834cf8e82337788e35b5bbd12075",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
