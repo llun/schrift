@@ -1,12 +1,11 @@
 # iOS design update — tab pages, dark mode, localization
 
-**Date:** 2026-07-11
-**Status:** Design (awaiting sign-off)
-
-This spec covers a design-system refresh handed off from Claude Design
-(`schrift-ios-design-system.zip`) plus two new user-facing features. It is a
-*living* design spec: when the behavior it describes changes, update it in place
-with a dated `Revised:` note.
+> **Living design document.** This covers a design-system refresh handed off from
+> Claude Design (`schrift-ios-design-system.zip`) — the adaptive dark theme,
+> in-app localization, layout-fidelity work, and read-only version history — plus
+> two new user-facing features, all of which shipped. Kept current with the app;
+> update it in place when behavior changes. See also
+> [`architecture.md`](architecture.md) and [`CLAUDE.md`](../CLAUDE.md).
 
 > **Revised: 2026-07-11 (post-implementation).** §3 and §5.7 below plan for
 > **English and French** as primary/reviewed translations. As shipped, only
@@ -574,9 +573,8 @@ uncertain piece.
   (large-title header collapses its top row and inlines trailing actions;
   tab sections are dividerless; sheets use detents + a bounded member list).
 - **`README.md`** — mention dark mode + language support.
-- **Living spec** `docs/superpowers/specs/2026-06-30-docs-ios-design.md` — dated
-  `Revised:` note pointing at dark mode + localization.
-- A dated implementation plan under `docs/superpowers/plans/` (from writing-plans).
+- **Living doc** [`architecture.md`](architecture.md) — note dark mode +
+  localization in the design summary.
 
 ## 12. Risks & mitigations
 

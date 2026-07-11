@@ -41,3 +41,8 @@ Local.xcconfig
 # Session-local scratch written by the superpowers agent workflow (task
 # briefs/reports, progress notes) — never current state, never committed.
 .superpowers/
+
+# Plans and "superpowers" workflow documents must never be committed — design
+# knowledge lives in the living docs under docs/ instead. See the "Docs
+# convention" in CLAUDE.md.
+docs/superpowers/

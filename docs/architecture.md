@@ -1,68 +1,38 @@
-# Docs iOS — Design Spec
+# Schrift — Architecture & Design
 
-Date: 2026-06-30
-Status: Approved (v1 scope)
-Revised: 2026-07-02 — the save mechanism section was updated to match the shipped
-implementation. The original design created a temporary document to reuse the
-backend's file→Yjs conversion; the app now builds the Yjs update **on-device**
-(a hand-written encoder in `Core/Yjs`) and PATCHes it directly. Everything else is
-as originally approved.
-Revised: 2026-07-03 — offline **reading** was added: previously-opened
-documents are cached on-device and render instantly with background
-revalidation (see
-`docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`).
-Offline *editing* remains out of scope.
-Revised: 2026-07-03 (later the same day) — document **lists** (Home
-pinned/recent per-filter, the Shared tab, and editor sub-page lists) are also
-cached on-device and readable offline with silent background revalidation (see
-`docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`). A user-facing
-**Work Offline** toggle (`schrift.workOffline`, Profile screen) forces
-read-only offline mode.
-Revised: 2026-07-04 — session cookies now persist in the Keychain across app
-kills, and a real 401 presents an in-place re-login sheet instead of returning
-to the Connect screen (see
-`docs/superpowers/plans/2026-07-04-persist-session-cookies-and-reauth.md`).
-Revised: 2026-07-07 — realigned with the shipped implementation: directory
-tree, Screens section (all four tabs are real features; the shipped Editor
-header), and the endpoint table (`GET /config/` was never implemented).
-Revised: 2026-07-07 (later) — a standalone `![alt](url)` line with an absolute
-http(s) URL is now a first-class `.image` block through the whole editor/save
-pipeline (parse → serialize → Yjs encode → render), so a web-authored image
-survives an in-app edit-and-save instead of being flattened to literal text.
-The Yjs encoder now supports leaf blocks that still carry props; the image byte
-layout is locked by a golden fixture captured from `@blocknote/core@0.51.4`. See
-`docs/superpowers/plans/2026-07-07-image-block-round-trip.md`.
-Revised: 2026-07-08 — users can **insert photos** from their library. A new
-multipart `attachment-upload` endpoint plus a bounded media-check readiness poll
-yield the absolute `/media/{key}` URL the web client persists; the picked photo
-is downscaled and re-encoded to JPEG on device, and the `.image` block is
-inserted only on upload success. Entry points: the slash-menu "Photo" item and a
-formatting-bar button. See
-`docs/superpowers/plans/2026-07-07-photo-upload-insert.md`.
-Revised: 2026-07-11 — a design-system refresh shipped four features this spec
-predates: a **complete adaptive dark theme** (`DocsColorHexDark`, a Light/Dark/
-System picker in Profile); **in-app localization** covering 10 languages with
-live switching (an in-code catalog, not `.lproj` — see `CLAUDE.md`); a
-**Profile restructure** (the appearance/language pickers, the removal of
-`AccountScreen` in favor of a static email row, and a server-version row from
-`GET /config/`); layout fidelity work (nav-bar large-title collapse,
-dividerless tab-screen list sections, sheet detents); and **read-only version
-history browsing** (a "Version history" row in the Options sheet, `GET
-documents/{id}/versions/`) — see the "Non-goals" and "Screens" reconciliation
-notes below and
-`docs/superpowers/specs/2026-07-11-ios-design-update-design.md` for the full
-design. Document content translation and in-app version **restore** remain
-out of scope (restore is a "Restore on the web" link instead — see §9.3 of
-that spec for why: the app has a Yjs encoder but no decoder, and the
-restore-response shape couldn't be verified end-to-end in a headless
-environment before this pass shipped).
-Revised: 2026-07-11 (later) — the **Material Symbols vs SF Symbols** decision
-below is now made: the app **bundles the exact Material Symbols font** (a ~18KB
-Apache-2.0 subset of the 77 glyphs used, FILL axis only), rendered via
-`MaterialIcon`/`MaterialSymbol`, so the iconography matches the handoff exactly.
-An earlier pass had approximated the glyphs with SF Symbols; that was a visible
-deviation and is gone. See
-`docs/superpowers/plans/2026-07-11-material-icons.md`.
+> **Living design document.** This is the full architecture and design rationale
+> behind Schrift, kept current with the shipped app — update it in place when
+> behavior changes. [`CLAUDE.md`](../CLAUDE.md) is the shorter operational
+> "how we write code here" companion. Two sibling docs go deep on areas this one
+> only summarizes: [`offline-and-sync.md`](offline-and-sync.md) (on-device
+> caching and background revalidation) and
+> [`design-system.md`](design-system.md) (the design-system refresh — adaptive
+> dark theme, in-app localization, and read-only version history).
+
+Notable behavior that post-dates the original v1 scope and is reflected below:
+
+- **Saving is fully on-device.** The app builds a byte-exact Yjs update with a
+  hand-written encoder in `Core/Yjs` and `PATCH`es it directly — no temporary
+  document is created.
+- **Offline reading and lists.** Previously-opened documents and every document
+  list are cached on-device and render instantly with silent background
+  revalidation; a **Work Offline** toggle (`schrift.workOffline`, Profile) forces
+  read-only offline mode. Offline *editing* is out of scope. See
+  [`offline-and-sync.md`](offline-and-sync.md).
+- **Persistent sessions.** Session cookies persist in the Keychain across app
+  kills, and a real 401 presents an in-place re-login sheet instead of dropping
+  back to the Connect screen.
+- **Rich editor content.** A standalone `![alt](url)` line with an absolute
+  http(s) URL is a first-class image block through the whole editor/save
+  pipeline, and photos can be inserted from the library (uploaded, then embedded
+  on success).
+- **Design-system refresh.** A complete adaptive dark theme, in-app localization
+  across 10 languages with live switching, a restructured Profile, layout-fidelity
+  work, and read-only version history browsing. In-app version *restore* and
+  document-content translation remain out of scope (restore is a "Restore on the
+  web" link). See [`design-system.md`](design-system.md).
+- **Iconography.** The app bundles the exact Material Symbols font (a ~18KB
+  Apache-2.0 subset, FILL axis only), rendered via `MaterialIcon`/`MaterialSymbol`.
 
 ## Summary
 
@@ -84,10 +54,10 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
 - AI features (proxy/transform/translate endpoints exist server-side but are out of scope).
-- ~~Document version history browsing/restore.~~ **Superseded 2026-07-11 for
-  browsing**: a read-only version-history list shipped (see the 2026-07-11
-  `Revised:` note above). **Restore** remains a non-goal — it hands off to the
-  web app instead.
+- ~~Document version history browsing/restore.~~ **Superseded for browsing**: a
+  read-only version-history list shipped (see the notes at the top of this
+  document). **Restore** remains a non-goal — it hands off to the web app
+  instead.
 - File download/export (PDF/Word/ODT).
 - Multiple simultaneous logged-in accounts/servers.
 
@@ -199,10 +169,10 @@ This is the part with no direct backend support, so it's called out explicitly:
 From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views using the DesignSystem components, not copied HTML/JS:
 
 - **Connect** — logo, "Welcome to Docs", server URL `TextField`, recent servers list, "Sign in to {host}" button → WebView login.
-- **Home** — `NavBar` (large title, subtitle = server host, new-doc action), `SearchField`, `SegmentedControl` (All/Shared/Pinned), Pinned + Recent sections of `DocRow`s, `TabBar` (Docs/Search/Shared/Profile — all four tabs are fully implemented: Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared with/by me with an offline metadata cache, Profile shows the current user via `GET /users/me/` as a static email row (the tappable Account screen was removed 2026-07-11 — see the `Revised:` note at the top), with the appearance/language pickers, server + server-version rows, sign-out, and the Work Offline toggle).
+- **Home** — `NavBar` (large title, subtitle = server host, new-doc action), `SearchField`, `SegmentedControl` (All/Shared/Pinned), Pinned + Recent sections of `DocRow`s, `TabBar` (Docs/Search/Shared/Profile — all four tabs are fully implemented: Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared with/by me with an offline metadata cache, Profile shows the current user via `GET /users/me/` as a static email row (the tappable Account screen was removed in the design-system refresh — see the notes at the top of this document), with the appearance/language pickers, server + server-version rows, sign-out, and the Work Offline toggle).
 - **Editor** — standard `NavBar` (back, no center title; trailing Edit/Share/Options in reading mode, a Done checkmark while editing). The document title is a large content header (`DocsFont.title1`) inside the reading canvas — separate from the bar, matching the handoff — with `LinkReachPill` + a live "Synced X ago" caption beneath it, above the rendered/editable blocks; a Subpages section (hierarchy-glyph eyebrow, title-only rows); floating formatting toolbar (add block/bold/italic/bulleted list/checklist/quote/code block). The earlier in-editor "Pages" document-tree panel (`DocTreePanel`) was removed — the handoff has no such surface; subpages are reached through the reading canvas's Subpages list. The mock's collaborator `AvatarGroup` and emoji were not implemented (the component exists in the DesignSystem but is unused by features).
 - **Share sheet** — invite by name/email (`GET /users/?q=`), member list (`ShareMemberRow` with role picker: Reader/Commenter/Editor/Administrator/Owner — Commenter included even though the mock only shows Admin/Editor/Reader, since it's a real backend role), link reach picker (Restricted/Authenticated/Public via `LinkReachPill`), Copy link.
-- **Options sheet** — Pin/Unpin, Copy link, Share, Copy as Markdown, Duplicate, Delete, ~~Version history~~ **Version history shipped 2026-07-11** (read-only list + "Restore on the web"; see the `Revised:` note above). *Still deferred to a later iteration*: Download (PDF/Word/ODT — no mobile-appropriate endpoint investigated yet), Present.
+- **Options sheet** — Pin/Unpin, Copy link, Share, Copy as Markdown, Duplicate, Delete, ~~Version history~~ **Version history shipped** (read-only list + "Restore on the web"; see [`design-system.md`](design-system.md)). *Still deferred to a later iteration*: Download (PDF/Word/ODT — no mobile-appropriate endpoint investigated yet), Present.
 
 **iPad**: `NavigationSplitView` (document list sidebar + detail/editor pane) instead of the iPhone single-column stack — extrapolated from the design's tokens/components since the handoff only mocked iPhone (390×844) layouts. iOS layout constants (status bar 54px, nav bar 44px, tab bar 49px, home indicator 34px, row min-height 44px, gutters 16/20px) are implemented as native safe-area-driven layout, not hardcoded pixel values, since real devices vary.
 
@@ -217,7 +187,7 @@ Ported from `tokens/*.css` in the handoff bundle into a `DesignSystem/Tokens` mo
 - Typography: Inter (system fallback), iOS HIG scale mapped ~1:1 to SwiftUI `.largeTitle/.title/.title2/.headline/.body/.callout/.subheadline/.footnote/.caption`
 - Spacing: 4px base unit scale (`2xs`…`5xl`)
 - Radius: 4px (controls) → 8px → 12px (badges/cards) → 16–24px (sheets/modals) → pill (avatars/segmented control)
-- Icons: Google Material Symbols Outlined — **shipped 2026-07-11 by bundling the variable font** (a ~18KB Apache-2.0 subset of the 77 glyphs used, FILL axis only), referenced by the typed `MaterialIcon` enum and rendered by `MaterialSymbol`. An earlier pass mapped each glyph to an approximate SF Symbol, but that was a visible deviation from the handoff, so the app now ships the exact Material glyphs. See `docs/superpowers/plans/2026-07-11-material-icons.md`.
+- Icons: Google Material Symbols Outlined — **shipped 2026-07-11 by bundling the variable font** (a ~18KB Apache-2.0 subset of the 77 glyphs used, FILL axis only), referenced by the typed `MaterialIcon` enum and rendered by `MaterialSymbol`. An earlier pass mapped each glyph to an approximate SF Symbol, but that was a visible deviation from the handoff, so the app now ships the exact Material glyphs. See [`design-system.md`](design-system.md).
 
 Static assets (logo, illustrations, doc-type icons) are copied from the handoff's `assets/` folder into the Xcode project's asset catalog during the scaffold PR.
 
@@ -261,8 +231,7 @@ High-level phases; the implementation plan will break each into small, separatel
 - Save is a full-content overwrite with no conflict detection — concurrent edits in the web app can be clobbered.
 - WebView-based login means periodic re-auth; no silent token refresh.
 - Save depends on the on-device Yjs encoder (`Core/Yjs`) producing bytes the backend's Yjs content-validator accepts and BlockNote can interpret. If the backend's Yjs/BlockNote schema changes, saves could break — worth verifying against the target server and surfacing a clear error if the server rejects the content. (Byte-exact golden tests against the real Yjs library guard the encoder itself.)
-- ~~Material Symbols vs SF Symbols decision deferred to implementation (visual fidelity vs native idiom trade-off).~~ **Resolved 2026-07-11** — the app bundles the exact Material Symbols font (see the `Revised:` note above and the Icons bullet); no longer open.
+- ~~Material Symbols vs SF Symbols decision deferred to implementation (visual fidelity vs native idiom trade-off).~~ **Resolved** — the app bundles the exact Material Symbols font (see the notes at the top of this document and the Icons bullet); no longer open.
 - Download/export remains explicitly deferred past v1. Version history
-  **browsing** shipped 2026-07-11 (read-only); **restoring** a version is still
-  deferred — see the `Revised:` note above and
-  `docs/superpowers/specs/2026-07-11-ios-design-update-design.md` §9.3.
+  **browsing** shipped (read-only); **restoring** a version is still
+  deferred — see [`design-system.md`](design-system.md) §9.3.

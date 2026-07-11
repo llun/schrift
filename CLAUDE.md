@@ -5,7 +5,7 @@ repository. Read this before making changes. It captures the conventions the
 existing code already follows and the safety rules that must never be broken.
 
 The full architecture/design rationale lives in
-[`docs/superpowers/specs/2026-06-30-docs-ios-design.md`](docs/superpowers/specs/2026-06-30-docs-ios-design.md).
+[`docs/architecture.md`](docs/architecture.md).
 This file is the shorter, operational "how we write code here" companion.
 
 ## What Schrift is
@@ -27,7 +27,7 @@ names the section with the details.
 
 1. **Orient.** Skim this file's headings, then read the sections your task
    touches in full. Architecture rationale lives in the design spec
-   ([`docs/superpowers/specs/2026-06-30-docs-ios-design.md`](docs/superpowers/specs/2026-06-30-docs-ios-design.md)).
+   ([`docs/architecture.md`](docs/architecture.md)).
 2. **Set up and baseline.** `brew install xcodegen`, `xcodegen generate`, then
    run the full test suite ([Build, run, test](#build-run-test)) so you start
    from a known-green state.
@@ -58,7 +58,7 @@ names the section with the details.
    - View models: poll with `waitUntil`; cover the error path (friendly
      `errorKey`) and the cached-data silence rules.
    - Build/CI/release: update the living docs in the same change
-     ([Docs & plans convention](#docs--plans-convention)).
+     ([Docs convention](#docs-convention)).
 6. **Definition of done** — a change is finished only when all of these hold
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
    - `swift format --recursive --in-place Schrift SchriftTests` has been run;
@@ -234,8 +234,8 @@ Schrift/
 │                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
-docs/                    living docs (ci.md, testflight-setup.md) + specs and dated
-                         plans under docs/superpowers/
+docs/                    living project docs — architecture.md, offline-and-sync.md,
+                         design-system.md, ci.md, testflight-setup.md (see docs/README.md)
 fastlane/ scripts/ .github/workflows/   CI: PR build/test checks + TestFlight release pipeline
 ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
@@ -608,7 +608,7 @@ new code reads like the surrounding code.
   `IconButton(icon:)` and `NavBarAction(icon:)` take a `MaterialIcon`; UIKit call
   sites (a `UIMenu` action) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
   the app doesn't yet bundle means re-subsetting the font (see
-  `docs/superpowers/plans/2026-07-11-material-icons.md`) — you can't just name any
+  [`docs/design-system.md`](docs/design-system.md)) — you can't just name any
   Material glyph. `MaterialSymbol` is `accessibilityHidden` (the glyph is a
   Private-Use-Area char with no spoken text), so every icon-only control must carry
   its own `.accessibilityLabel` and decorative icons rely on adjacent text.
@@ -764,7 +764,7 @@ markdown write endpoint**. Understand this before touching the save path:
   blocks) decides whether the fetched body counts as a change at all.
   The coordinator write-throughs the cache on save success; delete and 404/403
   revalidation purge the entry; sign-out clears the store. Offline is
-  read-only. See `docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md`.
+  read-only. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
 - **A clean copy always ends up showing the server's body.** `apply` takes no
   "user initiated" flag: passive `load()` and pull-to-refresh apply identical
   content rules, and `refresh()` differs only in surfacing failures (and in its
@@ -878,7 +878,7 @@ markdown write endpoint**. Understand this before touching the save path:
   settled — pinning it stranded the screen: every later revalidation **and**
   every pull-to-refresh no-oped in silence. Reclassify (a surviving draft ⇒
   `.draft`, otherwise `.clean`). See
-  `docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md`.
+  [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
 - **The block editor draws its markdown syntax at zero width — it never removes
   it.** `BlockTextView`'s buffer *is* `block.text`, the raw markdown the
   full-overwrite save re-parses, and it always will be. Inline marks render as
@@ -944,8 +944,7 @@ markdown write endpoint**. Understand this before touching the save path:
   Landing this **changed saved bytes** and required sign-off; before it, opening
   any web-authored italic document and letting it save destroyed the italic and
   wrote literal underscores into the server's text —
-  `parse("**_word_**")` returned bold(`_word_`). See
-  [`docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md`](docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md).
+  `parse("**_word_**")` returned bold(`_word_`).
 - **Code spans and links bind tighter than emphasis.**
   `matchUnderscoreEmphasis`'s closing search steps over them whole, or `` _`_` ``
   closes on the `_` *inside* the code span and destroys it, and `_[x](a_ b)_`
@@ -1059,7 +1058,7 @@ markdown write endpoint**. Understand this before touching the save path:
   the full bodies in `DocumentContentCacheStore` are. That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it
-  explicitly. See `docs/superpowers/plans/2026-07-03-instant-local-doc-lists.md`.
+  explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.
@@ -1143,7 +1142,7 @@ markdown write endpoint**. Understand this before touching the save path:
 - Fixtures are **inline** JSON string literals; use deterministic repeating-digit
   UUIDs. Test method names describe the behavior and its outcome.
 
-## Docs & plans convention
+## Docs convention
 
 - **Keep the docs in lockstep with the code — always, in the same change.** Any
   change that affects how the project is **built, tested, released, or run**
@@ -1151,40 +1150,45 @@ markdown write endpoint**. Understand this before touching the save path:
   lanes, `scripts/`, tooling/toolchain versions, the test command), **or any
   decision, constraint, or gotcha a future contributor would need to remember**,
   MUST update the docs alongside it: this `CLAUDE.md` (conventions / workflow /
-  safety) **and** the relevant project docs (`README.md`, the design spec,
-  `docs/testflight-setup.md`, and any affected plan/spec under `docs/`). Never
-  land a workflow change while the docs still describe the old behavior. If you
-  learned something worth keeping, write it down here — don't leave it only in a
-  commit message or your head.
+  safety) **and** the relevant project docs (`README.md`, the design docs under
+  `docs/`, `docs/testflight-setup.md`, and any other affected doc under `docs/`).
+  Never land a workflow change while the docs still describe the old behavior. If
+  you learned something worth keeping, write it down here — don't leave it only in
+  a commit message or your head.
 - **This `CLAUDE.md` is the single source of truth for agent/contributor
   guidance.** Put agent-facing conventions, workflow, and safety rules **here**,
   and here only. [`AGENTS.md`](AGENTS.md) is a deliberately thin pointer at the
   repo root that just sends other agents (Codex, Cursor, …) to this file — never
   copy rules into it, so the two can't drift. Any `AGENTS.override.md` layers on
   top of both.
-- Design and architecture decisions live under `docs/`. When you implement a
-  substantial feature, commit its plan under
-  `docs/superpowers/plans/YYYY-MM-DD-<name>.md` — these are **dated, point-in-time
-  records**.
-- **Don't rewrite a dated plan after the fact.** If later work supersedes it, add
-  a short dated amendment blockquote at the top and keep the original body as the
-  record. (Dated plans are the one exception to "keep docs current" — they are a
-  historical record, not living docs.)
-- Files under `docs/superpowers/specs/` are **living** design specs despite
-  their dated names: when behavior changes, update the spec in place and record
-  the change at the top with a dated `Revised:` line or a dated amendment
-  blockquote (the two existing specs demonstrate one form each). What makes
-  `docs/superpowers/plans/` different is that their **bodies are immutable**
-  dated records — a top amendment blockquote is the only allowed change.
-- `.superpowers/` at the repo root is session-local scratch produced by the
-  superpowers subagent-driven-development workflow (task briefs/reports,
-  progress notes), git-ignored via the repo `.gitignore`. Never commit it, and
-  don't treat its contents as current state — it is leftover history from past
-  sessions.
+- **Design and architecture decisions live in the living docs under `docs/`**
+  ([`docs/README.md`](docs/README.md) indexes them:
+  [`docs/architecture.md`](docs/architecture.md),
+  [`docs/offline-and-sync.md`](docs/offline-and-sync.md),
+  [`docs/design-system.md`](docs/design-system.md)). These are **living
+  documents**: when behavior changes, update the relevant doc **in place, in the
+  same change** — never a new file per change. A notable change may be flagged
+  with a short dated `Revised:` line or amendment blockquote at the top when it
+  helps a future reader; otherwise just keep the body current. Don't let a doc
+  drift from the shipped app.
+- **Never commit plans or "superpowers" workflow documents to the repository.**
+  Do **not** add a `docs/superpowers/`, `docs/plans/`, or `docs/specs/` folder, and
+  do **not** commit per-feature dated plan files (`YYYY-MM-DD-<name>.md`) — the
+  repo deliberately has none, and `docs/superpowers/**` is git-ignored to keep it
+  that way. A plan, spec draft, or task brief produced *while working* (e.g. by a
+  brainstorming / writing-plans / subagent-driven-development workflow) is
+  **session-local scratch**: keep it out of the commit. Anything worth preserving
+  from it belongs in this `CLAUDE.md` or the living `docs/` above, rewritten as
+  **current guidance**, not filed as a dated point-in-time record.
+- `.superpowers/` at the repo root is exactly that session-local scratch (task
+  briefs/reports, progress notes), git-ignored via the repo `.gitignore`. Never
+  commit it, and don't treat its contents as current state — it is leftover
+  history from past sessions.
 - Keep the **living docs** accurate when behavior changes: this `CLAUDE.md`,
-  `README.md`, the design spec, `docs/testflight-setup.md`, `docs/ci.md`, and the
-  CI/build sources (`project.yml`, `.github/workflows/pr-checks.yml`,
-  `.github/workflows/testflight.yml`, `ci_scripts/`).
+  `README.md`, the design docs under `docs/`, `docs/testflight-setup.md`,
+  `docs/ci.md`, and the CI/build sources (`project.yml`,
+  `.github/workflows/pr-checks.yml`, `.github/workflows/testflight.yml`,
+  `ci_scripts/`).
 
 ## PR review loop — required for all agent work
 

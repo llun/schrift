@@ -12,9 +12,14 @@ Spanish, German, Italian, Dutch, Portuguese, Thai, and Simplified/Traditional
 Chinese) that switches the UI live, with no relaunch — document content itself
 is never translated.
 
-## Design spec
+## Design & architecture docs
 
-See [`docs/superpowers/specs/2026-06-30-docs-ios-design.md`](docs/superpowers/specs/2026-06-30-docs-ios-design.md) for the full architecture and design decisions.
+See [`docs/architecture.md`](docs/architecture.md) for the full architecture and
+design decisions, [`docs/offline-and-sync.md`](docs/offline-and-sync.md) for the
+on-device caching and background-sync model, and
+[`docs/design-system.md`](docs/design-system.md) for the design system, dark
+mode, localization, and version history. [`docs/README.md`](docs/README.md)
+indexes all project docs.
 
 ## Architecture
 
