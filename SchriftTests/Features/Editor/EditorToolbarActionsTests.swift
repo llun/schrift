@@ -3,10 +3,12 @@ import XCTest
 @testable import Schrift
 
 final class EditorToolbarActionsTests: XCTestCase {
-    func testEditingModeShowsOnlyDone() {
-        XCTAssertEqual(editorToolbarActions(isEditing: true, isOffline: false), [.done])
-        // Editing is never reachable offline, but the intent list is unconditional there.
-        XCTAssertEqual(editorToolbarActions(isEditing: true, isOffline: true), [.done])
+    func testEditingModeExposesNoNavBarActions() {
+        // Editing hides the top nav bar entirely (no back button, no double
+        // border); Done lives in the editing header instead, so the nav bar's
+        // trailing-action list is empty in both offline and online editing.
+        XCTAssertEqual(editorToolbarActions(isEditing: true, isOffline: false), [])
+        XCTAssertEqual(editorToolbarActions(isEditing: true, isOffline: true), [])
     }
 
     func testReadingOnlineExposesEditShareOptions() {
