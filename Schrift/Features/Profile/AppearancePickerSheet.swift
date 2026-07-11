@@ -27,12 +27,11 @@ struct AppearancePickerSheet: View {
     private let options = appearanceOptions()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-            Text(loc[.profile_appearance])
-                .font(DocsFont.headline)
-                .foregroundStyle(DocsColor.textPrimary)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceSM)
+        // Shared `SheetHeader` (handoff), then — unlike the flat Language picker —
+        // the short three-option list keeps its boxed card below (matching the
+        // handoff's Appearance sheet).
+        VStack(spacing: 0) {
+            SheetHeader(title: loc[.profile_appearance], closeLabel: loc[.common_close], onClose: { dismiss() })
 
             VStack(spacing: 0) {
                 ForEach(options.indices, id: \.self) { index in
