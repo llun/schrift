@@ -66,6 +66,28 @@ func syncCaption(
     return SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false)
 }
 
+/// The editor nav bar's trailing actions, as an ordered list of intents. Pure
+/// so the offline/edit gating is unit-testable without SwiftUI — the view maps
+/// each case to a `NavBarAction`. Reading mode exposes **Edit only when
+/// online**: offline is read-only, matching the reading surface's other editing
+/// gates (the block tap, "Start writing", and "Add a subpage" all guard on
+/// `!isOffline`). Editing mode shows Done.
+enum EditorToolbarAction: Equatable {
+    case edit
+    case share
+    case options
+    case done
+}
+
+func editorToolbarActions(isEditing: Bool, isOffline: Bool) -> [EditorToolbarAction] {
+    if isEditing { return [.done] }
+    var actions: [EditorToolbarAction] = []
+    if !isOffline { actions.append(.edit) }
+    actions.append(.share)
+    actions.append(.options)
+    return actions
+}
+
 struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
@@ -81,7 +103,6 @@ struct EditorView: View {
     @Environment(LocalizationStore.self) private var loc
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
-    @State private var isPresentingTreePanel = false
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
@@ -117,13 +138,11 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // In reading mode the document title is the large-title header
-            // (uniform 96pt bar, matching every other screen). While editing,
-            // the title is edited inline in the canvas, so the bar collapses to
-            // the compact form and drops its title to avoid showing it twice.
+            // The document title lives in the reading canvas as a large content
+            // header (see `headerBlock`), not in the bar — matching the handoff.
+            // The bar stays the compact form in both reading and editing modes:
+            // a back button, no center title, and the trailing actions.
             NavBar(
-                title: viewModel.isEditing ? "" : viewModel.title,
-                largeTitle: !viewModel.isEditing,
                 backTitle: loc[.home_title],
                 onBack: onBack,
                 trailingActions: trailingActions
@@ -182,26 +201,6 @@ struct EditorView: View {
             }
         }
         .background(DocsColor.surfacePage)
-        .overlay {
-            DocTreePanel(
-                rootTitle: viewModel.title,
-                client: viewModel.client,
-                rootID: viewModel.documentID,
-                currentID: viewModel.documentID,
-                isOpen: isPresentingTreePanel,
-                childrenCache: viewModel.childrenCache,
-                onOpen: { document in onOpenDocument?(document) },
-                onClose: { isPresentingTreePanel = false },
-                onNewPage: {
-                    isPresentingTreePanel = false
-                    Task {
-                        if let child = await viewModel.addSubpage() {
-                            onOpenDocument?(child)
-                        }
-                    }
-                }
-            )
-        }
         .task {
             await viewModel.load()
         }
@@ -398,30 +397,41 @@ struct EditorView: View {
         .padding(.top, DocsSpacing.spaceLG)
     }
 
-    /// The document title now lives in the large-title nav bar (uniform 96pt
-    /// header across the app), so the in-content header only carries the
-    /// reach/sync metadata that has no place in the bar.
+    /// The reading canvas's document header: the title as a large content
+    /// header (moved out of the nav bar to match the handoff — the bar keeps
+    /// only the back button and trailing actions), then the reach pill and the
+    /// sync caption on the row beneath it.
     private var headerBlock: some View {
-        HStack(spacing: DocsSpacing.spaceXS) {
-            LinkReachPill(reach: reach)
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                let caption = currentSyncCaption(now: context.date)
-                if caption.offersRetry {
-                    Button {
-                        viewModel.saveNow()
-                    } label: {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            Text(viewModel.title)
+                .font(DocsFont.title1)
+                .tracking(DocsTypographySpec.title1.size * DocsTracking.tight)
+                .foregroundStyle(DocsColor.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+
+            HStack(spacing: DocsSpacing.spaceXS) {
+                LinkReachPill(reach: reach)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let caption = currentSyncCaption(now: context.date)
+                    if caption.offersRetry {
+                        Button {
+                            viewModel.saveNow()
+                        } label: {
+                            Text(resolvedCaption(caption.text))
+                                .font(DocsFont.footnote)
+                                .foregroundStyle(DocsColor.textBrand)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(loc[.editor_sync_save_failed_a11y])
+                    } else {
                         Text(resolvedCaption(caption.text))
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textBrand)
+                            .foregroundStyle(DocsColor.textTertiary)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(loc[.editor_sync_save_failed_a11y])
-                } else {
-                    Text(resolvedCaption(caption.text))
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -435,7 +445,7 @@ struct EditorView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space2xs) {
-                    Image(systemName: "list.bullet.indent")
+                    Image(systemName: "arrow.triangle.branch")
                         .font(.system(size: 16))
                         .accessibilityHidden(true)
                     Text(
@@ -519,25 +529,26 @@ struct EditorView: View {
     }
 
     private var trailingActions: [NavBarAction] {
-        if viewModel.isEditing {
-            return [
-                NavBarAction(
-                    systemImage: "checkmark", label: loc[.editor_action_done], action: { viewModel.finishEditing() })
-            ]
+        editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline).map { action in
+            switch action {
+            case .edit:
+                return NavBarAction(
+                    systemImage: "square.and.pencil", label: loc[.editor_action_edit],
+                    action: { viewModel.startEditing() })
+            case .share:
+                return NavBarAction(
+                    systemImage: "point.3.connected.trianglepath.dotted", label: loc[.editor_action_share],
+                    action: { isPresentingShareSheet = true })
+            case .options:
+                return NavBarAction(
+                    systemImage: "ellipsis", label: loc[.editor_action_options],
+                    action: { isPresentingOptionsSheet = true })
+            case .done:
+                return NavBarAction(
+                    systemImage: "checkmark", label: loc[.editor_action_done],
+                    action: { viewModel.finishEditing() })
+            }
         }
-        return [
-            NavBarAction(
-                systemImage: "list.bullet.indent", label: loc[.editor_action_pages],
-                action: { isPresentingTreePanel = true }),
-            NavBarAction(
-                systemImage: "square.and.arrow.up", label: loc[.editor_action_share],
-                action: { isPresentingShareSheet = true }),
-            NavBarAction(
-                systemImage: "ellipsis", label: loc[.editor_action_options],
-                action: {
-                    isPresentingOptionsSheet = true
-                }),
-        ]
     }
 }
 
