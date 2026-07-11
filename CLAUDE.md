@@ -664,12 +664,14 @@ new code reads like the surrounding code.
   interleaves `ProfileRowDivider()` between rows (a 1pt `borderDefault`
   rectangle inset 52pt past the leading icon). The four tab screens'
   multi-row sections (Shared's document list, Profile's Preferences/Server
-  sections) simply **omit** those calls and render flat, matching the handoff;
-  only the Share and Version-history sheets still interleave them where grouped
-  separators read well (the **Options** sheet is a flat, boxless menu — see the
-  next bullet). Don't add `ProfileRowDivider()` calls back onto a tab
-  screen without checking the handoff first — the flatness is deliberate, and
-  reverting it is just re-adding the calls, not flipping a flag.
+  sections) simply **omit** those calls and render flat, matching the handoff.
+  **The sheets are all flat too:** Options, Share, and Version-history are boxless
+  lists under a `SheetHeader` (see the next bullet), so **`ProfileRowDivider()`
+  currently has no call sites** — the component is retained as the
+  grouped-separator primitive should a future grouped list want it. Don't add
+  `ProfileRowDivider()` calls back onto a tab screen or sheet without checking the
+  handoff first — the flatness is deliberate, and reverting it is just re-adding
+  the calls, not flipping a flag.
 - **Sheets use `.presentationDetents` + `.presentationDragIndicator(.visible)`**
   (Share, Options, Version history, the Appearance/Language pickers) instead of
   an un-detented full-height `.sheet`, so a long scrollable list can't push a
@@ -690,7 +692,14 @@ new code reads like the surrounding code.
   is wired to `@Environment(\.dismiss)`. The header pads `4 / 16 / 10` (the
   app's 16pt sheet gutter, not the prototype's 18); rows keep `ListRow`'s own
   16pt so the title and the row icons align. This is the pattern for future
-  action/menu sheets.
+  action/menu sheets. **The `Share` and `Version-history` sheets follow the same
+  pattern** — a `SheetHeader` over a boxless body drawn on `surfacePage`, no
+  `NavigationStack`/"Done", no `ListSection` card, no dividers — keeping only
+  their section-label eyebrows and (for Share) the bounded members list. **Every
+  bottom sheet in the app now uses `SheetHeader` chrome** (Options, Share,
+  Version history, Appearance, Language); none wrap a `NavigationStack` + "Done"
+  toolbar anymore. The `common.done` L10n key was removed when its last two call
+  sites (these sheets) moved to `common.close`.
 
 ### Editor & the on-device save (`Core/Yjs`)
 
