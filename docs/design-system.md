@@ -36,13 +36,20 @@
 > `Done` toolbar, the `ListSection` cards, and every `ProfileRowDivider` /
 > section divider. Kept: their section-label eyebrows, Share's **bounded members
 > list** (`ShareSheetLayout.membersMaxHeight`) and confirmation dialogs, and
-> Version-history's pinned **"Restore on the web"** row. This **supersedes** the
-> "grouped separators stay for Share/Version-history" notes in §8.3 / §8.4 / §9.1
-> below. **Every bottom sheet now uses `SheetHeader`** (Options, Share, Version
-> history, Appearance, Language); none wrap a `NavigationStack` + "Done" toolbar.
+> Version-history's pinned **"Restore on the web"** row. This **supersedes**
+> §8.3's "`ProfileRowDivider` stays for Share/Version-history" note (rewritten
+> inline) and §8.4's present-tense description of these sheets as `NavigationStack`
+> + "Done" wrappers. **Every menu/action/picker sheet now uses `SheetHeader`**
+> (Options, Share, Version history, Appearance, Language); the two **form** sheets
+> (Link editor, Re-auth) keep a `NavigationStack` + Cancel/Save toolbar — they
+> host a form, not a list.
 > `ProfileRowDivider` consequently has **no remaining call sites** (retained as
 > the grouped-separator primitive), and the now-orphaned `common.done` L10n key
-> was removed — both sheets use `common.close` for the accessibility label.
+> was removed — both sheets use `common.close` for the accessibility label. This
+> is now a **standing rule**: *every list inside a sheet/dialog is flat* (boxless,
+> dividerless, on `surfacePage` under a `SheetHeader`); grouped `ListSection`
+> cards are reserved for the **tab screens** (Profile, Shared). See
+> [`CLAUDE.md`](../CLAUDE.md).
 
 ## 1. Goals
 
@@ -473,10 +480,12 @@ remaining call sites.)
 
 Handoff sheets (`chrome.jsx` `Sheet`) are **bottom sheets** with a grabber, an
 inline title, a scrollable body bounded by a **detent**, and bottom padding for
-the home indicator. The current Share / Options / Version sheets present as
-full-height `.sheet`s (no detent, no drag indicator) wrapping a `NavigationStack`
-+ "Done", with all content in one scroll view — so a long member list pushes the
-primary **Copy link** action below the fold.
+the home indicator. *(Superseded "before" snapshot — the state this part fixed:)*
+the Share / Options / Version sheets originally presented as full-height
+`.sheet`s (no detent, no drag indicator) wrapping a `NavigationStack` + "Done",
+with all content in one scroll view — so a long member list pushed the primary
+**Copy link** action below the fold. (They now use `.presentationDetents` + a
+`SheetHeader`; see the 2026-07-12 amendments at the top.)
 
 Target:
 
