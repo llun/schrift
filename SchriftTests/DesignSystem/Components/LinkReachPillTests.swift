@@ -10,7 +10,7 @@ final class LinkReachPillTests: XCTestCase {
             LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
                 foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
-                systemImage: "lock.fill", labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted))
+                icon: .lock, labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted))
     }
 
     func testAuthenticatedUsesInfoStyle() {
@@ -20,7 +20,7 @@ final class LinkReachPillTests: XCTestCase {
             LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
                 foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
-                systemImage: "network.badge.shield.half.filled", labelKey: .reach_connected,
+                icon: .vpn_lock, labelKey: .reach_connected,
                 hintKey: .linkreach_hint_authenticated))
     }
 
@@ -32,7 +32,7 @@ final class LinkReachPillTests: XCTestCase {
                 backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
                 foregroundLightHex: DocsColorHex.textBrandSecondary,
                 foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
-                systemImage: "globe", labelKey: .reach_public, hintKey: .linkreach_hint_public))
+                icon: .public, labelKey: .reach_public, hintKey: .linkreach_hint_public))
     }
 
     func testRawValuesMatchBackendAPIStrings() {

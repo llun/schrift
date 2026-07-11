@@ -20,8 +20,7 @@ struct DocIcon: View {
                     Text(displayEmoji)
                         .font(.system(size: size * 0.9))
                 } else {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: size))
+                    MaterialSymbol(.description, size: size)
                         .foregroundStyle(DocsColor.brandFill)
                 }
             }
@@ -30,8 +29,7 @@ struct DocIcon: View {
             .clipShape(RoundedRectangle(cornerRadius: tinted ? DocsRadius.md : 0))
 
             if pinned {
-                Image(systemName: "pin.fill")
-                    .font(.system(size: 14))
+                MaterialSymbol(.push_pin, size: 14, fill: true)
                     .foregroundStyle(DocsColor.brandFill)
                     .padding(1)
                     .background(Circle().fill(DocsColor.surfacePage))

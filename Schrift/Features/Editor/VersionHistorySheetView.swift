@@ -68,7 +68,7 @@ struct VersionHistorySheetView: View {
                 if let restoreURL {
                     ListSection {
                         ListRow(
-                            systemImage: "arrow.up.forward.square",
+                            icon: .open_in_new,
                             title: loc[.versions_restore_web],
                             action: { openURL(restoreURL) }
                         )
@@ -94,8 +94,7 @@ struct VersionHistorySheetView: View {
 
     private func versionRow(_ version: DocumentVersion) -> some View {
         HStack(spacing: DocsSpacing.spaceSM) {
-            Image(systemName: "clock")
-                .font(.system(size: 20))
+            MaterialSymbol(.schedule, size: 20)
                 .foregroundStyle(DocsColor.textSecondary)
                 .frame(width: 24)
                 .accessibilityHidden(true)

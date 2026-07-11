@@ -64,9 +64,13 @@ struct LinkEditorSheet: View {
                     Button(role: .destructive) {
                         onRemove()
                     } label: {
-                        Label(loc[.editor_link_remove], systemImage: "link.badge.minus")
-                            .font(DocsFont.body)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Label {
+                            Text(loc[.editor_link_remove])
+                        } icon: {
+                            MaterialSymbol(.link_off, size: 20)
+                        }
+                        .font(DocsFont.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.top, DocsSpacing.space2xs)
                 }

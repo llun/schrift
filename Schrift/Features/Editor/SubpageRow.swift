@@ -27,15 +27,14 @@ struct SubpageRow: View {
 
                 if document.numchild > 0 {
                     HStack(spacing: DocsSpacing.space4xs) {
-                        Image(systemName: "arrow.triangle.branch")
+                        MaterialSymbol(.account_tree, size: 14)
                         Text("\(document.numchild)")
                     }
                     .font(DocsFont.caption)
                     .foregroundStyle(DocsColor.textTertiary)
                 }
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 18))
+                MaterialSymbol(.chevron_right, size: 18)
                     .foregroundStyle(DocsColor.gray300)
             }
             .padding(.horizontal, DocsSpacing.spaceXS)

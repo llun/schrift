@@ -43,8 +43,8 @@ struct ListSection<Content: View>: View {
 
 #Preview {
     ListSection(header: "Document", footer: "These actions apply to the current document.") {
-        ListRow(systemImage: "pin", title: "Pin", action: {})
-        ListRow(systemImage: "link", title: "Copy link", action: {})
+        ListRow(icon: .push_pin, title: "Pin", action: {})
+        ListRow(icon: .link, title: "Copy link", action: {})
     }
     .padding()
 }

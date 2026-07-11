@@ -13,7 +13,7 @@ func listRowTitleColor(isDestructive: Bool) -> ListRowTitleColor {
 }
 
 struct ListRow: View {
-    var systemImage: String? = nil
+    var icon: MaterialIcon? = nil
     let title: String
     var subtitle: String? = nil
     var value: String? = nil
@@ -35,9 +35,8 @@ struct ListRow: View {
 
     private var rowContent: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 24))
+            if let icon {
+                MaterialSymbol(icon, size: 24)
                     .foregroundStyle(isDestructive ? DocsColor.danger : DocsColor.textSecondary)
                     .frame(width: 24)
             }
@@ -64,8 +63,7 @@ struct ListRow: View {
             }
 
             if showsChevron {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 18))
+                MaterialSymbol(.chevron_right, size: 18)
                     .foregroundStyle(DocsColor.gray300)
             }
         }
@@ -77,8 +75,8 @@ struct ListRow: View {
 
 #Preview {
     VStack(spacing: 0) {
-        ListRow(systemImage: "pin", title: "Pin", value: "Pinned", showsChevron: false, action: {})
-        ListRow(systemImage: "link", title: "Copy link", action: {})
+        ListRow(icon: .push_pin, title: "Pin", value: "Pinned", showsChevron: false, action: {})
+        ListRow(icon: .link, title: "Copy link", action: {})
         ListRow(title: "Delete document", isDestructive: true, action: {})
     }
 }

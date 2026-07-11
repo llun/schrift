@@ -16,10 +16,10 @@ struct EditorFormattingBar: View {
         // bar): add + the core block/inline formatters. Numbered list, inline
         // code and divider remain reachable via their Markdown shortcuts.
         HStack(spacing: DocsSpacing.space4xs) {
-            barButton(icon: "plus", label: loc[.editor_format_add_block], brand: true, disabled: false) {
+            barButton(icon: .add, label: loc[.editor_format_add_block], brand: true, disabled: false) {
                 viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
             }
-            barButton(icon: "bold", label: loc[.editor_format_bold]) {
+            barButton(icon: .format_bold, label: loc[.editor_format_bold]) {
                 viewModel.applyInlineMarker("**")
             }
             // `_`, and `*` would be wrong. `InlineMarkdown` honors CommonMark's
@@ -27,31 +27,31 @@ struct EditorFormattingBar: View {
             // save while `snake_case` stays literal — and it is what BlockNote
             // itself writes. Wrapping a selected **bold** word in `*` would produce
             // `***word***`, which this scanner reads as bold(`*word`) + literal.
-            barButton(icon: "italic", label: loc[.editor_format_italic]) {
+            barButton(icon: .format_italic, label: loc[.editor_format_italic]) {
                 viewModel.applyInlineMarker("_")
             }
             barButton(
-                icon: "link", label: loc[.editor_format_link],
+                icon: .link, label: loc[.editor_format_link],
                 disabled: !viewModel.canEditLink
             ) {
                 viewModel.beginLinkEditing()
             }
-            barButton(icon: "list.bullet", label: loc[.editor_format_bulleted_list]) {
+            barButton(icon: .format_list_bulleted, label: loc[.editor_format_bulleted_list]) {
                 viewModel.convertFocusedBlock(to: .bulletItem)
             }
-            barButton(icon: "checklist", label: loc[.editor_format_checklist]) {
+            barButton(icon: .checklist, label: loc[.editor_format_checklist]) {
                 viewModel.convertFocusedBlock(to: .checklistItem(checked: false))
             }
-            barButton(icon: "text.quote", label: loc[.editor_format_quote]) {
+            barButton(icon: .format_quote, label: loc[.editor_format_quote]) {
                 viewModel.convertFocusedBlock(to: .quote)
             }
-            barButton(icon: "curlybraces", label: loc[.editor_format_code_block]) {
+            barButton(icon: .data_object, label: loc[.editor_format_code_block]) {
                 viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
             }
             // Stays disabled while an upload is in flight (and before content has
             // loaded): the view model would decline anyway, so don't invite the tap.
             barButton(
-                icon: "photo", label: loc[.editor_format_insert_photo],
+                icon: .image, label: loc[.editor_format_insert_photo],
                 disabled: !hasTarget || !viewModel.canInsertPhoto
             ) {
                 viewModel.requestPhotoInsertion()
@@ -70,10 +70,10 @@ struct EditorFormattingBar: View {
 
     @ViewBuilder
     private func barButton(
-        icon: String, label: String, brand: Bool = false, disabled: Bool? = nil, action: @escaping () -> Void
+        icon: MaterialIcon, label: String, brand: Bool = false, disabled: Bool? = nil, action: @escaping () -> Void
     ) -> some View {
         IconButton(
-            systemImage: icon,
+            icon: icon,
             label: label,
             variant: .ghost,
             color: brand ? .brand : .neutral,

@@ -98,7 +98,7 @@ struct MarkdownBlockView: View {
 
         case .checklistItem(let checked):
             HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: 20)
                     .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
                 Text(markdownInlineText(block.text))
                     .strikethrough(checked)
@@ -203,7 +203,7 @@ struct MarkdownImageView: View {
     private var fallbackLink: some View {
         Link(destination: url) {
             HStack(spacing: DocsSpacing.spaceXS) {
-                Image(systemName: "photo")
+                MaterialSymbol(.image, size: 16)
                 Text(alt.isEmpty ? url.absoluteString : alt)
                     .lineLimit(1)
                     .truncationMode(.middle)

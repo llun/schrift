@@ -438,11 +438,13 @@ struct BlockTextView: UIViewRepresentable {
             // The suggested actions are the text view's own cut/copy/paste, which
             // make no sense for a tap that selected nothing.
             return UIMenu(children: [
-                UIAction(title: parent.editLinkTitle, image: UIImage(systemName: "link")) { [weak self] _ in
+                UIAction(
+                    title: parent.editLinkTitle, image: MaterialIcon.link.uiImage(pointSize: 17)
+                ) { [weak self] _ in
                     self?.parent.onEvent(.editLink(span))
                 },
                 UIAction(
-                    title: parent.removeLinkTitle, image: UIImage(systemName: "link.badge.minus"),
+                    title: parent.removeLinkTitle, image: MaterialIcon.link_off.uiImage(pointSize: 17),
                     attributes: .destructive
                 ) { [weak self] _ in
                     self?.parent.onEvent(.removeLink(span))

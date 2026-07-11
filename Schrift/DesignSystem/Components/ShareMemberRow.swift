@@ -49,8 +49,7 @@ struct ShareMemberRow: View {
                     Text(role)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(DocsColor.textSecondary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 18, weight: .medium))
+                    MaterialSymbol(.expand_more, size: 18)
                         .foregroundStyle(DocsColor.textSecondary)
                 }
                 .frame(minHeight: DocsSpacing.rowMinHeight)

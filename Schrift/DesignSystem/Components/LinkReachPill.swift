@@ -11,7 +11,7 @@ struct LinkReachPillStyleHex: Equatable {
     let backgroundDarkHex: UInt32
     let foregroundLightHex: UInt32
     let foregroundDarkHex: UInt32
-    let systemImage: String
+    let icon: MaterialIcon
     let labelKey: L10nKey
     let hintKey: L10nKey
 }
@@ -23,20 +23,20 @@ enum LinkReachPillStyleResolver {
             return LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
                 foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
-                systemImage: "lock.fill", labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted)
+                icon: .lock, labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted)
         case .authenticated:
             // Reference uses `vpn_lock` (a lock over a globe) for the org-gated state.
             return LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
                 foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
-                systemImage: "network.badge.shield.half.filled", labelKey: .reach_connected,
+                icon: .vpn_lock, labelKey: .reach_connected,
                 hintKey: .linkreach_hint_authenticated)
         case .public:
             return LinkReachPillStyleHex(
                 backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
                 foregroundLightHex: DocsColorHex.textBrandSecondary,
                 foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
-                systemImage: "globe", labelKey: .reach_public, hintKey: .linkreach_hint_public)
+                icon: .public, labelKey: .reach_public, hintKey: .linkreach_hint_public)
         }
     }
 }
@@ -50,8 +50,7 @@ struct LinkReachPill: View {
     var body: some View {
         let style = LinkReachPillStyleResolver.style(reach: reach)
         HStack(spacing: DocsSpacing.space2xs) {
-            Image(systemName: style.systemImage)
-                .font(.system(size: 18))
+            MaterialSymbol(style.icon, size: 18)
             VStack(alignment: .leading, spacing: 0) {
                 Text(loc[style.labelKey])
                     .font(.system(size: 14, weight: .semibold))

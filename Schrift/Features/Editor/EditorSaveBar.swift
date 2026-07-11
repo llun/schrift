@@ -55,8 +55,7 @@ struct SaveStatusIndicator: View {
 
         case .saved:
             HStack(spacing: DocsSpacing.space3xs) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
+                MaterialSymbol(.check, size: 11)
                 Text(loc[.editor_saved])
                     .font(DocsFont.footnote)
             }
@@ -65,8 +64,7 @@ struct SaveStatusIndicator: View {
         case .failed:
             Button(action: onTap) {
                 HStack(spacing: DocsSpacing.space3xs) {
-                    Image(systemName: "exclamationmark.circle")
-                        .font(.system(size: 11, weight: .semibold))
+                    MaterialSymbol(.error, size: 11)
                     Text(loc[.editor_save_failed])
                         .font(DocsFont.footnote.weight(.semibold))
                 }

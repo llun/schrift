@@ -97,7 +97,7 @@ enum IconButtonSize {
 }
 
 struct IconButton: View {
-    let systemImage: String
+    let icon: MaterialIcon
     let label: String
     var variant: IconButtonVariant = .ghost
     var color: IconButtonColor = .neutral
@@ -116,9 +116,7 @@ struct IconButton: View {
     var body: some View {
         let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: size.glyph))
-                .symbolVariant(filled ? .fill : .none)
+            MaterialSymbol(icon, size: size.glyph, fill: filled)
                 .frame(width: size.box, height: size.box)
                 .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
                 .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)
@@ -142,10 +140,10 @@ struct IconButton: View {
 
 #Preview {
     HStack(spacing: DocsSpacing.spaceSM) {
-        IconButton(systemImage: "magnifyingglass", label: "Search", variant: .ghost, color: .neutral, action: {})
-        IconButton(systemImage: "plus", label: "Add", variant: .soft, color: .brand, action: {})
-        IconButton(systemImage: "trash", label: "Delete", variant: .outline, color: .danger, action: {})
-        IconButton(systemImage: "ellipsis", label: "More", isDisabled: true, action: {})
+        IconButton(icon: .search, label: "Search", variant: .ghost, color: .neutral, action: {})
+        IconButton(icon: .add, label: "Add", variant: .soft, color: .brand, action: {})
+        IconButton(icon: .delete, label: "Delete", variant: .outline, color: .danger, action: {})
+        IconButton(icon: .more_horiz, label: "More", isDisabled: true, action: {})
     }
     .padding()
 }

@@ -51,7 +51,7 @@ struct SearchScreen: View {
     private var emptyQueryContent: some View {
         if !viewModel.recentSearches.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                sectionLabel(loc[.search_recent], icon: "clock.arrow.circlepath")
+                sectionLabel(loc[.search_recent], icon: .history)
                 RecentSearchesFlow(terms: viewModel.recentSearches) { term in
                     viewModel.selectRecent(term)
                 }
@@ -60,7 +60,7 @@ struct SearchScreen: View {
         }
 
         VStack(alignment: .leading, spacing: 0) {
-            sectionLabel(loc[.search_quick], icon: "pin.fill")
+            sectionLabel(loc[.search_quick], icon: .push_pin, filled: true)
             if viewModel.quickAccess.isEmpty {
                 Text(loc[.search_quick_empty])
                     .font(DocsFont.subhead)
@@ -106,8 +106,7 @@ struct SearchScreen: View {
 
     private var emptyState: some View {
         VStack(spacing: DocsSpacing.space2xs) {
-            Image(systemName: "exclamationmark.magnifyingglass")
-                .font(.system(size: 44))
+            MaterialSymbol(.search_off, size: 44)
                 .foregroundStyle(DocsColor.gray300)
             Text(loc[.search_empty_title])
                 .font(DocsFont.headline)
@@ -139,11 +138,10 @@ struct SearchScreen: View {
         }
     }
 
-    private func sectionLabel(_ text: String, icon: String?) -> some View {
+    private func sectionLabel(_ text: String, icon: MaterialIcon?, filled: Bool = false) -> some View {
         HStack(spacing: DocsSpacing.space3xs + 1) {
             if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 15))
+                MaterialSymbol(icon, size: 15, fill: filled)
             }
             Text(text.uppercased())
                 .font(DocsFont.footnote.weight(.semibold))
@@ -170,8 +168,7 @@ private struct RecentSearchesFlow: View {
                     onSelect(term)
                 } label: {
                     HStack(spacing: DocsSpacing.space2xs) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 16))
+                        MaterialSymbol(.history, size: 16)
                             .foregroundStyle(DocsColor.textTertiary)
                         Text(term)
                             .font(DocsFont.subhead)

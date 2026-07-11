@@ -72,7 +72,7 @@ final class EditorFormattingBarTests: XCTestCase {
     /// `IconButton`'s default is unchanged — only the bar opts out.
     func testAStandaloneIconButtonKeepsIts44ptMinimumWidth() {
         let host = UIHostingController(
-            rootView: IconButton(systemImage: "link", label: "Link", size: .small, action: {}))
+            rootView: IconButton(icon: .link, label: "Link", size: .small, action: {}))
         let size = host.sizeThatFits(in: CGSize(width: 0, height: 0))
         XCTAssertGreaterThanOrEqual(size.width, DocsSpacing.rowMinHeight)
         XCTAssertGreaterThanOrEqual(size.height, DocsSpacing.rowMinHeight)

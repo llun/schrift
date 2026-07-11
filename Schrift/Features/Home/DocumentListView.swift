@@ -23,7 +23,7 @@ struct DocumentListView: View {
         // and the Search tab.
         if let onNewDocument {
             actions.append(
-                NavBarAction(systemImage: "plus", label: loc[.home_newdoc], color: .brand, action: onNewDocument))
+                NavBarAction(icon: .add, label: loc[.home_newdoc], color: .brand, action: onNewDocument))
         }
         return actions
     }
@@ -75,8 +75,7 @@ struct DocumentListView: View {
                             Button {
                                 viewModel.dismissError()
                             } label: {
-                                Image(systemName: "xmark")
-                                    .font(DocsFont.footnote)
+                                MaterialSymbol(.close, size: DocsTypographySpec.footnote.size)
                                     .foregroundStyle(DocsColor.textSecondary)
                             }
                             .accessibilityLabel(loc[.home_dismiss_error])
@@ -159,20 +158,26 @@ struct DocumentListView: View {
             // filter (e.g. first visited under Work Offline) shows nothing;
             // the offline banner or error text above conveys the state.
             if viewModel.errorKey == nil && viewModel.isCurrentListKnown {
-                ContentUnavailableView(
-                    loc[.home_empty_title],
-                    systemImage: "doc.text",
-                    description: Text(loc[.home_empty_body])
-                )
+                ContentUnavailableView {
+                    Label {
+                        Text(loc[.home_empty_title])
+                    } icon: {
+                        MaterialSymbol(.description, size: 52)
+                    }
+                } description: {
+                    Text(loc[.home_empty_body])
+                }
             }
         } else {
             if viewModel.showsPinnedSection {
                 documentSection(
-                    title: loc[.home_section_pinned], icon: "pin.fill", documents: viewModel.pinnedDocuments)
+                    title: loc[.home_section_pinned], icon: .push_pin, filled: true,
+                    documents: viewModel.pinnedDocuments)
             }
             documentSection(
                 title: mainSectionTitle,
-                icon: viewModel.selectedFilter == .pinned ? "pin.fill" : nil,
+                icon: viewModel.selectedFilter == .pinned ? .push_pin : nil,
+                filled: viewModel.selectedFilter == .pinned,
                 documents: viewModel.recentDocuments
             )
         }
@@ -192,13 +197,14 @@ struct DocumentListView: View {
     /// A flat document section — an icon+label header over hover-highlighted
     /// rows, with no grouped-card border (matches the reference doc list).
     @ViewBuilder
-    private func documentSection(title: String, icon: String? = nil, documents: [Document]) -> some View {
+    private func documentSection(title: String, icon: MaterialIcon? = nil, filled: Bool = false, documents: [Document])
+        -> some View
+    {
         if !documents.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space3xs + 1) {
                     if let icon {
-                        Image(systemName: icon)
-                            .font(.system(size: 15))
+                        MaterialSymbol(icon, size: 15, fill: filled)
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                     Text(title.uppercased())

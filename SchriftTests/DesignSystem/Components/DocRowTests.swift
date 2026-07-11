@@ -4,15 +4,15 @@ import XCTest
 
 final class DocRowTests: XCTestCase {
     func testRestrictedShowsNoIndicator() {
-        XCTAssertNil(docRowReachIndicatorSystemImage(reach: .restricted))
+        XCTAssertNil(docRowReachIndicatorIcon(reach: .restricted))
     }
 
     func testAuthenticatedShowsNetworkIndicator() {
-        XCTAssertEqual(docRowReachIndicatorSystemImage(reach: .authenticated), "network.badge.shield.half.filled")
+        XCTAssertEqual(docRowReachIndicatorIcon(reach: .authenticated), .vpn_lock)
     }
 
     func testPublicShowsGlobeIndicator() {
-        XCTAssertEqual(docRowReachIndicatorSystemImage(reach: .public), "globe")
+        XCTAssertEqual(docRowReachIndicatorIcon(reach: .public), .public)
     }
 
     func testAccessibilityLabelForRestrictedUnpinnedDocument() {

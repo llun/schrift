@@ -5,9 +5,9 @@ import XCTest
 final class AppearancePickerTests: XCTestCase {
     func testOptionsOrderAndIcons() {
         XCTAssertEqual(appearanceOptions(), [.light, .dark, .system])
-        XCTAssertEqual(AppAppearance.light.iconName, "sun.max")
-        XCTAssertEqual(AppAppearance.dark.iconName, "moon")
-        XCTAssertEqual(AppAppearance.system.iconName, "circle.lefthalf.filled")
+        XCTAssertEqual(AppAppearance.light.icon, .light_mode)
+        XCTAssertEqual(AppAppearance.dark.icon, .dark_mode)
+        XCTAssertEqual(AppAppearance.system.icon, .contrast)
     }
 
     func testValueKeyMapping() {

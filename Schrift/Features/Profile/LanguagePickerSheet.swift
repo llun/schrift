@@ -24,8 +24,7 @@ struct LanguagePickerSheet: View {
                         } label: {
                             ProfileTrailingRow(title: language.autonym) {
                                 if language == loc.language {
-                                    Image(systemName: "checkmark")
-                                        .font(DocsFont.body)
+                                    MaterialSymbol(.check, size: 17)
                                         .foregroundStyle(DocsColor.brandFill)
                                         // The glyph carries no meaning to VoiceOver; the
                                         // row's .isSelected trait announces the state.

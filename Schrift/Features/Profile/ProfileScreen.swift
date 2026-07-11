@@ -68,7 +68,7 @@ struct ProfileScreen: View {
 
     private var userSection: some View {
         ListSection(header: loc[.profile_user]) {
-            ListRow(systemImage: "person.circle", title: viewModel.user?.email ?? "—")
+            ListRow(icon: .account_circle, title: viewModel.user?.email ?? "—")
         }
     }
 
@@ -80,23 +80,23 @@ struct ProfileScreen: View {
             footer: loc[.profile_prefs_footer]
         ) {
             ListRow(
-                systemImage: "moon",
+                icon: .dark_mode,
                 title: loc[.profile_appearance],
                 value: loc[appearanceValueKey(appearance.selected)],
                 showsChevron: true,
                 action: { showAppearanceSheet = true }
             )
             ListRow(
-                systemImage: "translate",
+                icon: .translate,
                 title: loc[.profile_language],
                 value: loc.language.autonym,
                 showsChevron: true,
                 action: { showLanguageSheet = true }
             )
-            ProfileTrailingRow(systemImage: "bell", title: loc[.profile_notifications]) {
+            ProfileTrailingRow(icon: .notifications, title: loc[.profile_notifications]) {
                 Switch(isOn: $notificationsEnabled)
             }
-            ProfileTrailingRow(systemImage: "icloud.slash", title: loc[.profile_work_offline]) {
+            ProfileTrailingRow(icon: .cloud_off, title: loc[.profile_work_offline]) {
                 Switch(isOn: $workOffline)
             }
         }
@@ -112,22 +112,21 @@ struct ProfileScreen: View {
             footer: loc[.profile_server_footer]
         ) {
             Button(action: { isConfirmingDisconnect = true }) {
-                ProfileTrailingRow(systemImage: "server.rack", title: serverHost) {
+                ProfileTrailingRow(icon: .dns, title: serverHost) {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         Badge(
                             text: isOfflineOrForced ? loc[.profile_offline] : loc[.profile_connected],
                             tone: isOfflineOrForced ? .neutral : .success,
                             dot: true
                         )
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 18))
+                        MaterialSymbol(.chevron_right, size: 18)
                             .foregroundStyle(DocsColor.gray300)
                     }
                 }
             }
             .buttonStyle(.plain)
             if let serverVersion = viewModel.serverVersion {
-                ListRow(systemImage: "shippingbox", title: loc[.profile_server_version], value: serverVersion)
+                ListRow(icon: .deployed_code, title: loc[.profile_server_version], value: serverVersion)
             }
         }
     }
@@ -145,7 +144,7 @@ struct ProfileScreen: View {
     private var signOutSection: some View {
         ListSection {
             ListRow(
-                systemImage: "rectangle.portrait.and.arrow.right", title: loc[.profile_sign_out], isDestructive: true,
+                icon: .logout, title: loc[.profile_sign_out], isDestructive: true,
                 action: onSignOut)
         }
     }

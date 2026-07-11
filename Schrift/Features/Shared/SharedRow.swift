@@ -26,8 +26,7 @@ struct SharedRow: View {
 
                 Spacer(minLength: DocsSpacing.spaceXS)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 18))
+                MaterialSymbol(.chevron_right, size: 18)
                     .foregroundStyle(DocsColor.gray300)
             }
             .padding(.horizontal, DocsSpacing.spaceBase)

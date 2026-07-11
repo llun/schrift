@@ -209,11 +209,12 @@ Schrift/
 │                        BlockNoteDocument, InlineMarkdown, YjsUpdateEncoder)
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
-│   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive)
+│   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
+│   │                    MaterialIcon (the app's icon set — Material Symbols)
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
-│                        IconButton, LinkReachPill, ListRow, ListSection, NavBar,
-│                        OfflineBanner, SearchField, SegmentedControl,
-│                        ShareMemberRow, Switch, TabBar, TextField
+│                        IconButton, LinkReachPill, ListRow, ListSection,
+│                        MaterialSymbol, NavBar, OfflineBanner, SearchField,
+│                        SegmentedControl, ShareMemberRow, Switch, TabBar, TextField
 │                        (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
@@ -596,6 +597,21 @@ new code reads like the surrounding code.
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
   `SearchScreen` — still use `DocsRadius.pill` directly).
+- **Icons are Google Material Symbols, never SF Symbols.** The app's entire icon
+  set is the handoff's Material Symbols Outlined, bundled as a ~18KB subset
+  (`Schrift/Resources/Fonts/MaterialSymbolsOutlined-Icons.ttf`, Apache-2.0,
+  registered via `UIAppFonts` in `project.yml`'s `Generated/Info.plist` template —
+  the same array-in-template mechanism as `CFBundleLocalizations`). Reference a
+  glyph by the typed `enum MaterialIcon` (raw value = the Material glyph name from
+  `brand-iconography.html`; the FILL axis renders filled via `fill: true`) and
+  render it with `MaterialSymbol(_:size:fill:)` — **never** `Image(systemName:)`.
+  `IconButton(icon:)` and `NavBarAction(icon:)` take a `MaterialIcon`; UIKit call
+  sites (a `UIMenu` action) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
+  the app doesn't yet bundle means re-subsetting the font (see
+  `docs/superpowers/plans/2026-07-11-material-icons.md`) — you can't just name any
+  Material glyph. `MaterialSymbol` is `accessibilityHidden` (the glyph is a
+  Private-Use-Area char with no spoken text), so every icon-only control must carry
+  its own `.accessibilityLabel` and decorative icons rely on adjacent text.
 - Variant/state components use the **Style Resolver** pattern: plain `enum`s for
   the axes → an `Equatable` `XStyleHex` struct of **raw** values → a caseless
   `enum XStyleResolver { static func style(...) -> XStyleHex }`. The view converts
