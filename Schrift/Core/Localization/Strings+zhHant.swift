@@ -243,5 +243,31 @@ enum Strings_zhHant {
         .editor_divider_a11y: "分隔線",
         .editor_checklist_done_a11y: "標示為完成",
         .editor_checklist_not_done_a11y: "標示為未完成",
+
+        // Profile
+        .profile_title: "個人檔案",
+        .profile_user: "使用者",
+        .profile_prefs: "偏好設定",
+        .profile_prefs_footer: "開啟後，您開啟過的文件即使離線也能在此裝置上閱讀。",
+        .profile_appearance: "外觀",
+        .profile_language: "語言",
+        .profile_notifications: "通知",
+        .profile_work_offline: "離線工作",
+        .profile_server: "伺服器",
+        .profile_server_footer: "該應用程式會使用您現有的網頁工作階段連線至任何 Schrift 伺服器。",
+        .profile_connected: "已連線",
+        .profile_offline: "離線",
+        .profile_server_version: "伺服器版本",
+        .profile_about: "關於",
+        .profile_version: "版本",
+        .profile_sign_out: "登出",
+        .profile_disconnect_title: "要中斷與 %@ 的連線嗎？",
+        .profile_disconnect: "中斷連線",
+        .profile_disconnect_body: "您需要重新登入才能再次連線。",
+
+        // Appearance picker
+        .appearance_system: "系統",
+        .appearance_light: "淺色",
+        .appearance_dark: "深色",
     ]
 }

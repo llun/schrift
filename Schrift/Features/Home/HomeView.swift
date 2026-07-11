@@ -7,11 +7,6 @@ func documentRowDate(_ document: Document, locale: Locale) -> String {
     return formatter.localizedString(for: document.updatedAt, relativeTo: Date())
 }
 
-/// Push destinations that aren't a `Document` (which routes to the editor).
-enum HomeRoute: Hashable {
-    case account
-}
-
 struct HomeView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
@@ -74,13 +69,6 @@ struct HomeView: View {
                 )
                 .toolbar(.hidden, for: .navigationBar)
             }
-            .navigationDestination(for: HomeRoute.self) { route in
-                switch route {
-                case .account:
-                    AccountScreen(viewModel: profileViewModel, serverHost: serverHost, onBack: { popPath() })
-                        .toolbar(.hidden, for: .navigationBar)
-                }
-            }
         }
     }
 
@@ -96,7 +84,6 @@ struct HomeView: View {
                 viewModel: profileViewModel,
                 serverHost: serverHost,
                 isOffline: viewModel.isOffline,
-                onOpenAccount: { path.append(HomeRoute.account) },
                 onSignOut: onSignOut
             )
         default:
@@ -128,4 +115,5 @@ struct HomeView: View {
         serverHost: "docs.llun.dev"
     )
     .environment(LocalizationStore())
+    .environment(AppearanceStore())
 }

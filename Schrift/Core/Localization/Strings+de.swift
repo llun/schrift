@@ -249,5 +249,32 @@ enum Strings_de {
         .editor_divider_a11y: "Trennlinie",
         .editor_checklist_done_a11y: "Als erledigt markieren",
         .editor_checklist_not_done_a11y: "Als nicht erledigt markieren",
+
+        // Profile
+        .profile_title: "Profil",
+        .profile_user: "Benutzer",
+        .profile_prefs: "Einstellungen",
+        .profile_prefs_footer:
+            "Wenn aktiviert, bleiben von Ihnen geöffnete Dokumente auf diesem Gerät auch ohne Verbindung lesbar.",
+        .profile_appearance: "Erscheinungsbild",
+        .profile_language: "Sprache",
+        .profile_notifications: "Benachrichtigungen",
+        .profile_work_offline: "Offline arbeiten",
+        .profile_server: "Server",
+        .profile_server_footer: "Die App verbindet sich mit jedem Schrift-Server über Ihre bestehende Web-Sitzung.",
+        .profile_connected: "Verbunden",
+        .profile_offline: "Offline",
+        .profile_server_version: "Serverversion",
+        .profile_about: "Info",
+        .profile_version: "Version",
+        .profile_sign_out: "Abmelden",
+        .profile_disconnect_title: "Verbindung zu %@ trennen?",
+        .profile_disconnect: "Trennen",
+        .profile_disconnect_body: "Sie müssen sich erneut anmelden, um die Verbindung wiederherzustellen.",
+
+        // Appearance picker
+        .appearance_system: "System",
+        .appearance_light: "Hell",
+        .appearance_dark: "Dunkel",
     ]
 }

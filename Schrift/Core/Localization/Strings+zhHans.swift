@@ -243,5 +243,31 @@ enum Strings_zhHans {
         .editor_divider_a11y: "分隔线",
         .editor_checklist_done_a11y: "标记为已完成",
         .editor_checklist_not_done_a11y: "标记为未完成",
+
+        // Profile
+        .profile_title: "个人资料",
+        .profile_user: "用户",
+        .profile_prefs: "偏好设置",
+        .profile_prefs_footer: "开启后，您打开过的文档即使离线也可以在此设备上阅读。",
+        .profile_appearance: "外观",
+        .profile_language: "语言",
+        .profile_notifications: "通知",
+        .profile_work_offline: "离线工作",
+        .profile_server: "服务器",
+        .profile_server_footer: "该应用会使用您现有的网页会话连接到任意 Schrift 服务器。",
+        .profile_connected: "已连接",
+        .profile_offline: "离线",
+        .profile_server_version: "服务器版本",
+        .profile_about: "关于",
+        .profile_version: "版本",
+        .profile_sign_out: "退出登录",
+        .profile_disconnect_title: "要断开与 %@ 的连接吗？",
+        .profile_disconnect: "断开连接",
+        .profile_disconnect_body: "您需要重新登录才能再次连接。",
+
+        // Appearance picker
+        .appearance_system: "系统",
+        .appearance_light: "浅色",
+        .appearance_dark: "深色",
     ]
 }

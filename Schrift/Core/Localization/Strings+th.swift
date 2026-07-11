@@ -245,5 +245,31 @@ enum Strings_th {
         .editor_divider_a11y: "เส้นแบ่ง",
         .editor_checklist_done_a11y: "ทำเครื่องหมายว่าเสร็จ",
         .editor_checklist_not_done_a11y: "ทำเครื่องหมายว่ายังไม่เสร็จ",
+
+        // Profile
+        .profile_title: "โปรไฟล์",
+        .profile_user: "ผู้ใช้",
+        .profile_prefs: "การตั้งค่า",
+        .profile_prefs_footer: "เมื่อเปิดใช้งาน เอกสารที่คุณเปิดไว้จะยังอ่านได้บนอุปกรณ์นี้แม้ไม่มีการเชื่อมต่อ",
+        .profile_appearance: "รูปลักษณ์",
+        .profile_language: "ภาษา",
+        .profile_notifications: "การแจ้งเตือน",
+        .profile_work_offline: "ทำงานออฟไลน์",
+        .profile_server: "เซิร์ฟเวอร์",
+        .profile_server_footer: "แอปเชื่อมต่อกับเซิร์ฟเวอร์ Schrift ใดก็ได้โดยใช้เซสชันเว็บที่มีอยู่ของคุณ",
+        .profile_connected: "เชื่อมต่อแล้ว",
+        .profile_offline: "ออฟไลน์",
+        .profile_server_version: "เวอร์ชันเซิร์ฟเวอร์",
+        .profile_about: "เกี่ยวกับ",
+        .profile_version: "เวอร์ชัน",
+        .profile_sign_out: "ออกจากระบบ",
+        .profile_disconnect_title: "ยกเลิกการเชื่อมต่อจาก %@?",
+        .profile_disconnect: "ยกเลิกการเชื่อมต่อ",
+        .profile_disconnect_body: "คุณจะต้องลงชื่อเข้าใช้อีกครั้งเพื่อเชื่อมต่อใหม่",
+
+        // Appearance picker
+        .appearance_system: "ระบบ",
+        .appearance_light: "สว่าง",
+        .appearance_dark: "มืด",
     ]
 }
