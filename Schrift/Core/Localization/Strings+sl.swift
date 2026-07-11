@@ -40,7 +40,7 @@ enum Strings_sl {
         .home_newdoc: "Nov dokument",
         .home_pin: "Pripni",
         .home_unpin: "Odpni",
-        .home_dismiss_error: "Opusti napako",
+        .home_dismiss_error: "Skrij napako",
         .home_document_options: "Možnosti dokumenta",
         .home_select_document: "Izberite dokument",
         .home_error_load: "Dokumentov ni bilo mogoče naložiti. Povlecite za osvežitev in poskusite znova.",
@@ -72,7 +72,7 @@ enum Strings_sl {
         .shared_footer_with:
             "Dokumenti, h katerim so vas povabili drugi. Vaš dostop je odvisen od vaše vloge pri vsakem.",
         .shared_footer_by:
-            "Dokumenti, ki jih imate v lasti ali ste jih delili. Upravljajte, kdo jih lahko vidi, prek lista za deljenje vsakega dokumenta.",
+            "Dokumenti, ki jih imate v lasti ali ste jih delili. Upravljajte, kdo jih lahko vidi, prek okna za deljenje vsakega dokumenta.",
         .shared_error_load: "Deljenih dokumentov ni bilo mogoče naložiti. Preverite povezavo in poskusite znova.",
         .reach_restricted: "Omejeno",
         .reach_connected: "Povezano",
@@ -184,8 +184,8 @@ enum Strings_sl {
         .editor_sync_save_failed: "Ni bilo mogoče shraniti · tapnite za ponovni poskus",
         .editor_sync_save_failed_a11y: "Ni bilo mogoče shraniti. Tapnite za ponovni poskus.",
         .editor_sync_saved_on_device: "Shranjeno v tej napravi",
-        .editor_sync_edited_just_now: "Urejeno pravkar",
-        .editor_sync_just_now: "Sinhronizirano pravkar",
+        .editor_sync_edited_just_now: "Pravkar urejeno",
+        .editor_sync_just_now: "Pravkar sinhronizirano",
         .editor_sync_ago: "Sinhronizirano %@",
         .editor_sync_not_synced_yet: "Še ni sinhronizirano",
 
@@ -211,7 +211,7 @@ enum Strings_sl {
         .editor_slash_checklist: "Kontrolni seznam",
         .editor_slash_quote: "Citat",
         .editor_slash_code_block: "Blok kode",
-        .editor_slash_divider: "Ločilo",
+        .editor_slash_divider: "Ločilna črta",
         .editor_slash_photo: "Fotografija",
 
         // Editor - formatting bar (icon-only buttons; accessibility labels)
@@ -252,7 +252,7 @@ enum Strings_sl {
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Dodaj odstavek na koncu",
-        .editor_divider_a11y: "Ločilo",
+        .editor_divider_a11y: "Ločilna črta",
         .editor_checklist_done_a11y: "Označi kot opravljeno",
         .editor_checklist_not_done_a11y: "Označi kot neopravljeno",
 
