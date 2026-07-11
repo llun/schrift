@@ -39,10 +39,11 @@ struct SheetHeader: View {
                 .accessibilityLabel(closeLabel)
             }
         }
-        // Matches the handoff `Sheet` title row padding (4 / 16 / 10); the app
-        // uses its 16pt sheet gutter rather than the prototype's 18.
+        // The handoff `Sheet` seats the title well clear of the drag indicator:
+        // a full 16pt sheet gutter above (the prior 4pt read as cramped against
+        // the grabber), the app's 16pt gutter on the sides, and 10pt below.
         .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.top, DocsSpacing.space3xs)
+        .padding(.top, DocsSpacing.spaceBase)
         .padding(.bottom, DocsSpacing.spaceSM - DocsSpacing.space4xs)
     }
 }
