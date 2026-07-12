@@ -165,6 +165,16 @@ enum Strings_en {
         .editor_sync_just_now: "Synced just now",
         .editor_sync_ago: "Synced %@",
         .editor_sync_not_synced_yet: "Not synced yet",
+        .editor_conflict_pill: "Sync conflict · tap to review",
+        .editor_conflict_pill_a11y: "Sync conflict. Tap to review.",
+        .editor_conflict_title: "Sync conflict",
+        .editor_conflict_body:
+            "This document changed elsewhere while your edits were waiting to sync. Choose which version to keep.",
+        .editor_conflict_keep_mine: "Keep my version",
+        .editor_conflict_keep_mine_detail: "Overwrites the server copy",
+        .editor_conflict_keep_server: "Keep the server version",
+        .editor_conflict_keep_server_detail: "Discards the changes on this device",
+        .editor_conflict_restore_hint: "Overwritten versions can be restored from version history on the web.",
 
         // Editor - errors
         .editor_error_load: "Couldn't load this document. Pull to refresh to try again.",

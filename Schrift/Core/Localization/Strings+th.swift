@@ -164,6 +164,15 @@ enum Strings_th {
         .editor_sync_just_now: "ซิงค์เมื่อสักครู่",
         .editor_sync_ago: "ซิงค์เมื่อ %@",
         .editor_sync_not_synced_yet: "ยังไม่ได้ซิงค์",
+        .editor_conflict_pill: "ข้อขัดแย้งการซิงค์ · แตะเพื่อตรวจสอบ",
+        .editor_conflict_pill_a11y: "ข้อขัดแย้งการซิงค์ แตะเพื่อตรวจสอบ",
+        .editor_conflict_title: "ข้อขัดแย้งการซิงค์",
+        .editor_conflict_body: "เอกสารนี้ถูกแก้ไขที่อื่นขณะที่การแก้ไขของคุณรอการซิงค์ เลือกเวอร์ชันที่จะเก็บไว้",
+        .editor_conflict_keep_mine: "เก็บเวอร์ชันของฉัน",
+        .editor_conflict_keep_mine_detail: "เขียนทับสำเนาบนเซิร์ฟเวอร์",
+        .editor_conflict_keep_server: "เก็บเวอร์ชันของเซิร์ฟเวอร์",
+        .editor_conflict_keep_server_detail: "ละทิ้งการเปลี่ยนแปลงบนอุปกรณ์นี้",
+        .editor_conflict_restore_hint: "เวอร์ชันที่ถูกเขียนทับสามารถกู้คืนได้จากประวัติเวอร์ชันบนเว็บ",
 
         // Editor - errors
         .editor_error_load: "โหลดเอกสารนี้ไม่ได้ ดึงลงเพื่อรีเฟรชแล้วลองอีกครั้ง",

@@ -168,6 +168,17 @@ enum Strings_de {
         .editor_sync_just_now: "Gerade eben synchronisiert",
         .editor_sync_ago: "Synchronisiert %@",
         .editor_sync_not_synced_yet: "Noch nicht synchronisiert",
+        .editor_conflict_pill: "Synchronisierungskonflikt · zum Prüfen tippen",
+        .editor_conflict_pill_a11y: "Synchronisierungskonflikt. Zum Prüfen tippen.",
+        .editor_conflict_title: "Synchronisierungskonflikt",
+        .editor_conflict_body:
+            "Dieses Dokument wurde anderswo geändert, während deine Änderungen auf die Synchronisierung warteten. Wähle, welche Version behalten werden soll.",
+        .editor_conflict_keep_mine: "Meine Version behalten",
+        .editor_conflict_keep_mine_detail: "Überschreibt die Serverkopie",
+        .editor_conflict_keep_server: "Serverversion behalten",
+        .editor_conflict_keep_server_detail: "Verwirft die Änderungen auf diesem Gerät",
+        .editor_conflict_restore_hint:
+            "Überschriebene Versionen können im Web aus dem Versionsverlauf wiederhergestellt werden.",
 
         // Editor - errors
         .editor_error_load: "Dieses Dokument konnte nicht geladen werden. Zum Aktualisieren nach unten ziehen.",
