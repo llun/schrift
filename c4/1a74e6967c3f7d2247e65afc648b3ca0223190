@@ -1,0 +1,25 @@
+SchriftTests/Features/Editor/PendingDraftStoreTests.swift
+  s_e60497739a7df0::t_b7ca72e708e4cb 77-113
+SchriftTests/Features/Editor/DocumentContentCacheStoreTests.swift
+  s_e60497739a7df0::t_4db5d33c53e4e1 83-113
+Schrift/Features/Editor/DocumentContentCacheStore.swift
+  s_e60497739a7df0::t_4f6255b5c3ec3f 22-33,39-53
+Schrift/Features/Editor/PendingDraftStore.swift
+  s_e60497739a7df0::t_6e95b523b7df71 6-12,18-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "c41a74e6967c3f7d2247e65afc648b3ca0223190",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
