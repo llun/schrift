@@ -170,6 +170,7 @@ enum Strings_sl {
         .editor_sync_save_failed: "Ni bilo mogoče shraniti · tapnite za ponovni poskus",
         .editor_sync_save_failed_a11y: "Ni bilo mogoče shraniti. Tapnite za ponovni poskus.",
         .editor_sync_saved_on_device: "Shranjeno v tej napravi",
+        .editor_sync_pending_sync: "Shranjeno v tej napravi · sinhronizira se ob povezavi",
         .editor_sync_edited_just_now: "Pravkar urejeno",
         .editor_sync_just_now: "Pravkar sinhronizirano",
         .editor_sync_ago: "Sinhronizirano %@",

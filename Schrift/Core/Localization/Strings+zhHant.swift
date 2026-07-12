@@ -157,6 +157,7 @@ enum Strings_zhHant {
         .editor_sync_save_failed: "無法儲存 · 點按以重試",
         .editor_sync_save_failed_a11y: "無法儲存。點按以重試。",
         .editor_sync_saved_on_device: "已儲存在此裝置",
+        .editor_sync_pending_sync: "已儲存到此裝置 · 連線後同步",
         .editor_sync_edited_just_now: "剛剛編輯",
         .editor_sync_just_now: "剛剛同步",
         .editor_sync_ago: "%@ 同步",

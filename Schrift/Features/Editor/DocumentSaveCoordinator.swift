@@ -44,6 +44,12 @@ final class DocumentSaveCoordinator {
         case idle
         case saving
         case saved(Date)
+        /// A save failed for a transient/transport reason (offline, 5xx, rate
+        /// limit) — the content is saved on-device and its draft is queued to
+        /// replay via `syncPendingDrafts` on reconnect/foreground/launch. A
+        /// friendlier state than `.failed`, which is reserved for a save the
+        /// server rejected on the merits (and which the user must retry).
+        case pendingSync
         case failed(String)
     }
 
@@ -183,6 +189,16 @@ final class DocumentSaveCoordinator {
                     enqueue(
                         documentID: draft.documentID, title: draft.title, markdown: draft.markdown,
                         baseline: draft.baseline)
+                } else if case .pendingSync = state(for: draft.documentID) {
+                    // A queued offline save whose server copy has moved past the window
+                    // (a co-author's edit) is a conflict, not a stale stranded draft:
+                    // discarding it would silently drop the user's offline work. Leave
+                    // it — the stack's conflict detection surfaces it to the user. This
+                    // holds only while the in-memory `.pendingSync` state is live (this
+                    // session); across a relaunch the state resets to `.idle`, so a
+                    // beyond-tolerance offline draft is protected instead by the
+                    // persistent conflict record the conflict-detection PR adds.
+                    continue
                 } else {
                     draftStore.remove(documentID: draft.documentID)
                 }
@@ -285,6 +301,12 @@ final class DocumentSaveCoordinator {
                     syncedAt: Date(),
                     serverUpdatedAt: nil
                 ))
+        } else if let docsError = error as? DocsAPIError, retryableSaveFailure(docsError) {
+            // Transient/transport failure (offline, 5xx, rate limit): the edit is
+            // safely on-device as a draft; mark it queued for sync rather than a
+            // scary failure. `.sessionExpired` is NOT retryable — the shared client's
+            // hook already raised the re-login sheet — so it lands in `.failed`.
+            states[documentID] = .pendingSync
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")
         }

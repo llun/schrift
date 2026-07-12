@@ -157,6 +157,7 @@ enum Strings_zhHans {
         .editor_sync_save_failed: "无法保存 · 点按以重试",
         .editor_sync_save_failed_a11y: "无法保存。点按以重试。",
         .editor_sync_saved_on_device: "已保存到此设备",
+        .editor_sync_pending_sync: "已保存到此设备 · 联网后同步",
         .editor_sync_edited_just_now: "刚刚编辑",
         .editor_sync_just_now: "刚刚同步",
         .editor_sync_ago: "同步于 %@",

@@ -159,6 +159,7 @@ enum Strings_th {
         .editor_sync_save_failed: "บันทึกไม่ได้ · แตะเพื่อลองใหม่",
         .editor_sync_save_failed_a11y: "บันทึกไม่ได้ แตะเพื่อลองใหม่",
         .editor_sync_saved_on_device: "บันทึกไว้บนอุปกรณ์นี้",
+        .editor_sync_pending_sync: "บันทึกไว้บนอุปกรณ์นี้ · จะซิงค์เมื่อออนไลน์",
         .editor_sync_edited_just_now: "แก้ไขเมื่อสักครู่",
         .editor_sync_just_now: "ซิงค์เมื่อสักครู่",
         .editor_sync_ago: "ซิงค์เมื่อ %@",

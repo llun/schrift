@@ -163,6 +163,7 @@ enum Strings_de {
         .editor_sync_save_failed: "Speichern fehlgeschlagen · zum Wiederholen tippen",
         .editor_sync_save_failed_a11y: "Speichern fehlgeschlagen. Zum Wiederholen tippen.",
         .editor_sync_saved_on_device: "Auf diesem Gerät gespeichert",
+        .editor_sync_pending_sync: "Auf diesem Gerät gespeichert · wird online synchronisiert",
         .editor_sync_edited_just_now: "Gerade eben bearbeitet",
         .editor_sync_just_now: "Gerade eben synchronisiert",
         .editor_sync_ago: "Synchronisiert %@",

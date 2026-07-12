@@ -13,6 +13,9 @@ final class EditorViewModel {
         case dirty
         case saving
         case saved
+        /// Saved on-device; the server save failed transiently and is queued for
+        /// the reconnect/foreground sync (mirrors the coordinator's `.pendingSync`).
+        case pendingSync
         case failed(String)
     }
 
@@ -214,10 +217,15 @@ final class EditorViewModel {
     var hasUnsavedLocalContent: Bool {
         guard hasLoadedContent else { return false }
         if isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil { return true }
-        if case .failed = saveCoordinator.state(for: documentID) {
+        // A failed or pending-sync save leaves the draft as the user's only copy of
+        // that edit (the server hasn't confirmed it), so it is unsaved local content
+        // whatever `displaySource` says.
+        switch saveCoordinator.state(for: documentID) {
+        case .failed, .pendingSync:
             return saveCoordinator.storedDraft(documentID: documentID) != nil
+        default:
+            return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
         }
-        return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
     }
 
     var saveState: SaveState {
@@ -226,6 +234,7 @@ final class EditorViewModel {
         case .idle: return .idle
         case .saving: return .saving
         case .saved: return .saved
+        case .pendingSync: return .pendingSync
         case .failed(let message): return .failed(message)
         }
     }
@@ -529,17 +538,24 @@ final class EditorViewModel {
             displaySource = .draft
             hasLocalCopy = true
         }
-        // A save that failed *this session* leaves a draft the user is looking at,
-        // with the "Couldn't save" retry on screen. The clock-tolerance rule below
-        // is for drafts stranded by an *earlier* session (`recoverDrafts`' job);
-        // applying it here silently deletes visible content. The comparison mixes
-        // clocks — `draft.updatedAt` is the device's, `formatted.updatedAt` the
-        // server's *last write* — so a device running slow shrinks the window from
-        // the draft's side, and even the user's own partially-landed save (content
-        // PATCH applied, title PATCH failed) can then read as "newer than the draft".
-        if case .failed = saveCoordinator.state(for: documentID) {
+        // A save that failed or is queued for sync *this session* leaves a draft the
+        // user is looking at — the "Couldn't save" retry (`.failed`) or "syncs when
+        // online" caption (`.pendingSync`) is on screen, and the draft is their only
+        // copy of that edit. The clock-tolerance rule below is for drafts stranded by
+        // an *earlier* session (`recoverDrafts`' job); applying it to either of these
+        // silently deletes visible content — the exact mirror of the `.pendingSync`
+        // preservation guard in `syncPendingDrafts`, and the reason a pull-to-refresh
+        // must not discard a queued offline edit. The comparison mixes clocks —
+        // `draft.updatedAt` is the device's, `formatted.updatedAt` the server's *last
+        // write* — so a device running slow shrinks the window from the draft's side,
+        // and even the user's own partially-landed save (content PATCH applied, title
+        // PATCH failed) can then read as "newer than the draft".
+        switch saveCoordinator.state(for: documentID) {
+        case .failed, .pendingSync:
             cacheServerCopy(formatted)
             return
+        default:
+            break
         }
         if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
             cacheServerCopy(formatted)
@@ -1429,12 +1445,19 @@ final class EditorViewModel {
             flushPendingChanges()
         }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
-        if case .failed = saveCoordinator.state(for: documentID) {
-            // The retry re-pushes the failed draft's content, so it descends from
-            // that draft's own recorded baseline.
+        // Retry a hard failure (`.failed`) or a queued transient one (`.pendingSync`).
+        // The latter matters when the failure happened while online (a 5xx / rate
+        // limit / HTTP-3 stall): the reconnect/foreground auto-sync triggers won't
+        // fire, so this manual retry is the only resync without a background cycle.
+        // The retry re-pushes the draft's content, so it descends from that draft's
+        // own recorded baseline.
+        switch saveCoordinator.state(for: documentID) {
+        case .failed, .pendingSync:
             saveCoordinator.enqueue(
                 documentID: documentID, title: savedTitle, markdown: savedMarkdown,
                 baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline)
+        default:
+            break
         }
     }
 

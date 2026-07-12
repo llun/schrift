@@ -161,6 +161,7 @@ enum Strings_fr {
         .editor_sync_save_failed: "Impossible d’enregistrer · appuyez pour réessayer",
         .editor_sync_save_failed_a11y: "Impossible d’enregistrer. Appuyez pour réessayer.",
         .editor_sync_saved_on_device: "Enregistré sur cet appareil",
+        .editor_sync_pending_sync: "Enregistré sur cet appareil · synchronisé une fois en ligne",
         .editor_sync_edited_just_now: "Modifié à l’instant",
         .editor_sync_just_now: "Synchronisé à l’instant",
         .editor_sync_ago: "Synchronisé %@",

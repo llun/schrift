@@ -36,9 +36,12 @@ struct SyncCaption: Equatable {
 /// offline wording — it is the only affordance that unpins the document, because
 /// `reconcileDraft` deliberately no-ops every revalidation while a failed save's
 /// draft is on screen, and the reading surface has no other retry (tap-to-edit is
-/// itself blocked offline, which is when saves fail most). (2) other unsaved local
-/// content → save wording (a previously-synced doc with a stranded draft must not
-/// read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
+/// itself blocked offline, which is when saves fail most). (1b) a **queued offline
+/// save** (`.pendingSync`) is its own tier just below: its "syncs when online"
+/// caption beats the generic offline wording, and it doubles as a manual retry
+/// when the device is online (where the auto-sync triggers can't fire). (2) other
+/// unsaved local content → save wording (a previously-synced doc with a stranded
+/// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
     hasUnsavedLocalContent: Bool,
     isOffline: Bool,
@@ -51,11 +54,21 @@ func syncCaption(
         if case .failed = saveState {
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }
+        // A queued offline save gets its own caption, above the generic offline one:
+        // it promises the edit will sync, not merely that it's on the device. When
+        // the device is actually online (a 5xx / rate limit / HTTP-3 stall parked the
+        // save), the reconnect/foreground auto-sync triggers can't fire, so the
+        // caption doubles as a manual retry; offline it stays passive (reconnect
+        // handles it).
+        if case .pendingSync = saveState {
+            return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: !isOffline)
+        }
         if isOffline { return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false) }
         switch saveState {
         case .saving: return SyncCaption(text: .key(.editor_saving), offersRetry: false)
         case .saved: return SyncCaption(text: .key(.editor_saved), offersRetry: false)
         case .failed: return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
+        case .pendingSync: return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false)
         case .dirty, .idle: return SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false)
         }
     }
@@ -436,7 +449,11 @@ struct EditorView: View {
                                 .foregroundStyle(DocsColor.textBrand)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(loc[.editor_sync_save_failed_a11y])
+                        // The failed-save label only fits the failed caption; a
+                        // pending-sync retry falls back to its visible text.
+                        .accessibilityLabel(
+                            caption.text == .key(.editor_sync_save_failed)
+                                ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text))
                     } else {
                         Text(resolvedCaption(caption.text))
                             .font(DocsFont.footnote)

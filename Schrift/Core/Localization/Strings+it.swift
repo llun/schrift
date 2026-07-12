@@ -159,6 +159,7 @@ enum Strings_it {
         .editor_sync_save_failed: "Impossibile salvare · tocca per riprovare",
         .editor_sync_save_failed_a11y: "Impossibile salvare. Tocca per riprovare.",
         .editor_sync_saved_on_device: "Salvato su questo dispositivo",
+        .editor_sync_pending_sync: "Salvato su questo dispositivo · si sincronizza online",
         .editor_sync_edited_just_now: "Modificato proprio ora",
         .editor_sync_just_now: "Sincronizzato proprio ora",
         .editor_sync_ago: "Sincronizzato %@",

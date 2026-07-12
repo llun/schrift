@@ -163,7 +163,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
     func testFailedSaveKeepsDraftAndReportsFailure() async {
         let log = RequestRecorder()
-        stubSavePipeline(log: log, contentStatus: 500)
+        stubSavePipeline(log: log, contentStatus: 400)
         let (coordinator, draftStore, _) = makeCoordinator()
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
@@ -172,6 +172,94 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(isFailed(coordinator.state(for: documentID)))
         XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Content")
+    }
+
+    private func isPendingSync(_ state: DocumentSaveCoordinator.DocSaveState) -> Bool {
+        if case .pendingSync = state { return true }
+        return false
+    }
+
+    /// A transient/transport failure (offline) is classified as `.pendingSync`, not
+    /// `.failed`: the edit is safely on-device and queued to replay.
+    func testTransientSaveFailureBecomesPendingSync() async {
+        let (coordinator, draftStore, contentCache) = makeCoordinator()
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Content", "the draft is queued for sync")
+        XCTAssertNil(contentCache.content(for: documentID), "a pending-sync save writes no cache entry")
+    }
+
+    /// A 5xx is transient too → `.pendingSync`.
+    func testServerErrorSaveFailureBecomesPendingSync() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, contentStatus: 503)
+        let (coordinator, _, _) = makeCoordinator()
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+    }
+
+    /// An expired session is NOT retryable — it would just fail again — so it stays
+    /// a hard `.failed` (the shared client's hook raises the re-login sheet).
+    func testSessionExpiredSaveBecomesFailedNotPendingSync() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, contentStatus: 401)
+        let (coordinator, _, _) = makeCoordinator()
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil { self.isFailed(coordinator.state(for: self.documentID)) }
+    }
+
+    /// A queued offline save (`.pendingSync`) whose server copy has moved past the
+    /// tolerance window is a conflict, not a stale draft — `syncPendingDrafts` must
+    /// preserve it, not discard it.
+    func testSyncPendingDraftsKeepsAPendingSyncDraftBeyondTolerance() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID),
+            "a pending-sync draft beyond tolerance is a conflict — preserved, not discarded")
+    }
+
+    /// The primary success path the state enables: an offline save lands in
+    /// `.pendingSync`, then `syncPendingDrafts` replays and clears it once the
+    /// server is reachable and within tolerance.
+    func testPendingSyncDraftResyncsAndClearsWhenWithinTolerance() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        // Reconnect: the server (2026-01-15) is older than the "now" draft → within
+        // tolerance → replay and clear.
+        stubSavePipeline(log: log)
+        await coordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertNil(draftStore.draft(for: documentID), "the queued offline edit synced and cleared")
     }
 
     func testDocumentsSaveIndependently() async {
@@ -341,7 +429,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
-                return MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+                return MockURLProtocol.Stub(statusCode: 400, headers: [:], body: Data(), error: nil)
             }
             return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: futureBody, error: nil)
         }
@@ -379,7 +467,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
     func testSaveFailureWritesNoContentCacheEntry() async {
         MockURLProtocol.stubHandler = { _ in
-            MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+            MockURLProtocol.Stub(statusCode: 400, headers: [:], body: Data(), error: nil)
         }
         let (coordinator, _, contentCache) = makeCoordinator(backgroundTasks: .noop)
 
@@ -445,7 +533,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testSuppressedWriteThroughSkipsTheCacheAndKeepsAnUnsavedDraft() async {
         let log = RequestRecorder()
         let (coordinator, draftStore, contentCache) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, saveDelay: 0.2, contentStatus: 500)
+        stubSavePipeline(log: log, saveDelay: 0.2, contentStatus: 400)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
         // The document becomes unavailable while the save's PATCH is on the wire.
@@ -515,7 +603,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
     func testSaveMarkerPredatesAFailedSaveToo() async {
         let log = RequestRecorder()
         let (coordinator, _, _) = makeCoordinator(backgroundTasks: .noop)
-        stubSavePipeline(log: log, contentStatus: 500)
+        stubSavePipeline(log: log, contentStatus: 400)
         let marker = coordinator.saveMarker(documentID: documentID)
 
         coordinator.enqueue(documentID: documentID, title: "A", markdown: "a")

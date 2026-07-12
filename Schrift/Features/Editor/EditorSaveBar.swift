@@ -76,6 +76,18 @@ struct SaveStatusIndicator: View {
             }
             .foregroundStyle(DocsColor.textTertiary)
 
+        case .pendingSync:
+            // The width-constrained editing header uses the compact "Saved on this
+            // device" (the `cloud_off` icon conveys the pending sync); the reading
+            // surface's caption carries the full "· syncs when online" promise once
+            // editing ends.
+            HStack(spacing: DocsSpacing.space3xs) {
+                MaterialSymbol(.cloud_off, size: 11)
+                Text(loc[.editor_sync_saved_on_device])
+                    .font(DocsFont.footnote)
+            }
+            .foregroundStyle(DocsColor.textTertiary)
+
         case .failed:
             Button(action: onTap) {
                 HStack(spacing: DocsSpacing.space3xs) {
@@ -97,6 +109,7 @@ struct SaveStatusIndicator: View {
         EditorSaveBar(saveState: .dirty, onSaveTap: {}, onDone: {})
         EditorSaveBar(saveState: .saving, onSaveTap: {}, onDone: {})
         EditorSaveBar(saveState: .saved, onSaveTap: {}, onDone: {})
+        EditorSaveBar(saveState: .pendingSync, onSaveTap: {}, onDone: {})
         EditorSaveBar(saveState: .failed("nope"), onSaveTap: {}, onDone: {})
     }
     .background(DocsColor.surfaceSunken)

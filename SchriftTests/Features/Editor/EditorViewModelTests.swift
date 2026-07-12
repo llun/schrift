@@ -609,16 +609,34 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testDraftWithinToleranceIsKeptOnScreen() async {
-        let (viewModel, _, draftStore, _) = makeEnvironment()
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         // Fixture updated_at is 2026-01-15T10:30:00Z; a draft stamped now is
         // far newer → within tolerance, draft stays.
         draftStore.save(PendingDraft(documentID: documentID, title: "Draft", markdown: "# Draft", updatedAt: Date()))
-        stubLoad(content: "# Server")
+        // Hold the hand-back re-save's PATCH open: within tolerance, reconcileDraft
+        // re-enqueues the draft, and a *completed* re-save would legitimately clear
+        // it — which raced the assertion below and flaked on fast CI machines.
+        let body = formattedBody(content: "# Server")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "# Draft")
-        XCTAssertNotNil(draftStore.draft(for: documentID))
+        XCTAssertEqual(viewModel.rawMarkdown, "# Draft", "the within-tolerance draft's content stays on screen")
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID), "the draft is kept (re-enqueued), not server-wins-discarded")
+        // Let the held re-save settle so nothing outlives the test.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
     func testSecondLoadSupersedesFirstRevalidation() async {
@@ -717,7 +735,7 @@ final class EditorViewModelTests: XCTestCase {
     func testRefreshAfterAFailedSaveKeepsTheDraftOnScreen() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 400)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
@@ -747,7 +765,7 @@ final class EditorViewModelTests: XCTestCase {
     func testRevalidationAfterAFailedSaveNeverClobbersTheSurvivingDraft() async {
         let log = RequestRecorder()
         let (viewModel, _, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 400)
         await viewModel.load()
         XCTAssertEqual(viewModel.displaySource, .clean)
 
@@ -778,7 +796,7 @@ final class EditorViewModelTests: XCTestCase {
     func testRevalidationAfterAFailedSaveKeepsTheDraftEvenWhenTheServerLooksNewer() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "# Server", log: log, contentStatus: 400)
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
@@ -1255,7 +1273,7 @@ final class EditorViewModelTests: XCTestCase {
     func testFailedSaveSurfacesFailedStateAndKeepsDraft() async {
         let log = RequestRecorder()
         let (viewModel, _, draftStore, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 400)
         await viewModel.load()
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
@@ -1273,6 +1291,74 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isEditing)
     }
 
+    /// A transient (5xx/offline) save failure surfaces as `.pendingSync`, not the
+    /// scary `.failed`, and still counts as unsaved local content (its draft is the
+    /// user's only copy until the queued sync lands).
+    func testTransientSaveFailureSurfacesPendingSyncAndCountsAsUnsaved() async {
+        let log = RequestRecorder()
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 503)
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+
+        XCTAssertEqual(viewModel.saveState, .pendingSync)
+        XCTAssertTrue(viewModel.hasUnsavedLocalContent, "a pending-sync draft is unsaved local content")
+    }
+
+    /// Regression: a queued offline (`.pendingSync`) draft must survive a
+    /// pull-to-refresh even when a co-author moved the server past the tolerance
+    /// window. reconcileDraft's guard covers `.pendingSync`, not only `.failed`;
+    /// without it the draft is silently discarded and the server body installed.
+    func testPendingSyncDraftSurvivesAPullToRefreshBeyondTolerance() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 503)
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Offline edit")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        // A co-author edits: the server updated_at is now far past the window.
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        await viewModel.refresh()
+
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Offline edit") ?? false,
+            "the queued offline edit is preserved, not tolerance-discarded on refresh")
+    }
+
+    /// Recoverability: an online transient failure parks the save at `.pendingSync`
+    /// with no auto-sync trigger able to fire, so `saveNow()` must re-enqueue it
+    /// (the manual retry the caption offers when online).
+    func testSaveNowRetriesAPendingSyncDraft() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 503)
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Edited")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+
+        // The server recovers; the manual retry re-enqueues and it succeeds.
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 204)
+        viewModel.saveNow()
+        await waitUntil { viewModel.saveState == .saved }
+        XCTAssertNil(draftStore.draft(for: documentID), "the retried pending-sync draft synced and cleared")
+    }
+
     /// Typing and undoing after a failed save leaves `isDirty` true with content
     /// that matches `savedMarkdown`, so the flush enqueues nothing. `saveNow()` must
     /// still fire the retry — swallowing it strands the document behind its failed
@@ -1281,7 +1367,7 @@ final class EditorViewModelTests: XCTestCase {
     func testSaveNowRetriesWhenADirtyFlushEnqueuesNothing() async {
         let log = RequestRecorder()
         let (viewModel, _, _, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 400)
         await viewModel.load()
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
@@ -1325,7 +1411,7 @@ final class EditorViewModelTests: XCTestCase {
     func testSaveNowRetriesAfterFailure() async {
         let log = RequestRecorder()
         let (viewModel, _, _, _) = makeEnvironment()
-        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 500)
+        stubLoadAndSavePipeline(content: "Original text", log: log, contentStatus: 400)
         await viewModel.load()
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Changed text")
@@ -1816,15 +1902,16 @@ final class EditorViewModelTests: XCTestCase {
     func testSaveNowRetryPreservesTheBaseline() async {
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         let bodyA = formattedBody(content: "# Server body")
-        // GET ok (baseline A); the content PATCH 500s so the save fails and the
-        // draft (with its baseline) survives to be retried.
+        // GET ok (baseline A); the content PATCH is rejected with a non-retryable
+        // 400 so the save reaches `.failed` (the retry state), and the draft (with
+        // its baseline) survives to be retried.
         MockURLProtocol.stubHandler = { request in
             let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "GET", url.contains("formatted-content") {
                 return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: bodyA, error: nil)
             }
             if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
-                return MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+                return MockURLProtocol.Stub(statusCode: 400, headers: [:], body: Data(), error: nil)
             }
             return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
         }
