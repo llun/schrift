@@ -67,16 +67,15 @@ final class SharedViewModelTests: XCTestCase {
             .results[0]
     }
 
+    // The accesses `list` action is not paginated — the backend returns a bare
+    // JSON array, not a `{count, results}` envelope.
     nonisolated private static func accessesFixture(userID: String, fullName: String) -> Data {
         """
-        {
-            "count": 1, "next": null, "previous": null,
-            "results": [
-                { "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                  "user": { "id": "\(userID)", "email": "u@x.io", "full_name": "\(fullName)", "short_name": "U" },
-                  "team": null, "role": "owner" }
-            ]
-        }
+        [
+            { "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "user": { "id": "\(userID)", "email": "u@x.io", "full_name": "\(fullName)", "short_name": "U" },
+              "team": null, "role": "owner" }
+        ]
         """.data(using: .utf8)!
     }
 

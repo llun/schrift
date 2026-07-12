@@ -21,10 +21,12 @@ final class ShareViewModelTests: XCTestCase {
         return ShareViewModel(client: client, documentID: documentID, linkReach: linkReach, linkRole: linkRole)
     }
 
+    // The accesses `list` action is not paginated — the backend returns a bare
+    // JSON array, not a `{count, results}` envelope. (Invitations are paginated.)
     private static let accessesFixture = """
-        {"count": 1, "next": null, "previous": null, "results": [
+        [
             {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "33333333-3333-4333-8333-333333333333", "email": "member@example.com", "full_name": "Member One", "short_name": "Member", "language": "en-us", "is_first_connection": false}, "team": "", "role": "editor", "abilities": {}, "max_ancestors_role": null, "max_role": "editor"}
-        ]}
+        ]
         """.data(using: .utf8)!
 
     private static let invitationsFixture = """

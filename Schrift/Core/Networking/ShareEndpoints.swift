@@ -49,7 +49,14 @@ func userSearchPath(query: String, excludingDocumentID: UUID) -> String {
 }
 
 extension DocsAPIClient {
-    func listAccesses(documentID: UUID) async throws -> PaginatedResponse<DocumentAccess> {
+    /// The accesses endpoint's `list` action is **not** paginated: the backend
+    /// overrides it to build the ancestor-aware access list by hand and returns a
+    /// bare JSON array (`[…]`), not a `{count, results}` envelope. Decoding it as a
+    /// `PaginatedResponse` fails on every call — which is why the Share sheet
+    /// reported "Couldn't load members" for every document and the Shared tab's
+    /// row enrichment silently no-op'd. Decode the bare array directly, like
+    /// `searchUsers`. (Invitations *are* paginated — see `listInvitations`.)
+    func listAccesses(documentID: UUID) async throws -> [DocumentAccess] {
         try await get("documents/\(documentID.uuidString.lowercased())/accesses/")
     }
 
