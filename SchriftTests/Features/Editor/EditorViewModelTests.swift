@@ -1584,4 +1584,80 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Co-author edit")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
+
+    /// The primary offline scenario: a draft persisted by an earlier session is
+    /// reopened offline (restoreLocalContent's `.draft` branch reconstructs the
+    /// baseline from it), edited, and flushed — the re-enqueued draft must still
+    /// descend from the original server baseline, so a later conflict check can't
+    /// tolerance-discard baseline-carrying work.
+    func testDraftRestoreReconstructsBaselineForOfflineReopen() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Offline edit",
+                updatedAt: Date(), baseline: DraftBaseline(serverUpdatedAt: serverDate, markdown: "# Server base")))
+        stubOffline()
+        await viewModel.load()  // restoreLocalContent .draft branch → serverBaseline = draft.baseline
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Offline edit more")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Server base")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, serverDate)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// Reopening a document whose save is still in flight runs restoreLocalContent's
+    /// `.pendingSave` branch, which reconstructs the baseline from the stored draft.
+    func testPendingSaveRestoreReconstructsBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let baseline = DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_000), markdown: "# Base")
+        // Hold the content PATCH open so the save stays in flight while we reopen.
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Queued", baseline: baseline)
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the save is in flight")
+
+        await viewModel.load()  // restoreLocalContent .pendingSave branch
+        XCTAssertEqual(viewModel.displaySource, .pendingSave)
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Queued edit")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Base")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// A 404 mid-edit tears the document down, but `becomeUnavailable` flushes
+    /// write-ahead *first* — the persisted draft must carry the baseline so a
+    /// transient 404's replay (recoverDrafts / reconcileDraft) can reconcile it.
+    func testTeardownFlushCarriesTheServerBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // installFetched → baseline A
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        XCTAssertTrue(viewModel.isDirty)
+
+        stubStatus(404)
+        await viewModel.load()  // 404 → becomeUnavailable flushes write-ahead with the baseline
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "the write-ahead teardown flush persists the baseline the edit descended from")
+    }
 }

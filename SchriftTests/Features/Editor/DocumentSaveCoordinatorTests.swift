@@ -263,6 +263,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertEqual(entry?.title, "Doc")
         XCTAssertEqual(entry?.markdown, "# Content")
         XCTAssertNotNil(entry?.syncedAt)
+        // Void PATCHes return no server timestamp, so the write-through must record
+        // nil here (not the client clock) — the clock-mixing guard this stack rests on.
+        XCTAssertNil(entry?.serverUpdatedAt)
     }
 
     func testSaveFailureWritesNoContentCacheEntry() async {

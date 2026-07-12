@@ -455,7 +455,8 @@ final class EditorViewModel {
     private func apply(formatted: FormattedDocumentContent, mayPredateLocalSave: Bool) {
         // This fetch raced one of our own saves, so its body may be the one that
         // save just replaced. Take nothing from it — not the body, not the cache
-        // entry, and not `updatedAt` — since a later full-overwrite save would
+        // entry, and not the server baseline (the early return leaves
+        // `serverBaseline` untouched) — since a later full-overwrite save would
         // push the resurrected body to the server. Only the display source is
         // settled, so the next fetch isn't stranded.
         if mayPredateLocalSave {

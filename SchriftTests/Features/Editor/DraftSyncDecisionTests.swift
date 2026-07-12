@@ -116,18 +116,27 @@ final class DraftSyncDecisionTests: XCTestCase {
     }
 
     func testBaselineCarryingDraftNeverDiscards() {
-        // However far past the tolerance window the server is, a baseline-carrying
-        // draft can only ever be .push or .conflict — never silently discarded.
-        let decision = draftSyncDecision(
-            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base"),
-            lastPushedMarkdown: nil,
-            draftUpdatedAt: base,
-            serverUpdatedAt: base.addingTimeInterval(10 * 24 * 3600),
-            serverMarkdown: "# Server changed",
-            tolerance: 120
-        )
-        XCTAssertEqual(decision, .conflict)
-        XCTAssertNotEqual(decision, .discardServerWins)
+        // Sweep server states well past the tolerance window with matching and
+        // diverged bodies: a baseline-carrying draft may only ever be .push or
+        // .conflict — never silently discarded (the invariant this stack protects).
+        let offsets: [TimeInterval] = [-3600, 0, 120, 3600, 10 * 24 * 3600]
+        let bodies = ["# Base", "# Server changed", "* Base"]  // one matches the baseline cosmetically
+        for offset in offsets {
+            for body in bodies {
+                let decision = draftSyncDecision(
+                    baseline: DraftBaseline(serverUpdatedAt: base, markdown: "- Base"),
+                    lastPushedMarkdown: nil,
+                    draftUpdatedAt: base,
+                    serverUpdatedAt: base.addingTimeInterval(offset),
+                    serverMarkdown: body,
+                    tolerance: 120
+                )
+                XCTAssertNotEqual(
+                    decision, .discardServerWins,
+                    "baseline-carrying draft discarded at offset \(offset), body \(body)")
+                XCTAssertTrue(decision == .push || decision == .conflict)
+            }
+        }
     }
 
     // MARK: - Rule 3: legacy (nil) baseline → tolerance

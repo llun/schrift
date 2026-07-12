@@ -90,6 +90,10 @@ func draftSyncDecision(
 /// surfaced as a hard failure. Transient/transport problems are retryable; anything
 /// the server rejected on the merits, or an expired session, is not — it would just
 /// fail again on every resync trigger, so it stays a visible `.failed`.
+///
+/// Like the rest of this file, this is a foundation piece with no caller yet: the
+/// PR that adds the `.pendingSync` save state wires it into
+/// `DocumentSaveCoordinator.finish()`.
 func retryableSaveFailure(_ error: DocsAPIError) -> Bool {
     switch error {
     case .network, .rateLimited:
