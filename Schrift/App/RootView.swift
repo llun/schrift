@@ -8,6 +8,8 @@ private struct AuthenticatedHomeContainer: View {
     let onSignOut: () -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(ConnectivityMonitor.self) private var connectivity
+    @Environment(\.scenePhase) private var scenePhase
 
     init(serverURL: URL, sessionStore: SessionStore, onSignOut: @escaping () -> Void) {
         // The one client every feature shares: its onSessionExpired hook is
@@ -54,6 +56,21 @@ private struct AuthenticatedHomeContainer: View {
                 onCancel: { sessionStore.cancelReauthentication() }
             )
         }
+        // Auto-sync queued drafts when connectivity returns (false→true edge) and
+        // when the app comes to the foreground. Launch is covered by the existing
+        // `recoverDrafts()` from HomeViewModel.load(). The coordinator self-guards
+        // against overlapping runs, so a foreground that coincides with a reconnect
+        // is harmless.
+        .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
+            guard !wasReachable, isReachable else { return }
+            let coordinator = viewModel.saveCoordinator
+            Task { await coordinator.syncPendingDrafts() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            let coordinator = viewModel.saveCoordinator
+            Task { await coordinator.syncPendingDrafts() }
+        }
     }
 }
 
@@ -85,4 +102,5 @@ struct RootView: View {
 #Preview {
     RootView()
         .environment(LocalizationStore())
+        .environment(ConnectivityMonitor())
 }
