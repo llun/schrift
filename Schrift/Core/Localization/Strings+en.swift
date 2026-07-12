@@ -47,17 +47,12 @@ enum Strings_en {
 
         // Shared
         .shared_title: "Shared",
-        .shared_with_me: "Shared with me",
-        .shared_by_me: "Shared by me",
         .shared_count_one: "%d document",
         .shared_count_other: "%d documents",
         .shared_subtitle_with: "Shared · %@",
         .shared_subtitle_shared_by: "Shared by %@ · %@",
-        .shared_subtitle_by: "%@ · Shared %@",
         .shared_footer_with:
             "Documents other people have invited you to. Your access depends on your role on each one.",
-        .shared_footer_by:
-            "Documents you own or have shared. Manage who can see them from each document’s share sheet.",
         .shared_error_load: "Could not load shared documents. Check your connection and try again.",
         .reach_restricted: "Restricted",
         .reach_connected: "Connected",

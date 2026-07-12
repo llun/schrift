@@ -52,8 +52,6 @@ enum L10nKey: String, CaseIterable, Sendable {
 
     // Shared
     case shared_title = "shared.title"  // "Shared"
-    case shared_with_me = "shared.with_me"  // "Shared with me"
-    case shared_by_me = "shared.by_me"  // "Shared by me"
     case shared_count_one = "shared.count.one"  // "%d document"
     case shared_count_other = "shared.count.other"  // "%d documents"
     // Slovene dual/few forms (see PluralRule); only the Slovene table defines these.
@@ -61,11 +59,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case shared_count_few = "shared.count.few"  // "%d dokumenti"
     case shared_subtitle_with = "shared.subtitle_with"  // "Shared · %@"
     case shared_subtitle_shared_by = "shared.subtitle_shared_by"  // "Shared by %@ · %@"
-    case shared_subtitle_by = "shared.subtitle_by"  // "%@ · Shared %@"
     case shared_footer_with = "shared.footer_with"
     // "Documents other people have invited you to. Your access depends on your role on each one."
-    case shared_footer_by = "shared.footer_by"
-    // "Documents you own or have shared. Manage who can see them from each document’s share sheet."
     case shared_error_load = "shared.error.load"
     // "Could not load shared documents. Check your connection and try again."
     case reach_restricted = "reach.restricted"  // "Restricted"

@@ -47,17 +47,12 @@ enum Strings_de {
 
         // Shared
         .shared_title: "Geteilt",
-        .shared_with_me: "Mit mir geteilt",
-        .shared_by_me: "Von mir geteilt",
         .shared_count_one: "%d Dokument",
         .shared_count_other: "%d Dokumente",
         .shared_subtitle_with: "Geteilt · %@",
         .shared_subtitle_shared_by: "Geteilt von %@ · %@",
-        .shared_subtitle_by: "%@ · Geteilt %@",
         .shared_footer_with:
             "Dokumente, zu denen andere dich eingeladen haben. Dein Zugriff hängt von deiner Rolle bei jedem einzelnen ab.",
-        .shared_footer_by:
-            "Dokumente, die dir gehören oder die du geteilt hast. Verwalte im Freigabemenü des jeweiligen Dokuments, wer sie sehen kann.",
         .shared_error_load:
             "Geteilte Dokumente konnten nicht geladen werden. Überprüfe deine Verbindung und versuche es erneut.",
         .reach_restricted: "Eingeschränkt",

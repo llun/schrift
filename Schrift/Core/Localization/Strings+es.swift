@@ -47,17 +47,12 @@ enum Strings_es {
 
         // Shared
         .shared_title: "Compartidos",
-        .shared_with_me: "Compartido conmigo",
-        .shared_by_me: "Compartido por mí",
         .shared_count_one: "%d documento",
         .shared_count_other: "%d documentos",
         .shared_subtitle_with: "Compartido · %@",
         .shared_subtitle_shared_by: "Compartido por %@ · %@",
-        .shared_subtitle_by: "%@ · Compartido %@",
         .shared_footer_with:
             "Documentos a los que otras personas te han invitado. Tu acceso depende de tu rol en cada uno.",
-        .shared_footer_by:
-            "Documentos que posees o que has compartido. Gestiona quién puede verlos desde el panel para compartir de cada documento.",
         .shared_error_load:
             "No se pudieron cargar los documentos compartidos. Comprueba tu conexión e inténtalo de nuevo.",
         .reach_restricted: "Restringido",

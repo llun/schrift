@@ -46,17 +46,12 @@ enum Strings_pt {
 
         // Shared
         .shared_title: "Partilhados",
-        .shared_with_me: "Partilhados comigo",
-        .shared_by_me: "Partilhados por mim",
         .shared_count_one: "%d documento",
         .shared_count_other: "%d documentos",
         .shared_subtitle_with: "Partilhado · %@",
         .shared_subtitle_shared_by: "Partilhado por %@ · %@",
-        .shared_subtitle_by: "%@ · Partilhado %@",
         .shared_footer_with:
             "Documentos para os quais outras pessoas o convidaram. O seu acesso depende da sua função em cada um.",
-        .shared_footer_by:
-            "Documentos que possui ou que partilhou. Faça a gestão de quem os pode ver a partir do ecrã de partilha de cada documento.",
         .shared_error_load:
             "Não foi possível carregar os documentos partilhados. Verifique a sua ligação e tente novamente.",
         .reach_restricted: "Restrito",
