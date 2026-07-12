@@ -2,10 +2,6 @@ import XCTest
 
 @testable import Schrift
 
-private final class RequestLog: @unchecked Sendable {
-    var urls: [String] = []
-}
-
 @MainActor
 final class HomeViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
@@ -114,22 +110,86 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
-    func testSelectFilterUpdatesQueryParametersForRecentList() async {
+    func testLoadRequestsTheUnfilteredRecentList() async {
+        // With the filter sub-tabs removed, the recent list is always the
+        // unfiltered feed — no is_favorite / is_creator_me query params.
         let viewModel = makeViewModel()
-        let log = RequestLog()
+        let recorder = RequestRecorder()
         let empty = Self.emptyFixture
         MockURLProtocol.stubHandler = { request in
-            let path = request.url?.path ?? ""
-            if !path.contains("favorite_list") {
-                log.urls.append(request.url?.absoluteString ?? "")
-            }
+            recorder.record(request)
             return .init(statusCode: 200, headers: [:], body: empty, error: nil)
         }
 
-        await viewModel.selectFilter(.shared)
+        await viewModel.load()
 
-        XCTAssertEqual(viewModel.selectedFilter, .shared)
-        XCTAssertTrue(log.urls.last?.contains("is_creator_me=false") ?? false)
+        // No request carries a filter query param: the recent list is the
+        // unfiltered feed and the pinned list uses its own favorite endpoint.
+        XCTAssertEqual(recorder.count(ofMethod: "GET", urlContaining: "is_creator_me"), 0)
+        XCTAssertEqual(recorder.count(ofMethod: "GET", urlContaining: "is_favorite"), 0)
+    }
+
+    func testShowsPinnedSectionReflectsWhetherPinnedDocumentsExist() {
+        let viewModel = makeViewModel()
+        XCTAssertFalse(viewModel.showsPinnedSection)
+
+        let pinnedBody = Self.paginatedFixture(
+            id: "24242424-2424-4242-8242-242424242424", title: "Pinned", isFavorite: true)
+        viewModel.pinnedDocuments = [
+            try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]
+        ]
+        XCTAssertTrue(viewModel.showsPinnedSection)
+    }
+
+    func testFirstRunWithNoLocalListShowsTheLoadingPlaceholder() async {
+        // Nothing cached and no pinned rows: the one first-run spinner shows
+        // while the fetch is in flight.
+        let viewModel = makeViewModel()
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            gate.wait()  // hold the fetch open so the mid-flight state is observable
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.count(ofMethod: "GET") >= 1 }  // load() is now in its network phase
+
+        XCTAssertTrue(viewModel.isLoading, "a true first run with nothing local must show the spinner")
+
+        gate.signal()
+        gate.signal()
+        await load.value
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testFirstRunWithCachedPinnedRowsSuppressesTheLoadingPlaceholder() async {
+        // Pinned rows are always visible now (no filter can hide their
+        // section), so they count as rows on screen and suppress the first-run
+        // spinner even when the recent list was never cached.
+        let cache = makeCache()
+        let pinnedBody = Self.paginatedFixture(
+            id: "25252525-2525-4252-8252-252525252525", title: "Cached Pinned", isFavorite: true)
+        cache.savePinnedDocuments(
+            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]])
+        let viewModel = makeViewModel(cache: cache)
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            gate.wait()
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.count(ofMethod: "GET") >= 1 }
+
+        XCTAssertFalse(viewModel.isLoading, "visible pinned rows are no first-run spinner")
+
+        gate.signal()
+        gate.signal()
+        await load.value
     }
 
     func testSearchWithEmptyQueryClearsResults() async {
@@ -175,7 +235,7 @@ final class HomeViewModelTests: XCTestCase {
         let recentDocument = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: recentBody)
             .results[0]
         cache.savePinnedDocuments([pinnedDocument])
-        cache.saveRecentDocuments([recentDocument], filter: .all)
+        cache.saveRecentDocuments([recentDocument])
 
         let viewModel = makeViewModel(cache: cache)
 
@@ -183,7 +243,7 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Recent"])
     }
 
-    func testLoadWithAllFilterSavesResultsToCache() async {
+    func testLoadSavesResultsToCache() async {
         let cache = makeCache()
         let viewModel = makeViewModel(cache: cache)
         let pinnedBody = Self.paginatedFixture(
@@ -201,51 +261,7 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertEqual(cache.loadPinnedDocuments().map(\.title), ["Pinned Doc"])
-        XCTAssertEqual(cache.loadRecentDocuments(filter: .all)?.map(\.title), ["Recent Doc"])
-    }
-
-    func testLoadWithNonAllFilterSavesUnderItsOwnKey() async {
-        let cache = makeCache()
-        let allRecentBody = Self.paginatedFixture(
-            id: "99999999-9999-4999-8999-999999999999", title: "All Doc", isFavorite: false)
-        let allRecentDocument = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: allRecentBody)
-            .results[0]
-        cache.saveRecentDocuments([allRecentDocument], filter: .all)
-        let viewModel = makeViewModel(cache: cache)
-        let sharedBody = Self.paginatedFixture(
-            id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Shared Doc", isFavorite: false)
-        let empty = Self.emptyFixture
-        MockURLProtocol.stubHandler = { request in
-            let path = request.url?.path ?? ""
-            if path.contains("favorite_list") {
-                return .init(statusCode: 200, headers: [:], body: empty, error: nil)
-            }
-            return .init(statusCode: 200, headers: [:], body: sharedBody, error: nil)
-        }
-
-        await viewModel.selectFilter(.shared)
-
-        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Shared Doc"])
-        XCTAssertEqual(cache.loadRecentDocuments(filter: .shared)?.map(\.title), ["Shared Doc"])
-        // The .all filter's cache is untouched by another filter's fetch.
-        XCTAssertEqual(cache.loadRecentDocuments(filter: .all)?.map(\.title), ["All Doc"])
-    }
-
-    func testSelectFilterSeedsRecentDocumentsFromThatFilterCache() async {
-        let cache = makeCache()
-        let sharedBody = Self.paginatedFixture(
-            id: "12121212-1212-4121-8121-121212121212", title: "Cached Shared Doc", isFavorite: false)
-        let sharedDocument = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: sharedBody)
-            .results[0]
-        cache.saveRecentDocuments([sharedDocument], filter: .shared)
-        let viewModel = makeViewModel(cache: cache)
-        // Offline: the fetch fails, so what shows is the synchronous seed.
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
-
-        await viewModel.selectFilter(.shared)
-
-        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Shared Doc"])
-        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(cache.loadRecentDocuments()?.map(\.title), ["Recent Doc"])
     }
 
     func testLoadFailureKeepsCachedDocumentsVisibleAndStaysSilent() async {
@@ -261,7 +277,7 @@ final class HomeViewModelTests: XCTestCase {
             PaginatedResponse<Document>.self, from: cachedRecentBody
         ).results[0]
         cache.savePinnedDocuments([cachedPinnedDocument])
-        cache.saveRecentDocuments([cachedRecentDocument], filter: .all)
+        cache.saveRecentDocuments([cachedRecentDocument])
         let viewModel = makeViewModel(cache: cache)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
@@ -282,7 +298,7 @@ final class HomeViewModelTests: XCTestCase {
         let cachedRecentDocument = try! JSONDecoder.docsAPI.decode(
             PaginatedResponse<Document>.self, from: cachedRecentBody
         ).results[0]
-        cache.saveRecentDocuments([cachedRecentDocument], filter: .all)
+        cache.saveRecentDocuments([cachedRecentDocument])
         let viewModel = makeViewModel(cache: cache)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
@@ -292,37 +308,6 @@ final class HomeViewModelTests: XCTestCase {
         // surface even though cached rows stay visible.
         XCTAssertNotNil(viewModel.errorKey)
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Offline Recent"])
-    }
-
-    func testConcurrentLoadAndFilterSwitchApplyTheLatestFilter() async {
-        let viewModel = makeViewModel()
-        let sharedBody = Self.paginatedFixture(
-            id: "14141414-1414-4141-8141-141414141414", title: "Shared Doc", isFavorite: false)
-        let allBody = Self.paginatedFixture(
-            id: "15151515-1515-4151-8151-151515151515", title: "All Doc", isFavorite: false)
-        let empty = Self.emptyFixture
-        MockURLProtocol.stubHandler = { request in
-            let url = request.url?.absoluteString ?? ""
-            if url.contains("favorite_list") {
-                return .init(statusCode: 200, headers: [:], body: empty, error: nil)
-            }
-            if url.contains("is_creator_me=false") {
-                return .init(statusCode: 200, headers: [:], body: sharedBody, error: nil)
-            }
-            return .init(statusCode: 200, headers: [:], body: allBody, error: nil)
-        }
-
-        // Race an in-flight load with a filter switch (Task {} inherits the
-        // main actor, so both interleave at suspension points like .task and
-        // .refreshable do): whichever fetch lands last, the generation guard
-        // makes the switched-to filter's data win.
-        let first = Task { await viewModel.load() }
-        let second = Task { await viewModel.selectFilter(.shared) }
-        await first.value
-        await second.value
-
-        XCTAssertEqual(viewModel.selectedFilter, .shared)
-        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Shared Doc"])
     }
 
     func testLoadFailureSetsIsOffline() async {
@@ -342,7 +327,7 @@ final class HomeViewModelTests: XCTestCase {
             id: "17171717-1717-4171-8171-171717171717", title: "Cached Doc", isFavorite: false)
         let cachedDocument = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: cachedBody)
             .results[0]
-        cache.saveRecentDocuments([cachedDocument], filter: .all)
+        cache.saveRecentDocuments([cachedDocument])
         let viewModel = makeViewModel(cache: cache)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
 
@@ -410,7 +395,7 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isOffline)
     }
 
-    func testFirstRunOfUncachedFilterFailureShowsErrorDespitePinnedRows() async {
+    func testFirstRunFailureShowsErrorDespitePinnedRows() async {
         let cache = makeCache()
         let pinnedBody = Self.paginatedFixture(
             id: "16161616-1616-4161-8161-161616161616", title: "Cached Pinned", isFavorite: true)
@@ -420,20 +405,19 @@ final class HomeViewModelTests: XCTestCase {
         let viewModel = makeViewModel(cache: cache)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
 
-        // First-ever visit to a never-cached filter: pinned rows are no
-        // evidence for it, so a total failure must not be silent.
-        await viewModel.selectFilter(.shared)
+        // First-ever load with no cached recent list: cached pinned rows are no
+        // evidence the recent feed loaded, so a total failure must not be silent.
+        await viewModel.load()
 
         XCTAssertNotNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
     }
 
-    func testCreateDocumentOfflinePersistsIntoAllFilterCacheOnly() async {
+    func testCreateDocumentOfflinePersistsIntoRecentCache() async {
         let cache = makeCache()
         preferences.set(true, forKey: "schrift.workOffline")
-        cache.saveRecentDocuments([], filter: .pinned)
         let viewModel = makeViewModel(cache: cache)
-        await viewModel.selectFilter(.pinned)
+        await viewModel.load()
         MockURLProtocol.stubHandler = { _ in
             .init(
                 statusCode: 201, headers: [:],
@@ -461,11 +445,11 @@ final class HomeViewModelTests: XCTestCase {
 
         let document = await viewModel.createDocument()
 
-        // The new (unpinned) document lands in the .all cache — never in the
-        // selected filter's cache, which the server would not return it for.
+        // Offline, load() never hits the network, so the new document is
+        // reflected directly into the on-screen list and the recent cache.
         XCTAssertEqual(document?.title, "New Doc")
-        XCTAssertEqual(cache.loadRecentDocuments(filter: .all)?.map(\.title), ["New Doc"])
-        XCTAssertEqual(cache.loadRecentDocuments(filter: .pinned), [])
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["New Doc"])
+        XCTAssertEqual(cache.loadRecentDocuments()?.map(\.title), ["New Doc"])
     }
 
     func testWorkOfflinePreferenceServesCacheWithoutNetwork() async {
@@ -478,8 +462,7 @@ final class HomeViewModelTests: XCTestCase {
             try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]
         ])
         cache.saveRecentDocuments(
-            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: recentBody).results[0]],
-            filter: .all)
+            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: recentBody).results[0]])
         preferences.set(true, forKey: "schrift.workOffline")
         let viewModel = makeViewModel(cache: cache)
         let recorder = RequestRecorder()
@@ -497,82 +480,19 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoading)
     }
 
-    func testSelectFilterWithCurrentFilterIsANoOp() async {
-        let viewModel = makeViewModel()
-        let sentinelBody = Self.paginatedFixture(
-            id: "20202020-2020-4202-8202-202020202020", title: "On Screen", isFavorite: false)
-        viewModel.recentDocuments = [
-            try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: sentinelBody).results[0]
-        ]
-        let recorder = RequestRecorder()
-        // Captured locally: the class is @MainActor, so its statics can't be
-        // referenced from the @Sendable stub closure.
-        let empty = Self.emptyFixture
-        MockURLProtocol.stubHandler = { request in
-            recorder.record(request)
-            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
-        }
-
-        // Re-tapping the active filter must neither reseed from (possibly
-        // stale) cache nor fire a redundant load.
-        await viewModel.selectFilter(.all)
-
-        XCTAssertEqual(recorder.methods.count, 0)
-        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["On Screen"])
-    }
-
-    func testWorkOfflineNeverCachedFilterDoesNotClaimEmpty() async {
-        // Only .all was ever cached; .shared is unknown. Under Work Offline
-        // the unknown filter must not read as a real empty result.
+    func testWorkOfflineWithNoCacheDoesNotClaimEmpty() async {
+        // Fresh install under Work Offline with nothing cached: the list is
+        // unknown, so it must not read as a real empty result.
         let cache = makeCache()
-        let recentBody = Self.paginatedFixture(
-            id: "23232323-2323-4232-8232-232323232323", title: "Cached Recent", isFavorite: false)
-        cache.saveRecentDocuments(
-            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: recentBody).results[0]],
-            filter: .all)
         preferences.set(true, forKey: "schrift.workOffline")
         let viewModel = makeViewModel(cache: cache)
 
         await viewModel.load()
-        XCTAssertTrue(viewModel.isCurrentListKnown)
-
-        await viewModel.selectFilter(.shared)
 
         XCTAssertFalse(viewModel.isCurrentListKnown, "a never-fetched list must not masquerade as empty")
         XCTAssertTrue(viewModel.recentDocuments.isEmpty)
         XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
-
-        await viewModel.selectFilter(.all)
-        XCTAssertTrue(viewModel.isCurrentListKnown)
-        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Recent"])
-    }
-
-    func testFirstRunOfPinnedFilterShowsPlaceholderDespiteHiddenPinnedRows() async {
-        // Pinned rows exist but their section is hidden under the .pinned
-        // filter — they must not suppress the first-run spinner, or the
-        // content area renders blank.
-        let cache = makeCache()
-        let pinnedBody = Self.paginatedFixture(
-            id: "21212121-2121-4212-8212-212121212121", title: "Cached Pinned", isFavorite: true)
-        cache.savePinnedDocuments(
-            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]])
-        let viewModel = makeViewModel(cache: cache)
-        let gate = DispatchSemaphore(value: 0)
-        MockURLProtocol.stubHandler = { _ in
-            gate.wait()  // hold the fetch open so the mid-flight state is observable
-            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
-        }
-
-        let load = Task { await viewModel.selectFilter(.pinned) }
-        await waitUntil { viewModel.isLoading }
-        XCTAssertTrue(viewModel.isLoading, "hidden pinned rows are no substitute for the first-run spinner")
-
-        gate.signal()
-        gate.signal()
-        await load.value
-        XCTAssertFalse(viewModel.isLoading)
-        XCTAssertNotNil(viewModel.errorKey, "first-ever .pinned load failed with nothing visible")
     }
 
     // MARK: - Create-document failure reporting

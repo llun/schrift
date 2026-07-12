@@ -44,19 +44,7 @@ struct DocumentListView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     searchField
-                        .padding(.bottom, DocsSpacing.spaceSM)
-
-                    SegmentedControl(
-                        segments: HomeFilter.allCases.map { loc[$0.titleKey] },
-                        selectedIndex: Binding(
-                            get: { viewModel.selectedFilter.rawValue },
-                            set: { newValue in
-                                let filter = HomeFilter(rawValue: newValue) ?? .all
-                                Task { await viewModel.selectFilter(filter) }
-                            }
-                        )
-                    )
-                    .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
+                        .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
 
                     if let errorKey = viewModel.errorKey {
                         HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
@@ -122,7 +110,7 @@ struct DocumentListView: View {
     @ViewBuilder
     private var content: some View {
         // isLoading is set only via shouldShowLoadingPlaceholder (true first
-        // run of a filter) — cached rows are never replaced by a spinner while
+        // run of the list) — cached rows are never replaced by a spinner while
         // a background revalidation is in flight. The view trusts the VM's
         // single, unit-tested gate rather than re-deriving it here.
         if viewModel.isLoading {
@@ -138,12 +126,12 @@ struct DocumentListView: View {
                 documentSection(title: loc[.home_results], documents: viewModel.searchResults)
             }
         } else if !viewModel.showsPinnedSection && viewModel.recentDocuments.isEmpty {
-            // Keyed to what will actually render (the pinned section is hidden
-            // under the .pinned filter), so an empty filter never leaves a
-            // silent blank area below the controls. The empty state may only
-            // claim "No documents yet" for a *known* list — a never-fetched
-            // filter (e.g. first visited under Work Offline) shows nothing;
-            // the offline banner or error text above conveys the state.
+            // Keyed to what will actually render (both sections empty), so an
+            // empty list never leaves a silent blank area below the controls.
+            // The empty state may only claim "No documents yet" for a *known*
+            // list — a never-fetched list (e.g. a fresh install under Work
+            // Offline) shows nothing; the offline banner or error text above
+            // conveys the state.
             if viewModel.errorKey == nil && viewModel.isCurrentListKnown {
                 ContentUnavailableView {
                     Label {
@@ -162,22 +150,9 @@ struct DocumentListView: View {
                     documents: viewModel.pinnedDocuments)
             }
             documentSection(
-                title: mainSectionTitle,
-                icon: viewModel.selectedFilter == .pinned ? .push_pin : nil,
-                filled: viewModel.selectedFilter == .pinned,
+                title: loc[.home_section_recent],
                 documents: viewModel.recentDocuments
             )
-        }
-    }
-
-    /// Header for the main (non-pinned) section, which reflects the active
-    /// filter: the Pinned filter loads favorites here, so it must read "Pinned"
-    /// rather than the default "Recent".
-    private var mainSectionTitle: String {
-        switch viewModel.selectedFilter {
-        case .shared: return loc[.home_section_shared]
-        case .pinned: return loc[.home_section_pinned]
-        default: return loc[.home_section_recent]
         }
     }
 

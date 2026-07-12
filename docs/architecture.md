@@ -199,9 +199,9 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 - `429` → respect `Retry-After` if present; otherwise simple backoff with a banner ("Too many requests, try again shortly").
 - Network failure → retry affordance on the failed view; no offline edit/sync
   queue in v1 (since 2026-07-03, previously-opened documents are content-cached
-  on-device and readable offline, and document lists — Home per-filter, Shared,
-  editor sub-pages — are metadata-cached and shown instantly with silent
-  background revalidation).
+  on-device and readable offline, and document lists — Home (the unfiltered
+  recent feed plus pinned), Shared, editor sub-pages — are metadata-cached and
+  shown instantly with silent background revalidation).
 - Save conflicts are not detected (see Editing & save mechanism) — documented limitation, not silently swallowed.
 
 ## Testing

@@ -221,7 +221,7 @@ Schrift/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry
 │   │                    re-login sheet (ReauthenticationSheetView +
 │   │                    ReauthenticationViewModel), RecentServersStore
-│   ├── Home/            document list, filters, offline metadata cache
+│   ├── Home/            document list (pinned + recent), offline metadata cache
 │   ├── Search/ Shared/  the other tabs; Profile also hosts the Appearance/Language
 │   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet)
 │   │                    and the server-version row (ServerConfig)
@@ -1077,9 +1077,10 @@ markdown write endpoint**. Understand this before touching the save path:
   seconds, making draft-vs-save races and eviction tie-breaks arbitrary
   (`DocumentCacheStore`, which carries no recency data, is the one `.iso8601`
   store).
-- **List-metadata caches** (`DocumentCacheStore`: pinned + per-filter recent +
-  shared lists; `DocumentChildrenCacheStore`: sub-page lists keyed by parent
-  document) make every document list instant and offline-readable, following
+- **List-metadata caches** (`DocumentCacheStore`: pinned + recent (the
+  unfiltered Home feed) + shared lists; `DocumentChildrenCacheStore`: sub-page
+  lists keyed by parent document) make every document list instant and
+  offline-readable, following
   the content cache's pattern: the VM seeds **synchronously** (init or the
   pre-await phase of `load()`), a loading placeholder may show only when there
   is **no local entry** — list loads return Optional (`loadPinnedDocuments()`
