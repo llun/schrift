@@ -609,16 +609,34 @@ final class EditorViewModelTests: XCTestCase {
     }
 
     func testDraftWithinToleranceIsKeptOnScreen() async {
-        let (viewModel, _, draftStore, _) = makeEnvironment()
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         // Fixture updated_at is 2026-01-15T10:30:00Z; a draft stamped now is
         // far newer → within tolerance, draft stays.
         draftStore.save(PendingDraft(documentID: documentID, title: "Draft", markdown: "# Draft", updatedAt: Date()))
-        stubLoad(content: "# Server")
+        // Hold the hand-back re-save's PATCH open: within tolerance, reconcileDraft
+        // re-enqueues the draft, and a *completed* re-save would legitimately clear
+        // it — which raced the assertion below and flaked on fast CI machines.
+        let body = formattedBody(content: "# Server")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.rawMarkdown, "# Draft")
-        XCTAssertNotNil(draftStore.draft(for: documentID))
+        XCTAssertEqual(viewModel.rawMarkdown, "# Draft", "the within-tolerance draft's content stays on screen")
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID), "the draft is kept (re-enqueued), not server-wins-discarded")
+        // Let the held re-save settle so nothing outlives the test.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
     func testSecondLoadSupersedesFirstRevalidation() async {
