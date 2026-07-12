@@ -87,7 +87,7 @@ final class EditorViewModelChildrenTests: XCTestCase {
         XCTAssertNil(viewModel.subpages, "failed fetch: not fetched, not 'none'")
     }
 
-    func testLoadPopulatesSubpagesAndCapturesUpdatedAt() async {
+    func testLoadPopulatesSubpages() async {
         let viewModel = makeViewModel()
         let contentBody = """
             {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Body", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
@@ -104,7 +104,8 @@ final class EditorViewModelChildrenTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertEqual(viewModel.subpages?.map(\.title), ["Child page"])
-        XCTAssertNotNil(viewModel.updatedAt)
+        // Content actually landed on screen (install sets lastSyncedAt from the fetch).
+        XCTAssertNotNil(viewModel.lastSyncedAt)
     }
 
     private func decodeChild(id: String, title: String) -> Document {

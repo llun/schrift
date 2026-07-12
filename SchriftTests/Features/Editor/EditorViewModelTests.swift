@@ -6,6 +6,9 @@ import XCTest
 final class EditorViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
+    /// The `updated_at` every `formattedBody` fixture pins — the server-clock value
+    /// a fetched baseline must record (never the client clock).
+    private let fetchedUpdatedAt = ISO8601DateFormatter().date(from: "2026-01-15T10:30:00Z")!
 
     private var cacheDirectory: URL!
     private var childrenSuiteName: String!
@@ -1470,5 +1473,360 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertNil(contentCache.content(for: documentID), "the purge survives the late 200")
         XCTAssertTrue(viewModel.isDocumentDiscarded)
+    }
+
+    // MARK: - Server baseline capture (plumbing for offline sync)
+
+    /// A flush after editing fetched content carries the server body and its
+    /// `updated_at` as the draft's baseline — the state the edit descends from.
+    func testFlushCapturesServerBaselineFromFetchedContent() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // installFetched captures the server baseline
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        viewModel.flushPendingChanges()  // enqueue writes the draft synchronously
+
+        // Read before the background save (all-200 stub) can settle and clear it.
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server body")
+        // The exact server clock, not the client clock — a Date() regression in
+        // installFetched would keep this non-nil but wrong.
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
+
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// The baseline can also come from a cache-restored copy — carrying the
+    /// server `updated_at` the cache entry recorded (nil for void-save entries).
+    func testFlushCapturesBaselineFromCacheRestoredContent() async {
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID, title: "Cached Doc", markdown: "# Cached",
+                syncedAt: Date(timeIntervalSince1970: 1_000_000), serverUpdatedAt: serverDate))
+        stubOffline()
+        await viewModel.load()  // cached copy on screen; revalidation fails, baseline from cache
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Cached edited")
+        viewModel.flushPendingChanges()
+
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Cached")
+        XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
+
+        // The offline save fails (draft stays); let it settle so no request
+        // outlives the test.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// Load-bearing: while a dirty screen observes a diverged server body, the
+    /// revalidation routes through `cacheServerCopy`, which must NOT advance the
+    /// baseline — the edit still descends from the body it was made against, so a
+    /// later conflict check (a stack PR) must not push over the web edit we saw.
+    func testCacheServerCopyDoesNotAdvanceTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline = server body A
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My local edit")
+        XCTAssertTrue(viewModel.isDirty)
+
+        // A revalidation lands with a diverged body while the screen is dirty →
+        // apply short-circuits to cacheServerCopy(B).
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()
+
+        viewModel.flushPendingChanges()
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "cacheServerCopy must not advance the baseline over an observed web edit")
+
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// A server change installed while NOT editing (reconcileClean install branch)
+    /// advances the baseline to the freshly-installed body.
+    func testReconcileCleanInstallCapturesBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline = A, reading mode
+
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()  // not editing, not dirty → installs B, baseline = B
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Co-author edit and mine")
+        viewModel.flushPendingChanges()
+
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Co-author edit")
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// Opting into a body stashed behind the "Updated" banner (applyPendingUpdate)
+    /// makes that body the baseline — the on-screen content now descends from it.
+    func testApplyPendingUpdateCapturesBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline = A
+
+        viewModel.startEditing()  // editing, not dirty
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()  // server changed mid-edit → stashed behind the banner
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        viewModel.finishEditing()
+        viewModel.applyPendingUpdate()  // installs the stashed body → baseline = B
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Co-author edit and mine")
+        viewModel.flushPendingChanges()
+
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Co-author edit")
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// The primary offline scenario: a draft persisted by an earlier session is
+    /// reopened offline (restoreLocalContent's `.draft` branch reconstructs the
+    /// baseline from it), edited, and flushed — the re-enqueued draft must still
+    /// descend from the original server baseline, so a later conflict check can't
+    /// tolerance-discard baseline-carrying work.
+    func testDraftRestoreReconstructsBaselineForOfflineReopen() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Offline edit",
+                updatedAt: Date(), baseline: DraftBaseline(serverUpdatedAt: serverDate, markdown: "# Server base")))
+        stubOffline()
+        await viewModel.load()  // restoreLocalContent .draft branch → serverBaseline = draft.baseline
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Offline edit more")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Server base")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, serverDate)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// Reopening a document whose save is still in flight runs restoreLocalContent's
+    /// `.pendingSave` branch, which reconstructs the baseline from the stored draft.
+    func testPendingSaveRestoreReconstructsBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let baseline = DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_000), markdown: "# Base")
+        // Hold the content PATCH open so the save stays in flight while we reopen.
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Queued", baseline: baseline)
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the save is in flight")
+
+        await viewModel.load()  // restoreLocalContent .pendingSave branch
+        XCTAssertEqual(viewModel.displaySource, .pendingSave)
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Queued edit")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Base")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// A 404 mid-edit tears the document down, but `becomeUnavailable` flushes
+    /// write-ahead *first* — the persisted draft must carry the baseline so a
+    /// transient 404's replay (recoverDrafts / reconcileDraft) can reconcile it.
+    func testTeardownFlushCarriesTheServerBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // installFetched → baseline A
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        XCTAssertTrue(viewModel.isDirty)
+
+        stubStatus(404)
+        await viewModel.load()  // 404 → becomeUnavailable flushes write-ahead with the baseline
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "the write-ahead teardown flush persists the baseline the edit descended from")
+    }
+
+    /// A stored draft plus a successful fetch reaches reconcileDraft's tolerance
+    /// (draft-wins) branch, which re-enqueues the draft. That re-enqueue must carry
+    /// the draft's own baseline through — the draft-replay reconciliation the
+    /// baseline exists to serve.
+    func testReconcileDraftReplayCarriesTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        // Draft written "now" is newer than the fixture's 2026-01-15 server
+        // updated_at, so the fetch lands in reconcileDraft's tolerance-push branch.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Draft body", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: serverDate, markdown: "# Server base")))
+        let body = formattedBody(content: "# Server")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.load()  // reconcileDraft tolerance-push re-enqueues with draft.baseline
+
+        // Read while the save is still held in flight.
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server base")
+        XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// reconcileClean's unchanged-body (else) branch advances the baseline's
+    /// timestamp: a cache-restored entry with an unknown (void-save) server
+    /// timestamp gets promoted to the real server clock once a clean revalidation
+    /// confirms the same body.
+    func testReconcileCleanUnchangedBodyAdvancesBaselineTimestamp() async {
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID, title: "Doc", markdown: "# Body",
+                syncedAt: Date(timeIntervalSince1970: 1_000_000), serverUpdatedAt: nil))
+        stubLoad(content: "# Body")  // same body (serverChanged == false), known updated_at
+        await viewModel.load()  // reconcileClean else-branch promotes nil → the server timestamp
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Body edited")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, fetchedUpdatedAt,
+            "an unchanged-body revalidation advances the baseline timestamp from nil to the server clock")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// Mirror of testCacheServerCopyDoesNotAdvanceTheBaseline for the *editing-but-
+    /// clean* path: a diverged server body that lands mid-edit is stashed behind the
+    /// "Updated" banner, and the on-screen (older) body must keep owning the
+    /// baseline — the caret is in it, so an edit descends from it, not the stash.
+    func testReconcileCleanStashDoesNotAdvanceTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline A
+
+        viewModel.startEditing()  // editing, not yet dirty
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()  // server changed mid-edit → stashed, baseline stays A
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        // Edit WITHOUT opting into the stash, then flush.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "the editing stash must not advance the baseline over an observed web edit")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// A fetch that races one of our own saves (mayPredateLocalSave == true) makes
+    /// `apply` early-return, taking nothing from the response — including the
+    /// baseline. If it did, a later full-overwrite save would push the resurrected
+    /// stale body back to the server.
+    func testMayPredateFetchDoesNotAdvanceTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline A
+
+        // Hold the save's content PATCH open so it stays in flight; a GET that lands
+        // during it is answered with a diverged body and races the save.
+        let bodyB = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: bodyB, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.4)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit")
+        viewModel.flushPendingChanges()  // save enqueued, PATCH held → in flight
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
+
+        await viewModel.refresh()  // fetch B races the in-flight save → apply early-returns
+
+        // Edit again and flush; the still-in-flight save queues this, writing a draft.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit 2")
+        viewModel.flushPendingChanges()
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "a fetch racing our own save must not advance the baseline to the raced body")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// The `saveNow` failed-save retry is a baseline-carrying enqueue site too: it
+    /// must re-push with the stored draft's baseline, not nil (which would degrade
+    /// a retried offline save to the legacy tolerance rule).
+    func testSaveNowRetryPreservesTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let bodyA = formattedBody(content: "# Server body")
+        // GET ok (baseline A); the content PATCH 500s so the save fails and the
+        // draft (with its baseline) survives to be retried.
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: bodyA, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()  // installFetched → baseline A
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        viewModel.flushPendingChanges()
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "the failed draft carries the baseline")
+
+        viewModel.saveNow()  // retry re-enqueues with the stored draft's baseline
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server body")
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
     }
 }

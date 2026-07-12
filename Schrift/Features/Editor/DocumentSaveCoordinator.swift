@@ -116,9 +116,15 @@ final class DocumentSaveCoordinator {
         marker.hadPendingSave || (settledSaves[marker.documentID] ?? 0) != marker.settledSaves
     }
 
-    func enqueue(documentID: UUID, title: String, markdown: String) {
+    /// `baseline` is the server state the enqueued edit descends from (supplied by
+    /// the editor). It is persisted on the draft so the sync/replay path can detect
+    /// a conflict; it defaults to nil so legacy call sites (and tests) route to the
+    /// tolerance rule exactly as before.
+    func enqueue(documentID: UUID, title: String, markdown: String, baseline: DraftBaseline? = nil) {
         let save = PendingSave(title: title, markdown: markdown)
-        draftStore.save(PendingDraft(documentID: documentID, title: title, markdown: markdown, updatedAt: Date()))
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: title, markdown: markdown, updatedAt: Date(), baseline: baseline))
         if inFlight[documentID] != nil {
             queued[documentID] = save
             return
@@ -144,7 +150,9 @@ final class DocumentSaveCoordinator {
                     draftStore.draft(for: draft.documentID) == draft
                 else { continue }
                 if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
-                    enqueue(documentID: draft.documentID, title: draft.title, markdown: draft.markdown)
+                    enqueue(
+                        documentID: draft.documentID, title: draft.title, markdown: draft.markdown,
+                        baseline: draft.baseline)
                 } else {
                     draftStore.remove(documentID: draft.documentID)
                 }
@@ -236,14 +244,16 @@ final class DocumentSaveCoordinator {
                 draftStore.remove(documentID: documentID)
             }
             // Keep the local copy consistent with what the server now holds.
-            // The save PATCHes are void (no server timestamp exists here);
-            // syncedAt is the client wall-clock of the confirmed save.
+            // The save PATCHes are void, so there is no server `updated_at` to
+            // record: `serverUpdatedAt` is nil (truthfully "unknown after a void
+            // save") and `syncedAt` is the client wall-clock of the confirmed save.
             contentCache.save(
                 CachedDocumentContent(
                     documentID: documentID,
                     title: save.title,
                     markdown: save.markdown,
-                    syncedAt: Date()
+                    syncedAt: Date(),
+                    serverUpdatedAt: nil
                 ))
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")

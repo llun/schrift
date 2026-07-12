@@ -175,18 +175,22 @@ struct CachedDocumentContent: Codable, Equatable, Sendable {
     let documentID: UUID
     let title: String?
     let markdown: String
-    let syncedAt: Date          // wall-clock of the successful fetch/save
+    let syncedAt: Date          // client wall-clock of the fetch/save (eviction only)
+    let serverUpdatedAt: Date?  // server updated_at when fetched; nil after a void save
 }
 ```
 
-There is deliberately **no server-timestamp field**: no decision in this design
-reads one (the banner is driven by content equality, eviction and the caption by
-`syncedAt`), and the save endpoints return no server timestamp (see §3), so a
-stored server-clock value would either go stale or get backfilled from the client
-clock — the exact clock-mixing hazard `pendingDraftClockTolerance` exists to
-avoid. Any future feature that needs a server timestamp must source it from
-`formatted-content` fetches only and compare it against client-stamped dates only
-with tolerance.
+> **Revised (offline-editing stack):** `serverUpdatedAt` was added when offline
+> editing with conflict detection began. The original objection to a server
+> timestamp was **clock-mixing** — comparing a stored server clock against the
+> client clock. That objection does not apply to a *server-clock-to-server-clock*
+> comparison, which is exactly what the draft baseline
+> (`DraftBaseline`/`draftSyncDecision`) needs. So the field is a **truthful server
+> `updated_at` when the entry came from a fetch, and nil after a void save** (the
+> save PATCHes return no timestamp — see §3); `syncedAt` remains the
+> client-clock value used only for eviction ordering. It is Optional, so entries
+> written by earlier builds decode as nil. The banner is still driven by content
+> equality, never by this field.
 
 Design decisions:
 
@@ -553,10 +557,13 @@ approach is the baseline.
 On a **successful** save, `DocumentSaveCoordinator` writes the just-saved
 markdown and title into the content cache with `syncedAt = now`. Both save
 requests (`setContent`, `updateTitle`) are void PATCHes with no response body, so
-**no server timestamp is available at save success** — which is fine, because
-nothing in the cache stores one (§1); the entry is simply
-`(documentID, title, markdown, syncedAt: Date())`, written whether or not a prior
-entry existed (a save after eviction recreates the entry). The coordinator owns
+**no server timestamp is available at save success** — so the entry records
+`serverUpdatedAt: nil` (truthfully "unknown after a void save"; §1), i.e.
+`(documentID, title, markdown, syncedAt: Date(), serverUpdatedAt: nil)`, written
+whether or not a prior entry existed (a save after eviction recreates the entry).
+Fetch-sourced writes (`installFetched`, `reconcileClean`, `cacheServerCopy`) do
+record the fetched `updated_at`, so a later open can build a draft baseline from
+the cache. The coordinator owns
 the reliable save-success point (saves can complete after the editor is
 dismissed), so the write lives there, not in the view. The coordinator gains a
 `DocumentContentCacheStore` dependency (injected, with a production default),
