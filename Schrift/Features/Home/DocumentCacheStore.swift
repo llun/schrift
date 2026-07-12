@@ -1,23 +1,12 @@
 import Foundation
 
-/// UserDefaults key for one filter's cached recent-documents list. Keyed by
-/// stable names — never `HomeFilter.rawValue` Ints, which would silently remap
-/// caches if the cases were ever reordered. `.all` keeps the original
-/// pre-per-filter key so existing caches migrate for free.
-func recentDocumentsCacheKey(_ filter: HomeFilter) -> String {
-    switch filter {
-    case .all: return "dev.llun.Schrift.cachedRecentDocuments"
-    case .shared: return "dev.llun.Schrift.cachedRecentDocuments.shared"
-    case .pinned: return "dev.llun.Schrift.cachedRecentDocuments.pinned"
-    }
-}
-
 /// Cached document-list metadata (titles, dates, abilities — never content).
 /// The Optional loads return nil when a list was never cached, which is
 /// distinct from a cached empty list (a real fetch result): the nil case is
 /// what allows the UI to show its one first-run spinner.
 final class DocumentCacheStore {
     private static let pinnedKey = "dev.llun.Schrift.cachedPinnedDocuments"
+    private static let recentKey = "dev.llun.Schrift.cachedRecentDocuments"
     private static let sharedWithMeKey = "dev.llun.Schrift.cachedSharedWithMeDocuments"
     private static let sharedByMeKey = "dev.llun.Schrift.cachedSharedByMeDocuments"
 
@@ -39,8 +28,8 @@ final class DocumentCacheStore {
         load(forKey: Self.pinnedKey) ?? []
     }
 
-    func loadRecentDocuments(filter: HomeFilter) -> [Document]? {
-        load(forKey: recentDocumentsCacheKey(filter))
+    func loadRecentDocuments() -> [Document]? {
+        load(forKey: Self.recentKey)
     }
 
     func loadSharedWithMeDocuments() -> [Document]? {
@@ -55,8 +44,8 @@ final class DocumentCacheStore {
         save(documents, forKey: Self.pinnedKey)
     }
 
-    func saveRecentDocuments(_ documents: [Document], filter: HomeFilter) {
-        save(documents, forKey: recentDocumentsCacheKey(filter))
+    func saveRecentDocuments(_ documents: [Document]) {
+        save(documents, forKey: Self.recentKey)
     }
 
     func saveSharedWithMeDocuments(_ documents: [Document]) {

@@ -48,12 +48,10 @@ final class DocumentCacheStoreTests: XCTestCase {
         XCTAssertTrue(store.loadPinnedDocuments().isEmpty)
     }
 
-    func testLoadRecentDocumentsReturnsNilWhenFilterNeverCached() {
+    func testLoadRecentDocumentsReturnsNilWhenNeverCached() {
         let store = makeStore()
 
-        for filter in HomeFilter.allCases {
-            XCTAssertNil(store.loadRecentDocuments(filter: filter))
-        }
+        XCTAssertNil(store.loadRecentDocuments())
     }
 
     func testSaveAndLoadPinnedDocumentsRoundTrips() {
@@ -65,36 +63,23 @@ final class DocumentCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.loadPinnedDocuments(), [document])
     }
 
-    func testSaveAndLoadRecentDocumentsRoundTripsPerFilter() {
+    func testSaveAndLoadRecentDocumentsRoundTrips() {
         let store = makeStore()
         let document = makeDocument(id: "22222222-2222-4222-8222-222222222222", title: "Recent Doc")
 
-        for filter in HomeFilter.allCases {
-            store.saveRecentDocuments([document], filter: filter)
-            XCTAssertEqual(store.loadRecentDocuments(filter: filter), [document])
-        }
+        store.saveRecentDocuments([document])
+
+        XCTAssertEqual(store.loadRecentDocuments(), [document])
     }
 
     func testCachedEmptyListIsDistinctFromNeverCached() {
+        // A never-cached list reads nil; a cached empty list (a real fetch
+        // result) reads []. The UI's one first-run spinner keys off that split.
+        XCTAssertNil(makeStore().loadRecentDocuments())
+
         let store = makeStore()
-
-        store.saveRecentDocuments([], filter: .shared)
-
-        XCTAssertEqual(store.loadRecentDocuments(filter: .shared), [])
-        XCTAssertNil(store.loadRecentDocuments(filter: .pinned))
-    }
-
-    func testRecentFiltersAreCachedIndependently() {
-        let store = makeStore()
-        let allDoc = makeDocument(id: "33333333-3333-4333-8333-333333333333", title: "All Doc")
-        let sharedDoc = makeDocument(id: "44444444-4444-4444-8444-444444444444", title: "Shared Doc")
-
-        store.saveRecentDocuments([allDoc], filter: .all)
-        store.saveRecentDocuments([sharedDoc], filter: .shared)
-
-        XCTAssertEqual(store.loadRecentDocuments(filter: .all), [allDoc])
-        XCTAssertEqual(store.loadRecentDocuments(filter: .shared), [sharedDoc])
-        XCTAssertNil(store.loadRecentDocuments(filter: .pinned))
+        store.saveRecentDocuments([])
+        XCTAssertEqual(store.loadRecentDocuments(), [])
     }
 
     func testPinnedAndRecentCachesAreIndependent() {
@@ -103,15 +88,16 @@ final class DocumentCacheStoreTests: XCTestCase {
         let recent = makeDocument(id: "66666666-6666-4666-8666-666666666666", title: "Recent")
 
         store.savePinnedDocuments([pinned])
-        store.saveRecentDocuments([recent], filter: .all)
+        store.saveRecentDocuments([recent])
 
         XCTAssertEqual(store.loadPinnedDocuments(), [pinned])
-        XCTAssertEqual(store.loadRecentDocuments(filter: .all), [recent])
+        XCTAssertEqual(store.loadRecentDocuments(), [recent])
     }
 
-    /// The `.all` filter must keep reading the original pre-per-filter key so
-    /// caches written before the split migrate for free.
-    func testAllFilterReadsLegacyRecentDocumentsKey() {
+    /// Pins the durable key so caches written by earlier builds (including the
+    /// pre-filter and per-filter eras, which both used this same `.all` key)
+    /// migrate for free.
+    func testRecentDocumentsReadsTheStableCacheKey() {
         let document = makeDocument(id: "77777777-7777-4777-8777-777777777777", title: "Legacy Doc")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -119,13 +105,7 @@ final class DocumentCacheStoreTests: XCTestCase {
 
         let store = makeStore()
 
-        XCTAssertEqual(store.loadRecentDocuments(filter: .all), [document])
-    }
-
-    func testRecentDocumentsCacheKeyValuesAreStable() {
-        XCTAssertEqual(recentDocumentsCacheKey(.all), "dev.llun.Schrift.cachedRecentDocuments")
-        XCTAssertEqual(recentDocumentsCacheKey(.shared), "dev.llun.Schrift.cachedRecentDocuments.shared")
-        XCTAssertEqual(recentDocumentsCacheKey(.pinned), "dev.llun.Schrift.cachedRecentDocuments.pinned")
+        XCTAssertEqual(store.loadRecentDocuments(), [document])
     }
 
     func testLoadSharedDocumentsReturnsNilWhenNeverCached() {

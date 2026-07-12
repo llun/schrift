@@ -44,19 +44,7 @@ struct DocumentListView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     searchField
-                        .padding(.bottom, DocsSpacing.spaceSM)
-
-                    SegmentedControl(
-                        segments: HomeFilter.allCases.map { loc[$0.titleKey] },
-                        selectedIndex: Binding(
-                            get: { viewModel.selectedFilter.rawValue },
-                            set: { newValue in
-                                let filter = HomeFilter(rawValue: newValue) ?? .all
-                                Task { await viewModel.selectFilter(filter) }
-                            }
-                        )
-                    )
-                    .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
+                        .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
 
                     if let errorKey = viewModel.errorKey {
                         HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
@@ -162,22 +150,9 @@ struct DocumentListView: View {
                     documents: viewModel.pinnedDocuments)
             }
             documentSection(
-                title: mainSectionTitle,
-                icon: viewModel.selectedFilter == .pinned ? .push_pin : nil,
-                filled: viewModel.selectedFilter == .pinned,
+                title: loc[.home_section_recent],
                 documents: viewModel.recentDocuments
             )
-        }
-    }
-
-    /// Header for the main (non-pinned) section, which reflects the active
-    /// filter: the Pinned filter loads favorites here, so it must read "Pinned"
-    /// rather than the default "Recent".
-    private var mainSectionTitle: String {
-        switch viewModel.selectedFilter {
-        case .shared: return loc[.home_section_shared]
-        case .pinned: return loc[.home_section_pinned]
-        default: return loc[.home_section_recent]
         }
     }
 
