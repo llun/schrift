@@ -3,11 +3,36 @@ import Foundation
 /// A document edit that has been handed to the save pipeline but not yet
 /// confirmed persisted by the server. Written before any network call so the
 /// content survives suspension, process death, or a failed save.
+///
+/// `baseline` and `lastPushedMarkdown` are optional and decode as nil from drafts
+/// written before they existed (legacy drafts route to the tolerance rule). They
+/// let the sync path distinguish "the server moved on while I was offline" from
+/// "the server only changed because my own save landed" — see `draftSyncDecision`.
+/// `baseline` is supplied by the editor (the server state the edit descends from);
+/// `lastPushedMarkdown` is maintained by `DocumentSaveCoordinator`.
 struct PendingDraft: Codable, Equatable, Sendable {
     let documentID: UUID
     let title: String
     let markdown: String
     let updatedAt: Date
+    let baseline: DraftBaseline?
+    let lastPushedMarkdown: String?
+
+    init(
+        documentID: UUID,
+        title: String,
+        markdown: String,
+        updatedAt: Date,
+        baseline: DraftBaseline? = nil,
+        lastPushedMarkdown: String? = nil
+    ) {
+        self.documentID = documentID
+        self.title = title
+        self.markdown = markdown
+        self.updatedAt = updatedAt
+        self.baseline = baseline
+        self.lastPushedMarkdown = lastPushedMarkdown
+    }
 }
 
 /// Slack applied when comparing a client-stamped draft timestamp against the

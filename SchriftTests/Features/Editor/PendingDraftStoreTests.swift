@@ -74,4 +74,41 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertNil(store.draft(for: UUID()))
         XCTAssertTrue(store.allDrafts().isEmpty)
     }
+
+    func testDraftWithBaselineRoundTrips() {
+        let (store, _) = makeStore()
+        let draft = PendingDraft(
+            documentID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+            title: "Doc",
+            markdown: "# Draft",
+            updatedAt: Date(timeIntervalSince1970: 1_000),
+            baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 900), markdown: "# Server"),
+            lastPushedMarkdown: "# Pushed")
+
+        store.save(draft)
+
+        let loaded = store.draft(for: draft.documentID)
+        XCTAssertEqual(loaded, draft)
+        XCTAssertEqual(loaded?.baseline?.serverUpdatedAt, Date(timeIntervalSince1970: 900))
+        XCTAssertEqual(loaded?.baseline?.markdown, "# Server")
+        XCTAssertEqual(loaded?.lastPushedMarkdown, "# Pushed")
+    }
+
+    /// A draft persisted by a build predating the baseline fields must still decode
+    /// — with the new fields nil, which routes it to the tolerance rule.
+    func testLegacyDraftWithoutBaselineDecodesWithNilFields() {
+        let (store, userDefaults) = makeStore()
+        let id = "11111111-1111-4111-8111-111111111111"
+        // updatedAt is encoded as millisecondsSince1970 (matching the store).
+        let legacyJSON = """
+            {"\(id)": {"documentID": "\(id)", "title": "Doc", "markdown": "# Legacy", "updatedAt": 1000000}}
+            """
+        userDefaults.set(Data(legacyJSON.utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+
+        let draft = store.draft(for: UUID(uuidString: id)!)
+        XCTAssertEqual(draft?.markdown, "# Legacy")
+        XCTAssertEqual(draft?.updatedAt, Date(timeIntervalSince1970: 1_000))
+        XCTAssertNil(draft?.baseline)
+        XCTAssertNil(draft?.lastPushedMarkdown)
+    }
 }

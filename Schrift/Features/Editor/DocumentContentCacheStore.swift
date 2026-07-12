@@ -19,17 +19,38 @@ func contentCacheEvictions(index: [ContentCacheIndexEntry], limit: Int) -> [UUID
         .map(\.id)
 }
 
-/// A previously-synced copy of a document's content. `syncedAt` is the
-/// wall-clock of the successful fetch/save that produced it. There is
-/// deliberately no server-timestamp field: nothing in the design reads one,
-/// and the save endpoints return none — a stored server-clock value would go
-/// stale or get backfilled from the client clock, the exact clock-mixing
-/// hazard `pendingDraftClockTolerance` exists to avoid.
+/// A previously-synced copy of a document's content. `syncedAt` is the client
+/// wall-clock of the successful fetch/save that produced it (used only for
+/// eviction ordering, never for freshness).
+///
+/// `serverUpdatedAt` is the server's own `updated_at` when this copy came from a
+/// fetch, and nil when it came from a void save (the save PATCHes return no
+/// timestamp). It exists so a cache-derived draft baseline can compare
+/// server-clock-to-server-clock — the original "no server timestamp" objection
+/// was about mixing the client and server clocks, which a server-clock-only
+/// comparison does not do; nil truthfully means "unknown after a void save" and
+/// the entry's `markdown` still anchors a content comparison. It is Optional, so
+/// entries written before the field existed decode as nil.
 struct CachedDocumentContent: Codable, Equatable, Sendable {
     let documentID: UUID
     let title: String?
     let markdown: String
     let syncedAt: Date
+    let serverUpdatedAt: Date?
+
+    init(
+        documentID: UUID,
+        title: String?,
+        markdown: String,
+        syncedAt: Date,
+        serverUpdatedAt: Date? = nil
+    ) {
+        self.documentID = documentID
+        self.title = title
+        self.markdown = markdown
+        self.syncedAt = syncedAt
+        self.serverUpdatedAt = serverUpdatedAt
+    }
 }
 
 /// On-disk cache of document content: one JSON file per document under

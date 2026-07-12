@@ -80,6 +80,37 @@ final class DocumentContentCacheStoreTests: XCTestCase {
         XCTAssertNil(makeStore().content(for: documentID))
     }
 
+    func testEntryWithServerUpdatedAtRoundTrips() {
+        let store = makeStore()
+        let entry = CachedDocumentContent(
+            documentID: documentID,
+            title: "Doc",
+            markdown: "# Hello",
+            syncedAt: Date(timeIntervalSince1970: 1_000_000),
+            serverUpdatedAt: Date(timeIntervalSince1970: 999_999))
+        store.save(entry)
+        let loaded = store.content(for: documentID)
+        XCTAssertEqual(loaded, entry)
+        XCTAssertEqual(loaded?.serverUpdatedAt, Date(timeIntervalSince1970: 999_999))
+    }
+
+    /// An entry written before `serverUpdatedAt` existed must still decode — with
+    /// that field nil (a truthful "unknown", not a fabricated timestamp).
+    func testLegacyEntryWithoutServerUpdatedAtDecodesNil() {
+        let store = makeStore()
+        let file = directory.appendingPathComponent("\(documentID.uuidString.lowercased()).json")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // syncedAt is millisecondsSince1970 (matching the store's encoder).
+        let legacyJSON = """
+            {"documentID": "\(documentID.uuidString)", "title": "Doc", "markdown": "# Legacy", "syncedAt": 1000000000}
+            """
+        try? Data(legacyJSON.utf8).write(to: file)
+
+        let loaded = store.content(for: documentID)
+        XCTAssertEqual(loaded?.markdown, "# Legacy")
+        XCTAssertNil(loaded?.serverUpdatedAt)
+    }
+
     func testCorruptFileReturnsNil() {
         let store = makeStore()
         store.save(makeEntry())
