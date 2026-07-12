@@ -550,6 +550,21 @@ new code reads like the surrounding code.
   add a field, check it against the *create* response too — and note
   `Document`'s `init(from:)` lives in an **extension** so the memberwise
   initializer survives for `SubpageRow`'s preview.
+- **Not every list endpoint is paginated — check the viewset, not just the
+  serializer.** Most list routes return DRF's `{count, next, previous, results}`
+  envelope (decode as `PaginatedResponse<T>`), but a viewset that **overrides
+  `list()`** can bypass pagination entirely. The document **accesses** endpoint
+  does exactly this: `DocumentAccessViewSet.list()` builds the ancestor-aware
+  access list by hand and `return`s a bare JSON array (`[…]`), so
+  `listAccesses` decodes `[DocumentAccess]` directly (like `searchUsers`), **not**
+  a `PaginatedResponse`. Decoding it as a `PaginatedResponse` threw on every call
+  — which is why the Share sheet showed "Couldn't load members" for every
+  document and the Shared tab's row enrichment silently no-op'd. **Invitations
+  *are* paginated** (`InvitationViewset` uses `ListModelMixin` + `Pagination`), so
+  `listInvitations` stays `PaginatedResponse<Invitation>`. The matching test
+  fixtures must use the **real** shape (bare array for accesses); a hand-written
+  paginated envelope hid this bug for as long as the feature existed
+  (`ShareEndpointsClientTests.testListAccessesDecodesBareArrayResponse` pins it).
 - **Permission logic is driven by the server `abilities` dict** — never hardcode
   client-side permission rules.
 - CSRF/`Origin`/`Referer` headers are attached only on non-GET requests inside

@@ -25,9 +25,9 @@ final class ShareViewModel {
         isLoading = true
         errorKey = nil
         do {
-            async let accessesPage = client.listAccesses(documentID: documentID)
+            async let accessesList = client.listAccesses(documentID: documentID)
             async let invitationsPage = client.listInvitations(documentID: documentID)
-            let accesses = try await accessesPage.results
+            let accesses = try await accessesList
             let invitations = try await invitationsPage.results
             members = shareMembers(accesses: accesses, invitations: invitations)
         } catch {
