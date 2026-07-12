@@ -71,15 +71,9 @@ final class SharedViewModel {
 
         let hadCache = hasLoaded
         isLoading = true
+        let withMe: [Document]
         do {
-            let withMe = try await client.listDocuments(isCreatorMe: false, ordering: "-updated_at").results
-            guard generation == loadGeneration else { return }
-            documents = withMe
-            cache.saveSharedWithMeDocuments(withMe)
-            hasLoaded = true
-            isOffline = false
-            isLoading = false
-            await enrich(documents: withMe, generation: generation)
+            withMe = try await client.listDocuments(isCreatorMe: false, ordering: "-updated_at").results
         } catch {
             guard generation == loadGeneration else { return }
             // A real 401 is not "offline": the client's onSessionExpired hook has
@@ -92,7 +86,25 @@ final class SharedViewModel {
                 errorKey = .shared_error_load
             }
             isLoading = false
+            return
         }
+        guard generation == loadGeneration else { return }
+        documents = withMe
+        cache.saveSharedWithMeDocuments(withMe)
+        hasLoaded = true
+        isOffline = false
+        isLoading = false
+        // Prune enrichment to the current list: a document that is no longer
+        // shared can't keep showing stale avatars, and the dictionary can't grow
+        // without bound across a long session. Surviving entries are overwritten
+        // as fresh accesses land.
+        let currentIDs = Set(withMe.map(\.id))
+        enrichment = enrichment.filter { currentIDs.contains($0.key) }
+
+        // Enrichment runs *outside* the list-load do/catch above and never
+        // throws — so a decorative accesses failure can never be caught there
+        // and misreported as a failed document list (offline / errorKey).
+        await enrich(documents: withMe, generation: generation)
     }
 
     /// Fetch each document's accesses concurrently and resolve avatars +

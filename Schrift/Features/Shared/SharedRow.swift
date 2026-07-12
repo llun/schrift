@@ -37,11 +37,11 @@ struct SharedRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // Collapse into a single button carrying the composed label; the
-        // avatar group's members are already conveyed by the subtitle's
-        // "Shared by …".
+        // Collapse into a single button carrying the composed label. The avatar
+        // group is otherwise dropped by `children: .ignore`, so its members are
+        // folded into the label — the subtitle only names the sharer.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([title, subtitle].joined(separator: ", "))
+        .accessibilityLabel(([title, subtitle] + memberNames).joined(separator: ", "))
         .accessibilityAddTraits(.isButton)
     }
 }

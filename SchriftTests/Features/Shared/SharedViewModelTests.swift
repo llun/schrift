@@ -31,7 +31,7 @@ final class SharedViewModelTests: XCTestCase {
         return SharedViewModel(client: client, cache: cache, userDefaults: preferences)
     }
 
-    private static func paginatedFixture(id: String, title: String) -> Data {
+    nonisolated private static func paginatedFixture(id: String, title: String) -> Data {
         """
         {
             "count": 1,
@@ -250,6 +250,97 @@ final class SharedViewModelTests: XCTestCase {
         await viewModel.refresh()
         XCTAssertFalse(viewModel.isOffline)
         XCTAssertNil(viewModel.errorKey)
+    }
+
+    nonisolated private static func listFixture(id: String, title: String, creator: String) -> Data {
+        """
+        {"count":1,"next":null,"previous":null,"results":[
+          {"id":"\(id)","title":"\(title)","excerpt":null,"abilities":{},
+           "computed_link_reach":"restricted","computed_link_role":null,
+           "created_at":"2026-01-15T10:30:00Z","creator":"\(creator)","depth":1,
+           "link_role":"reader","link_reach":"restricted","numchild":0,"path":"0001",
+           "updated_at":"2026-01-15T10:30:00Z","user_role":"owner","is_favorite":false}]}
+        """.data(using: .utf8)!
+    }
+
+    func testReloadPrunesEnrichmentForRemovedDocuments() async {
+        let viewModel = makeViewModel()
+        let docA = "11111111-1111-4111-8111-111111111111"
+        let docB = "22222222-2222-4222-8222-222222222222"
+
+        // First load: list = [A], A is its own creator, so A gets enriched.
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.absoluteString.contains("/accesses/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Self.accessesFixture(userID: docA, fullName: "Amandine Salambo"), error: nil)
+            }
+            return .init(
+                statusCode: 200, headers: [:], body: Self.listFixture(id: docA, title: "Doc A", creator: docA),
+                error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.enrichment[UUID(uuidString: docA)!])
+
+        // Second load: list = [B] only. A dropped out ⇒ its enrichment is pruned.
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.absoluteString.contains("/accesses/") == true {
+                return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+            }
+            return .init(
+                statusCode: 200, headers: [:], body: Self.paginatedFixture(id: docB, title: "Doc B"), error: nil)
+        }
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.documents.map(\.id), [UUID(uuidString: docB)!])
+        XCTAssertNil(viewModel.enrichment[UUID(uuidString: docA)!])
+    }
+
+    func testReloadOverwritesEnrichmentWithFreshData() async {
+        let viewModel = makeViewModel()
+        let docA = "11111111-1111-4111-8111-111111111111"
+
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.absoluteString.contains("/accesses/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Self.accessesFixture(userID: docA, fullName: "Old Name"), error: nil)
+            }
+            return .init(
+                statusCode: 200, headers: [:], body: Self.listFixture(id: docA, title: "Doc A", creator: docA),
+                error: nil)
+        }
+        await viewModel.load()
+        XCTAssertEqual(viewModel.enrichment[UUID(uuidString: docA)!]?.memberNames, ["Old Name"])
+
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.absoluteString.contains("/accesses/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Self.accessesFixture(userID: docA, fullName: "New Name"), error: nil)
+            }
+            return .init(
+                statusCode: 200, headers: [:], body: Self.listFixture(id: docA, title: "Doc A", creator: docA),
+                error: nil)
+        }
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.enrichment[UUID(uuidString: docA)!]?.memberNames, ["New Name"])
+        XCTAssertEqual(viewModel.enrichment[UUID(uuidString: docA)!]?.sharedByName, "New Name")
+    }
+
+    func testEmptyListIsKnownAndShowsList() async {
+        let viewModel = makeViewModel()
+        let empty = Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: empty, error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.documents.isEmpty)
+        XCTAssertTrue(viewModel.showsDocumentList)
+        XCTAssertFalse(viewModel.showsLoadingPlaceholder)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.isOffline)
     }
 
     func testLoadSuccessWritesListThrough() async {

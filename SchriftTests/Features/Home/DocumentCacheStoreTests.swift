@@ -122,4 +122,14 @@ final class DocumentCacheStoreTests: XCTestCase {
 
         XCTAssertEqual(store.loadSharedWithMeDocuments(), [withMe])
     }
+
+    func testInitClearsStrandedSharedByMeCache() {
+        // A previous app version cached a shared-by-me list; a new store must
+        // drop that now-unread key on init.
+        userDefaults.set(Data("stale".utf8), forKey: "dev.llun.Schrift.cachedSharedByMeDocuments")
+
+        _ = makeStore()
+
+        XCTAssertNil(userDefaults.data(forKey: "dev.llun.Schrift.cachedSharedByMeDocuments"))
+    }
 }

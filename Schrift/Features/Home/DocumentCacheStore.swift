@@ -21,6 +21,9 @@ final class DocumentCacheStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
+        // The shared-by-me list was removed; drop any entry a previous app
+        // version left stranded so it doesn't linger unread in UserDefaults.
+        userDefaults.removeObject(forKey: "dev.llun.Schrift.cachedSharedByMeDocuments")
     }
 
     func loadPinnedDocuments() -> [Document] {
