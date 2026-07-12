@@ -6,6 +6,9 @@ import XCTest
 final class EditorViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
+    /// The `updated_at` every `formattedBody` fixture pins — the server-clock value
+    /// a fetched baseline must record (never the client clock).
+    private let fetchedUpdatedAt = ISO8601DateFormatter().date(from: "2026-01-15T10:30:00Z")!
 
     private var cacheDirectory: URL!
     private var childrenSuiteName: String!
@@ -1488,7 +1491,9 @@ final class EditorViewModelTests: XCTestCase {
         // Read before the background save (all-200 stub) can settle and clear it.
         let baseline = draftStore.draft(for: documentID)?.baseline
         XCTAssertEqual(baseline?.markdown, "# Server body")
-        XCTAssertNotNil(baseline?.serverUpdatedAt, "a fetched baseline carries the server updated_at")
+        // The exact server clock, not the client clock — a Date() regression in
+        // installFetched would keep this non-nil but wrong.
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
 
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
@@ -1558,7 +1563,9 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Co-author edit and mine")
         viewModel.flushPendingChanges()
 
-        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Co-author edit")
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Co-author edit")
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
@@ -1581,7 +1588,9 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Co-author edit and mine")
         viewModel.flushPendingChanges()
 
-        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Co-author edit")
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Co-author edit")
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
@@ -1659,5 +1668,39 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
             "the write-ahead teardown flush persists the baseline the edit descended from")
+    }
+
+    /// A stored draft plus a successful fetch reaches reconcileDraft's tolerance
+    /// (draft-wins) branch, which re-enqueues the draft. That re-enqueue must carry
+    /// the draft's own baseline through — the draft-replay reconciliation the
+    /// baseline exists to serve.
+    func testReconcileDraftReplayCarriesTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        // Draft written "now" is newer than the fixture's 2026-01-15 server
+        // updated_at, so the fetch lands in reconcileDraft's tolerance-push branch.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Draft body", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: serverDate, markdown: "# Server base")))
+        let body = formattedBody(content: "# Server")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.load()  // reconcileDraft tolerance-push re-enqueues with draft.baseline
+
+        // Read while the save is still held in flight.
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server base")
+        XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 }

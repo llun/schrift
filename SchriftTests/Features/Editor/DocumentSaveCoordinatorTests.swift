@@ -206,6 +206,26 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 
+    func testRecoverDraftsPreservesTheBaselineOnReplay() async {
+        let log = RequestRecorder()
+        // Hold the content PATCH open so the replayed draft can be read in flight.
+        stubSavePipeline(log: log, saveDelay: 0.3)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        // Newer than the 2026-01-15 fixture → tolerance replay re-enqueues it.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: serverDate, markdown: "# Server base")))
+
+        await coordinator.recoverDrafts()
+
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server base", "the replayed draft keeps its baseline")
+        XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+    }
+
     func testRecoverDraftsDiscardsDraftOlderThanServer() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)

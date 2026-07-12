@@ -116,11 +116,12 @@ final class EditorViewModel {
     private var autosaveTask: Task<Void, Never>?
     private var dirtySince: Date?
     private var pendingFreshContent: (markdown: String, syncedAt: Date, serverUpdatedAt: Date)?
-    /// The server state the on-screen content descends from. Captured only where
-    /// the display is known to equal a fetched (or cache-restored) server body —
-    /// never from `cacheServerCopy` (a dirty screen's edits don't descend from the
-    /// just-fetched body) and never at flush time. Threaded into `enqueue` so a
-    /// queued draft can later be reconciled against the server via
+    /// The server state the on-screen content descends from: a fetched (or
+    /// cache-restored) server body's own `updated_at`, or — when a draft is what's
+    /// on screen — that draft's own recorded baseline (continuity across a reopen).
+    /// Never advanced from `cacheServerCopy` (a dirty screen's edits don't descend
+    /// from the just-observed server body) nor at flush time. Threaded into
+    /// `enqueue` so a queued draft can later be reconciled against the server via
     /// `draftSyncDecision`. Cleared when the document is torn down.
     private var serverBaseline: DraftBaseline?
     /// Monotonic guard: a completing fetch applies its outcome only if no
