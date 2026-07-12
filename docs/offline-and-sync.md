@@ -528,6 +528,44 @@ func applyPendingUpdate()
 func handleDidDelete()             // §6
 ```
 
+#### Conflict detection & resolution
+
+The whole point of carrying `DraftBaseline` on a draft is this: when a queued
+offline edit is reconciled against the server (by `syncPendingDrafts` on a
+reconnect/foreground/launch trigger, or by the editor's own `reconcileDraft`
+revalidation) and `draftSyncDecision` returns **`.conflict`** — the server body
+moved on *and* it no longer matches the baseline the edit descended from — the app
+**detects and asks** rather than silently picking a winner. There is no on-device
+Yjs *decoder* and no CRDT merge, by design (Non-goals); a conflict is resolved by
+choosing one whole version.
+
+- **Record.** `DocumentSaveCoordinator` keeps `conflicts: [UUID: SyncConflict]`.
+  `SyncConflict` carries only `serverUpdatedAt` + `serverTitle` — deliberately **no
+  server markdown**, so "Keep the server version" re-fetches through the editor's
+  guarded funnel rather than installing a body the coordinator squirreled away.
+  Both detection sites record the same way (`syncPendingDrafts` inline;
+  `reconcileDraft` via `recordConflict(...)`), and `conflict(for:)` is read by the
+  VM's `syncConflict` so the pill appears/disappears live (`@Observable`).
+- **Hold the push.** While a conflict is recorded, `enqueue` writes the draft and
+  the queued slot (write-ahead, so `pendingSave()`/`hasUnsavedLocalContent` keep
+  working) but does **not** start a save — an autosave flush must never overwrite
+  the conflicting server copy unasked. `syncPendingDrafts` likewise skips a
+  conflicted draft entirely.
+- **Keep mine** (`resolveConflictKeepingLocal`): clear the record and release the
+  held push — an unchecked, last-writer-wins overwrite the user chose (the
+  overwritten server version is recoverable from the web's version history). The VM
+  wrapper `flushPendingChanges()` first, so the push captures the newest content.
+- **Keep the server version** (`resolveConflictKeepingServer`): clear the record,
+  drop the local draft/queued work, and let the VM `refresh()` install the server
+  body through the normal `apply` funnel (`mayPredateSave` / generation checks / the
+  dirty baseline all stay in force). This is the one sanctioned discard.
+- **No false conflicts against our own writes.** After a confirmed save the
+  coordinator remembers what it pushed (`lastConfirmedPushMarkdown`) and stamps it
+  onto the next edit's draft as `lastPushedMarkdown`, so `draftSyncDecision` rule 1
+  recognises "the server's most recent writer was us" — even across a relaunch —
+  and pushes instead of flagging a conflict. A web title-only rename (body still
+  equals the baseline) is rule 2's body-equality push, also not a conflict.
+
 #### Pull-to-refresh (explicit refresh)
 
 `.refreshable` stops calling `load()` and calls a distinct intent
@@ -628,6 +666,14 @@ server is about to hold.
   `viewModel.updateAvailable && !viewModel.isEditing` — a subtle, tappable
   "Document updated · tap to refresh" below the nav/offline banner and above the
   content; tapping calls `viewModel.applyPendingUpdate()`.
+- **Sync-conflict pill & sheet.** Render a `danger`-tinted "Sync conflict · tap
+  to review" pill (mirroring the "Updated" banner's placement/structure) when
+  `viewModel.syncConflict != nil && !viewModel.isEditing`; tapping presents
+  `ConflictSheetView` — a flat `SheetHeader` list (per the design system) offering
+  **Keep my version** (`resolveConflictKeepingMine()`) and a destructive,
+  confirmation-gated **Keep the server version** (`resolveConflictKeepingServer()`),
+  plus a footnote that overwritten versions are restorable from the web's version
+  history. See *Conflict detection & resolution* below.
 - **`OfflineBanner` gated on a real copy, with reading-oriented copy**
   (`EditorView.swift:54`). Show **"Reading the copy saved on this device"** only
   when `isOffline && viewModel.hasLocalCopy`. (Editing stays blocked offline —
