@@ -7,9 +7,10 @@ import Foundation
 ///
 /// `serverUpdatedAt` is the server's own `updated_at`, so comparisons against it
 /// are server-clock-to-server-clock and — unlike `pendingDraftClockTolerance` —
-/// need no slack. It is nil only when the baseline was derived from a cache entry
-/// the coordinator wrote after a *void* save (the save PATCHes return no server
-/// timestamp); the `markdown` still anchors a content comparison in that case.
+/// need no slack. It is nil after a void save (the save PATCHes return no server
+/// timestamp) or when the baseline was restored from a cache entry written before
+/// that field existed; the `markdown` still anchors a content comparison in either
+/// case.
 struct DraftBaseline: Codable, Equatable, Sendable {
     let serverUpdatedAt: Date?
     let markdown: String

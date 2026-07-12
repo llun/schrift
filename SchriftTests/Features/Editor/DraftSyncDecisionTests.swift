@@ -34,6 +34,21 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(decision, .push)
     }
 
+    func testLastPushedMarkdownNonMatchFallsThroughToBaselineRule() {
+        // Rule 1 misses (lastPushedMarkdown is non-nil but diverged from the server
+        // body), so the baseline rule decides — here, a conflict. Guards the seam
+        // between rules 1 and 2: a mutation dropping rule 1's equality check would
+        // wrongly .push and this would fail.
+        let decision = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base body"),
+            lastPushedMarkdown: "# Something we pushed earlier",
+            draftUpdatedAt: base,
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: "# A co-author's edit"
+        )
+        XCTAssertEqual(decision, .conflict)
+    }
+
     // MARK: - Rule 2: baseline present
 
     func testServerNotNewerThanBaselinePushes() {

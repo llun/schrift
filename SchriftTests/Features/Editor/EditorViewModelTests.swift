@@ -1788,4 +1788,45 @@ final class EditorViewModelTests: XCTestCase {
             "a fetch racing our own save must not advance the baseline to the raced body")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
+
+    /// The `saveNow` failed-save retry is a baseline-carrying enqueue site too: it
+    /// must re-push with the stored draft's baseline, not nil (which would degrade
+    /// a retried offline save to the legacy tolerance rule).
+    func testSaveNowRetryPreservesTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let bodyA = formattedBody(content: "# Server body")
+        // GET ok (baseline A); the content PATCH 500s so the save fails and the
+        // draft (with its baseline) survives to be retried.
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: bodyA, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()  // installFetched → baseline A
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        viewModel.flushPendingChanges()
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "the failed draft carries the baseline")
+
+        viewModel.saveNow()  // retry re-enqueues with the stored draft's baseline
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server body")
+        XCTAssertEqual(baseline?.serverUpdatedAt, fetchedUpdatedAt)
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+    }
 }
