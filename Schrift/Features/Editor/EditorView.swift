@@ -118,6 +118,7 @@ struct EditorView: View {
     @Environment(LocalizationStore.self) private var loc
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
+    @State private var isPresentingConflictSheet = false
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
@@ -176,6 +177,27 @@ struct EditorView: View {
 
             if isOffline, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
+            }
+
+            if viewModel.syncConflict != nil, !viewModel.isEditing {
+                Button {
+                    isPresentingConflictSheet = true
+                } label: {
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        MaterialSymbol(.warning, size: 13)
+                        Text(loc[.editor_conflict_pill])
+                            .font(DocsFont.footnote)
+                    }
+                    .foregroundStyle(DocsColor.danger)
+                    .padding(.horizontal, DocsSpacing.spaceSM)
+                    .padding(.vertical, DocsSpacing.space2xs)
+                    .background(Capsule().fill(DocsColor.gray050))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(loc[.editor_conflict_pill_a11y])
             }
 
             if viewModel.updateAvailable, !viewModel.isEditing {
@@ -267,6 +289,14 @@ struct EditorView: View {
                 }
             )
             .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isPresentingConflictSheet) {
+            ConflictSheetView(
+                onKeepMine: { viewModel.resolveConflictKeepingMine() },
+                onKeepServer: { Task { await viewModel.resolveConflictKeepingServer() } }
+            )
+            .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
     }
