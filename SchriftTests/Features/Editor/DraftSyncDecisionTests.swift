@@ -213,5 +213,6 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertFalse(retryableSaveFailure(.server(statusCode: 404)))
         XCTAssertFalse(retryableSaveFailure(.server(statusCode: 409)))
         XCTAssertFalse(retryableSaveFailure(.server(statusCode: 499)))
+        XCTAssertFalse(retryableSaveFailure(.server(statusCode: 600)))  // just past the 5xx range
     }
 }
