@@ -239,6 +239,14 @@ final class EditorViewModel {
         }
     }
 
+    /// The detected sync conflict for this document, if any. The reading surface
+    /// shows a "Sync conflict · tap to review" pill and the `ConflictSheetView`
+    /// while this is non-nil (reading `@Observable` cross-object state re-renders
+    /// live when the coordinator records or clears it).
+    var syncConflict: DocumentSaveCoordinator.SyncConflict? {
+        saveCoordinator.conflict(for: documentID)
+    }
+
     // MARK: - Loading
 
     func load() async {
@@ -557,43 +565,50 @@ final class EditorViewModel {
         default:
             break
         }
-        if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+        // Reconcile against the server the same way the coordinator's `syncPendingDrafts`
+        // does: server-clock-to-server-clock with a content tiebreak for baseline-carrying
+        // drafts, falling back to the legacy tolerance rule only for baseline-less ones.
+        switch draftSyncDecision(
+            baseline: draft.baseline,
+            lastPushedMarkdown: draft.lastPushedMarkdown,
+            draftUpdatedAt: draft.updatedAt,
+            serverUpdatedAt: formatted.updatedAt,
+            serverMarkdown: formatted.content ?? "")
+        {
+        case .push:
+            // The draft still descends from the server (or the server's last writer is
+            // us). Cache the fresh body and hand the draft back to the save pipeline —
+            // otherwise a stored draft that wins with no save pushing it and no
+            // `.failed`/`.pendingSync` affordance has **no funnel at all** (`flush`
+            // needs `isDirty`, `recoverDrafts` runs once). Hand it back whichever screen
+            // is looking. No storm: `enqueue` makes `pendingSave` non-nil, so `apply`
+            // short-circuits before `reconcileDraft` on every later fetch.
             cacheServerCopy(formatted)
-            // A stored draft that wins the tolerance rule, with no save pushing it and
-            // no `.failed` retry affordance, has **no funnel at all**:
-            // `flushPendingChanges` needs `isDirty`, `saveNow` and the retry caption
-            // need `.failed`, and `recoverDrafts` runs once per process. That is the
-            // state `becomeUnavailable` leaves behind (`suppressLocalWriteThrough`
-            // drops the queued save; `finish`'s discarded branch resets to `.idle`),
-            // and also the state an offline launch leaves when `recoverDrafts` gives
-            // up. Left alone the edit sits on screen captioned "Edited just now" until
-            // a co-author's write pushes the server past the tolerance — and then the
-            // branch below deletes it. Hand it back, whichever screen is looking:
-            // gating this on "did *this* view model recover the screen" missed the
-            // pop-back-and-reopen path, where a fresh view model restores the draft
-            // locally and never recovers anything.
-            //
-            // No storm: `enqueue` makes `pendingSave` non-nil, so `apply` short-circuits
-            // before `reconcileDraft` on every later fetch; a failure lands in `.failed`,
-            // whose branch returned above; a success removes the draft.
             if saveCoordinator.pendingSave(documentID: documentID) == nil {
                 saveCoordinator.enqueue(
                     documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
             }
-            return
-        }
-        // Server newer beyond tolerance: this stranded draft would never have been
-        // shown — server wins, and the draft goes. `discardStoredDraft` re-checks
-        // identity; that check cannot fail today (no await since `apply` read the
-        // draft), but install only on success. Installing over a draft that
-        // survived would leave unsaved work on disk that isn't on screen — the
-        // state every rule here exists to prevent.
-        saveCoordinator.discardStoredDraft(draft)
-        guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
+        case .conflict:
+            // The server moved on under a baseline-carrying draft. Record it so the
+            // reading-surface pill and `ConflictSheetView` ask the user; keep the draft
+            // on screen (never install), and let the coordinator's enqueue-hold block
+            // any autosave push until the user resolves it. `markAvailableAgain` is
+            // unaffected — this never installs, so `isUnavailable` gating is untouched.
+            saveCoordinator.recordConflict(
+                documentID: documentID, serverUpdatedAt: formatted.updatedAt, serverTitle: formatted.title)
             cacheServerCopy(formatted)
-            return
+        case .discardServerWins:
+            // Legacy (baseline-less) stranded draft the server has moved past — server
+            // wins, and the draft goes. `discardStoredDraft` re-checks identity; install
+            // only on success. Installing over a surviving draft would leave unsaved work
+            // on disk that isn't on screen — the state every rule here exists to prevent.
+            saveCoordinator.discardStoredDraft(draft)
+            guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
+                cacheServerCopy(formatted)
+                return
+            }
+            installFetched(formatted)
         }
-        installFetched(formatted)
     }
 
     /// Silent cache update while local edits own the screen — next open (or
@@ -1459,6 +1474,37 @@ final class EditorViewModel {
         default:
             break
         }
+    }
+
+    // MARK: - Conflict resolution
+
+    /// "Keep my version": flush any in-progress edit first (so the held push captures
+    /// the newest content), then release the coordinator's enqueue-hold and push —
+    /// an unchecked, last-writer-wins overwrite the user chose (the overwritten
+    /// server version is recoverable from the web's version history).
+    func resolveConflictKeepingMine() {
+        flushPendingChanges()
+        saveCoordinator.resolveConflictKeepingLocal(documentID: documentID)
+    }
+
+    /// "Keep the server version": the one sanctioned discard. End the editing session
+    /// **without** flushing (discard is the user's explicit choice), drop the local
+    /// draft, then `refresh()` so the server body installs through the existing
+    /// guarded funnel (`apply` → no draft → `reconcileClean` → `install`), which keeps
+    /// `mayPredateSave`, the generation checks and the dirty baseline all in force. No
+    /// content is ever taken from the conflict record itself.
+    func resolveConflictKeepingServer() async {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        dirtySince = nil
+        isDirty = false
+        mode = .reading
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
+        saveCoordinator.resolveConflictKeepingServer(documentID: documentID)
+        await refresh()
     }
 
     private func markDirty() {
