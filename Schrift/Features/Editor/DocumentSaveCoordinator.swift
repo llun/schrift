@@ -69,6 +69,9 @@ final class DocumentSaveCoordinator {
     /// resurrect any local copy when it lands.
     private var discardedDuringSave: Set<UUID> = []
     private var hasRecoveredDrafts = false
+    /// Re-entrancy guard for `syncPendingDrafts()`: it is repeatable (reconnect,
+    /// foreground, launch), and overlapping triggers must not double-replay a draft.
+    private var isSyncingDrafts = false
 
     init(
         client: DocsAPIClient,
@@ -132,12 +135,27 @@ final class DocumentSaveCoordinator {
         start(documentID: documentID, save: save)
     }
 
-    /// Replays drafts left behind by a previous session. A draft is re-saved
-    /// unless the document changed on the server after the draft was written —
-    /// fresher edits made elsewhere win over a stale draft.
+    /// The once-per-process launch wrapper (HomeViewModel calls it from `load()`).
+    /// Delegates to the repeatable `syncPendingDrafts()`; the once-guard keeps that
+    /// single call site's semantics unchanged.
     func recoverDrafts() async {
         guard !hasRecoveredDrafts else { return }
         hasRecoveredDrafts = true
+        await syncPendingDrafts()
+    }
+
+    /// Replays drafts left behind by a previous session (or a save that failed /
+    /// was queued offline) against the current server copy. A draft is re-saved
+    /// unless the document changed on the server after the draft was written —
+    /// fresher edits made elsewhere win over a stale draft.
+    ///
+    /// Unlike `recoverDrafts()` this is **repeatable**: it is the funnel for the
+    /// reconnect, foreground and launch triggers, so it self-guards against
+    /// overlapping runs (`isSyncingDrafts`) rather than running once per process.
+    func syncPendingDrafts() async {
+        guard !isSyncingDrafts else { return }
+        isSyncingDrafts = true
+        defer { isSyncingDrafts = false }
         for draft in draftStore.allDrafts() {
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             do {
@@ -159,7 +177,7 @@ final class DocumentSaveCoordinator {
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
                 draftStore.remove(documentID: draft.documentID)
             } catch {
-                // Leave the draft for a later launch (e.g. offline right now).
+                // Leave the draft for a later sync (e.g. offline right now).
             }
         }
     }
