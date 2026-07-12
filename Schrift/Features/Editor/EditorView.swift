@@ -36,9 +36,12 @@ struct SyncCaption: Equatable {
 /// offline wording — it is the only affordance that unpins the document, because
 /// `reconcileDraft` deliberately no-ops every revalidation while a failed save's
 /// draft is on screen, and the reading surface has no other retry (tap-to-edit is
-/// itself blocked offline, which is when saves fail most). (2) other unsaved local
-/// content → save wording (a previously-synced doc with a stranded draft must not
-/// read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
+/// itself blocked offline, which is when saves fail most). (1b) a **queued offline
+/// save** (`.pendingSync`) is its own tier just below: its "syncs when online"
+/// caption beats the generic offline wording, and it doubles as a manual retry
+/// when the device is online (where the auto-sync triggers can't fire). (2) other
+/// unsaved local content → save wording (a previously-synced doc with a stranded
+/// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
     hasUnsavedLocalContent: Bool,
     isOffline: Bool,
