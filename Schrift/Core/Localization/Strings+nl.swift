@@ -161,6 +161,7 @@ enum Strings_nl {
         .editor_sync_save_failed: "Opslaan mislukt · tik om opnieuw te proberen",
         .editor_sync_save_failed_a11y: "Opslaan mislukt. Tik om opnieuw te proberen.",
         .editor_sync_saved_on_device: "Opgeslagen op dit apparaat",
+        .editor_sync_pending_sync: "Opgeslagen op dit apparaat · synchroniseert wanneer online",
         .editor_sync_edited_just_now: "Zojuist bewerkt",
         .editor_sync_just_now: "Zojuist gesynchroniseerd",
         .editor_sync_ago: "Gesynchroniseerd %@",

@@ -177,6 +177,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_sync_save_failed = "editor.sync.save_failed"  // "Couldn't save · tap to retry"
     case editor_sync_save_failed_a11y = "editor.sync.save_failed_a11y"  // "Couldn't save. Tap to retry."
     case editor_sync_saved_on_device = "editor.sync.saved_on_device"  // "Saved on this device"
+    // "Saved on this device · syncs when online"
+    case editor_sync_pending_sync = "editor.sync.pending_sync"
     case editor_sync_edited_just_now = "editor.sync.edited_just_now"  // "Edited just now"
     case editor_sync_just_now = "editor.sync.just_now"  // "Synced just now"
     case editor_sync_ago = "editor.sync.ago"  // "Synced %@"

@@ -160,6 +160,7 @@ enum Strings_en {
         .editor_sync_save_failed: "Couldn't save · tap to retry",
         .editor_sync_save_failed_a11y: "Couldn't save. Tap to retry.",
         .editor_sync_saved_on_device: "Saved on this device",
+        .editor_sync_pending_sync: "Saved on this device · syncs when online",
         .editor_sync_edited_just_now: "Edited just now",
         .editor_sync_just_now: "Synced just now",
         .editor_sync_ago: "Synced %@",
