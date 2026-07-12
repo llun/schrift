@@ -158,6 +158,16 @@ final class DocumentSaveCoordinator {
         defer { isSyncingDrafts = false }
         for draft in draftStore.allDrafts() {
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
+            // A save that FAILED this session is a retry candidate the user may still
+            // be looking at: its draft is their only copy of that edit, and the
+            // reading surface's "Couldn't save · tap to retry" affordance owns its
+            // recovery. The tolerance rule below would `remove` it the moment the
+            // server moved past the window (a co-author's edit), silently deleting
+            // visible content — the exact hazard `reconcileDraft` guards against.
+            // Firing this trigger mid-session (unlike the launch-only `recoverDrafts`)
+            // newly exposes it, so skip a `.failed` draft here; the stack's conflict
+            // detection is what reconciles it.
+            if case .failed = state(for: draft.documentID) { continue }
             do {
                 let formatted = try await client.formattedContent(documentID: draft.documentID)
                 // The session may have started editing/saving this document
@@ -184,7 +194,7 @@ final class DocumentSaveCoordinator {
 
     /// Removes a stored draft only if it is still exactly the given draft —
     /// the user may have produced a newer one while the caller awaited
-    /// (mirrors recoverDrafts' re-check).
+    /// (mirrors the draft-replay re-check in `syncPendingDrafts`).
     func discardStoredDraft(_ draft: PendingDraft) {
         guard draftStore.draft(for: draft.documentID) == draft else { return }
         draftStore.remove(documentID: draft.documentID)

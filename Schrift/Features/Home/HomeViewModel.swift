@@ -137,6 +137,13 @@ final class HomeViewModel {
         await load(userInitiated: true)
     }
 
+    /// Auto-sync trigger for reconnect / foreground. Keeps the coordinator access
+    /// inside the view model (like `load()`'s `recoverDrafts()`), so the view never
+    /// drives networking/persistence directly.
+    func syncPendingDrafts() async {
+        await saveCoordinator.syncPendingDrafts()
+    }
+
     func search() async {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {

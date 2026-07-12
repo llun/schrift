@@ -63,13 +63,13 @@ private struct AuthenticatedHomeContainer: View {
         // is harmless.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
             guard !wasReachable, isReachable else { return }
-            let coordinator = viewModel.saveCoordinator
-            Task { await coordinator.syncPendingDrafts() }
+            let homeViewModel = viewModel
+            Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            let coordinator = viewModel.saveCoordinator
-            Task { await coordinator.syncPendingDrafts() }
+            let homeViewModel = viewModel
+            Task { await homeViewModel.syncPendingDrafts() }
         }
     }
 }

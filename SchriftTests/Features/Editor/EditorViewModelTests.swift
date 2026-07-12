@@ -1697,7 +1697,11 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()  // reconcileDraft tolerance-push re-enqueues with draft.baseline
 
-        // Read while the save is still held in flight.
+        // The replay must actually have fired (not just left the identical draft
+        // untouched): the re-enqueued save is in flight, held open by the stub.
+        XCTAssertNotNil(
+            coordinator.pendingSave(documentID: documentID), "the tolerance replay re-enqueued a save")
+        // …and that in-flight draft carries the baseline through.
         let baseline = draftStore.draft(for: documentID)?.baseline
         XCTAssertEqual(baseline?.markdown, "# Server base")
         XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)

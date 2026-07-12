@@ -325,6 +325,41 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertEqual(savesInFlight(log), 1)
     }
 
+    /// A save that FAILED this session leaves a `.failed` state and its draft (the
+    /// user's only copy). Firing `syncPendingDrafts()` mid-session must NOT
+    /// tolerance-discard it even when the server has moved far past the draft —
+    /// that would silently delete visible content the retry affordance still owns.
+    func testSyncPendingDraftsSkipsAFailedSaveDraft() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        // Far-future server updated_at: the raw tolerance rule WOULD discard the draft.
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID), "a failed-save draft is never tolerance-discarded mid-session")
+        // Sync skipped it before any fetch.
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
+    }
+
     func testSaveSuccessWritesContentCacheEntry() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)
