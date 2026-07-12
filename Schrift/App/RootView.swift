@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Whether a reachability change should trigger a draft sync: only the false→true
+/// (reconnect) edge, never a disconnect or a redundant true→true. Pure so the edge
+/// is unit-testable without SwiftUI.
+func shouldSyncOnReachabilityChange(wasReachable: Bool, isReachable: Bool) -> Bool {
+    !wasReachable && isReachable
+}
+
+/// Whether a scene-phase change should trigger a draft sync: only when the app
+/// becomes active (foreground), never on `.background`/`.inactive`.
+func shouldSyncOnScenePhase(_ phase: ScenePhase) -> Bool {
+    phase == .active
+}
+
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     let serverURL: URL
@@ -62,12 +75,12 @@ private struct AuthenticatedHomeContainer: View {
         // against overlapping runs, so a foreground that coincides with a reconnect
         // is harmless.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
-            guard !wasReachable, isReachable else { return }
+            guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
+            guard shouldSyncOnScenePhase(phase) else { return }
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
         }

@@ -592,4 +592,38 @@ final class HomeViewModelTests: XCTestCase {
         }
         """.data(using: .utf8)!
     }
+
+    /// The reconnect/foreground triggers call `viewModel.syncPendingDrafts()`; it
+    /// must forward to the save coordinator (which does the actual replay).
+    func testSyncPendingDraftsForwardsToTheCoordinator() async {
+        let documentID = UUID(uuidString: "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b")!
+        let suiteName = "HomeViewModelTests.forwarding.\(UUID().uuidString)"
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        // A draft "now" is newer than the 2026-01-15 fixture → tolerance replay.
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
+        let log = RequestRecorder()
+        let contentBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Server", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: contentBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)  // PATCH
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
+        let viewModel = HomeViewModel(
+            client: client, cache: makeCache(), saveCoordinator: coordinator, userDefaults: preferences)
+
+        await viewModel.syncPendingDrafts()
+
+        // Forwarded: the draft was replayed and cleared, and a content PATCH fired.
+        await waitUntil { draftStore.draft(for: documentID) == nil }
+        XCTAssertGreaterThanOrEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+    }
 }

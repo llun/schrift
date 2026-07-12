@@ -31,7 +31,7 @@ struct NetworkPathMonitoring: Sendable {
 /// quirk in CLAUDE.md), so reachability here answers "can the OS see a network",
 /// not "is the server usable". Reachability starts optimistic (`true`) so nothing
 /// reads offline before the first path update, and every change is delivered on
-/// the main actor.
+/// the main actor **in order**.
 @MainActor
 @Observable
 final class ConnectivityMonitor {
@@ -44,8 +44,24 @@ final class ConnectivityMonitor {
     private let canceller = MonitorCanceller()
 
     init(monitoring: NetworkPathMonitoring = .nwPath) {
-        canceller.cancel = monitoring.start { [weak self] reachable in
-            Task { @MainActor in
+        // NWPathMonitor delivers updates in order on its serial queue, but a fresh
+        // `Task { @MainActor }` per callback carries no ordering guarantee — a fast
+        // false→true flap could land true-then-false and strand `isReachable` at a
+        // stale value on a link that is actually up. Funnel the ordered callbacks
+        // through an AsyncStream drained by a single Task, so the main-actor updates
+        // stay in order.
+        let (stream, continuation) = AsyncStream<Bool>.makeStream()
+        let stopMonitoring = monitoring.start { reachable in
+            continuation.yield(reachable)
+        }
+        // The box's deinit ends both the OS monitor and the drain loop when the
+        // owner is released.
+        canceller.cancel = {
+            stopMonitoring()
+            continuation.finish()
+        }
+        Task { [weak self] in
+            for await reachable in stream {
                 self?.isReachable = reachable
             }
         }
