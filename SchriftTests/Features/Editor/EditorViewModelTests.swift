@@ -1760,9 +1760,9 @@ final class EditorViewModelTests: XCTestCase {
     /// baseline. If it did, a later full-overwrite save would push the resurrected
     /// stale body back to the server.
     func testMayPredateFetchDoesNotAdvanceTheBaseline() async {
-        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
         stubLoad(content: "# Server body")
-        await viewModel.load()  // baseline A
+        await viewModel.load()  // baseline A, cached A
 
         // Hold the save's content PATCH open so it stays in flight; a GET that lands
         // during it is answered with a diverged body and races the save.
@@ -1783,6 +1783,14 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
         await viewModel.refresh()  // fetch B races the in-flight save → apply early-returns
+
+        // The mayPredate early-return uniquely takes NOTHING from the raced fetch:
+        // in particular it does not write-through the cache with body B (the
+        // pendingSave branch's cacheServerCopy would, so this is what distinguishes
+        // the guard from that branch). Asserted while the first save is still held.
+        XCTAssertEqual(
+            contentCache.content(for: documentID)?.markdown, "# Server body",
+            "the raced fetch's body must not be installed or cached")
 
         // Edit again and flush; the still-in-flight save queues this, writing a draft.
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit 2")

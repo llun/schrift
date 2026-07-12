@@ -36,6 +36,26 @@ final class ConnectivityMonitorTests: XCTestCase {
         await waitUntil { monitor.isReachable == true }
     }
 
+    /// The whole reason for the AsyncStream drain: several changes buffered
+    /// back-to-back (no await between) are applied in order, so reachability
+    /// settles on the LAST value — an earlier one never wins late.
+    func testDeliversBufferedChangesInOrder() async {
+        let fake = FakePath()
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(fake))
+
+        fake.onChange?(false)
+        fake.onChange?(true)
+        fake.onChange?(false)
+        fake.onChange?(true)
+        await waitUntil { monitor.isReachable == true }
+        await waitAndConfirmNever { monitor.isReachable == false }
+
+        // A burst ending in `false` settles on `false`.
+        fake.onChange?(true)
+        fake.onChange?(false)
+        await waitUntil { monitor.isReachable == false }
+    }
+
     func testCancelsMonitoringOnDeinit() {
         let fake = FakePath()
         var monitor: ConnectivityMonitor? = ConnectivityMonitor(monitoring: makeMonitoring(fake))

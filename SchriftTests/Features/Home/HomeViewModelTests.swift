@@ -599,7 +599,14 @@ final class HomeViewModelTests: XCTestCase {
         let documentID = UUID(uuidString: "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b")!
         let suiteName = "HomeViewModelTests.forwarding.\(UUID().uuidString)"
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
-        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        // Isolated content cache so the successful replay's write-through doesn't
+        // leak a JSON file into the real Application Support directory.
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HomeViewModelTests.forwarding.\(UUID().uuidString)", isDirectory: true)
+        defer {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: cacheDir)
+        }
         // A draft "now" is newer than the 2026-01-15 fixture → tolerance replay.
         draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
         let log = RequestRecorder()
@@ -616,7 +623,9 @@ final class HomeViewModelTests: XCTestCase {
             return .init(statusCode: 204, headers: [:], body: Data(), error: nil)  // PATCH
         }
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore,
+            contentCache: DocumentContentCacheStore(directory: cacheDir), backgroundTasks: .noop)
         let viewModel = HomeViewModel(
             client: client, cache: makeCache(), saveCoordinator: coordinator, userDefaults: preferences)
 
