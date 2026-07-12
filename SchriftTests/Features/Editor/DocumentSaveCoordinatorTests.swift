@@ -241,6 +241,27 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             "a pending-sync draft beyond tolerance is a conflict — preserved, not discarded")
     }
 
+    /// The primary success path the state enables: an offline save lands in
+    /// `.pendingSync`, then `syncPendingDrafts` replays and clears it once the
+    /// server is reachable and within tolerance.
+    func testPendingSyncDraftResyncsAndClearsWhenWithinTolerance() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        // Reconnect: the server (2026-01-15) is older than the "now" draft → within
+        // tolerance → replay and clear.
+        stubSavePipeline(log: log)
+        await coordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertNil(draftStore.draft(for: documentID), "the queued offline edit synced and cleared")
+    }
+
     func testDocumentsSaveIndependently() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)

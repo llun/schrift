@@ -193,7 +193,11 @@ final class DocumentSaveCoordinator {
                     // A queued offline save whose server copy has moved past the window
                     // (a co-author's edit) is a conflict, not a stale stranded draft:
                     // discarding it would silently drop the user's offline work. Leave
-                    // it — the stack's conflict detection surfaces it to the user.
+                    // it — the stack's conflict detection surfaces it to the user. This
+                    // holds only while the in-memory `.pendingSync` state is live (this
+                    // session); across a relaunch the state resets to `.idle`, so a
+                    // beyond-tolerance offline draft is protected instead by the
+                    // persistent conflict record the conflict-detection PR adds.
                     continue
                 } else {
                     draftStore.remove(documentID: draft.documentID)

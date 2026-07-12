@@ -538,17 +538,24 @@ final class EditorViewModel {
             displaySource = .draft
             hasLocalCopy = true
         }
-        // A save that failed *this session* leaves a draft the user is looking at,
-        // with the "Couldn't save" retry on screen. The clock-tolerance rule below
-        // is for drafts stranded by an *earlier* session (`recoverDrafts`' job);
-        // applying it here silently deletes visible content. The comparison mixes
-        // clocks — `draft.updatedAt` is the device's, `formatted.updatedAt` the
-        // server's *last write* — so a device running slow shrinks the window from
-        // the draft's side, and even the user's own partially-landed save (content
-        // PATCH applied, title PATCH failed) can then read as "newer than the draft".
-        if case .failed = saveCoordinator.state(for: documentID) {
+        // A save that failed or is queued for sync *this session* leaves a draft the
+        // user is looking at — the "Couldn't save" retry (`.failed`) or "syncs when
+        // online" caption (`.pendingSync`) is on screen, and the draft is their only
+        // copy of that edit. The clock-tolerance rule below is for drafts stranded by
+        // an *earlier* session (`recoverDrafts`' job); applying it to either of these
+        // silently deletes visible content — the exact mirror of the `.pendingSync`
+        // preservation guard in `syncPendingDrafts`, and the reason a pull-to-refresh
+        // must not discard a queued offline edit. The comparison mixes clocks —
+        // `draft.updatedAt` is the device's, `formatted.updatedAt` the server's *last
+        // write* — so a device running slow shrinks the window from the draft's side,
+        // and even the user's own partially-landed save (content PATCH applied, title
+        // PATCH failed) can then read as "newer than the draft".
+        switch saveCoordinator.state(for: documentID) {
+        case .failed, .pendingSync:
             cacheServerCopy(formatted)
             return
+        default:
+            break
         }
         if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
             cacheServerCopy(formatted)

@@ -1290,6 +1290,37 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasUnsavedLocalContent, "a pending-sync draft is unsaved local content")
     }
 
+    /// Regression: a queued offline (`.pendingSync`) draft must survive a
+    /// pull-to-refresh even when a co-author moved the server past the tolerance
+    /// window. reconcileDraft's guard covers `.pendingSync`, not only `.failed`;
+    /// without it the draft is silently discarded and the server body installed.
+    func testPendingSyncDraftSurvivesAPullToRefreshBeyondTolerance() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 503)
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Offline edit")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        // A co-author edits: the server updated_at is now far past the window.
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        await viewModel.refresh()
+
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Offline edit") ?? false,
+            "the queued offline edit is preserved, not tolerance-discarded on refresh")
+    }
+
     /// Typing and undoing after a failed save leaves `isDirty` true with content
     /// that matches `savedMarkdown`, so the flush enqueues nothing. `saveNow()` must
     /// still fire the retry — swallowing it strands the document behind its failed
