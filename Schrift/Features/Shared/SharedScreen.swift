@@ -1,13 +1,5 @@
 import SwiftUI
 
-private func reachLabel(_ reach: LinkReach) -> L10nKey {
-    switch reach {
-    case .restricted: return .reach_restricted
-    case .authenticated: return .reach_connected
-    case .public: return .reach_public
-    }
-}
-
 struct SharedScreen: View {
     @Bindable var viewModel: SharedViewModel
     let serverHost: String
@@ -16,31 +8,12 @@ struct SharedScreen: View {
     @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
 
-    private var scopeIndex: Binding<Int> {
-        Binding(
-            get: { viewModel.scope == .withMe ? 0 : 1 },
-            set: { viewModel.scope = $0 == 0 ? .withMe : .byMe }
-        )
-    }
-
     private func subtitle(for document: Document) -> String {
-        switch viewModel.scope {
-        case .withMe:
-            return loc.format(.shared_subtitle_with, documentRowDate(document, locale: loc.locale))
-        case .byMe:
-            return loc.format(
-                .shared_subtitle_by, loc[reachLabel(document.linkReach)], documentRowDate(document, locale: loc.locale)
-            )
+        let date = documentRowDate(document, locale: loc.locale)
+        if let name = viewModel.enrichment[document.id]?.sharedByName {
+            return loc.format(.shared_subtitle_shared_by, name, date)
         }
-    }
-
-    private var footerText: String {
-        switch viewModel.scope {
-        case .withMe:
-            return loc[.shared_footer_with]
-        case .byMe:
-            return loc[.shared_footer_by]
-        }
+        return loc.format(.shared_subtitle_with, date)
     }
 
     var body: some View {
@@ -51,14 +24,6 @@ struct SharedScreen: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
-                    SegmentedControl(
-                        segments: [loc[.shared_with_me], loc[.shared_by_me]],
-                        selectedIndex: scopeIndex
-                    )
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    // 18pt gap below the control, matching Home/Search and the reference.
-                    .padding(.bottom, DocsSpacing.space4xs)
-
                     if let errorKey = viewModel.errorKey {
                         Text(loc[errorKey])
                             .font(DocsFont.footnote)
@@ -66,11 +31,9 @@ struct SharedScreen: View {
                             .padding(.horizontal, DocsSpacing.gutter)
                     }
 
-                    // Per-scope gates: spinner only while fetching a scope
-                    // with no local list; and never claim "0 documents" for a
-                    // scope that is simply not yet known (unknown + not
-                    // fetching renders neither — the banner/error above
-                    // conveys the state).
+                    // Per-list gate: spinner only while fetching a list with no
+                    // local copy; never claim "0 documents" for a list that is
+                    // simply not yet known (the banner/error above conveys that).
                     if viewModel.showsLoadingPlaceholder {
                         ProgressView()
                             .frame(maxWidth: .infinity)
@@ -85,6 +48,7 @@ struct SharedScreen: View {
                                 SharedRow(
                                     title: document.title ?? loc[.common_untitled],
                                     subtitle: subtitle(for: document),
+                                    memberNames: viewModel.enrichment[document.id]?.memberNames ?? [],
                                     onTap: { onOpenDocument(document) }
                                 )
                             }
@@ -92,12 +56,12 @@ struct SharedScreen: View {
                         .padding(.horizontal, DocsSpacing.gutter)
                     }
 
-                    Text(footerText)
+                    Text(loc[.shared_footer_with])
                         .font(DocsFont.footnote)
                         .foregroundStyle(DocsColor.textTertiary)
                         .padding(.horizontal, DocsSpacing.gutterGrouped)
                 }
-                .padding(.top, DocsSpacing.space3xs)
+                .padding(.top, DocsSpacing.spaceBase)
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
             .refreshable {

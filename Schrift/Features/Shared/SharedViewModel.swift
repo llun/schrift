@@ -3,16 +3,14 @@ import Foundation
 @MainActor
 @Observable
 final class SharedViewModel {
-    enum Scope {
-        case withMe
-        case byMe
-    }
-
-    var scope: Scope = .withMe
-    var sharedWithMe: [Document] = []
-    var sharedByMe: [Document] = []
-    /// A network load is in flight. Whether that shows as a placeholder is a
-    /// per-scope decision — see `showsLoadingPlaceholder`.
+    /// Documents shared with the current user (newest first).
+    var documents: [Document] = []
+    /// Best-effort per-document members + creator name, resolved from each
+    /// document's accesses after the list lands. Absent ⇒ date-only subtitle,
+    /// no avatars.
+    var enrichment: [UUID: SharedRowEnrichment] = [:]
+    /// A list load is in flight. Whether that shows as a placeholder is decided
+    /// by `showsLoadingPlaceholder`.
     var isLoading = false
     var errorKey: L10nKey?
     var isOffline = false
@@ -20,15 +18,13 @@ final class SharedViewModel {
     let client: DocsAPIClient
     private let cache: DocumentCacheStore
     private let userDefaults: UserDefaults
-    /// Monotonic guard: a completing fetch applies its outcome only if no
-    /// newer load() superseded it (latest-wins; .task refires on every tab
-    /// revisit and races .refreshable).
+    /// Monotonic guard: a completing fetch (list or enrichment) applies its
+    /// outcome only if no newer load() superseded it (.task refires on every
+    /// tab revisit and races .refreshable).
     private var loadGeneration = 0
-    /// Scopes with a real local result (cached or fetched this session).
-    /// An unknown scope must never render as "0 documents" — nil ≠ empty.
-    /// Stored (not derived from the cache on demand) so SwiftUI re-renders
-    /// when knowledge changes and cache reads stay out of view evaluation.
-    private var knownScopes: Set<Scope> = []
+    /// True once a real local list exists (cached or fetched). An unknown list
+    /// must never render as "0 documents"; nil ≠ empty.
+    private var hasLoaded = false
 
     init(
         client: DocsAPIClient,
@@ -39,32 +35,22 @@ final class SharedViewModel {
         self.cache = cache
         self.userDefaults = userDefaults
         if let withMe = cache.loadSharedWithMeDocuments() {
-            sharedWithMe = withMe
-            knownScopes.insert(.withMe)
-        }
-        if let byMe = cache.loadSharedByMeDocuments() {
-            sharedByMe = byMe
-            knownScopes.insert(.byMe)
+            documents = withMe
+            hasLoaded = true
         }
     }
 
-    var documents: [Document] {
-        scope == .withMe ? sharedWithMe : sharedByMe
-    }
-
-    /// Per-scope spinner gate: only while fetching a scope that has no local
-    /// list yet. A cached (even empty) scope revalidates silently; switching
-    /// segments mid-fetch re-evaluates for the newly visible scope.
+    /// Spinner only while fetching a list that has no local copy yet. A cached
+    /// (even empty) list revalidates silently.
     var showsLoadingPlaceholder: Bool {
-        isLoading && !knownScopes.contains(scope) && documents.isEmpty
+        isLoading && !hasLoaded && documents.isEmpty
     }
 
-    /// Whether the visible scope may render its list (and "N documents"
-    /// header). False only for a scope that is unknown — never fetched and
-    /// never cached — where a "0 documents" claim would be a lie; the offline
-    /// banner or error footnote conveys the state instead.
+    /// The list (and "N documents" header) may render once known; a
+    /// never-fetched/never-cached list shows neither — the banner/error conveys
+    /// state instead of a false "0 documents".
     var showsDocumentList: Bool {
-        knownScopes.contains(scope) || !documents.isEmpty
+        hasLoaded || !documents.isEmpty
     }
 
     func load(userInitiated: Bool = false) async {
@@ -72,74 +58,76 @@ final class SharedViewModel {
         loadGeneration += 1
         let generation = loadGeneration
 
-        // "Work offline" preference (Profile > Preferences): serve cached
-        // documents and never hit the network.
+        // "Work offline" (Profile > Preferences): serve cache, never hit the network.
         if userDefaults.bool(forKey: "schrift.workOffline") {
             if let withMe = cache.loadSharedWithMeDocuments() {
-                sharedWithMe = withMe
-                knownScopes.insert(.withMe)
-            }
-            if let byMe = cache.loadSharedByMeDocuments() {
-                sharedByMe = byMe
-                knownScopes.insert(.byMe)
+                documents = withMe
+                hasLoaded = true
             }
             isOffline = true
             isLoading = false
             return
         }
 
-        // Cache existence is read per scope: both the spinner (via
-        // knownScopes) and the silent-vs-loud policy are keyed to the exact
-        // list in question (nil = never cached ≠ cached empty), so one
-        // scope's cache never silences or masks the other's first-ever state.
-        let hadWithMeCache = knownScopes.contains(.withMe)
-        let hadByMeCache = knownScopes.contains(.byMe)
+        let hadCache = hasLoaded
         isLoading = true
-
-        // Load each scope independently so a failure in one doesn't discard the
-        // other's results (partial success is kept; the failing scope keeps its
-        // cached rows). A real 401 is not "offline" — the client's
-        // onSessionExpired hook has already raised the app-level re-login
-        // sheet, so an expired session keeps cached rows silently instead of
-        // flagging the scope as failed.
-        var withMeFailed = false
-        var byMeFailed = false
         do {
             let withMe = try await client.listDocuments(isCreatorMe: false, ordering: "-updated_at").results
             guard generation == loadGeneration else { return }
-            sharedWithMe = withMe
+            documents = withMe
             cache.saveSharedWithMeDocuments(withMe)
-            knownScopes.insert(.withMe)
+            hasLoaded = true
+            isOffline = false
+            isLoading = false
+            await enrich(documents: withMe, generation: generation)
         } catch {
             guard generation == loadGeneration else { return }
-            withMeFailed = (error as? DocsAPIError) != .sessionExpired
-        }
-        do {
-            let byMe = try await client.listDocuments(isCreatorMe: true, ordering: "-updated_at").results
-            guard generation == loadGeneration else { return }
-            sharedByMe = byMe
-            cache.saveSharedByMeDocuments(byMe)
-            knownScopes.insert(.byMe)
-        } catch {
-            guard generation == loadGeneration else { return }
-            byMeFailed = (error as? DocsAPIError) != .sessionExpired
-        }
-        isOffline = withMeFailed || byMeFailed
-        // Loud when a *failing* scope has no cached list to fall back on
-        // (a never-fetched list must not masquerade as a real empty result),
-        // or on an explicit pull-to-refresh.
-        if withMeFailed || byMeFailed,
-            userInitiated || (withMeFailed && !hadWithMeCache) || (byMeFailed && !hadByMeCache)
-        {
-            errorKey = .shared_error_load
-        }
-        if generation == loadGeneration {
+            // A real 401 is not "offline": the client's onSessionExpired hook has
+            // already raised the app-level re-login sheet, so keep cache silently.
+            let failed = (error as? DocsAPIError) != .sessionExpired
+            isOffline = failed
+            // Loud when a failing load has no cache to fall back on, or on an
+            // explicit pull-to-refresh.
+            if failed, userInitiated || !hadCache {
+                errorKey = .shared_error_load
+            }
             isLoading = false
         }
     }
 
-    /// Explicit pull-to-refresh: unlike the passive on-appear revalidation it
-    /// surfaces failures instead of swallowing them behind cached rows.
+    /// Fetch each document's accesses concurrently and resolve avatars +
+    /// creator name. Best-effort: a per-document failure leaves that row
+    /// un-enriched and never surfaces an error or "offline". Generation-guarded
+    /// so a superseded load's late results are dropped.
+    private func enrich(documents: [Document], generation: Int) async {
+        await withTaskGroup(of: (UUID, SharedRowEnrichment?).self) { group in
+            for document in documents {
+                let id = document.id
+                let creator = document.creator
+                group.addTask { [client] in
+                    do {
+                        let accesses = try await client.listAccesses(documentID: id).results
+                        return (
+                            id,
+                            SharedRowEnrichment(
+                                sharedByName: sharedCreatorName(accesses: accesses, creator: creator),
+                                memberNames: sharedMemberNames(accesses: accesses)
+                            )
+                        )
+                    } catch {
+                        return (id, nil)
+                    }
+                }
+            }
+            for await (id, result) in group {
+                guard generation == loadGeneration else { continue }
+                if let result { enrichment[id] = result }
+            }
+        }
+    }
+
+    /// Explicit pull-to-refresh: surfaces failures instead of swallowing them
+    /// behind cached rows.
     func refresh() async {
         await load(userInitiated: true)
     }
