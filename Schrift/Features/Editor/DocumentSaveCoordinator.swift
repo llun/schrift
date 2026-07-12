@@ -29,7 +29,9 @@ struct BackgroundTaskProvider {
 /// snapshots coalesce into a single "latest wins" queued slot. Every snapshot
 /// is persisted to `PendingDraftStore` before any network call and cleared
 /// only once that exact content has been saved, so edits survive suspension
-/// and process death; `recoverDrafts()` replays them on the next launch.
+/// and process death; the repeatable `syncPendingDrafts()` replays them on
+/// reconnect, foreground and launch (`recoverDrafts()` is the once-per-process
+/// launch wrapper over it).
 @MainActor
 @Observable
 final class DocumentSaveCoordinator {
