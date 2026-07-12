@@ -108,22 +108,18 @@ final class DocumentCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.loadRecentDocuments(), [document])
     }
 
-    func testLoadSharedDocumentsReturnsNilWhenNeverCached() {
+    func testLoadSharedWithMeDocumentsReturnsNilWhenNeverCached() {
         let store = makeStore()
 
         XCTAssertNil(store.loadSharedWithMeDocuments())
-        XCTAssertNil(store.loadSharedByMeDocuments())
     }
 
-    func testSharedWithMeAndByMeCachesAreIndependent() {
+    func testSharedWithMeCacheRoundTrips() {
         let store = makeStore()
         let withMe = makeDocument(id: "88888888-8888-4888-8888-888888888888", title: "With Me")
-        let byMe = makeDocument(id: "99999999-9999-4999-8999-999999999999", title: "By Me")
 
         store.saveSharedWithMeDocuments([withMe])
-        store.saveSharedByMeDocuments([byMe])
 
         XCTAssertEqual(store.loadSharedWithMeDocuments(), [withMe])
-        XCTAssertEqual(store.loadSharedByMeDocuments(), [byMe])
     }
 }
