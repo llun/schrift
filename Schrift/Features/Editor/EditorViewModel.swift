@@ -13,6 +13,9 @@ final class EditorViewModel {
         case dirty
         case saving
         case saved
+        /// Saved on-device; the server save failed transiently and is queued for
+        /// the reconnect/foreground sync (mirrors the coordinator's `.pendingSync`).
+        case pendingSync
         case failed(String)
     }
 
@@ -214,10 +217,15 @@ final class EditorViewModel {
     var hasUnsavedLocalContent: Bool {
         guard hasLoadedContent else { return false }
         if isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil { return true }
-        if case .failed = saveCoordinator.state(for: documentID) {
+        // A failed or pending-sync save leaves the draft as the user's only copy of
+        // that edit (the server hasn't confirmed it), so it is unsaved local content
+        // whatever `displaySource` says.
+        switch saveCoordinator.state(for: documentID) {
+        case .failed, .pendingSync:
             return saveCoordinator.storedDraft(documentID: documentID) != nil
+        default:
+            return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
         }
-        return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
     }
 
     var saveState: SaveState {
@@ -226,6 +234,7 @@ final class EditorViewModel {
         case .idle: return .idle
         case .saving: return .saving
         case .saved: return .saved
+        case .pendingSync: return .pendingSync
         case .failed(let message): return .failed(message)
         }
     }

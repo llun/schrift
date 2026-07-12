@@ -51,11 +51,17 @@ func syncCaption(
         if case .failed = saveState {
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }
+        // A queued offline save gets its own caption, above the generic offline one:
+        // it promises the edit will sync, not merely that it's on the device.
+        if case .pendingSync = saveState {
+            return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false)
+        }
         if isOffline { return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false) }
         switch saveState {
         case .saving: return SyncCaption(text: .key(.editor_saving), offersRetry: false)
         case .saved: return SyncCaption(text: .key(.editor_saved), offersRetry: false)
         case .failed: return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
+        case .pendingSync: return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false)
         case .dirty, .idle: return SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false)
         }
     }
