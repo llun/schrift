@@ -1,0 +1,26 @@
+Schrift/Core/Networking/ConnectivityMonitor.swift
+  s_e60497739a7df0::t_7ede03c2133304 34,47-64
+Schrift/App/RootView.swift
+  s_e60497739a7df0::t_582cee4761557d 3-15
+  s_e60497739a7df0::t_e432bf12478aba 78,83
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_e60497739a7df0::t_2ef3b6b50ec605 595-628
+SchriftTests/App/SyncTriggerTests.swift
+  s_e60497739a7df0::t_01c3f8a31a44eb 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "f19863363a58c310dbd5432d159f0de1f526aae5",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
