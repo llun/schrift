@@ -1,0 +1,22 @@
+Schrift/Core/Networking/ConnectivityMonitor.swift
+  s_e60497739a7df0::t_3116732a2103d9 39-44,47,53,55-61
+  s_e60497739a7df0::t_bcc01044d6545e 1-38,45-46,48-52,54,62
+SchriftTests/Core/Networking/ConnectivityMonitorTests.swift
+  s_e60497739a7df0::t_3d9f0407f9ad49 1-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "9208d5f40c626b26bcaaf7854d344979686db560",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
