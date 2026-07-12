@@ -1703,4 +1703,27 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
+
+    /// reconcileClean's unchanged-body (else) branch advances the baseline's
+    /// timestamp: a cache-restored entry with an unknown (void-save) server
+    /// timestamp gets promoted to the real server clock once a clean revalidation
+    /// confirms the same body.
+    func testReconcileCleanUnchangedBodyAdvancesBaselineTimestamp() async {
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID, title: "Doc", markdown: "# Body",
+                syncedAt: Date(timeIntervalSince1970: 1_000_000), serverUpdatedAt: nil))
+        stubLoad(content: "# Body")  // same body (serverChanged == false), known updated_at
+        await viewModel.load()  // reconcileClean else-branch promotes nil → the server timestamp
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Body edited")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, fetchedUpdatedAt,
+            "an unchanged-body revalidation advances the baseline timestamp from nil to the server clock")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
 }
