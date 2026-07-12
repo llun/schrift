@@ -449,9 +449,16 @@ branch instead of popping a banner. Outcomes:
   only "on a document nobody is looking at". Because of that it **skips a
   `.failed` draft** (`if case .failed = state(for:) { continue }`): a draft whose
   save failed *this* session is a retry candidate with its "Couldn't save" retry
-  on screen, exactly why `reconcileDraft` returns early on `saveState == .failed`.
-  Applying the tolerance rule to a `.failed` draft deletes visible content. (An
-  *idle* stranded draft beyond the window may still be reconciled mid-session,
+  on screen, exactly why `reconcileDraft` returns early on
+  `saveState == .failed`. A transient/transport save failure (offline, 5xx, rate
+  limit) is classified as **`.pendingSync`** rather than `.failed` (see the save
+  states below), and gets the same protection on **both** sides: `syncPendingDrafts`
+  **preserves** a beyond-window `.pendingSync` draft (`else if case .pendingSync …
+  { continue }`) instead of discarding it — a queued offline edit the server has
+  moved past is a *conflict*, not a stale draft — and `reconcileDraft`'s early
+  return covers `.failed` **and** `.pendingSync`, so a plain pull-to-refresh can't
+  drop it either. Applying the tolerance rule to either deletes visible content.
+  (An *idle* stranded draft beyond the window may still be reconciled mid-session,
   matching what `reconcileDraft` already does on that document's own screen.) The comparison mixes clocks — `draft.updatedAt` is the device's,
   `formatted.updatedAt` the server's **last write** — so a slow device shrinks the
   window from the draft's side, and even the user's own partially-landed save
@@ -590,7 +597,12 @@ server is about to hold.
      wins **regardless of `lastSyncedAt`** (offline → "Saved on this device";
      online → the coordinator's `DocSaveState` for this document, e.g.
      "Saving…" / "Saved" / the failure copy — the state the VM already maps at
-     `EditorViewModel.swift:88–95`). After eviction, "no cache entry" does not
+     `EditorViewModel.swift:88–95`). A transient/transport failure maps to
+     **`.pendingSync`** ("Saved on this device · syncs when online"), which sits
+     just below the hard-`.failed` "Couldn't save · tap to retry" tier: it beats
+     the plain offline wording and, when the device is actually online (so the
+     reconnect/foreground auto-sync can't fire), it doubles as a manual retry.
+     After eviction, "no cache entry" does not
      imply "never synced" — a previously-synced doc with a stranded draft must
      not read "Not synced yet".
   2. clean with `lastSyncedAt` → **"Synced X ago"**.
