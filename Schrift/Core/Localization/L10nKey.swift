@@ -60,6 +60,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case shared_count_two = "shared.count.two"  // "%d dokumenta"
     case shared_count_few = "shared.count.few"  // "%d dokumenti"
     case shared_subtitle_with = "shared.subtitle_with"  // "Shared · %@"
+    case shared_subtitle_shared_by = "shared.subtitle_shared_by"  // "Shared by %@ · %@"
     case shared_subtitle_by = "shared.subtitle_by"  // "%@ · Shared %@"
     case shared_footer_with = "shared.footer_with"
     // "Documents other people have invited you to. Your access depends on your role on each one."

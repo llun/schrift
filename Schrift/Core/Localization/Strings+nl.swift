@@ -52,6 +52,7 @@ enum Strings_nl {
         .shared_count_one: "%d document",
         .shared_count_other: "%d documenten",
         .shared_subtitle_with: "Gedeeld · %@",
+        .shared_subtitle_shared_by: "Gedeeld door %@ · %@",
         .shared_subtitle_by: "%@ · Gedeeld %@",
         .shared_footer_with:
             "Documenten waarvoor anderen je hebben uitgenodigd. Je toegang hangt af van je rol per document.",

@@ -49,6 +49,7 @@ enum Strings_zhHans {
         .shared_count_one: "%d 个文档",
         .shared_count_other: "%d 个文档",
         .shared_subtitle_with: "已共享 · %@",
+        .shared_subtitle_shared_by: "由 %@ 共享 · %@",
         .shared_subtitle_by: "%@ · 共享于 %@",
         .shared_footer_with:
             "其他人邀请你访问的文档。你的访问权限取决于你在每个文档中的角色。",

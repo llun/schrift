@@ -51,6 +51,7 @@ enum Strings_th {
         .shared_count_one: "เอกสาร %d ฉบับ",
         .shared_count_other: "เอกสาร %d ฉบับ",
         .shared_subtitle_with: "ที่แชร์ · %@",
+        .shared_subtitle_shared_by: "แชร์โดย %@ · %@",
         .shared_subtitle_by: "%@ · แชร์ %@",
         .shared_footer_with:
             "เอกสารที่ผู้อื่นเชิญคุณเข้าร่วม สิทธิ์การเข้าถึงของคุณขึ้นอยู่กับบทบาทของคุณในแต่ละเอกสาร",

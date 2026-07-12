@@ -59,6 +59,7 @@ enum Strings_sl {
         .shared_count_two: "%d dokumenta",
         .shared_count_few: "%d dokumenti",
         .shared_subtitle_with: "Deljeno · %@",
+        .shared_subtitle_shared_by: "Delil %@ · %@",
         .shared_subtitle_by: "%@ · Deljeno %@",
         .shared_footer_with:
             "Dokumenti, h katerim so vas povabili drugi. Vaš dostop je odvisen od vaše vloge pri vsakem.",

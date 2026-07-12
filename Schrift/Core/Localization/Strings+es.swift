@@ -52,6 +52,7 @@ enum Strings_es {
         .shared_count_one: "%d documento",
         .shared_count_other: "%d documentos",
         .shared_subtitle_with: "Compartido · %@",
+        .shared_subtitle_shared_by: "Compartido por %@ · %@",
         .shared_subtitle_by: "%@ · Compartido %@",
         .shared_footer_with:
             "Documentos a los que otras personas te han invitado. Tu acceso depende de tu rol en cada uno.",
