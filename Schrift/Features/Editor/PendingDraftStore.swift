@@ -9,10 +9,11 @@ import Foundation
 /// let the sync path distinguish "the server moved on while I was offline" from
 /// "the server only changed because my own save landed" — see `draftSyncDecision`.
 /// `baseline` is supplied by the editor (the server state the edit descends from).
-/// `lastPushedMarkdown` is a persisted foundation piece that stays **nil in this
-/// step of the offline-sync stack** — the PR that wires `draftSyncDecision` into
-/// the replay path also has `DocumentSaveCoordinator` populate it (rule 1); until
-/// then nothing writes it and rule 1 simply never fires.
+/// `lastPushedMarkdown` is the markdown `DocumentSaveCoordinator` last confirmed
+/// pushed for this document (copied from `lastConfirmedPushMarkdown` by `enqueue`
+/// and refreshed on a surviving draft in `finish`), so `draftSyncDecision` rule 1
+/// can recognise our own write — including across a relaunch — and not flag a
+/// false conflict against it.
 struct PendingDraft: Codable, Equatable, Sendable {
     let documentID: UUID
     let title: String

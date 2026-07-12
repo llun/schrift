@@ -62,6 +62,15 @@ final class DocumentSaveCoordinator {
         fileprivate let hadPendingSave: Bool
     }
 
+    /// A detected conflict: the server changed under a queued offline draft. Carries
+    /// only what the conflict UI needs — deliberately **no server markdown**, so
+    /// "Keep the server version" re-fetches through the view model's guarded funnel
+    /// rather than installing a body the coordinator squirreled away.
+    struct SyncConflict: Equatable, Sendable {
+        let serverUpdatedAt: Date
+        let serverTitle: String?
+    }
+
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
     private let contentCache: DocumentContentCacheStore
@@ -80,6 +89,15 @@ final class DocumentSaveCoordinator {
     /// Re-entrancy guard for `syncPendingDrafts()`: it is repeatable (reconnect,
     /// foreground, launch), and overlapping triggers must not double-replay a draft.
     private var isSyncingDrafts = false
+    /// Documents whose queued draft conflicts with the server (the sync path or the
+    /// editor detected the server moved on). The push is **held** until the user
+    /// resolves it via `resolveConflictKeeping{Local,Server}`.
+    private var conflicts: [UUID: SyncConflict] = [:]
+    /// The markdown of the last save this coordinator confirmed for each document,
+    /// so `draftSyncDecision` rule 1 ("the server's most recent writer was us") can
+    /// fire — including across a relaunch, via the persisted `lastPushedMarkdown`
+    /// that `enqueue`/`finish` copy from and to this map.
+    private var lastConfirmedPushMarkdown: [UUID: String] = [:]
 
     init(
         client: DocsAPIClient,
@@ -109,6 +127,13 @@ final class DocumentSaveCoordinator {
         draftStore.draft(for: documentID)
     }
 
+    /// The recorded conflict for a document, if the server changed under its queued
+    /// draft. `@Observable` cross-object reads track this, so the editor's conflict
+    /// pill appears/disappears live.
+    func conflict(for documentID: UUID) -> SyncConflict? {
+        conflicts[documentID]
+    }
+
     func saveMarker(documentID: UUID) -> SaveMarker {
         SaveMarker(
             documentID: documentID,
@@ -133,10 +158,18 @@ final class DocumentSaveCoordinator {
     /// tolerance rule exactly as before.
     func enqueue(documentID: UUID, title: String, markdown: String, baseline: DraftBaseline? = nil) {
         let save = PendingSave(title: title, markdown: markdown)
+        // The draft carries the last-confirmed-push so `draftSyncDecision` rule 1 can
+        // recognise our own writes on the next replay (even across a relaunch).
         draftStore.save(
             PendingDraft(
-                documentID: documentID, title: title, markdown: markdown, updatedAt: Date(), baseline: baseline))
-        if inFlight[documentID] != nil {
+                documentID: documentID, title: title, markdown: markdown, updatedAt: Date(), baseline: baseline,
+                lastPushedMarkdown: lastConfirmedPushMarkdown[documentID]))
+        // Enqueue-hold: while a conflict is recorded, persist the draft and the
+        // queued slot (write-ahead, so `pendingSave()` still sees it and the editor's
+        // dirty short-circuit / `hasUnsavedLocalContent` keep working) but do NOT
+        // start a save — an autosave flush would otherwise push unchecked over the
+        // conflicting server copy the instant a conflict lands. "Keep mine" starts it.
+        if conflicts[documentID] != nil || inFlight[documentID] != nil {
             queued[documentID] = save
             return
         }
@@ -167,15 +200,13 @@ final class DocumentSaveCoordinator {
         for draft in draftStore.allDrafts() {
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             // A save that FAILED this session is a retry candidate the user may still
-            // be looking at: its draft is their only copy of that edit, and the
-            // reading surface's "Couldn't save · tap to retry" affordance owns its
-            // recovery. The tolerance rule below would `remove` it the moment the
-            // server moved past the window (a co-author's edit), silently deleting
-            // visible content — the exact hazard `reconcileDraft` guards against.
-            // Firing this trigger mid-session (unlike the launch-only `recoverDrafts`)
-            // newly exposes it, so skip a `.failed` draft here; the stack's conflict
-            // detection is what reconciles it.
+            // be looking at (its draft is their only copy), owned by the reading
+            // surface's "Couldn't save · tap to retry". Reconciling it here would
+            // silently delete visible content — skip it.
             if case .failed = state(for: draft.documentID) { continue }
+            // A recorded conflict waits for the user's explicit choice — never push
+            // over it and never discard it here.
+            if conflicts[draft.documentID] != nil { continue }
             do {
                 let formatted = try await client.formattedContent(documentID: draft.documentID)
                 // The session may have started editing/saving this document
@@ -185,21 +216,26 @@ final class DocumentSaveCoordinator {
                     queued[draft.documentID] == nil,
                     draftStore.draft(for: draft.documentID) == draft
                 else { continue }
-                if formatted.updatedAt <= draft.updatedAt.addingTimeInterval(pendingDraftClockTolerance) {
+                let decision = draftSyncDecision(
+                    baseline: draft.baseline,
+                    lastPushedMarkdown: draft.lastPushedMarkdown,
+                    draftUpdatedAt: draft.updatedAt,
+                    serverUpdatedAt: formatted.updatedAt,
+                    serverMarkdown: formatted.content ?? "")
+                switch decision {
+                case .push:
                     enqueue(
                         documentID: draft.documentID, title: draft.title, markdown: draft.markdown,
                         baseline: draft.baseline)
-                } else if case .pendingSync = state(for: draft.documentID) {
-                    // A queued offline save whose server copy has moved past the window
-                    // (a co-author's edit) is a conflict, not a stale stranded draft:
-                    // discarding it would silently drop the user's offline work. Leave
-                    // it — the stack's conflict detection surfaces it to the user. This
-                    // holds only while the in-memory `.pendingSync` state is live (this
-                    // session); across a relaunch the state resets to `.idle`, so a
-                    // beyond-tolerance offline draft is protected instead by the
-                    // persistent conflict record the conflict-detection PR adds.
-                    continue
-                } else {
+                case .conflict:
+                    // Record it and keep the draft: the pill/sheet asks the user.
+                    conflicts[draft.documentID] = SyncConflict(
+                        serverUpdatedAt: formatted.updatedAt, serverTitle: formatted.title)
+                case .discardServerWins:
+                    // Legacy (baseline-less) draft only. Never discard a queued offline
+                    // save (`.pendingSync`) even so — leave it for the user / a later
+                    // sync — matching the pre-decision protection.
+                    if case .pendingSync = state(for: draft.documentID) { continue }
                     draftStore.remove(documentID: draft.documentID)
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
@@ -208,6 +244,36 @@ final class DocumentSaveCoordinator {
                 // Leave the draft for a later sync (e.g. offline right now).
             }
         }
+    }
+
+    /// Record a conflict the editor's own revalidation (`reconcileDraft`) detected,
+    /// so the pill/sheet and the enqueue-hold apply just as they do for a conflict
+    /// found by `syncPendingDrafts`.
+    func recordConflict(documentID: UUID, serverUpdatedAt: Date, serverTitle: String?) {
+        conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt, serverTitle: serverTitle)
+    }
+
+    /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
+    /// wins — an accepted race, recoverable from the server's version history).
+    func resolveConflictKeepingLocal(documentID: UUID) {
+        conflicts[documentID] = nil
+        // A save already in flight will pick up the held slot on `finish`.
+        guard inFlight[documentID] == nil else { return }
+        if let held = queued.removeValue(forKey: documentID) {
+            start(documentID: documentID, save: held)
+        } else if let draft = draftStore.draft(for: documentID) {
+            enqueue(
+                documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
+        }
+    }
+
+    /// Keep-server: clear the record and drop the local draft/queued work. The editor
+    /// re-fetches the server body through its own guarded funnel — the conflict record
+    /// carries no server markdown by design.
+    func resolveConflictKeepingServer(documentID: UUID) {
+        conflicts[documentID] = nil
+        queued[documentID] = nil
+        draftStore.remove(documentID: documentID)
     }
 
     /// Removes a stored draft only if it is still exactly the given draft —
@@ -225,6 +291,8 @@ final class DocumentSaveCoordinator {
     /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
         queued[documentID] = nil
+        conflicts[documentID] = nil  // the document is gone — the conflict is moot
+        lastConfirmedPushMarkdown[documentID] = nil
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {
             discardedDuringSave.insert(documentID)
@@ -239,6 +307,10 @@ final class DocumentSaveCoordinator {
     /// decides its fate next launch (replay if reachable, purge on a real 404/403).
     func suppressLocalWriteThrough(documentID: UUID) {
         queued[documentID] = nil
+        // Clear any conflict record: on a 404/403 the draft survives (it's the user's
+        // only unsaved work), and `syncPendingDrafts` re-detects a conflict after the
+        // document becomes reachable again — a stale record must not linger.
+        conflicts[documentID] = nil
         guard inFlight[documentID] != nil else { return }
         discardedDuringSave.insert(documentID)
     }
@@ -284,10 +356,22 @@ final class DocumentSaveCoordinator {
         }
         if error == nil {
             states[documentID] = .saved(Date())
-            if let draft = draftStore.draft(for: documentID),
-                draft.title == save.title, draft.markdown == save.markdown
-            {
-                draftStore.remove(documentID: documentID)
+            // The server's most recent writer is now us. Remember what we pushed so a
+            // later replay recognises it (rule 1 of `draftSyncDecision`).
+            lastConfirmedPushMarkdown[documentID] = save.markdown
+            if let draft = draftStore.draft(for: documentID) {
+                if draft.title == save.title, draft.markdown == save.markdown {
+                    draftStore.remove(documentID: documentID)
+                } else {
+                    // A newer draft survives (the user kept editing during the save):
+                    // its edits descend from what this save just landed, so stamp that
+                    // as its `lastPushedMarkdown` to kill a cross-relaunch false
+                    // conflict against our own write.
+                    draftStore.save(
+                        PendingDraft(
+                            documentID: documentID, title: draft.title, markdown: draft.markdown,
+                            updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown))
+                }
             }
             // Keep the local copy consistent with what the server now holds.
             // The save PATCHes are void, so there is no server `updated_at` to
