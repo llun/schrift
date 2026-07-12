@@ -1,0 +1,23 @@
+SchriftTests/Features/Editor/DraftSyncDecisionTests.swift
+  s_e60497739a7df0::t_9bd4a8a859f0af 37-51
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_e60497739a7df0::t_d593a5d4c89497 1791-1831
+Schrift/Features/Editor/DraftSyncDecision.swift
+  s_e60497739a7df0::t_d6e269d5253dc7 10-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "cdd4cadf4b0c1bdc251eccac3f06fbd53dfa841b",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
