@@ -110,7 +110,7 @@ struct DocumentListView: View {
     @ViewBuilder
     private var content: some View {
         // isLoading is set only via shouldShowLoadingPlaceholder (true first
-        // run of a filter) — cached rows are never replaced by a spinner while
+        // run of the list) — cached rows are never replaced by a spinner while
         // a background revalidation is in flight. The view trusts the VM's
         // single, unit-tested gate rather than re-deriving it here.
         if viewModel.isLoading {
@@ -126,12 +126,12 @@ struct DocumentListView: View {
                 documentSection(title: loc[.home_results], documents: viewModel.searchResults)
             }
         } else if !viewModel.showsPinnedSection && viewModel.recentDocuments.isEmpty {
-            // Keyed to what will actually render (the pinned section is hidden
-            // under the .pinned filter), so an empty filter never leaves a
-            // silent blank area below the controls. The empty state may only
-            // claim "No documents yet" for a *known* list — a never-fetched
-            // filter (e.g. first visited under Work Offline) shows nothing;
-            // the offline banner or error text above conveys the state.
+            // Keyed to what will actually render (both sections empty), so an
+            // empty list never leaves a silent blank area below the controls.
+            // The empty state may only claim "No documents yet" for a *known*
+            // list — a never-fetched list (e.g. a fresh install under Work
+            // Offline) shows nothing; the offline banner or error text above
+            // conveys the state.
             if viewModel.errorKey == nil && viewModel.isCurrentListKnown {
                 ContentUnavailableView {
                     Label {

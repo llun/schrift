@@ -14,11 +14,11 @@ final class HomeViewModel {
     /// same sentence, and a self-hoster needs to tell them apart without a debugger.
     var errorDetail: String?
     var isOffline = false
-    /// Whether the current filter's list is known — cached or fetched this
-    /// session. The view may render the "No documents yet" empty state only
-    /// for a known list: nil (never fetched) must not masquerade as a real
-    /// empty result, e.g. a never-visited filter under Work Offline (mirrors
-    /// Shared's showsDocumentList).
+    /// Whether the recent list is known — cached or fetched this session. The
+    /// view may render the "No documents yet" empty state only for a known
+    /// list: nil (never fetched) must not masquerade as a real empty result,
+    /// e.g. a fresh install under Work Offline (mirrors Shared's
+    /// showsDocumentList).
     private(set) var isCurrentListKnown = false
 
     let client: DocsAPIClient
@@ -31,7 +31,7 @@ final class HomeViewModel {
     let diagnostics: APIDiagnosticsLog?
     /// Monotonic guard: a completing fetch applies its outcome only if no
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
-    /// races .refreshable and rapid filter switches).
+    /// races .refreshable).
     private var loadGeneration = 0
 
     init(
@@ -182,7 +182,7 @@ final class HomeViewModel {
 
     /// The one way an error leaves the screen without a reload. `createDocument`'s failure
     /// path never reaches `load()`, so before this the message could only be cleared by a
-    /// pull-to-refresh or a filter switch — it looked permanent.
+    /// pull-to-refresh — it looked permanent.
     func dismissError() {
         clearError()
     }

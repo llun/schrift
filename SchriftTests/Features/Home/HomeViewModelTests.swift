@@ -129,6 +129,69 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.count(ofMethod: "GET", urlContaining: "is_favorite"), 0)
     }
 
+    func testShowsPinnedSectionReflectsWhetherPinnedDocumentsExist() {
+        let viewModel = makeViewModel()
+        XCTAssertFalse(viewModel.showsPinnedSection)
+
+        let pinnedBody = Self.paginatedFixture(
+            id: "24242424-2424-4242-8242-242424242424", title: "Pinned", isFavorite: true)
+        viewModel.pinnedDocuments = [
+            try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]
+        ]
+        XCTAssertTrue(viewModel.showsPinnedSection)
+    }
+
+    func testFirstRunWithNoLocalListShowsTheLoadingPlaceholder() async {
+        // Nothing cached and no pinned rows: the one first-run spinner shows
+        // while the fetch is in flight.
+        let viewModel = makeViewModel()
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            gate.wait()  // hold the fetch open so the mid-flight state is observable
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.count(ofMethod: "GET") >= 1 }  // load() is now in its network phase
+
+        XCTAssertTrue(viewModel.isLoading, "a true first run with nothing local must show the spinner")
+
+        gate.signal()
+        gate.signal()
+        await load.value
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testFirstRunWithCachedPinnedRowsSuppressesTheLoadingPlaceholder() async {
+        // Pinned rows are always visible now (no filter can hide their
+        // section), so they count as rows on screen and suppress the first-run
+        // spinner even when the recent list was never cached.
+        let cache = makeCache()
+        let pinnedBody = Self.paginatedFixture(
+            id: "25252525-2525-4252-8252-252525252525", title: "Cached Pinned", isFavorite: true)
+        cache.savePinnedDocuments(
+            [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]])
+        let viewModel = makeViewModel(cache: cache)
+        let recorder = RequestRecorder()
+        let gate = DispatchSemaphore(value: 0)
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            gate.wait()
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.count(ofMethod: "GET") >= 1 }
+
+        XCTAssertFalse(viewModel.isLoading, "visible pinned rows are no first-run spinner")
+
+        gate.signal()
+        gate.signal()
+        await load.value
+    }
+
     func testSearchWithEmptyQueryClearsResults() async {
         let viewModel = makeViewModel()
         viewModel.searchResults = []
