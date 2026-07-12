@@ -1613,6 +1613,11 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Offline edit more")
         viewModel.flushPendingChanges()
 
+        // The flush actually re-enqueued the NEW edit (not just left the identical
+        // pre-existing draft in place) — otherwise the baseline check is vacuous.
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("more") ?? false,
+            "the flush re-enqueued the edited content")
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Server base")
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, serverDate)
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
@@ -1645,6 +1650,10 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Queued edit")
         viewModel.flushPendingChanges()
 
+        // The flush actually re-enqueued the NEW edit, not the original "# Queued".
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Queued edit") ?? false,
+            "the flush re-enqueued the edited content")
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Base")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
