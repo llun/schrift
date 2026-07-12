@@ -67,6 +67,40 @@ final class ShareEndpointsClientTests: XCTestCase {
         XCTAssertEqual(json["role"], "reader")
     }
 
+    func testListAccessesDecodesBareArrayResponse() async throws {
+        // The backend's accesses `list` action is not paginated — it returns a
+        // bare JSON array, not a `{count, results}` envelope. Decoding it as a
+        // `PaginatedResponse` threw on every call (the "Couldn't load members"
+        // bug). This fixture is that real bare-array shape.
+        let responseBody = """
+            [
+                {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "33333333-3333-4333-8333-333333333333", "email": "member@example.com", "full_name": "Member One", "short_name": "Member", "language": "en-us", "is_first_connection": false}, "team": "", "role": "owner", "abilities": {}, "max_ancestors_role": null, "max_role": "owner"}
+            ]
+            """.data(using: .utf8)!
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
+        let client = makeClient()
+
+        let accesses = try await client.listAccesses(documentID: documentID)
+
+        XCTAssertEqual(accesses.count, 1)
+        XCTAssertEqual(accesses.first?.role, .owner)
+        XCTAssertEqual(accesses.first?.user?.email, "member@example.com")
+        let url = MockURLProtocol.lastRequest?.url?.absoluteString ?? ""
+        XCTAssertTrue(url.hasSuffix("documents/11111111-1111-4111-8111-111111111111/accesses/"))
+    }
+
+    func testListAccessesDecodesEmptyBareArray() async throws {
+        // A user without a privileged role can legitimately get `[]` back.
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data("[]".utf8), error: nil)
+        }
+        let client = makeClient()
+
+        let accesses = try await client.listAccesses(documentID: documentID)
+
+        XCTAssertTrue(accesses.isEmpty)
+    }
+
     func testSearchUsersRequestsCorrectURL() async throws {
         let responseBody = "[]".data(using: .utf8)!
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }

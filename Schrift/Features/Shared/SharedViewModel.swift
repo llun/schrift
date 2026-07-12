@@ -118,7 +118,7 @@ final class SharedViewModel {
                 let creator = document.creator
                 group.addTask { [client] in
                     do {
-                        let accesses = try await client.listAccesses(documentID: id).results
+                        let accesses = try await client.listAccesses(documentID: id)
                         return (
                             id,
                             SharedRowEnrichment(
