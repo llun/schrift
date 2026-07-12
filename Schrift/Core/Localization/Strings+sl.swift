@@ -52,18 +52,14 @@ enum Strings_sl {
 
         // Shared
         .shared_title: "Deljeno",
-        .shared_with_me: "Deljeno z mano",
-        .shared_by_me: "Deljeno z drugimi",
         .shared_count_one: "%d dokument",
         .shared_count_other: "%d dokumentov",
         .shared_count_two: "%d dokumenta",
         .shared_count_few: "%d dokumenti",
         .shared_subtitle_with: "Deljeno · %@",
-        .shared_subtitle_by: "%@ · Deljeno %@",
+        .shared_subtitle_shared_by: "Delil %@ · %@",
         .shared_footer_with:
             "Dokumenti, h katerim so vas povabili drugi. Vaš dostop je odvisen od vaše vloge pri vsakem.",
-        .shared_footer_by:
-            "Dokumenti, ki jih imate v lasti ali ste jih delili. Upravljajte, kdo jih lahko vidi, prek okna za deljenje vsakega dokumenta.",
         .shared_error_load: "Deljenih dokumentov ni bilo mogoče naložiti. Preverite povezavo in poskusite znova.",
         .reach_restricted: "Omejeno",
         .reach_connected: "Povezano",

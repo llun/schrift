@@ -3,7 +3,6 @@ import SwiftUI
 struct ComponentCatalogPreview: View {
     @State private var isSwitchOn = true
     @State private var searchText = ""
-    @State private var selectedSegment = 0
     @State private var textFieldValue = ""
     @State private var catalogTab = "docs"
 
@@ -69,10 +68,6 @@ struct ComponentCatalogPreview: View {
 
                 catalogSection("Search Field") {
                     SearchField(text: $searchText)
-                }
-
-                catalogSection("Segmented Control") {
-                    SegmentedControl(segments: ["All", "Shared", "Pinned"], selectedIndex: $selectedSegment)
                 }
 
                 catalogSection("Text Field") {

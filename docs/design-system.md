@@ -69,7 +69,7 @@
 
 The app was already built from an **earlier version of this same design system**:
 the same `DocsColor`/`DocsColorHex` tokens and the same components
-(`NavBar`, `TabBar`, `SegmentedControl`, `DocRow`, `ListRow`, `ListSection`,
+(`NavBar`, `TabBar`, `DocRow`, `ListRow`, `ListSection`,
 `Badge`, `SearchField`, `Switch`, …). Consequently:
 
 - **Home, Search, Shared already match** the handoff structurally, given the real

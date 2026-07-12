@@ -46,16 +46,12 @@ enum Strings_th {
 
         // Shared
         .shared_title: "ที่แชร์",
-        .shared_with_me: "ที่แชร์กับฉัน",
-        .shared_by_me: "ที่ฉันแชร์",
         .shared_count_one: "เอกสาร %d ฉบับ",
         .shared_count_other: "เอกสาร %d ฉบับ",
         .shared_subtitle_with: "ที่แชร์ · %@",
-        .shared_subtitle_by: "%@ · แชร์ %@",
+        .shared_subtitle_shared_by: "แชร์โดย %@ · %@",
         .shared_footer_with:
             "เอกสารที่ผู้อื่นเชิญคุณเข้าร่วม สิทธิ์การเข้าถึงของคุณขึ้นอยู่กับบทบาทของคุณในแต่ละเอกสาร",
-        .shared_footer_by:
-            "เอกสารที่คุณเป็นเจ้าของหรือได้แชร์ไว้ จัดการผู้ที่สามารถเห็นเอกสารได้จากชีตแชร์ของแต่ละเอกสาร",
         .shared_error_load: "โหลดเอกสารที่แชร์ไม่ได้ ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง",
         .reach_restricted: "จำกัด",
         .reach_connected: "เชื่อมต่อ",

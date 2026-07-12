@@ -46,16 +46,12 @@ enum Strings_it {
 
         // Shared
         .shared_title: "Condivisi",
-        .shared_with_me: "Condivisi con me",
-        .shared_by_me: "Condivisi da me",
         .shared_count_one: "%d documento",
         .shared_count_other: "%d documenti",
         .shared_subtitle_with: "Condiviso · %@",
-        .shared_subtitle_by: "%@ · Condiviso %@",
+        .shared_subtitle_shared_by: "Condiviso da %@ · %@",
         .shared_footer_with:
             "Documenti a cui altre persone ti hanno invitato. Il tuo accesso dipende dal ruolo che hai su ciascuno.",
-        .shared_footer_by:
-            "Documenti di tua proprietà o che hai condiviso. Gestisci chi può vederli dal foglio di condivisione di ciascun documento.",
         .shared_error_load: "Impossibile caricare i documenti condivisi. Controlla la connessione e riprova.",
         .reach_restricted: "Limitato",
         .reach_connected: "Connesso",

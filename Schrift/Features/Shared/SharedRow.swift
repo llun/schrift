@@ -3,6 +3,7 @@ import SwiftUI
 struct SharedRow: View {
     let title: String
     let subtitle: String
+    var memberNames: [String] = []
     var onTap: (() -> Void)? = nil
 
     var body: some View {
@@ -10,7 +11,7 @@ struct SharedRow: View {
             onTap?()
         } label: {
             HStack(spacing: DocsSpacing.spaceSM) {
-                DocIcon(emoji: nil, size: 22, tinted: true)
+                DocIcon(emoji: nil, tinted: true)
 
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(title)
@@ -26,8 +27,9 @@ struct SharedRow: View {
 
                 Spacer(minLength: DocsSpacing.spaceXS)
 
-                MaterialSymbol(.chevron_right, size: 18)
-                    .foregroundStyle(DocsColor.gray300)
+                if !memberNames.isEmpty {
+                    AvatarGroup(names: memberNames, size: 28, max: 3)
+                }
             }
             .padding(.horizontal, DocsSpacing.spaceBase)
             .frame(minHeight: DocsSpacing.rowMinHeight)
@@ -35,16 +37,32 @@ struct SharedRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Collapse into a single button carrying the composed label. The avatar
+        // group is otherwise dropped by `children: .ignore`, so its members are
+        // folded into the label — the subtitle only names the sharer.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(([title, subtitle] + memberNames).joined(separator: ", "))
+        .accessibilityAddTraits(.isButton)
     }
 }
 
-#Preview {
+#Preview("Light") {
+    sharedRowPreview.environment(LocalizationStore())
+}
+
+#Preview("Dark") {
+    sharedRowPreview.environment(LocalizationStore()).preferredColorScheme(.dark)
+}
+
+private var sharedRowPreview: some View {
     VStack(spacing: 0) {
-        SharedRow(title: "Design review", subtitle: "Restricted · 2d ago")
-        Divider()
-        SharedRow(title: "Roadmap", subtitle: "Connected · 5h ago")
+        SharedRow(
+            title: "Q2 roadmap",
+            subtitle: "Shared by Amandine Salambo · 2 days ago",
+            memberNames: ["Amandine Salambo", "Charlie Saris", "Alfredo Levin", "Cam Moreau"]
+        )
+        SharedRow(title: "Bibliography", subtitle: "Shared · Last week")
     }
     .background(DocsColor.surfacePage)
-    .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
     .padding()
 }

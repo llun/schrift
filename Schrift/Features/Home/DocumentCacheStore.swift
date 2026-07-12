@@ -8,7 +8,6 @@ final class DocumentCacheStore {
     private static let pinnedKey = "dev.llun.Schrift.cachedPinnedDocuments"
     private static let recentKey = "dev.llun.Schrift.cachedRecentDocuments"
     private static let sharedWithMeKey = "dev.llun.Schrift.cachedSharedWithMeDocuments"
-    private static let sharedByMeKey = "dev.llun.Schrift.cachedSharedByMeDocuments"
 
     private let userDefaults: UserDefaults
     private let encoder: JSONEncoder
@@ -22,6 +21,9 @@ final class DocumentCacheStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
+        // The shared-by-me list was removed; drop any entry a previous app
+        // version left stranded so it doesn't linger unread in UserDefaults.
+        userDefaults.removeObject(forKey: "dev.llun.Schrift.cachedSharedByMeDocuments")
     }
 
     func loadPinnedDocuments() -> [Document] {
@@ -36,10 +38,6 @@ final class DocumentCacheStore {
         load(forKey: Self.sharedWithMeKey)
     }
 
-    func loadSharedByMeDocuments() -> [Document]? {
-        load(forKey: Self.sharedByMeKey)
-    }
-
     func savePinnedDocuments(_ documents: [Document]) {
         save(documents, forKey: Self.pinnedKey)
     }
@@ -50,10 +48,6 @@ final class DocumentCacheStore {
 
     func saveSharedWithMeDocuments(_ documents: [Document]) {
         save(documents, forKey: Self.sharedWithMeKey)
-    }
-
-    func saveSharedByMeDocuments(_ documents: [Document]) {
-        save(documents, forKey: Self.sharedByMeKey)
     }
 
     private func load(forKey key: String) -> [Document]? {

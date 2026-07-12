@@ -44,16 +44,12 @@ enum Strings_zhHant {
 
         // Shared
         .shared_title: "共用",
-        .shared_with_me: "與我共用",
-        .shared_by_me: "由我共用",
         .shared_count_one: "%d 個文件",
         .shared_count_other: "%d 個文件",
         .shared_subtitle_with: "共用 · %@",
-        .shared_subtitle_by: "%@ · 共用 %@",
+        .shared_subtitle_shared_by: "由 %@ 共用 · %@",
         .shared_footer_with:
             "其他人邀請你參與的文件。你的存取權取決於你在各文件中的角色。",
-        .shared_footer_by:
-            "你擁有或已共用的文件。可從各文件的分享面板管理誰能查看。",
         .shared_error_load: "無法載入共用文件。請檢查你的連線並再試一次。",
         .reach_restricted: "受限",
         .reach_connected: "已連線",

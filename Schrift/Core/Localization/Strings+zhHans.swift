@@ -44,16 +44,12 @@ enum Strings_zhHans {
 
         // Shared
         .shared_title: "已共享",
-        .shared_with_me: "与我共享",
-        .shared_by_me: "我共享的",
         .shared_count_one: "%d 个文档",
         .shared_count_other: "%d 个文档",
         .shared_subtitle_with: "已共享 · %@",
-        .shared_subtitle_by: "%@ · 共享于 %@",
+        .shared_subtitle_shared_by: "由 %@ 共享 · %@",
         .shared_footer_with:
             "其他人邀请你访问的文档。你的访问权限取决于你在每个文档中的角色。",
-        .shared_footer_by:
-            "你拥有或已共享的文档。可在每个文档的分享面板中管理谁可以查看。",
         .shared_error_load: "无法加载共享文档。请检查网络连接后重试。",
         .reach_restricted: "受限",
         .reach_connected: "组织内",

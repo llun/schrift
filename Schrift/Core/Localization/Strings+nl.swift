@@ -47,16 +47,12 @@ enum Strings_nl {
 
         // Shared
         .shared_title: "Gedeeld",
-        .shared_with_me: "Met mij gedeeld",
-        .shared_by_me: "Door mij gedeeld",
         .shared_count_one: "%d document",
         .shared_count_other: "%d documenten",
         .shared_subtitle_with: "Gedeeld · %@",
-        .shared_subtitle_by: "%@ · Gedeeld %@",
+        .shared_subtitle_shared_by: "Gedeeld door %@ · %@",
         .shared_footer_with:
             "Documenten waarvoor anderen je hebben uitgenodigd. Je toegang hangt af van je rol per document.",
-        .shared_footer_by:
-            "Documenten die van jou zijn of die je hebt gedeeld. Beheer wie ze kunnen zien via het deelvenster van elk document.",
         .shared_error_load: "Kan gedeelde documenten niet laden. Controleer je verbinding en probeer het opnieuw.",
         .reach_restricted: "Beperkt",
         .reach_connected: "Verbonden",

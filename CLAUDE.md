@@ -214,7 +214,7 @@ Schrift/
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
 │                        IconButton, LinkReachPill, ListRow, ListSection,
 │                        MaterialSymbol, NavBar, OfflineBanner, SearchField,
-│                        SegmentedControl, ShareMemberRow, Switch, TabBar, TextField
+│                        ShareMemberRow, Switch, TabBar, TextField
 │                        (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
