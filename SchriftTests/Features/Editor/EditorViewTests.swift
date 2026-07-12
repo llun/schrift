@@ -48,17 +48,19 @@ final class EditorViewTests: XCTestCase {
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
     }
 
-    func testPendingSyncReadsAsSyncsWhenOnline() {
+    /// Online: the auto-sync triggers can't fire (device is online), so the
+    /// pending-sync caption doubles as a manual retry.
+    func testPendingSyncOnlineOffersRetry() {
         let caption = syncCaption(
             hasUnsavedLocalContent: true, isOffline: false, saveState: .pendingSync, lastSyncedAt: now, now: now,
             locale: locale)
 
-        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false))
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: true))
     }
 
-    /// A queued offline save promises it *will* sync, so its caption beats the
-    /// generic "Saved on this device" offline wording (but not the failed retry).
-    func testPendingSyncBeatsTheGenericOfflineWording() {
+    /// Offline: passive — reconnect will sync it, so no retry affordance. The
+    /// pending-sync caption still beats the generic "Saved on this device" wording.
+    func testPendingSyncOfflineIsPassiveAndBeatsGenericOfflineWording() {
         let caption = syncCaption(
             hasUnsavedLocalContent: true, isOffline: true, saveState: .pendingSync, lastSyncedAt: now, now: now,
             locale: locale)

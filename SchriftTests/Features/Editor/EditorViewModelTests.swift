@@ -1321,6 +1321,26 @@ final class EditorViewModelTests: XCTestCase {
             "the queued offline edit is preserved, not tolerance-discarded on refresh")
     }
 
+    /// Recoverability: an online transient failure parks the save at `.pendingSync`
+    /// with no auto-sync trigger able to fire, so `saveNow()` must re-enqueue it
+    /// (the manual retry the caption offers when online).
+    func testSaveNowRetriesAPendingSyncDraft() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 503)
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Edited")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+
+        // The server recovers; the manual retry re-enqueues and it succeeds.
+        stubLoadAndSavePipeline(content: "# Server body", log: log, contentStatus: 204)
+        viewModel.saveNow()
+        await waitUntil { viewModel.saveState == .saved }
+        XCTAssertNil(draftStore.draft(for: documentID), "the retried pending-sync draft synced and cleared")
+    }
+
     /// Typing and undoing after a failed save leaves `isDirty` true with content
     /// that matches `savedMarkdown`, so the flush enqueues nothing. `saveNow()` must
     /// still fire the retry — swallowing it strands the document behind its failed

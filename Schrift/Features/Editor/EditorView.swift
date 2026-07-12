@@ -52,9 +52,13 @@ func syncCaption(
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }
         // A queued offline save gets its own caption, above the generic offline one:
-        // it promises the edit will sync, not merely that it's on the device.
+        // it promises the edit will sync, not merely that it's on the device. When
+        // the device is actually online (a 5xx / rate limit / HTTP-3 stall parked the
+        // save), the reconnect/foreground auto-sync triggers can't fire, so the
+        // caption doubles as a manual retry; offline it stays passive (reconnect
+        // handles it).
         if case .pendingSync = saveState {
-            return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false)
+            return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: !isOffline)
         }
         if isOffline { return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false) }
         switch saveState {
@@ -442,7 +446,11 @@ struct EditorView: View {
                                 .foregroundStyle(DocsColor.textBrand)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(loc[.editor_sync_save_failed_a11y])
+                        // The failed-save label only fits the failed caption; a
+                        // pending-sync retry falls back to its visible text.
+                        .accessibilityLabel(
+                            caption.text == .key(.editor_sync_save_failed)
+                                ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text))
                     } else {
                         Text(resolvedCaption(caption.text))
                             .font(DocsFont.footnote)

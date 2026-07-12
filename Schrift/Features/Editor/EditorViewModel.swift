@@ -1445,12 +1445,19 @@ final class EditorViewModel {
             flushPendingChanges()
         }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
-        if case .failed = saveCoordinator.state(for: documentID) {
-            // The retry re-pushes the failed draft's content, so it descends from
-            // that draft's own recorded baseline.
+        // Retry a hard failure (`.failed`) or a queued transient one (`.pendingSync`).
+        // The latter matters when the failure happened while online (a 5xx / rate
+        // limit / HTTP-3 stall): the reconnect/foreground auto-sync triggers won't
+        // fire, so this manual retry is the only resync without a background cycle.
+        // The retry re-pushes the draft's content, so it descends from that draft's
+        // own recorded baseline.
+        switch saveCoordinator.state(for: documentID) {
+        case .failed, .pendingSync:
             saveCoordinator.enqueue(
                 documentID: documentID, title: savedTitle, markdown: savedMarkdown,
                 baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline)
+        default:
+            break
         }
     }
 
