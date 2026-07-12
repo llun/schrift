@@ -1613,6 +1613,11 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Offline edit more")
         viewModel.flushPendingChanges()
 
+        // The flush actually re-enqueued the NEW edit (not just left the identical
+        // pre-existing draft in place) — otherwise the baseline check is vacuous.
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("more") ?? false,
+            "the flush re-enqueued the edited content")
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Server base")
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, serverDate)
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
@@ -1645,6 +1650,10 @@ final class EditorViewModelTests: XCTestCase {
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Queued edit")
         viewModel.flushPendingChanges()
 
+        // The flush actually re-enqueued the NEW edit, not the original "# Queued".
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Queued edit") ?? false,
+            "the flush re-enqueued the edited content")
         XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Base")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
@@ -1697,7 +1706,11 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()  // reconcileDraft tolerance-push re-enqueues with draft.baseline
 
-        // Read while the save is still held in flight.
+        // The replay must actually have fired (not just left the identical draft
+        // untouched): the re-enqueued save is in flight, held open by the stub.
+        XCTAssertNotNil(
+            coordinator.pendingSave(documentID: documentID), "the tolerance replay re-enqueued a save")
+        // …and that in-flight draft carries the baseline through.
         let baseline = draftStore.draft(for: documentID)?.baseline
         XCTAssertEqual(baseline?.markdown, "# Server base")
         XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
@@ -1756,9 +1769,9 @@ final class EditorViewModelTests: XCTestCase {
     /// baseline. If it did, a later full-overwrite save would push the resurrected
     /// stale body back to the server.
     func testMayPredateFetchDoesNotAdvanceTheBaseline() async {
-        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
         stubLoad(content: "# Server body")
-        await viewModel.load()  // baseline A
+        await viewModel.load()  // baseline A, cached A
 
         // Hold the save's content PATCH open so it stays in flight; a GET that lands
         // during it is answered with a diverged body and races the save.
@@ -1779,6 +1792,14 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
 
         await viewModel.refresh()  // fetch B races the in-flight save → apply early-returns
+
+        // The mayPredate early-return uniquely takes NOTHING from the raced fetch:
+        // in particular it does not write-through the cache with body B (the
+        // pendingSave branch's cacheServerCopy would, so this is what distinguishes
+        // the guard from that branch). Asserted while the first save is still held.
+        XCTAssertEqual(
+            contentCache.content(for: documentID)?.markdown, "# Server body",
+            "the raced fetch's body must not be installed or cached")
 
         // Edit again and flush; the still-in-flight save queues this, writing a draft.
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit 2")

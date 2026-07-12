@@ -29,7 +29,9 @@ struct BackgroundTaskProvider {
 /// snapshots coalesce into a single "latest wins" queued slot. Every snapshot
 /// is persisted to `PendingDraftStore` before any network call and cleared
 /// only once that exact content has been saved, so edits survive suspension
-/// and process death; `recoverDrafts()` replays them on the next launch.
+/// and process death; the repeatable `syncPendingDrafts()` replays them on
+/// reconnect, foreground and launch (`recoverDrafts()` is the once-per-process
+/// launch wrapper over it).
 @MainActor
 @Observable
 final class DocumentSaveCoordinator {
@@ -69,6 +71,9 @@ final class DocumentSaveCoordinator {
     /// resurrect any local copy when it lands.
     private var discardedDuringSave: Set<UUID> = []
     private var hasRecoveredDrafts = false
+    /// Re-entrancy guard for `syncPendingDrafts()`: it is repeatable (reconnect,
+    /// foreground, launch), and overlapping triggers must not double-replay a draft.
+    private var isSyncingDrafts = false
 
     init(
         client: DocsAPIClient,
@@ -132,14 +137,39 @@ final class DocumentSaveCoordinator {
         start(documentID: documentID, save: save)
     }
 
-    /// Replays drafts left behind by a previous session. A draft is re-saved
-    /// unless the document changed on the server after the draft was written —
-    /// fresher edits made elsewhere win over a stale draft.
+    /// The once-per-process launch wrapper (HomeViewModel calls it from `load()`).
+    /// Delegates to the repeatable `syncPendingDrafts()`; the once-guard keeps that
+    /// single call site's semantics unchanged.
     func recoverDrafts() async {
         guard !hasRecoveredDrafts else { return }
         hasRecoveredDrafts = true
+        await syncPendingDrafts()
+    }
+
+    /// Replays drafts left behind by a previous session (or a save that failed /
+    /// was queued offline) against the current server copy. A draft is re-saved
+    /// unless the document changed on the server after the draft was written —
+    /// fresher edits made elsewhere win over a stale draft.
+    ///
+    /// Unlike `recoverDrafts()` this is **repeatable**: it is the funnel for the
+    /// reconnect, foreground and launch triggers, so it self-guards against
+    /// overlapping runs (`isSyncingDrafts`) rather than running once per process.
+    func syncPendingDrafts() async {
+        guard !isSyncingDrafts else { return }
+        isSyncingDrafts = true
+        defer { isSyncingDrafts = false }
         for draft in draftStore.allDrafts() {
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
+            // A save that FAILED this session is a retry candidate the user may still
+            // be looking at: its draft is their only copy of that edit, and the
+            // reading surface's "Couldn't save · tap to retry" affordance owns its
+            // recovery. The tolerance rule below would `remove` it the moment the
+            // server moved past the window (a co-author's edit), silently deleting
+            // visible content — the exact hazard `reconcileDraft` guards against.
+            // Firing this trigger mid-session (unlike the launch-only `recoverDrafts`)
+            // newly exposes it, so skip a `.failed` draft here; the stack's conflict
+            // detection is what reconciles it.
+            if case .failed = state(for: draft.documentID) { continue }
             do {
                 let formatted = try await client.formattedContent(documentID: draft.documentID)
                 // The session may have started editing/saving this document
@@ -159,14 +189,14 @@ final class DocumentSaveCoordinator {
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
                 draftStore.remove(documentID: draft.documentID)
             } catch {
-                // Leave the draft for a later launch (e.g. offline right now).
+                // Leave the draft for a later sync (e.g. offline right now).
             }
         }
     }
 
     /// Removes a stored draft only if it is still exactly the given draft —
     /// the user may have produced a newer one while the caller awaited
-    /// (mirrors recoverDrafts' re-check).
+    /// (mirrors the draft-replay re-check in `syncPendingDrafts`).
     func discardStoredDraft(_ draft: PendingDraft) {
         guard draftStore.draft(for: draft.documentID) == draft else { return }
         draftStore.remove(documentID: draft.documentID)

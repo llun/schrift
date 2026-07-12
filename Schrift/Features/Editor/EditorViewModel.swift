@@ -653,8 +653,10 @@ final class EditorViewModel {
 
     private func serverChanged(fetched: String) -> Bool {
         guard fetched != displayedSourceMarkdown else { return false }
-        return serializeMarkdown(parseEditorBlocks(fetched))
-            != serializeMarkdown(parseEditorBlocks(displayedSourceMarkdown))
+        // One definition of canonical form (shared with `draftSyncDecision`), so
+        // the two can't drift; the byte-equal early-return above keeps the common
+        // no-op case from re-parsing.
+        return canonicalMarkdown(fetched) != canonicalMarkdown(displayedSourceMarkdown)
     }
 
     /// The "Updated" banner tap: swaps in the body stashed while an editing

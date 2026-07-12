@@ -443,11 +443,16 @@ branch instead of popping a banner. Outcomes:
   screen), so the reading surface's "Couldn't save · tap to retry" caption is
   load-bearing: it is the only escape when offline, where tap-to-edit is blocked.
   **`pendingDraftClockTolerance` may only discard a draft *stranded by an earlier
-  session*** — that is `recoverDrafts`' job, at launch, on a document nobody is
-  looking at. A draft whose save failed *this* session is a retry candidate with
-  its "Couldn't save" retry on screen, so `reconcileDraft` returns early on
-  `saveState == .failed`. Applying the tolerance rule there deletes visible
-  content. The comparison mixes clocks — `draft.updatedAt` is the device's,
+  session*** — never one the retry affordance is holding. This rule runs both at
+  launch (`recoverDrafts`) **and mid-session** — `syncPendingDrafts` is the
+  repeatable funnel the reconnect/foreground triggers fire, so it no longer runs
+  only "on a document nobody is looking at". Because of that it **skips a
+  `.failed` draft** (`if case .failed = state(for:) { continue }`): a draft whose
+  save failed *this* session is a retry candidate with its "Couldn't save" retry
+  on screen, exactly why `reconcileDraft` returns early on `saveState == .failed`.
+  Applying the tolerance rule to a `.failed` draft deletes visible content. (An
+  *idle* stranded draft beyond the window may still be reconciled mid-session,
+  matching what `reconcileDraft` already does on that document's own screen.) The comparison mixes clocks — `draft.updatedAt` is the device's,
   `formatted.updatedAt` the server's **last write** — so a slow device shrinks the
   window from the draft's side, and even the user's own partially-landed save
   (content PATCH applied, title PATCH failed) can then read as "newer than the

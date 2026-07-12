@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Whether a reachability change should trigger a draft sync: only the false→true
+/// (reconnect) edge, never a disconnect or a redundant true→true. Pure so the edge
+/// is unit-testable without SwiftUI.
+func shouldSyncOnReachabilityChange(wasReachable: Bool, isReachable: Bool) -> Bool {
+    !wasReachable && isReachable
+}
+
+/// Whether a scene-phase change should trigger a draft sync: only when the app
+/// becomes active (foreground), never on `.background`/`.inactive`.
+func shouldSyncOnScenePhase(_ phase: ScenePhase) -> Bool {
+    phase == .active
+}
+
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     let serverURL: URL
@@ -8,6 +21,8 @@ private struct AuthenticatedHomeContainer: View {
     let onSignOut: () -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(ConnectivityMonitor.self) private var connectivity
+    @Environment(\.scenePhase) private var scenePhase
 
     init(serverURL: URL, sessionStore: SessionStore, onSignOut: @escaping () -> Void) {
         // The one client every feature shares: its onSessionExpired hook is
@@ -54,6 +69,21 @@ private struct AuthenticatedHomeContainer: View {
                 onCancel: { sessionStore.cancelReauthentication() }
             )
         }
+        // Auto-sync queued drafts when connectivity returns (false→true edge) and
+        // when the app comes to the foreground. Launch is covered by the existing
+        // `recoverDrafts()` from HomeViewModel.load(). The coordinator self-guards
+        // against overlapping runs, so a foreground that coincides with a reconnect
+        // is harmless.
+        .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
+            guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
+            let homeViewModel = viewModel
+            Task { await homeViewModel.syncPendingDrafts() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard shouldSyncOnScenePhase(phase) else { return }
+            let homeViewModel = viewModel
+            Task { await homeViewModel.syncPendingDrafts() }
+        }
     }
 }
 
@@ -85,4 +115,5 @@ struct RootView: View {
 #Preview {
     RootView()
         .environment(LocalizationStore())
+        .environment(ConnectivityMonitor())
 }

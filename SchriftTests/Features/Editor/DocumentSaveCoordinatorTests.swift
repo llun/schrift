@@ -271,6 +271,95 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertEqual(savesInFlight(log), savesAfterFirstRecovery)
     }
 
+    /// Unlike `recoverDrafts()` (once per process), `syncPendingDrafts()` is
+    /// repeatable — the funnel for the reconnect/foreground triggers. A draft left
+    /// behind by an offline sync must replay on the next call.
+    func testSyncPendingDraftsIsRepeatable() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
+
+        // Offline: the fetch fails, so the draft is left for later.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(
+                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await coordinator.syncPendingDrafts()
+        XCTAssertNotNil(draftStore.draft(for: documentID), "an offline sync leaves the draft")
+        XCTAssertEqual(savesInFlight(log), 0)
+
+        // Reconnect: a second sync replays it (recoverDrafts would be a no-op here).
+        stubSavePipeline(log: log)
+        await coordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertGreaterThanOrEqual(savesInFlight(log), 1)
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// Overlapping sync triggers (a foreground coinciding with a reconnect) must
+    /// not double-replay: the second call no-ops while the first is in flight.
+    func testSyncPendingDraftsIsReentrant() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
+        let formattedBody = Self.formattedBody
+        // Hold the GET open so the first sync is still awaiting it when the second
+        // starts and sees the re-entrancy guard set.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: formattedBody, error: nil, delay: 0.3)
+            }
+            return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        async let first: Void = coordinator.syncPendingDrafts()
+        async let second: Void = coordinator.syncPendingDrafts()
+        _ = await (first, second)
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        // Exactly one replay — the draft was fetched once, not twice.
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1)
+        XCTAssertEqual(savesInFlight(log), 1)
+    }
+
+    /// A save that FAILED this session leaves a `.failed` state and its draft (the
+    /// user's only copy). Firing `syncPendingDrafts()` mid-session must NOT
+    /// tolerance-discard it even when the server has moved far past the draft —
+    /// that would silently delete visible content the retry affordance still owns.
+    func testSyncPendingDraftsSkipsAFailedSaveDraft() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        // Far-future server updated_at: the raw tolerance rule WOULD discard the draft.
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 500, headers: [:], body: Data(), error: nil)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil {
+            if case .failed = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID), "a failed-save draft is never tolerance-discarded mid-session")
+        // Sync skipped it before any fetch.
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
+    }
+
     func testSaveSuccessWritesContentCacheEntry() async {
         let log = RequestRecorder()
         stubSavePipeline(log: log)

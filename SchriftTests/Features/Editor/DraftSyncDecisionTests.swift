@@ -34,6 +34,30 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(decision, .push)
     }
 
+    func testLastPushedMarkdownNonMatchWithNilBaselineFallsThroughToTolerance() {
+        // Rule 1 misses (non-nil, diverged) and there is no baseline, so it falls
+        // all the way to rule 3 (tolerance): within → push, beyond → discard.
+        let within = draftSyncDecision(
+            baseline: nil,
+            lastPushedMarkdown: "# Something else",
+            draftUpdatedAt: base,
+            serverUpdatedAt: base.addingTimeInterval(60),
+            serverMarkdown: "# Server",
+            tolerance: 120
+        )
+        XCTAssertEqual(within, .push)
+
+        let beyond = draftSyncDecision(
+            baseline: nil,
+            lastPushedMarkdown: "# Something else",
+            draftUpdatedAt: base,
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: "# Server",
+            tolerance: 120
+        )
+        XCTAssertEqual(beyond, .discardServerWins)
+    }
+
     func testLastPushedMarkdownNonMatchFallsThroughToBaselineRule() {
         // Rule 1 misses (lastPushedMarkdown is non-nil but diverged from the server
         // body), so the baseline rule decides — here, a conflict. Guards the seam
