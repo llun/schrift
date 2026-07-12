@@ -40,9 +40,12 @@ func canonicalMarkdown(_ markdown: String) -> String {
 /// Rules, applied in order (every markdown comparison is canonical-form):
 ///
 /// 1. The server body still equals what we last pushed → the server's most recent
-///    writer was us, so replaying is safe. This kills false conflicts right after
-///    our own mid-session saves, including across a relaunch (the coordinator
-///    persists `lastPushedMarkdown` onto the surviving draft).
+///    writer was us, so replaying is safe. This is designed to kill false
+///    conflicts right after our own mid-session saves, including across a relaunch
+///    once `DocumentSaveCoordinator` persists `lastPushedMarkdown` onto the
+///    surviving draft. (That coordinator maintenance lands with the PR that wires
+///    this decision in; until then `lastPushedMarkdown` is always nil here and this
+///    rule never fires.)
 /// 2. A baseline is present (the draft was made from a known server state): the
 ///    draft still descends from the server copy when the server is no newer than
 ///    the baseline (`serverUpdatedAt <= baseline.serverUpdatedAt`, when the baseline

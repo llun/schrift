@@ -1517,4 +1517,71 @@ final class EditorViewModelTests: XCTestCase {
         // outlives the test.
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
+
+    /// Load-bearing: while a dirty screen observes a diverged server body, the
+    /// revalidation routes through `cacheServerCopy`, which must NOT advance the
+    /// baseline — the edit still descends from the body it was made against, so a
+    /// later conflict check (a stack PR) must not push over the web edit we saw.
+    func testCacheServerCopyDoesNotAdvanceTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline = server body A
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My local edit")
+        XCTAssertTrue(viewModel.isDirty)
+
+        // A revalidation lands with a diverged body while the screen is dirty →
+        // apply short-circuits to cacheServerCopy(B).
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()
+
+        viewModel.flushPendingChanges()
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "cacheServerCopy must not advance the baseline over an observed web edit")
+
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// A server change installed while NOT editing (reconcileClean install branch)
+    /// advances the baseline to the freshly-installed body.
+    func testReconcileCleanInstallCapturesBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline = A, reading mode
+
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()  // not editing, not dirty → installs B, baseline = B
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Co-author edit and mine")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Co-author edit")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// Opting into a body stashed behind the "Updated" banner (applyPendingUpdate)
+    /// makes that body the baseline — the on-screen content now descends from it.
+    func testApplyPendingUpdateCapturesBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline = A
+
+        viewModel.startEditing()  // editing, not dirty
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()  // server changed mid-edit → stashed behind the banner
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        viewModel.finishEditing()
+        viewModel.applyPendingUpdate()  // installs the stashed body → baseline = B
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Co-author edit and mine")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(draftStore.draft(for: documentID)?.baseline?.markdown, "# Co-author edit")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
 }
