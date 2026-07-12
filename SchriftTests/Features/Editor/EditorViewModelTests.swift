@@ -1471,4 +1471,50 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNil(contentCache.content(for: documentID), "the purge survives the late 200")
         XCTAssertTrue(viewModel.isDocumentDiscarded)
     }
+
+    // MARK: - Server baseline capture (plumbing for offline sync)
+
+    /// A flush after editing fetched content carries the server body and its
+    /// `updated_at` as the draft's baseline — the state the edit descends from.
+    func testFlushCapturesServerBaselineFromFetchedContent() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // installFetched captures the server baseline
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Server body edited")
+        viewModel.flushPendingChanges()  // enqueue writes the draft synchronously
+
+        // Read before the background save (all-200 stub) can settle and clear it.
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Server body")
+        XCTAssertNotNil(baseline?.serverUpdatedAt, "a fetched baseline carries the server updated_at")
+
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// The baseline can also come from a cache-restored copy — carrying the
+    /// server `updated_at` the cache entry recorded (nil for void-save entries).
+    func testFlushCapturesBaselineFromCacheRestoredContent() async {
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID, title: "Cached Doc", markdown: "# Cached",
+                syncedAt: Date(timeIntervalSince1970: 1_000_000), serverUpdatedAt: serverDate))
+        stubOffline()
+        await viewModel.load()  // cached copy on screen; revalidation fails, baseline from cache
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Cached edited")
+        viewModel.flushPendingChanges()
+
+        let baseline = draftStore.draft(for: documentID)?.baseline
+        XCTAssertEqual(baseline?.markdown, "# Cached")
+        XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
+
+        // The offline save fails (draft stays); let it settle so no request
+        // outlives the test.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
 }

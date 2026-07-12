@@ -55,7 +55,6 @@ final class EditorViewModel {
     /// subpages"); [] = a real result — fetched this session or restored from
     /// the children cache — with none existing.
     var subpages: [Document]? = nil
-    var updatedAt: Date? = nil
     var mode: Mode = .reading
     var isLoading = false
     var errorKey: L10nKey?
@@ -116,7 +115,14 @@ final class EditorViewModel {
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
     private var dirtySince: Date?
-    private var pendingFreshContent: (markdown: String, syncedAt: Date)?
+    private var pendingFreshContent: (markdown: String, syncedAt: Date, serverUpdatedAt: Date)?
+    /// The server state the on-screen content descends from. Captured only where
+    /// the display is known to equal a fetched (or cache-restored) server body —
+    /// never from `cacheServerCopy` (a dirty screen's edits don't descend from the
+    /// just-fetched body) and never at flush time. Threaded into `enqueue` so a
+    /// queued draft can later be reconciled against the server via
+    /// `draftSyncDecision`. Cleared when the document is torn down.
+    private var serverBaseline: DraftBaseline?
     /// Monotonic guard: a completing fetch applies its outcome only if no
     /// newer load()/refresh() superseded it (latest-wins; .task refires on
     /// pop-back and .refreshable re-enters).
@@ -266,14 +272,19 @@ final class EditorViewModel {
     private func restoreLocalContent() {
         if let pending = saveCoordinator.pendingSave(documentID: documentID) {
             install(markdown: pending.markdown, title: pending.title, syncedAt: nil)
+            // Continuity: the in-flight/queued content descends from the same server
+            // state its draft recorded (enqueue writes both together).
+            serverBaseline = saveCoordinator.storedDraft(documentID: documentID)?.baseline
             displaySource = .pendingSave
         } else if let draft = saveCoordinator.storedDraft(documentID: documentID) {
             // New: shown before any fetch (fixes drafts being unreachable
             // offline). The server-wins staleness rule runs at revalidation.
             install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
+            serverBaseline = draft.baseline
             displaySource = .draft
         } else if let cached = contentCache.content(for: documentID) {
             install(markdown: cached.markdown, title: cached.title, syncedAt: cached.syncedAt)
+            serverBaseline = DraftBaseline(serverUpdatedAt: cached.serverUpdatedAt, markdown: cached.markdown)
             displaySource = .clean
         } else {
             displaySource = .none
@@ -432,6 +443,7 @@ final class EditorViewModel {
         rawMarkdown = ""
         displayedSourceMarkdown = ""
         displaySource = .none
+        serverBaseline = nil
         hasLoadedContent = false  // startEditing guards on this
         errorKey = unavailableMessageKey
         errorDetail = nil
@@ -450,7 +462,6 @@ final class EditorViewModel {
             unpinSettledPendingSave()
             return
         }
-        defer { updatedAt = formatted.updatedAt }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
         if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
@@ -501,6 +512,11 @@ final class EditorViewModel {
     /// meaningfully later than the draft itself — never to the user's own
     /// refresh, because the draft is work that hasn't reached the server yet.
     private func reconcileDraft(_ formatted: FormattedDocumentContent, draft: PendingDraft) {
+        // The on-screen content is the draft, so it descends from the draft's own
+        // recorded baseline. The server-wins install below routes through
+        // `installFetched`, which overrides this with the server state it actually
+        // put on screen.
+        serverBaseline = draft.baseline
         // Nothing is on screen: `becomeUnavailable` tore it down, and its own
         // write-ahead flush is what wrote this draft. The draft is the user's only
         // copy, so put it back — every branch below then reasons about content that
@@ -543,7 +559,8 @@ final class EditorViewModel {
             // before `reconcileDraft` on every later fetch; a failure lands in `.failed`,
             // whose branch returned above; a success removes the draft.
             if saveCoordinator.pendingSave(documentID: documentID) == nil {
-                saveCoordinator.enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown)
+                saveCoordinator.enqueue(
+                    documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
             }
             return
         }
@@ -564,12 +581,18 @@ final class EditorViewModel {
     /// Silent cache update while local edits own the screen — next open (or
     /// the coordinator's own conflict handling) deals with freshness.
     private func cacheServerCopy(_ formatted: FormattedDocumentContent) {
+        // The cache entry records the fresh server body and its `updated_at`, so a
+        // later open can build a baseline from it. The in-memory `serverBaseline` is
+        // deliberately *not* advanced here: the on-screen edits do not descend from
+        // this just-observed server body, and moving the baseline forward would let
+        // a queued push sail past the conflict check over a web edit we just saw.
         contentCache.save(
             CachedDocumentContent(
                 documentID: documentID,
                 title: formatted.title,
                 markdown: formatted.content ?? "",
-                syncedAt: Date()
+                syncedAt: Date(),
+                serverUpdatedAt: formatted.updatedAt
             ))
     }
 
@@ -596,14 +619,19 @@ final class EditorViewModel {
                 documentID: documentID,
                 title: title,
                 markdown: fetched,
-                syncedAt: now
+                syncedAt: now,
+                serverUpdatedAt: formatted.updatedAt
             ))
         if serverChanged(fetched: fetched) {
             if isEditing {
-                pendingFreshContent = (markdown: fetched, syncedAt: now)
+                // Stash behind the "Updated" banner without installing. The
+                // on-screen (older) body still owns `serverBaseline` — the caret is
+                // in it, so any edit descends from it, not from this stashed copy.
+                pendingFreshContent = (markdown: fetched, syncedAt: now, serverUpdatedAt: formatted.updatedAt)
                 updateAvailable = true
             } else {
                 install(markdown: fetched, title: nil, syncedAt: now)
+                serverBaseline = DraftBaseline(serverUpdatedAt: formatted.updatedAt, markdown: fetched)
                 updateAvailable = false
                 pendingFreshContent = nil
             }
@@ -612,8 +640,10 @@ final class EditorViewModel {
             // basis on the fetched raw so future comparisons settle.
             displayedSourceMarkdown = fetched
             lastSyncedAt = now
-            // The server now holds what's on screen, so any body stashed by an
-            // earlier fetch (server since reverted) has nothing left to offer.
+            // The server holds what's on screen, so advance the baseline's server
+            // timestamp; and any body stashed by an earlier fetch (server since
+            // reverted) has nothing left to offer.
+            serverBaseline = DraftBaseline(serverUpdatedAt: formatted.updatedAt, markdown: fetched)
             updateAvailable = false
             pendingFreshContent = nil
         }
@@ -639,6 +669,8 @@ final class EditorViewModel {
         guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return }
         guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
         install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
+        // The stashed body is now on screen, so it becomes the baseline.
+        serverBaseline = DraftBaseline(serverUpdatedAt: pending.serverUpdatedAt, markdown: pending.markdown)
         displaySource = .clean
         updateAvailable = false
         pendingFreshContent = nil
@@ -670,6 +702,7 @@ final class EditorViewModel {
         dirtySince = nil
         isDirty = false
         saveCoordinator.discardPendingWork(documentID: documentID)
+        serverBaseline = nil
         // A photo upload can still be in flight and would otherwise re-save (and
         // re-draft) the deleted document when it lands. `hasLoadedContent` stays
         // true here, so the insert needs its own gate.
@@ -680,6 +713,7 @@ final class EditorViewModel {
     private func installFetched(_ formatted: FormattedDocumentContent) {
         let now = Date()
         install(markdown: formatted.content ?? "", title: formatted.title, syncedAt: now)
+        serverBaseline = DraftBaseline(serverUpdatedAt: formatted.updatedAt, markdown: formatted.content ?? "")
         displaySource = .clean
         hasLocalCopy = true
         contentCache.save(
@@ -687,7 +721,8 @@ final class EditorViewModel {
                 documentID: documentID,
                 title: title,
                 markdown: formatted.content ?? "",
-                syncedAt: now
+                syncedAt: now,
+                serverUpdatedAt: formatted.updatedAt
             ))
     }
 
@@ -1375,7 +1410,7 @@ final class EditorViewModel {
         savedMarkdown = markdown
         savedTitle = title
         displayedSourceMarkdown = markdown
-        saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown)
+        saveCoordinator.enqueue(documentID: documentID, title: title, markdown: markdown, baseline: serverBaseline)
     }
 
     /// Manual save: flushes dirty edits, and retries the last content after a
@@ -1391,7 +1426,11 @@ final class EditorViewModel {
         }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
         if case .failed = saveCoordinator.state(for: documentID) {
-            saveCoordinator.enqueue(documentID: documentID, title: savedTitle, markdown: savedMarkdown)
+            // The retry re-pushes the failed draft's content, so it descends from
+            // that draft's own recorded baseline.
+            saveCoordinator.enqueue(
+                documentID: documentID, title: savedTitle, markdown: savedMarkdown,
+                baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline)
         }
     }
 
