@@ -1726,4 +1726,66 @@ final class EditorViewModelTests: XCTestCase {
             "an unchanged-body revalidation advances the baseline timestamp from nil to the server clock")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
+
+    /// Mirror of testCacheServerCopyDoesNotAdvanceTheBaseline for the *editing-but-
+    /// clean* path: a diverged server body that lands mid-edit is stashed behind the
+    /// "Updated" banner, and the on-screen (older) body must keep owning the
+    /// baseline — the caret is in it, so an edit descends from it, not the stash.
+    func testReconcileCleanStashDoesNotAdvanceTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline A
+
+        viewModel.startEditing()  // editing, not yet dirty
+        stubLoad(content: "# Co-author edit")
+        await viewModel.load()  // server changed mid-edit → stashed, baseline stays A
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        // Edit WITHOUT opting into the stash, then flush.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "the editing stash must not advance the baseline over an observed web edit")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// A fetch that races one of our own saves (mayPredateLocalSave == true) makes
+    /// `apply` early-return, taking nothing from the response — including the
+    /// baseline. If it did, a later full-overwrite save would push the resurrected
+    /// stale body back to the server.
+    func testMayPredateFetchDoesNotAdvanceTheBaseline() async {
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoad(content: "# Server body")
+        await viewModel.load()  // baseline A
+
+        // Hold the save's content PATCH open so it stays in flight; a GET that lands
+        // during it is answered with a diverged body and races the save.
+        let bodyB = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: bodyB, error: nil)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.4)
+            }
+            return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit")
+        viewModel.flushPendingChanges()  // save enqueued, PATCH held → in flight
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID))
+
+        await viewModel.refresh()  // fetch B races the in-flight save → apply early-returns
+
+        // Edit again and flush; the still-in-flight save queues this, writing a draft.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# My edit 2")
+        viewModel.flushPendingChanges()
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Server body",
+            "a fetch racing our own save must not advance the baseline to the raced body")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
 }
