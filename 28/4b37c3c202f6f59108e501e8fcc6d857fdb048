@@ -1,0 +1,49 @@
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 165-173
+Schrift/Core/Localization/Strings+en.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 168-170,173-177
+  s_e60497739a7df0::t_df0186cf9e6b12 171-172
+Schrift/Core/Localization/Strings+es.swift
+  s_e60497739a7df0::t_df0186cf9e6b12 174-175,180-181
+  s_e60497739a7df0::t_9a4be3f5d88a30 171-173,176-179
+Schrift/Core/Localization/Strings+de.swift
+  s_e60497739a7df0::t_df0186cf9e6b12 174-175,180-181
+  s_e60497739a7df0::t_9a4be3f5d88a30 171-173,176-179
+Schrift/Core/Localization/Strings+it.swift
+  s_e60497739a7df0::t_df0186cf9e6b12 170-171,176-177
+  s_e60497739a7df0::t_9a4be3f5d88a30 167-169,172-175
+Schrift/Core/Localization/Strings+nl.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 169-171,174-177
+  s_e60497739a7df0::t_df0186cf9e6b12 172-173,178-179
+Schrift/Core/Localization/L10nKey.swift
+  s_e60497739a7df0::t_544166e0b84595 186-199
+Schrift/Core/Localization/Strings+pt.swift
+  s_e60497739a7df0::t_df0186cf9e6b12 171-172,177-178
+  s_e60497739a7df0::t_9a4be3f5d88a30 168-170,173-176
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 165-173
+Schrift/Core/Localization/Strings+th.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 167-175
+Schrift/Core/Localization/Strings+fr.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 169-171,174-177
+  s_e60497739a7df0::t_df0186cf9e6b12 172-173,178-179
+Schrift/Core/Localization/Strings+sl.swift
+  s_e60497739a7df0::t_9a4be3f5d88a30 178-180,183-187
+  s_e60497739a7df0::t_df0186cf9e6b12 181-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "284b37c3c202f6f59108e501e8fcc6d857fdb048",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
