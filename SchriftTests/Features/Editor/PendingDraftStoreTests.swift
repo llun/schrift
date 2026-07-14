@@ -83,7 +83,9 @@ final class PendingDraftStoreTests: XCTestCase {
             markdown: "# Draft",
             updatedAt: Date(timeIntervalSince1970: 1_000),
             baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 900), markdown: "# Server"),
-            lastPushedMarkdown: "# Pushed")
+            lastPushedMarkdown: "# Pushed",
+            // Safety-critical: this is what makes an unanswered conflict hold survive a relaunch.
+            conflictServerUpdatedAt: Date(timeIntervalSince1970: 1_500))
 
         store.save(draft)
 
@@ -92,6 +94,7 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.baseline?.serverUpdatedAt, Date(timeIntervalSince1970: 900))
         XCTAssertEqual(loaded?.baseline?.markdown, "# Server")
         XCTAssertEqual(loaded?.lastPushedMarkdown, "# Pushed")
+        XCTAssertEqual(loaded?.conflictServerUpdatedAt, Date(timeIntervalSince1970: 1_500))
     }
 
     /// A draft persisted by a build predating the baseline fields must still decode
@@ -110,5 +113,6 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertEqual(draft?.updatedAt, Date(timeIntervalSince1970: 1_000))
         XCTAssertNil(draft?.baseline)
         XCTAssertNil(draft?.lastPushedMarkdown)
+        XCTAssertNil(draft?.conflictServerUpdatedAt, "a pre-conflict-feature draft decodes with no hold")
     }
 }

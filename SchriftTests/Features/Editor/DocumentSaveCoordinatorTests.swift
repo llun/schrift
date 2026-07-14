@@ -786,6 +786,51 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNotNil(draftStore.draft(for: documentID))
     }
 
+    /// The observation is scoped to **one** save, so it must be dropped even when that save is
+    /// discarded (a 404/403 teardown), not only when it is consumed. Leaving it behind that
+    /// early return let it leak into a *later, unrelated* save and manufacture a phantom
+    /// conflict against a document the server had not touched.
+    func testAnObservationFromADiscardedSaveDoesNotLeakIntoALaterOne() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let serverBody = Self.formattedBody
+        // Every content PATCH is held open, then fails (offline) — so save A can be discarded
+        // mid-flight and save B can reach `finish`'s re-decide block.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+            }
+            return .init(statusCode: 200, headers: [:], body: serverBody, error: nil)
+        }
+
+        // Save A is on the wire; a revalidation observes a wildly-diverged server body…
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# A")
+        coordinator.noteServerObservedDuringSave(
+            documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000),
+            markdown: "# Some unrelated server body")
+        // …but then the document 404s, so A is discarded (its `finish` takes the early return,
+        // settling to `.idle` and dropping the observation at the top of `finish`).
+        coordinator.suppressLocalWriteThrough(documentID: documentID)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertNil(coordinator.conflict(for: documentID), "the discarded save records nothing")
+
+        // A later save then fails and reaches the re-decide block. The leaked observation would
+        // surface HERE — it must not.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# B")
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+
+        XCTAssertNil(
+            coordinator.conflict(for: documentID),
+            "an observation scoped to the discarded save must not manufacture a conflict on a later one")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+    }
+
     /// The supersession rule. If the content PATCH **landed**, the server holds *our* body, so an
     /// observation taken during that save is stale — deciding against it would manufacture a
     /// conflict against the user's own writing.
