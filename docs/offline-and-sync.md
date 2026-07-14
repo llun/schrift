@@ -568,6 +568,14 @@ choosing one whole version.
   held push — an unchecked, last-writer-wins overwrite the user chose (the
   overwritten server version is recoverable from the web's version history). The VM
   wrapper `flushPendingChanges()` first, so the push captures the newest content.
+  **It also advances the baseline** — on the stored draft *and* on the editor's
+  in-memory `serverBaseline` — to the server timestamp the user chose to overwrite.
+  Both halves are load-bearing: the released push very often fails (the conflict is
+  usually reviewed on the connection that caused it), and a surviving draft with its
+  original baseline would make the next sync re-detect the identical conflict and hold
+  the push again — the answer evaporating, forever. Advancing only the draft is not
+  enough either, because `enqueue` rebuilds the draft from the baseline its *caller*
+  passes and the next autosave flush passes the editor's.
 - **Keep the server version** (`resolveConflictKeepingServer`): the one sanctioned
   discard — and it **fetches before it discards**. The VM ends the editing session,
   fetches the server body, and only once that body is *in hand* (generation still
