@@ -203,7 +203,8 @@ Schrift/
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
 │   │                    (incl. AttachmentEndpoints: multipart upload + media-check;
 │   │                    VersionEndpoints: read-only version list), Codable models,
-│   │                    DocsAPIError, CSRF
+│   │                    DocsAPIError, CSRF, ConnectivityMonitor (NWPathMonitor →
+│   │                    the reconnect trigger for draft sync)
 │   └── Yjs/             on-device Markdown→BlockNote→Yjs encoder that builds the
 │                        base64 content payload for saves (MarkdownYjs,
 │                        BlockNoteDocument, InlineMarkdown, YjsUpdateEncoder)
@@ -227,7 +228,9 @@ Schrift/
 │   │                    and the server-version row (ServerConfig)
 │   ├── Options/ Share/
 │   └── Editor/          block editor, save coordinator, drafts, content cache,
-│                        photo insert (ImagePreparation), in-app document links (DocumentLink),
+│                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
+│                        ConflictSheetView), photo insert (ImagePreparation),
+│                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
 │                        read-only version history (VersionHistoryViewModel,
@@ -805,13 +808,55 @@ markdown write endpoint**. Understand this before touching the save path:
   the dirty baseline are never bypassed.
 - Saves go through **`DocumentSaveCoordinator`** (app-scoped; owns its `Task`s so
   navigating away never cancels a save; write-ahead draft to `PendingDraftStore`;
-  per-document latest-wins coalescing; background-task assertion; launch
-  recovery). View models **enqueue** on the coordinator — they never call the
-  client to persist edits themselves. Draft-vs-server freshness never compares
-  the two clocks directly: `pendingDraftClockTolerance` (120 s) is added to the
-  draft's client timestamp — within the window the draft wins (replay), beyond
-  it the server copy wins and the draft is discarded (both in `recoverDrafts()`
-  and the editor's draft reconciliation).
+  per-document latest-wins coalescing; background-task assertion; draft replay).
+  View models **enqueue** on the coordinator — they never call the client to
+  persist edits themselves.
+- **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
+  the reconnect (`ConnectivityMonitor`), foreground and launch triggers, self-guarded
+  against overlapping runs. `recoverDrafts()` is just the once-per-process launch
+  wrapper over it. Because it now runs on documents the user is *looking at*, it
+  **skips a `.failed` draft** (a retry candidate whose "Couldn't save" affordance is on
+  screen) and never discards a `.pendingSync` one.
+- **A failed save is classified, not just failed.** `retryableSaveFailure` routes a
+  transient/transport failure (offline, 5xx, rate limit) to **`.pendingSync`**
+  ("Saved on this device · syncs when online") rather than the hard `.failed` reserved
+  for a save the server rejected on the merits. `.sessionExpired` is *not* retryable.
+- **Draft-vs-server reconciliation is `draftSyncDecision`** (`DraftSyncDecision.swift`),
+  not a bare clock comparison. In order: (1) the server body still equals what we last
+  pushed (`lastPushedMarkdown`) ⇒ the last writer was us ⇒ `.push`; (2) the draft carries
+  a **`DraftBaseline`** and the server hasn't moved past it (by timestamp, or the body
+  still equals the baseline body — a web *rename* bumps `updated_at` without touching
+  content) ⇒ `.push`, otherwise ⇒ **`.conflict`**; (3) no baseline (a legacy draft) ⇒ fall
+  back to `pendingDraftClockTolerance` (120 s added to the draft's client timestamp;
+  within the window the draft wins, beyond it the server copy wins and the draft is
+  dropped). **A baseline-carrying draft is never silently discarded** — the tolerance
+  rule is now only the legacy path.
+- **A conflict is detected and *asked about*, never auto-merged** (there is no on-device
+  Yjs decoder and no CRDT). `.conflict` records a `SyncConflict` (the server's
+  `updated_at` only — no server markdown, so "keep the server" must re-fetch), which
+  makes `enqueue` **hold** the push: it writes the draft and the queued slot but starts
+  no save, so an autosave can never overwrite the conflicting server copy unasked. Both
+  detection sites record it — `syncPendingDrafts` and the editor's `reconcileDraft`,
+  *including* `reconcileDraft`'s `.pendingSync`/`.failed` early return, or a "tap to
+  retry" would push over a web edit the app had already fetched. `resolveConflictKeeping‐
+  Local` releases the held push **and advances the draft's baseline** to the server state
+  the user chose to overwrite (or a failed push would re-detect the identical conflict
+  forever); `resolveConflictKeepingServer` is the one sanctioned discard and **fetches
+  before it discards** (a failed fetch must not cost the user the only copy of their
+  work). Every purge path (`discardPendingWork`, `suppressLocalWriteThrough`,
+  `handleDidDelete`) clears the record, or the enqueue-hold wedges the document's save
+  pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
+  flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
+  unreachable during a save; `syncPendingDrafts` guards on both), which is why
+  `SaveMarker.hadPendingSave` asks whether a save *reached the network*
+  (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
+  never sent, and counting it wedged "keep the server version" permanently.
+- **Known limitation:** conflict detection covers a *queued* draft. A revalidation that
+  lands while the screen is **dirty** still takes `apply`'s silent-cache-update branch,
+  so a concurrent web edit observed mid-typing is overwritten by the ensuing autosave —
+  the pre-existing last-writer-wins model (`docs/architecture.md` keeps automatic
+  multi-user merge a non-goal). Closing that means holding an *active* typist's autosave,
+  which needs its own design.
 - Content is cached on-device in **`DocumentContentCacheStore`** (one JSON per
   document under Application Support, backup-excluded, ≤50 entries by
   most-recent `syncedAt` via file mtime): `load()` shows a local copy
@@ -910,8 +955,11 @@ markdown write endpoint**. Understand this before touching the save path:
      *before* it switches on `displaySource`. `hasUnsavedLocalContent` follows the
      same rule, gated on `hasLoadedContent` (a torn-down document claims nothing)
      — its two guarded draft reads are exhaustive only because `enqueue` is the
-     sole writer of a draft and sets `pendingSave` synchronously; add another
-     writer and it must read the draft unconditionally. A failed save pins the
+     sole **creator** of a draft and sets `pendingSave` synchronously; add another
+     creator and it must read the draft unconditionally. (`finish` and
+     `resolveConflictKeepingLocal` also *write* the store, but only ever refresh an
+     **existing** draft in place — the stamp and the baseline — so they create nothing
+     the guarded reads could miss.) A failed save pins the
      document (every revalidation and pull-to-refresh no-ops while its draft is on
      screen), so the reading surface's **"Couldn't save · tap to retry" caption is
      load-bearing** — it is the only way out when offline, where tap-to-edit is
@@ -919,8 +967,11 @@ markdown write endpoint**. Understand this before touching the save path:
      may only discard a draft *stranded by an earlier session*** — that is
      `recoverDrafts`' job. A draft whose save failed *this* session is a retry
      candidate the user is looking at, so `reconcileDraft` returns early on
-     `saveState == .failed`. Applying the tolerance rule there deletes visible
-     content. The comparison mixes clocks — `draft.updatedAt` is the device's,
+     `saveState == .failed` **and `.pendingSync`** (a queued offline edit a
+     pull-to-refresh must not drop). Applying the tolerance rule to either deletes
+     visible content. That early return still **records a conflict** on the way out if
+     the fetch shows the server diverged — detection is non-destructive, and skipping it
+     let a "tap to retry" overwrite an already-fetched web edit. The comparison mixes clocks — `draft.updatedAt` is the device's,
      `formatted.updatedAt` the server's **last write** — so a slow device shrinks
      the window from the draft's side, and even the user's own partially-landed
      save (content PATCH applied, title PATCH failed) can read as "newer".

@@ -579,6 +579,16 @@ choosing one whole version.
   full-overwrote the server copy the user had just chosen to keep. On failure the
   draft *and* the conflict both survive, so the pill and sheet stay available and
   everything on screen is still backed by disk.
+- **Known limitation — detection covers a *queued* draft, not a live typist.** A
+  revalidation that lands while the screen is **dirty** takes `apply`'s
+  silent-cache-update branch (`pendingSave != nil || isDirty` → `cacheServerCopy`), so
+  no conflict is recorded and the ensuing autosave full-overwrites a concurrent web
+  edit the app had already fetched. That is the pre-existing last-writer-wins model —
+  automatic multi-user merge is an explicit non-goal — and this feature does not change
+  it. Closing it means holding an **actively typing** user's autosave and surfacing the
+  pill only once they stop, which needs its own design (what the save caption says while
+  held, and how to avoid a false conflict against the user's *own* just-landed save,
+  which needs `lastConfirmedPushMarkdown` exposed to the editor). Deliberately deferred.
 - **No false conflicts against our own writes.** After a confirmed save the
   coordinator remembers what it pushed (`lastConfirmedPushMarkdown`) and stamps it
   onto the next edit's draft as `lastPushedMarkdown`, so `draftSyncDecision` rule 1
