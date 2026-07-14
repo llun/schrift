@@ -745,6 +745,11 @@ final class EditorViewModel {
                 // Stash behind the "Updated" banner without installing. The
                 // on-screen (older) body still owns `serverBaseline` — the caret is
                 // in it, so any edit descends from it, not from this stashed copy.
+                // `startEditing` *hides* the banner but deliberately **keeps** this stash
+                // (destroying it there would blind `markDirty`); `markDirty` is what drops
+                // it — and records a conflict as it does, since abandoning a server body we
+                // fetched and showed the user is exactly what the next autosave would
+                // otherwise overwrite unasked. See `abandonPendingFreshContent`.
                 pendingFreshContent = (markdown: fetched, syncedAt: now, serverUpdatedAt: formatted.updatedAt)
                 updateAvailable = true
             } else {
@@ -1600,8 +1605,17 @@ final class EditorViewModel {
         // chose to overwrite it, so the on-screen content now descends from *that* server
         // state. Only the timestamp is knowable (`SyncConflict` carries no server markdown),
         // and only the timestamp is needed: rule 2's date check short-circuits first.
+        // Mirror the coordinator's `?? draft.markdown` fallback exactly — do NOT fabricate `""`.
+        // A legacy (baseline-less) draft leaves `serverBaseline == nil` here, and an empty
+        // baseline body makes rule 2's content tiebreak match any **empty server document**:
+        // a co-author who deliberately empties the doc would then be silently full-overwritten
+        // instead of raising a new conflict. And this value *wins*: `flushPendingChanges()`
+        // below re-enqueues with it, and `enqueue` persists the caller's baseline verbatim — so
+        // the coordinator's protection is dead code on exactly the path (a dirty editor
+        // resolving a conflict) it was written for. `currentMarkdown()` is precisely the body
+        // the flush is about to push, so the tiebreak can only ever match our own writing.
         serverBaseline = DraftBaseline(
-            serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? "")
+            serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown())
         flushPendingChanges()
         saveCoordinator.resolveConflictKeepingLocal(documentID: documentID)
     }

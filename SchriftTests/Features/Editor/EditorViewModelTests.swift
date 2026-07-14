@@ -2580,11 +2580,17 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the push is held")
     }
 
-    /// The release side. A conflict that has become moot — the user discarded their edit, the
-    /// co-author reverted, our own push landed — must be cleared, or the enqueue-hold parks
-    /// every future save for this document forever behind a question with nothing left to ask,
-    /// and leaves a destructive "Keep the server version" armed against unrelated new work.
-    func testACleanRevalidationReleasesAConflictThatIsNoLongerLive() async {
+    /// The release side, exercised with the conflict **still standing** when the decision comes
+    /// back `.push`. This is the property that matters: the record is the only thing holding the
+    /// enqueue, and `syncPendingDrafts` skips any document that has one — so if it is never
+    /// released, the document can **never sync again**, with a destructive "Keep the server
+    /// version" armed against whatever the user types next.
+    ///
+    /// (An earlier version of this test resolved the conflict via `resolveConflictKeepingServer()`
+    /// first — which clears the record inside the coordinator — so it passed with every
+    /// `clearResolvedConflict` call site deleted. It asserted the right thing about the wrong
+    /// state. The conflict must be live at the moment the `.push` decision lands.)
+    func testAPushDecisionReleasesAStandingConflictSoTheDocumentCanSyncAgain() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
         draftStore.save(
@@ -2597,22 +2603,54 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
         XCTAssertNotNil(viewModel.syncConflict, "a conflict stands over the queued draft")
 
-        // The user resolves it by taking the server's copy — so no local work remains…
-        await viewModel.resolveConflictKeepingServer()
-        XCTAssertNil(viewModel.syncConflict)
-        XCTAssertNil(draftStore.draft(for: documentID))
-
-        // …and a later clean revalidation must keep it that way, not resurrect a hold.
+        // The co-author reverts: the server body is the baseline again, so the decision is
+        // `.push` — and the conflict is STILL RECORDED when that decision lands.
+        stubDivergedServer(content: "# Base", log: log)
         await viewModel.refresh()
 
-        XCTAssertNil(viewModel.syncConflict)
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "the conflict is moot — releasing it is the only thing that lets this document sync again")
+        // The hold is genuinely gone: the draft actually reaches the network.
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(coordinator.conflict(for: documentID))
+    }
+
+    /// The same release, via `reconcileClean` — reached only with no pending save, no draft and
+    /// not dirty, i.e. no local work by construction, so a record there cannot be live. Here the
+    /// local work is destroyed by a *successful save* rather than by a resolver, so
+    /// `clearResolvedConflict` is the only thing that can null the record.
+    func testReconcileCleanReleasesAConflictLeftOverAfterTheLocalWorkIsGone() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        // Local work, saved successfully → no draft, not dirty, nothing pending.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+        viewModel.flushPendingChanges()
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        viewModel.finishEditing()
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertFalse(viewModel.isDirty)
+
+        // A conflict record survives from earlier (e.g. the sync pass recorded one before the
+        // save landed). It is now moot: there is no local work left to overwrite anything.
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        await viewModel.refresh()  // clean path
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "no pending save, no draft, not dirty — the record has nothing left to protect and must be released")
+
+        // …and the pipeline is genuinely unwedged: new work reaches the network.
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Fresh unrelated work")
         viewModel.flushPendingChanges()
-        await waitUntil { self.savesInFlight(log) >= 1 }
-        XCTAssertNil(
-            coordinator.conflict(for: documentID),
-            "new work on a document with no live conflict must save, not be parked by a stale hold")
+        await waitUntil { self.savesInFlight(log) >= 2 }
     }
 
     /// reconcileClean's unchanged-body (else) branch advances the baseline's

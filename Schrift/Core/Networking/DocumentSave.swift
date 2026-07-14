@@ -54,16 +54,23 @@ extension DocsAPIClient {
     /// conflict against the user's own writing.
     ///
     /// Reporting the half-land as a return value rather than a second thrown type keeps
-    /// `DocsAPIError` the one error type crossing this layer (see CLAUDE.md, Networking).
-    @discardableResult
-    func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> Error? {
+    /// `DocsAPIError` the one error type crossing this layer (see CLAUDE.md, Networking). The
+    /// result is **not** discardable: a caller that ignores it silently loses the fact that
+    /// the server holds its content, which is the whole point.
+    func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> DocsAPIError? {
         let update = MarkdownYjs.encode(markdown: markdown)
         try await setContent(documentID: documentID, yjsUpdate: update)
         do {
             try await updateTitle(documentID: documentID, title: title)
             return nil
-        } catch {
+        } catch let error as DocsAPIError {
             return error
+        } catch {
+            // `performRequest` maps everything into `DocsAPIError`, so this is unreachable —
+            // but it must never *rethrow*: the content PATCH has landed, and a throw would tell
+            // the caller nothing reached the server, re-opening the conflict-against-your-own-
+            // writing bug this signal exists to prevent.
+            return .network(String(describing: error))
         }
     }
 }

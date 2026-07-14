@@ -576,6 +576,40 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             "the coalesced pass must still carry the launch-recovery semantics, or the discard is lost")
     }
 
+    /// Keep-mine on a **legacy** (baseline-less) draft. Advancing its baseline needs a body to
+    /// carry, and there isn't one — fabricating `""` makes rule 2's content tiebreak match any
+    /// **empty server document**, so a co-author who deliberately empties the doc would be
+    /// silently full-overwritten instead of raising a fresh conflict. The draft's own body is
+    /// the right fallback: the tiebreak can then only ever match our own writing.
+    func testKeepingLocalOnALegacyDraftNeverFabricatesAnEmptyBaselineBody() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            return .init(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        // No baseline (a pre-upgrade draft); the save fails offline → `.pendingSync`.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        await coordinator.syncPendingDrafts()
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
+
+        coordinator.resolveConflictKeepingLocal(documentID: documentID)
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "# Mine",
+            "the advanced baseline carries the draft's own body — never an empty string, which would "
+                + "make the content tiebreak match any empty server document")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {
