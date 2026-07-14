@@ -211,8 +211,8 @@ final class EditorViewModel {
     /// a draft, and it sets `pendingSave` synchronously, so
     /// `draft != nil && !isDirty && pendingSave == nil` implies either the save failed
     /// (`.failed`/`.pendingSync`), or the draft was stranded by an earlier session — and
-    /// `restoreLocalContent` always installs *that* as `.draft`. The coordinator's three
-    /// other `draftStore.save` calls (`finish`'s surviving-draft stamp,
+    /// `restoreLocalContent` always installs *that* as `.draft`. The coordinator's two other
+    /// `draftStore.save` calls (`finish`'s surviving-draft stamp and
     /// `resolveConflictKeepingLocal`'s baseline advance) only ever **rewrite an existing
     /// draft in place**, so they create nothing these guards could miss. Add a caller that
     /// *creates* one, or make `enqueue` async, and this stops being exhaustive: drop the
@@ -510,15 +510,21 @@ final class EditorViewModel {
             // hence `lastConfirmedPush(documentID:)`. Without it, `serverBaseline` (which a
             // save deliberately does not advance) would make our own just-pushed body read
             // as a diverged server.
-            if saveCoordinator.pendingSave(documentID: documentID) == nil, let baseline = serverBaseline,
-                case .conflict = draftSyncDecision(
+            if saveCoordinator.pendingSave(documentID: documentID) == nil, let baseline = serverBaseline {
+                if case .conflict = draftSyncDecision(
                     baseline: baseline,
                     lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
                     draftUpdatedAt: Date(),
                     serverUpdatedAt: formatted.updatedAt,
                     serverMarkdown: formatted.content ?? "")
-            {
-                saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+                {
+                    saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+                } else {
+                    // The decision says there is nothing to ask about any more (the server came
+                    // back to the baseline, or its body is one we pushed). Release the hold —
+                    // nothing else would, and it parks every save for this document forever.
+                    saveCoordinator.clearResolvedConflict(documentID: documentID)
+                }
             }
             cacheServerCopy(formatted)
             return
@@ -612,6 +618,9 @@ final class EditorViewModel {
                 serverMarkdown: formatted.content ?? "")
             {
                 saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+            } else {
+                // No longer a conflict — release any hold, or it parks every save forever.
+                saveCoordinator.clearResolvedConflict(documentID: documentID)
             }
             cacheServerCopy(formatted)
             return
@@ -629,6 +638,9 @@ final class EditorViewModel {
             serverMarkdown: formatted.content ?? "")
         {
         case .push:
+            // No longer a conflict (if it ever was): release any stale hold before enqueuing,
+            // or the enqueue below would simply park again behind it.
+            saveCoordinator.clearResolvedConflict(documentID: documentID)
             // The draft still descends from the server (or the server's last writer is
             // us). Cache the fresh body and hand the draft back to the save pipeline —
             // otherwise a stored draft that wins with no save pushing it and no
@@ -917,8 +929,7 @@ final class EditorViewModel {
     func startEditing(focusing blockID: UUID? = nil) {
         guard hasLoadedContent else { return }
         clearError()
-        updateAvailable = false
-        pendingFreshContent = nil
+        abandonPendingFreshContent()
         if blocks.isEmpty {
             let seed = EditorBlock(kind: .paragraph)
             blocks = [seed]
@@ -1641,11 +1652,41 @@ final class EditorViewModel {
         }
     }
 
-    private func markDirty() {
-        if updateAvailable {
+    /// The user is about to make local work that will full-overwrite a server body the app
+    /// has **already fetched and shown them** (the "Updated" banner's stash). Dropping that
+    /// stash silently is the same defect as skipping detection in `apply`'s dirty branch,
+    /// just on the other side of the race: type one character *before* the fetch resolves and
+    /// the push is held and the user is asked; type one character *after* it resolves and the
+    /// identical push used to go through unchecked — no pill, no prompt, and the co-author's
+    /// edit gone. Whether a destructive push is checked must not depend on when the finger
+    /// lands, so record the conflict as the stash is abandoned.
+    ///
+    /// Guarded exactly like the other detection sites: no save may be in flight (the
+    /// coordinator's invariant), and rule 1 is fed from `lastConfirmedPush(documentID:)` so a
+    /// body that is *our own* confirmed write never conflicts against the user.
+    private func abandonPendingFreshContent() {
+        guard let pending = pendingFreshContent else {
             updateAvailable = false
-            pendingFreshContent = nil
+            return
         }
+        updateAvailable = false
+        pendingFreshContent = nil
+        guard saveCoordinator.pendingSave(documentID: documentID) == nil, let baseline = serverBaseline else {
+            return
+        }
+        if case .conflict = draftSyncDecision(
+            baseline: baseline,
+            lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
+            draftUpdatedAt: Date(),
+            serverUpdatedAt: pending.serverUpdatedAt,
+            serverMarkdown: pending.markdown)
+        {
+            saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: pending.serverUpdatedAt)
+        }
+    }
+
+    private func markDirty() {
+        abandonPendingFreshContent()
         isDirty = true
         let now = Date()
         if dirtySince == nil {

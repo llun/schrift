@@ -343,11 +343,21 @@ final class DocumentSaveCoordinator {
         }
     }
 
-    /// Record a conflict the editor's own revalidation (`reconcileDraft`) detected,
-    /// so the pill/sheet and the enqueue-hold apply just as they do for a conflict
-    /// found by `syncPendingDrafts`.
+    /// Record a conflict the editor's own revalidation (`reconcileDraft`, or `apply`'s dirty
+    /// branch) detected, so the pill/sheet and the enqueue-hold apply just as they do for a
+    /// conflict found by `syncPendingDrafts`.
     func recordConflict(documentID: UUID, serverUpdatedAt: Date) {
         conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+    }
+
+    /// A later decision proved the conflict is **gone** (the server came back to the
+    /// baseline, or its current body is one we pushed), so the hold must be released. The
+    /// record is otherwise only ever cleared by a user resolution or a purge — and the
+    /// enqueue-hold would then park every save for this document *indefinitely*, waiting on
+    /// a question that no longer has anything to ask about. Only the detection sites call
+    /// this, and only on a non-`.conflict` decision, so it can never discard a live one.
+    func clearResolvedConflict(documentID: UUID) {
+        conflicts[documentID] = nil
     }
 
     /// **Invariant both resolvers rely on: while a conflict is recorded, no save for

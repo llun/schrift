@@ -2406,6 +2406,54 @@ final class EditorViewModelTests: XCTestCase {
                 + "about their own write")
     }
 
+    /// The other side of the same race. A revalidation landing on a **clean, open editing
+    /// session** stashes the fetched body behind the "Updated" banner — and the first
+    /// keystroke used to throw that stash away with nothing recorded, so the ensuing autosave
+    /// full-overwrote a web edit the app had fetched, cached, *and shown the user a banner
+    /// for*. Type one character **before** the fetch resolves and the push is held and the
+    /// user asked; type one character **after** it resolves and the identical push went
+    /// through unchecked. Abandoning the stash now records the conflict.
+    func testAbandoningTheUpdatedStashRecordsAConflictInsteadOfOverwritingIt() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        // An open editing session, still clean. A co-author's edit lands as the stash — with a
+        // NEWER `updated_at` than the baseline, which is what a real server write does. (The
+        // shared fixture's timestamp is fixed, so reusing it would make rule 2 correctly say
+        // "the server has not moved past the baseline" and decline to conflict.)
+        viewModel.startEditing()
+        let coauthorBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "the fetched body is stashed behind the banner")
+        XCTAssertNil(viewModel.syncConflict, "…and is merely offered, not yet a conflict")
+
+        // The user ignores the banner and types.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+
+        XCTAssertFalse(viewModel.updateAvailable, "the stash is dropped…")
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "…but a server body we fetched AND showed the user cannot be silently overwritten by the "
+                + "next autosave — abandoning it must record the conflict")
+
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the push is held, not sent")
+    }
+
     /// reconcileClean's unchanged-body (else) branch advances the baseline's
     /// timestamp: a cache-restored entry with an unknown (void-save) server
     /// timestamp gets promoted to the real server clock once a clean revalidation

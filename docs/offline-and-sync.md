@@ -452,14 +452,26 @@ branch instead of popping a banner. Outcomes:
   on screen, exactly why `reconcileDraft` returns early on
   `saveState == .failed`. A transient/transport save failure (offline, 5xx, rate
   limit) is classified as **`.pendingSync`** rather than `.failed` (see the save
-  states below), and gets the same protection on **both** sides: `syncPendingDrafts`
-  **preserves** a beyond-window `.pendingSync` draft (`else if case .pendingSync …
-  { continue }`) instead of discarding it — a queued offline edit the server has
-  moved past is a *conflict*, not a stale draft — and `reconcileDraft`'s early
-  return covers `.failed` **and** `.pendingSync`, so a plain pull-to-refresh can't
-  drop it either. Applying the tolerance rule to either deletes visible content.
-  (An *idle* stranded draft beyond the window may still be reconciled mid-session,
-  matching what `reconcileDraft` already does on that document's own screen.) The comparison mixes clocks — `draft.updatedAt` is the device's,
+  states below), and gets the same protection on **both** sides: a beyond-window
+  `.pendingSync` draft is **never discarded** — `runSyncPass` records a **`SyncConflict`**
+  for it instead (the `.discardServerWins` → `case .pendingSync` arm), so a queued offline
+  edit the server has moved past becomes a *question*, not a silent deletion and not a
+  silent overwrite. (Merely *skipping* it, as an earlier revision did, stranded it: never
+  pushed, never discarded, and — the decision not being `.conflict` — no pill either, so the
+  only escape left was a retry tap that overwrote the newer server copy with no prompt at
+  all.) `reconcileDraft`'s early return covers `.failed` **and** `.pendingSync` so a plain
+  pull-to-refresh can't drop it either — and it still **records a conflict on the way out**,
+  because keeping the draft is not the same as staying blind to the server. Applying the
+  tolerance rule to either deletes visible content.
+  An *idle* stranded (legacy, baseline-less) draft beyond the window is discarded **only on
+  the launch pass** (`syncPendingDrafts(isLaunchRecovery:)`, which only `recoverDrafts()`
+  sets): mid-session the editor may be *displaying* that draft, and removing it there leaves
+  on-screen content with no disk backing — the next keystroke would then full-overwrite the
+  newer server body. Off the launch path it is left to `reconcileDraft`, which discards
+  **and installs** the winning body atomically, on the screen actually showing it.
+  Overlapping triggers are **coalesced, not dropped**: a reconnect landing during an
+  in-progress (failing) pass would otherwise be lost until the next foreground cycle.
+  The comparison mixes clocks — `draft.updatedAt` is the device's,
   `formatted.updatedAt` the server's **last write** — so a slow device shrinks the
   window from the draft's side, and even the user's own partially-landed save
   (content PATCH applied, title PATCH failed) can then read as "newer than the
@@ -845,12 +857,18 @@ XCTest, mirroring the source tree. New/updated:
     tolerance is discarded and the server copy installed;
   - revalidate, **title** changed, body identical → title + cache + `savedTitle`
     updated silently (no spurious save), no banner;
-  - revalidate while dirty → three cases: in-flight save → untouched; stored
-    draft within tolerance → untouched, cache updated; stored draft **stale**
-    (server newer beyond tolerance, no session edits) → server content installed,
-    draft removed, cache updated;
-  - banner then edit: `updateAvailable == true`, then `startEditing()` →
-    `updateAvailable == false`, blocks unchanged; `applyPendingUpdate()` while
+  - revalidate while dirty → the fetched body is cached silently and the edits are
+    untouched, but the **decision still runs** (`pendingSave == nil`): a diverged server
+    records a `SyncConflict`, so the ensuing autosave is *held* rather than overwriting a
+    web edit the app has just fetched. Whether a destructive push gets checked must not
+    depend on whether a keystroke landed before or after the fetch resolved;
+  - a stored draft is reconciled by **`draftSyncDecision`**, not the bare tolerance rule:
+    a baseline-carrying draft is never silently discarded — it either pushes or becomes a
+    `.conflict`. The tolerance rule survives only as rule 3, for legacy baseline-less drafts;
+  - banner then edit: `updateAvailable == true`, then `startEditing()` / the first keystroke
+    → `updateAvailable == false`, blocks unchanged — **and the abandoned stash records a
+    conflict**, because it is a server body the app fetched and *showed the user*, which the
+    next autosave would otherwise full-overwrite unasked; `applyPendingUpdate()` while
     dirty/editing is a no-op;
   - second `load()` during an in-flight revalidation → latest-wins, no stale
     banner; content turning dirty mid-fetch → no banner;

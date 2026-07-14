@@ -765,6 +765,9 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# A")
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# B")  // queued behind A
+        XCTAssertEqual(
+            coordinator.state(for: documentID), .saving,
+            "coalescing behind an in-flight save is NOT the conflict hold — it must stay `.saving`")
         XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# B")
         XCTAssertNil(
             draftStore.draft(for: documentID)?.lastPushedMarkdown, "nothing has been confirmed pushed yet")

@@ -812,11 +812,19 @@ markdown write endpoint**. Understand this before touching the save path:
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
-  the reconnect (`ConnectivityMonitor`), foreground and launch triggers, self-guarded
-  against overlapping runs. `recoverDrafts()` is just the once-per-process launch
-  wrapper over it. Because it now runs on documents the user is *looking at*, it
-  **skips a `.failed` draft** (a retry candidate whose "Couldn't save" affordance is on
-  screen) and never discards a `.pendingSync` one.
+  the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
+  `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping
+  trigger is **coalesced, not dropped** (a reconnect landing mid-pass would otherwise be
+  lost until the next foreground cycle). Because it now runs on documents the user is
+  *looking at*, three things follow: it **skips a `.failed` draft** (a retry candidate
+  whose "Couldn't save" affordance is on screen); a beyond-window **`.pendingSync`** draft
+  is never discarded but **recorded as a conflict** (skipping it silently stranded it —
+  never pushed, never discarded, no pill, so the only escape was a retry tap that
+  overwrote the newer server copy unasked); and a stale **legacy** draft may be discarded
+  outright **only on the launch pass** (`isLaunchRecovery`), since mid-session the editor
+  may be *displaying* it and removing it would leave on-screen content with no disk
+  backing — off that path it is left to `reconcileDraft`, which discards *and installs*
+  the winning body atomically.
 - **A failed save is classified, not just failed.** `retryableSaveFailure` routes a
   transient/transport failure (offline, 5xx, rate limit) to **`.pendingSync`**
   ("Saved on this device · syncs when online") rather than the hard `.failed` reserved
