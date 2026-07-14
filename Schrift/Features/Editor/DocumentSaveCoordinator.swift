@@ -294,6 +294,10 @@ final class DocumentSaveCoordinator {
             }
             return
         }
+        // Latest-wins, and defence in depth for the invariant above: a stale slot parked by a
+        // hold that was released some other way must never be resurrected by this save's
+        // `finish` and pushed over the newer content.
+        queued[documentID] = nil
         start(documentID: documentID, save: save)
     }
 
@@ -426,6 +430,29 @@ final class DocumentSaveCoordinator {
     func clearResolvedConflict(documentID: UUID) {
         conflicts[documentID] = nil
         persistConflictOnDraft(documentID: documentID)
+        releaseHeldSave(documentID: documentID)
+    }
+
+    /// **The enqueue-hold broke an invariant, and this restores it.** Before the hold existed,
+    /// `queued[id] != nil` implied `inFlight[id] != nil` — the slot was only ever filled behind
+    /// an in-flight save, and `finish` always drained it. The hold parks a save with *nothing*
+    /// in flight, and only `resolveConflictKeepingLocal` ever drained that. So a conflict
+    /// released any other way (a proven `.push` from a detection site — the co-author reverted,
+    /// or the server holds a body we pushed) left the parked save stranded **forever**: nothing
+    /// starts it (`saveNow` no-ops on a non-nil `pendingSave`; `runSyncPass` skips a document
+    /// with a queued slot), so the user's edit silently never syncs while the caption offers a
+    /// retry that does nothing.
+    ///
+    /// And then it gets worse. The next keystroke's `enqueue` sees no conflict and nothing in
+    /// flight, so it takes the `start` path — which did **not** clear the slot. When that newer
+    /// save lands, `finish` pops the **stale** one and starts it: a full overwrite of the
+    /// server with the *older* body, which then write-throughs the cache and stamps
+    /// `lastConfirmedPushMarkdown`. The user's newer text is gone from screen, disk and server.
+    /// That is the full-overwrite save eating content — the one thing this subsystem exists to
+    /// prevent. So: lift the hold, start the work it was holding.
+    private func releaseHeldSave(documentID: UUID) {
+        guard inFlight[documentID] == nil, let held = queued.removeValue(forKey: documentID) else { return }
+        start(documentID: documentID, save: held)
     }
 
     /// **Invariant both resolvers rely on: while a conflict is recorded, no save for
@@ -440,10 +467,15 @@ final class DocumentSaveCoordinator {
     /// wins — an accepted race, recoverable from the server's version history).
     func resolveConflictKeepingLocal(documentID: UUID) {
         let resolved = conflicts[documentID]
-        clearResolvedConflict(documentID: documentID)
         // Defensive only, per the invariant above: were a save somehow in flight, its
         // `finish` would pick the held slot up anyway, so dropping out here is safe.
-        guard inFlight[documentID] == nil else { return }
+        guard inFlight[documentID] == nil else {
+            clearResolvedConflict(documentID: documentID)
+            return
+        }
+        // Advance the baseline on disk **before** clearing the record — `clearResolvedConflict`
+        // now starts the held save, and it must carry the advanced baseline, not the stale one.
+        //
         // The choice has to **stick on the draft**, not just in the in-memory map. The
         // released push very often fails (a conflict is usually reviewed on the same
         // flaky connection that produced it), and the draft would then survive carrying
@@ -470,12 +502,16 @@ final class DocumentSaveCoordinator {
                         serverUpdatedAt: resolved.serverUpdatedAt,
                         markdown: draft.baseline?.markdown ?? draft.markdown),
                     lastPushedMarkdown: draft.lastPushedMarkdown,
-                    // The user answered: the hold is released, on disk as well as in memory.
-                    conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
+                    // The user answered: the hold is released, on disk as well as in memory
+                    // (`clearResolvedConflict` below rewrites this to nil).
+                    conflictServerUpdatedAt: nil))
         }
-        if let held = queued.removeValue(forKey: documentID) {
-            start(documentID: documentID, save: held)
-        } else if let draft = draftStore.draft(for: documentID) {
+        // Releases the record AND starts whatever the hold was parking.
+        clearResolvedConflict(documentID: documentID)
+        // No held save (the conflict was recorded before any flush)? Then push the draft.
+        if queued[documentID] == nil, inFlight[documentID] == nil,
+            let draft = draftStore.draft(for: documentID)
+        {
             // Re-read: the draft above may have just had its baseline advanced.
             enqueue(
                 documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
@@ -491,9 +527,11 @@ final class DocumentSaveCoordinator {
     /// nothing. The conflict record deliberately carries no server markdown, so there is
     /// nothing to install from here.
     func resolveConflictKeepingServer(documentID: UUID) {
-        clearResolvedConflict(documentID: documentID)
+        // Drop the held work FIRST: `clearResolvedConflict` now *starts* whatever the hold was
+        // parking, and this is the one resolution where that work must be thrown away, not sent.
         queued[documentID] = nil
         draftStore.remove(documentID: documentID)
+        clearResolvedConflict(documentID: documentID)
         // The conflict is almost always reached from a `.failed`/`.pendingSync` draft, and
         // discarding it leaves nothing to save — so the state must not keep claiming one.
         // Left alone it strands the reading surface's "Couldn't save · tap to retry" (or

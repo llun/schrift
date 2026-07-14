@@ -807,6 +807,65 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
                 + "raise a conflict against the user's own writing")
     }
 
+    /// **The enqueue-hold broke an invariant: `queued != nil` used to imply `inFlight != nil`.**
+    /// The hold parks a save with nothing in flight, and only "Keep mine" ever drained it. So a
+    /// conflict released *any other way* — a proven `.push` from a detection site, e.g. the
+    /// co-author reverting — stranded that save forever: nothing starts it (`saveNow` no-ops on
+    /// a non-nil `pendingSave`; `runSyncPass` skips a queued document), so the user's edit
+    /// silently never syncs.
+    func testReleasingAConflictStartsTheSaveItWasHolding() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, draftStore, _) = makeCoordinator()
+
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }  // held
+
+        // A detection site proves the conflict is gone (the co-author reverted).
+        coordinator.clearResolvedConflict(documentID: documentID)
+
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(
+            coordinator.pendingSave(documentID: documentID),
+            "the work the hold was parking must actually be sent, not stranded forever")
+        await waitUntil { draftStore.draft(for: self.documentID) == nil }
+    }
+
+    /// …and the second half, which is the destructive one. If the released hold's save is left
+    /// parked, the NEXT save takes `enqueue`'s `start` path (no conflict, nothing in flight)
+    /// without clearing the slot — and when it lands, `finish` pops the **stale** save and
+    /// starts it, full-overwriting the server with the OLDER body and stamping it as our last
+    /// confirmed push. The user's newer text is destroyed on screen, disk and server.
+    func testAStaleHeldSaveIsNeverResurrectedOverNewerContent() async {
+        let log = RequestRecorder()
+        let bodies = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                bodies.record(request)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, draftStore, contentCache) = makeCoordinator()
+
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# OLD held body")
+        coordinator.clearResolvedConflict(documentID: documentID)  // releases and sends it
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        // The user types on. This save must be the last word.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# NEW body")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        await waitAndConfirmNever { coordinator.pendingSave(documentID: self.documentID) != nil }
+
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertEqual(
+            contentCache.content(for: documentID)?.markdown, "# NEW body",
+            "the newer body must be the last thing written — a resurrected stale save would overwrite it")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {
