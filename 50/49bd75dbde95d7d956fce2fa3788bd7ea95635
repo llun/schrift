@@ -1,0 +1,184 @@
+SchriftTests/Features/Editor/DraftSyncDecisionTests.swift
+  s_e60497739a7df0::t_ee1a6d5772ab42 1-36,76-157,179-239,241-242
+  s_e60497739a7df0::t_87ab436b80172e 158-178
+  s_e60497739a7df0::t_9bd4a8a859f0af 61-75
+  s_e60497739a7df0::t_4519cb50cc4a32 240
+  s_e60497739a7df0::t_08623389734d3d 37-60
+Schrift/Features/Editor/DraftSyncDecision.swift
+  s_e60497739a7df0::t_c52c5237b4b8d6 1-9,14-43,48-91,95-104
+  s_e60497739a7df0::t_fdeb7c239f0b09 92
+  s_e60497739a7df0::t_d6e269d5253dc7 10-13
+  s_e60497739a7df0::t_7bf2bb64ba448a 93-94
+  s_e60497739a7df0::t_b719da55c4367e 44-47
+SchriftTests/Features/Editor/PendingDraftStoreTests.swift
+  s_e60497739a7df0::t_b7ca72e708e4cb 77-113
+SchriftTests/Features/Editor/DocumentContentCacheStoreTests.swift
+  s_e60497739a7df0::t_4db5d33c53e4e1 83-113
+Schrift/Features/Editor/DocumentContentCacheStore.swift
+  s_e60497739a7df0::t_4f6255b5c3ec3f 22-33,39-53
+Schrift/Features/Editor/PendingDraftStore.swift
+  s_e60497739a7df0::t_6e95b523b7df71 6-10,22-39
+  s_e60497739a7df0::t_119af4e77b43aa 11
+  s_e60497739a7df0::t_9e76f3c7313536 12-16
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_e60497739a7df0::t_496c404c7d35fe 227-229
+  s_e60497739a7df0::t_21341424196720 155-159,163-164
+  s_e60497739a7df0::t_1697c57dba5402 377-379,385-386
+  s_e60497739a7df0::t_ddf40ebde1817a 89-91
+  s_e60497739a7df0::t_694976995748cc 179-181,185-199,244
+  s_e60497739a7df0::t_48026f7bba74c3 281
+  s_e60497739a7df0::t_b3e6fc0d58515d 202,206
+  s_e60497739a7df0::t_b9c2bf340399c9 32-34
+  s_e60497739a7df0::t_97ed0fc52f4d2d 388-393
+  s_e60497739a7df0::t_29f05f7d9622fe 47-52
+  s_e60497739a7df0::t_4a083d36c2949b 249-255
+  s_e60497739a7df0::t_e641649d5b84bf 294-295
+  s_e60497739a7df0::t_d0780dd1c02350 92-100
+  s_e60497739a7df0::t_77e0f510b37189 130-136
+  s_e60497739a7df0::t_6fce3243bada83 65-73
+  s_e60497739a7df0::t_9f1817a6efbbc9 359-374
+  s_e60497739a7df0::t_481bb27fe52e38 161-162,165-172
+  s_e60497739a7df0::t_742f63e4d3d841 203-205,207-209,219-226,230-238,256-277
+  s_e60497739a7df0::t_5c490c6d3a3c5f 310-313
+  s_e60497739a7df0::t_ca90051b0091a3 278
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_e60497739a7df0::t_74b58f83e36f4c 1563-1579,1583-1610
+  s_e60497739a7df0::t_9b5a0191af657e 1611-1651,1655-1676,1680-1681,1896-1897
+  s_e60497739a7df0::t_e8a9b04c0500b3 1682-1701,1707-1738,1743-1766
+  s_e60497739a7df0::t_29fb3d7fda40f8 9-11
+  s_e60497739a7df0::t_9d4d2f23c1f841 1580-1582
+  s_e60497739a7df0::t_9a4a149de55c9c 1767-1794,1800-1804
+  s_e60497739a7df0::t_4a7102743c1526 1652-1654
+  s_e60497739a7df0::t_b82e1495156458 1677-1679
+  s_e60497739a7df0::t_300d100a14c73b 1805-1827
+  s_e60497739a7df0::t_bdda7566d0dff2 1828-1857,1859,1861-1881,1890-1897
+  s_e60497739a7df0::t_d593a5d4c89497 1898-1904,1908-1913,1915-1939
+  s_e60497739a7df0::t_e5db8af7addc26 1795-1799
+  s_e60497739a7df0::t_3da654d669c431 1882-1889
+  s_e60497739a7df0::t_be5450b6124bf6 1858,1860
+  s_e60497739a7df0::t_b19f7d46efaf8f 1702-1706
+  s_e60497739a7df0::t_f33f4889e094ec 1739-1742
+  s_e60497739a7df0::t_357cd1f3ac7e58 1905-1907,1914
+  s_e60497739a7df0::t_81f82cfb4e09f1 1294-1310
+  s_e60497739a7df0::t_6852db2b45b5f3 738,768,799,1276,1370,1414
+  s_e60497739a7df0::t_f075c27c45d6f9 1311-1341
+  s_e60497739a7df0::t_8bfb1befc001f7 1342-1361
+  s_e60497739a7df0::t_ebcdd933661561 612-613,617-631,635-639
+Schrift/Features/Editor/EditorViewModel.swift
+  s_e60497739a7df0::t_30becb4a0d53e2 580-581
+  s_e60497739a7df0::t_8c36243024dbac 526-530
+  s_e60497739a7df0::t_9967b46b0e48ff 640-641,645-648,652,661-664
+  s_e60497739a7df0::t_f3ecbdf48f4ca9 1433
+  s_e60497739a7df0::t_2523e96ccadb05 1456-1458
+  s_e60497739a7df0::t_4fc93bfb5bfd31 285-287,293,297
+  s_e60497739a7df0::t_6838622ea98956 121,128-129
+  s_e60497739a7df0::t_3ff8e04ffa445a 692-693
+  s_e60497739a7df0::t_0e99fd1ef5ce30 456
+  s_e60497739a7df0::t_50b6259f2d671b 602-606,612-613
+  s_e60497739a7df0::t_35c1e134a61e18 736,744-745
+  s_e60497739a7df0::t_3fd14b35ed08aa 725
+  s_e60497739a7df0::t_2c11b723917eef 468-469
+  s_e60497739a7df0::t_ad451b997a2e36 122-127
+  s_e60497739a7df0::t_a32347490bd75b 672-675
+  s_e60497739a7df0::t_dd3b33b02ee9f5 16-18
+  s_e60497739a7df0::t_6c6cd3e14ac972 220-224,226-227
+  s_e60497739a7df0::t_f4002798c6ff12 237
+  s_e60497739a7df0::t_57f47dcb44e585 541-554,557-558
+  s_e60497739a7df0::t_169324385f9129 1459-1460
+  s_e60497739a7df0::t_788551b1792e5a 1448-1455
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_e60497739a7df0::t_4094f103eb6c36 90
+  s_e60497739a7df0::t_bb7fa75213cc45 107-108
+docs/offline-and-sync.md
+  s_e60497739a7df0::t_62085795b95c79 178-179,183-193
+  s_e60497739a7df0::t_9ee824d2f5e819 572-578
+  s_e60497739a7df0::t_5afc91da90303c 446-451,462
+  s_e60497739a7df0::t_f86014e0ad8a83 452-461
+  s_e60497739a7df0::t_f3a313e35ff5c6 600-605
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_e60497739a7df0::t_91127b3985a93c 593-595
+  s_e60497739a7df0::t_0cd85ad9f2142a 425-429,434-446
+  s_e60497739a7df0::t_df765afedfb761 492-545
+  s_e60497739a7df0::t_273c7079a52123 546-561,563-580
+  s_e60497739a7df0::t_326b7715e84861 177-243
+  s_e60497739a7df0::t_c0b97e0ff2e4a6 166,562,600,666,736
+  s_e60497739a7df0::t_8491b643fe01d6 244-264
+  s_e60497739a7df0::t_353e8cffb2eb80 265-392
+  s_e60497739a7df0::t_c4db0110540a49 430-433
+Schrift/Core/Networking/ConnectivityMonitor.swift
+  s_e60497739a7df0::t_3116732a2103d9 39-44,69,71-77
+  s_e60497739a7df0::t_bcc01044d6545e 1-33,35-38,45-46,65-68,70,78
+  s_e60497739a7df0::t_7ede03c2133304 34,47-64
+SchriftTests/Core/Networking/ConnectivityMonitorTests.swift
+  s_e60497739a7df0::t_3d9f0407f9ad49 1-38,59-69
+  s_e60497739a7df0::t_afb019473e2e77 39-58
+Schrift/App/SchriftApp.swift
+  s_e60497739a7df0::t_f46b9356ef5f37 7,16
+Schrift/App/RootView.swift
+  s_e60497739a7df0::t_24845d31d1de35 72-77,81-82,86
+  s_e60497739a7df0::t_37fef647d28165 24-25
+  s_e60497739a7df0::t_39d9c5c8051912 118
+  s_e60497739a7df0::t_35fa651a0135ad 79-80,84-85
+  s_e60497739a7df0::t_582cee4761557d 3-15
+  s_e60497739a7df0::t_e432bf12478aba 78,83
+Schrift/Features/Home/HomeViewModel.swift
+  s_e60497739a7df0::t_cd9c42bdc96217 140-146
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_e60497739a7df0::t_2ef3b6b50ec605 595-601,610-625,629-637
+  s_e60497739a7df0::t_b3ba3ab6d119b0 626-628
+  s_e60497739a7df0::t_031928df25e5a0 602-609
+SchriftTests/App/SyncTriggerTests.swift
+  s_e60497739a7df0::t_01c3f8a31a44eb 1-19
+Schrift/Features/Editor/EditorView.swift
+  s_e60497739a7df0::t_47befff1c44e7d 57,63,65,71
+  s_e60497739a7df0::t_8ffd2f6c5afc4f 452-456
+  s_e60497739a7df0::t_7ccccded41eada 58-62,64
+  s_e60497739a7df0::t_3c134ede229fac 39-44
+SchriftTests/Features/Editor/EditorViewTests.swift
+  s_e60497739a7df0::t_c75a02877668c3 54-57,59-60,64-70
+  s_e60497739a7df0::t_82d38edb246266 51-53,58,61-63
+Schrift/Features/Editor/EditorSaveBar.swift
+  s_e60497739a7df0::t_0c008c403046b6 112
+  s_e60497739a7df0::t_2a37558cae700e 79,84-90
+  s_e60497739a7df0::t_15ffb79f61a5ca 80-83
+Schrift/Core/Localization/Strings+fr.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 164
+Schrift/Core/Localization/Strings+nl.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 164
+Schrift/Core/Localization/Strings+pt.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 163
+Schrift/Core/Localization/Strings+en.swift
+  s_e60497739a7df0::t_78b8e93266926d 163
+Schrift/Core/Localization/Strings+it.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 162
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 160
+Schrift/Core/Localization/Strings+de.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 166
+Schrift/Core/Localization/Strings+es.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 166
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 160
+Schrift/Core/Localization/Strings+th.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 162
+Schrift/Core/Localization/Strings+sl.swift
+  s_e60497739a7df0::t_669aa6add6ebb0 173
+Schrift/Core/Localization/L10nKey.swift
+  s_e60497739a7df0::t_e4030fca7937d5 180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "5049bd75dbde95d7d956fce2fa3788bd7ea95635",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
