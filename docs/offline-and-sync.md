@@ -540,25 +540,45 @@ Yjs *decoder* and no CRDT merge, by design (Non-goals); a conflict is resolved b
 choosing one whole version.
 
 - **Record.** `DocumentSaveCoordinator` keeps `conflicts: [UUID: SyncConflict]`.
-  `SyncConflict` carries only `serverUpdatedAt` + `serverTitle` — deliberately **no
-  server markdown**, so "Keep the server version" re-fetches through the editor's
-  guarded funnel rather than installing a body the coordinator squirreled away.
-  Both detection sites record the same way (`syncPendingDrafts` inline;
-  `reconcileDraft` via `recordConflict(...)`), and `conflict(for:)` is read by the
-  VM's `syncConflict` so the pill appears/disappears live (`@Observable`).
+  `SyncConflict` carries only `serverUpdatedAt` — which the sheet shows ("The server
+  copy changed *\<when\>*"), the one fact the user needs to choose a winner — and
+  deliberately **no server markdown**, so "Keep the server version" re-fetches
+  through the editor's guarded funnel rather than installing a body the coordinator
+  squirreled away. Both detection sites record the same way (`syncPendingDrafts`
+  inline; `reconcileDraft` via `recordConflict(...)`), and `conflict(for:)` is read
+  by the VM's `syncConflict` so the pill appears/disappears live (`@Observable`).
+  **`reconcileDraft` records a conflict even in its `.pendingSync`/`.failed` early
+  return.** That branch exists so the tolerance rule can't discard content the retry
+  affordance is holding — but skipping *detection* there left the hole this whole
+  feature exists to close: the fetch has just proved the server moved on, and with no
+  record the enqueue-hold never engages, so the user's next "tap to retry"
+  (`saveNow` enqueues straight through) full-overwrites the web edit the app had
+  already fetched. Recording is non-destructive — nothing is installed, the draft
+  stays — and strictly more protective.
 - **Hold the push.** While a conflict is recorded, `enqueue` writes the draft and
   the queued slot (write-ahead, so `pendingSave()`/`hasUnsavedLocalContent` keep
   working) but does **not** start a save — an autosave flush must never overwrite
   the conflicting server copy unasked. `syncPendingDrafts` likewise skips a
-  conflicted draft entirely.
+  conflicted draft entirely. Together these give the **invariant both resolvers rely
+  on: while a conflict is recorded, no save for that document is in flight** (nothing
+  can record one *during* a save either — `apply` diverts to `cacheServerCopy`
+  whenever `pendingSave != nil`, so `reconcileDraft` is unreachable then). No save can
+  land underneath a resolver and resurrect the losing body.
 - **Keep mine** (`resolveConflictKeepingLocal`): clear the record and release the
   held push — an unchecked, last-writer-wins overwrite the user chose (the
   overwritten server version is recoverable from the web's version history). The VM
   wrapper `flushPendingChanges()` first, so the push captures the newest content.
-- **Keep the server version** (`resolveConflictKeepingServer`): clear the record,
-  drop the local draft/queued work, and let the VM `refresh()` install the server
-  body through the normal `apply` funnel (`mayPredateSave` / generation checks / the
-  dirty baseline all stay in force). This is the one sanctioned discard.
+- **Keep the server version** (`resolveConflictKeepingServer`): the one sanctioned
+  discard — and it **fetches before it discards**. The VM ends the editing session,
+  fetches the server body, and only once that body is *in hand* (generation still
+  current, `mayPredateSave` false) drops the draft/queued work and installs it.
+  Discarding first and refreshing after was a real data-loss path: a conflict is
+  usually reviewed on the same flaky connection that caused it, and a failed fetch
+  then left the discarded body still on screen with nothing backing it on disk, the
+  conflict record cleared and the stale baseline intact — so the next keystroke
+  full-overwrote the server copy the user had just chosen to keep. On failure the
+  draft *and* the conflict both survive, so the pill and sheet stay available and
+  everything on screen is still backed by disk.
 - **No false conflicts against our own writes.** After a confirmed save the
   coordinator remembers what it pushed (`lastConfirmedPushMarkdown`) and stamps it
   onto the next edit's draft as `lastPushedMarkdown`, so `draftSyncDecision` rule 1
