@@ -831,6 +831,41 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNotNil(draftStore.draft(for: documentID))
     }
 
+    /// The **benign** deferred re-decision. When a save that carried an observation fails, `finish`
+    /// re-runs the decision — and if that observation resolves to a *proven* `.push` (the server
+    /// held our own body, or a body that descends from the baseline), it must record **nothing**.
+    /// Recording there would manufacture a false "conflict against the user's own writing" after a
+    /// failed save, the exact hazard this whole subsystem exists to prevent. Every other test that
+    /// reaches this block feeds a diverged body (`.conflict`); this pins the `.push` arm.
+    func testAFailedSaveWhoseObservationMatchesOurBodyRecordsNoConflict() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        // The content PATCH is held open, then fails: the observation reaches `finish`'s re-decide.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        coordinator.enqueue(
+            documentID: documentID, title: "Doc", markdown: "# Mine",
+            baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
+        // The revalidation saw a server body EQUAL TO OUR OWN (rule 0), with a newer `updated_at`.
+        coordinator.noteServerObservedDuringSave(
+            documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000), markdown: "# Mine")
+
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        XCTAssertNil(
+            coordinator.conflict(for: documentID),
+            "the observed body is our own — a proven push, never a conflict against the user's own writing")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+    }
+
     /// The supersession rule. If the content PATCH **landed**, the server holds *our* body, so an
     /// observation taken during that save is stale — deciding against it would manufacture a
     /// conflict against the user's own writing.
