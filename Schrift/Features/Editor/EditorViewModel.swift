@@ -537,11 +537,10 @@ final class EditorViewModel {
                     // legacy draft the server has moved past, which is visible unsaved work.
                     // `runSyncPass` and `reconcileDraft` both record a conflict for it.
                     saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-                case .push:
-                    // Nothing left to ask about (the server came back to the baseline, or its
-                    // body is one we pushed). Release the hold — nothing else would, and it
-                    // parks every save for this document forever.
-                    saveCoordinator.clearResolvedConflict(documentID: documentID)
+                case .push(let evidence):
+                    // Nothing left to ask about — but only if the push is *proven*, not merely
+                    // clock-tolerated. See `releaseConflictIfProven`.
+                    _ = releaseConflictIfProven(evidence, serverUpdatedAt: formatted.updatedAt)
                 }
             }
             cacheServerCopy(formatted)
@@ -645,10 +644,9 @@ final class EditorViewModel {
             {
             case .conflict, .discardServerWins:
                 saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-            case .push:
-                // Genuinely nothing left to ask about — release any hold, or it parks every
-                // save for this document forever.
-                saveCoordinator.clearResolvedConflict(documentID: documentID)
+            case .push(let evidence):
+                // Genuinely nothing left to ask about — but only on *proven* evidence.
+                _ = releaseConflictIfProven(evidence, serverUpdatedAt: formatted.updatedAt)
             }
             cacheServerCopy(formatted)
             return
@@ -666,10 +664,15 @@ final class EditorViewModel {
             serverUpdatedAt: formatted.updatedAt,
             serverMarkdown: formatted.content ?? "")
         {
-        case .push:
+        case .push(let evidence):
             // No longer a conflict (if it ever was): release any stale hold before enqueuing,
-            // or the enqueue below would simply park again behind it.
-            saveCoordinator.clearResolvedConflict(documentID: documentID)
+            // or the enqueue below would simply park again behind it. But a **clock-only** push
+            // is not proof the conflict is gone — releasing on that basis would push a full
+            // overwrite over the co-author with no prompt. Keep the hold and re-record.
+            guard releaseConflictIfProven(evidence, serverUpdatedAt: formatted.updatedAt) else {
+                cacheServerCopy(formatted)
+                return
+            }
             // The draft still descends from the server (or the server's last writer is
             // us). Cache the fresh body and hand the draft back to the save pipeline —
             // otherwise a stored draft that wins with no save pushing it and no
@@ -716,6 +719,26 @@ final class EditorViewModel {
             saveCoordinator.clearResolvedConflict(documentID: documentID)
             installFetched(formatted)
         }
+    }
+
+    /// A `.push` releases a standing conflict **only when it carries content evidence.**
+    ///
+    /// Rules 0–2 prove something about the body (the server holds ours, or holds what we
+    /// pushed, or ours descends from it), so a conflict really is gone. **Rule 3 proves
+    /// nothing** — it only says the draft's *client* clock is within tolerance of the server's
+    /// `updated_at`. And the user typing *after* a conflict was surfaced bumps that clock past
+    /// the server's, so rule 3 then starts answering `.push` for a baseline-less draft whose
+    /// conflict is still standing and still persisted. Releasing on that basis discarded the
+    /// hold and full-overwrote the co-author with no pill and no prompt — the persisted hold's
+    /// whole purpose is to survive exactly that relaunch. So a clock-only push re-records
+    /// instead. Returns false when the conflict stands and the caller must not proceed.
+    private func releaseConflictIfProven(_ evidence: PushEvidence, serverUpdatedAt: Date) -> Bool {
+        if evidence == .clockToleranceOnly, saveCoordinator.conflict(for: documentID) != nil {
+            saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: serverUpdatedAt)
+            return false
+        }
+        saveCoordinator.clearResolvedConflict(documentID: documentID)
+        return true
     }
 
     /// Silent cache update while local edits own the screen — next open (or
@@ -1645,9 +1668,27 @@ final class EditorViewModel {
         // the coordinator's protection is dead code on exactly the path (a dirty editor
         // resolving a conflict) it was written for. `currentMarkdown()` is precisely the body
         // the flush is about to push, so the tiebreak can only ever match our own writing.
+        let baselineBeforeResolving = serverBaseline
         serverBaseline = DraftBaseline(
             serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown())
         flushPendingChanges()
+        // **Re-check after the flush.** `isDirty` is not proof there is anything to push:
+        // `flushPendingChanges` enqueues nothing when the content serializes back to
+        // `savedMarkdown` (the user edited and then undid it). The pre-flush guard passed, the
+        // flush no-opped, `resolveConflictKeepingLocal` found no queued slot and no draft and
+        // started nothing — yet the conflict was cleared, so the next clean revalidation
+        // installed the co-author's body. The sheet promised "Overwrites the server copy" and
+        // the user got precisely the outcome they declined. With nothing to push, the record is
+        // simply moot: release it and leave the baseline alone.
+        guard
+            saveCoordinator.pendingSave(documentID: documentID) != nil
+                || saveCoordinator.storedDraft(documentID: documentID) != nil
+        else {
+            // Nothing was pushed, so do not pretend we overwrote anything: put the baseline back.
+            serverBaseline = baselineBeforeResolving
+            saveCoordinator.clearResolvedConflict(documentID: documentID)
+            return
+        }
         saveCoordinator.resolveConflictKeepingLocal(documentID: documentID)
     }
 

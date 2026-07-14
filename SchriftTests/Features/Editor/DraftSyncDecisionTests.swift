@@ -22,7 +22,9 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverMarkdown: "# My text"
         )
 
-        XCTAssertEqual(decision, .push, "the server already holds our body — there is nothing to conflict about")
+        XCTAssertEqual(
+            decision, .push(.serverHoldsOurBody),
+            "the server already holds our body — there is nothing to conflict about")
     }
 
     /// It must not swallow a *real* conflict: a server body that differs from ours still
@@ -54,7 +56,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Mine"
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.serverHoldsOurLastPush))
     }
 
     func testLastPushedMatchesServerOnlyCosmetically() {
@@ -68,7 +70,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base.addingTimeInterval(10_000),
             serverMarkdown: "- a\n- b"
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.serverHoldsOurLastPush))
     }
 
     func testLastPushedMarkdownNonMatchWithNilBaselineFallsThroughToTolerance() {
@@ -83,7 +85,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverMarkdown: "# Server",
             tolerance: 120
         )
-        XCTAssertEqual(within, .push)
+        XCTAssertEqual(within, .push(.clockToleranceOnly))
 
         let beyond = draftSyncDecision(
             baseline: nil,
@@ -124,7 +126,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base,
             serverMarkdown: "# Whatever"
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.descendsFromBaseline))
     }
 
     func testServerOlderThanBaselinePushes() {
@@ -136,7 +138,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base.addingTimeInterval(-500),
             serverMarkdown: "# Different"
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.descendsFromBaseline))
     }
 
     func testServerNewerButContentMatchesBaselinePushes() {
@@ -150,7 +152,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Base body"
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.descendsFromBaseline))
     }
 
     func testServerNewerBodyMatchesBaselineOnlyCosmetically() {
@@ -162,7 +164,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "- one"
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.descendsFromBaseline))
     }
 
     func testServerMovedOnConflicts() {
@@ -188,7 +190,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Base"
         )
-        XCTAssertEqual(matching, .push)
+        XCTAssertEqual(matching, .push(.descendsFromBaseline))
 
         let diverged = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: nil, markdown: "# Base"),
@@ -221,7 +223,16 @@ final class DraftSyncDecisionTests: XCTestCase {
                 XCTAssertNotEqual(
                     decision, .discardServerWins,
                     "baseline-carrying draft discarded at offset \(offset), body \(body)")
-                XCTAssertTrue(decision == .push || decision == .conflict)
+                switch decision {
+                case .push(let evidence):
+                    XCTAssertNotEqual(
+                        evidence, .clockToleranceOnly,
+                        "a baseline-carrying draft must never fall to the clock rule — that is rule 3's job")
+                case .conflict:
+                    break
+                case .discardServerWins:
+                    XCTFail("unreachable: asserted above")
+                }
             }
         }
     }
@@ -238,7 +249,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverMarkdown: "# Server",
             tolerance: 120
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.clockToleranceOnly))
     }
 
     func testLegacyDraftBeyondToleranceDiscardsServerWins() {
@@ -264,7 +275,7 @@ final class DraftSyncDecisionTests: XCTestCase {
             serverMarkdown: "# Server",
             tolerance: 120
         )
-        XCTAssertEqual(decision, .push)
+        XCTAssertEqual(decision, .push(.clockToleranceOnly))
     }
 
     // MARK: - retryableSaveFailure

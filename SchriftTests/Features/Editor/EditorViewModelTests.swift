@@ -2677,6 +2677,51 @@ final class EditorViewModelTests: XCTestCase {
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
+    /// **A clock-only push must not release a standing conflict.** `.push` has two very different
+    /// provenances: rules 0–2 prove something about the *body*, but rule 3 proves nothing — it
+    /// only says the draft's client clock is within tolerance of the server's `updated_at`. And
+    /// the user typing *after* a conflict was surfaced bumps that clock past the server's, so
+    /// rule 3 then starts answering `.push` for a baseline-less draft whose conflict is still
+    /// standing and still persisted. Releasing on that basis discarded the hold and
+    /// full-overwrote the co-author with no pill and no prompt — defeating the whole point of
+    /// persisting the hold across the relaunch.
+    func testAClockOnlyPushDoesNotReleaseAStandingConflict() async {
+        let log = RequestRecorder()
+        let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        // A legacy (baseline-less) draft carrying an unanswered, persisted conflict — and whose
+        // own clock is NEWER than the server's, because the user kept typing after the pill
+        // appeared. Rule 3 therefore answers `.push`.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# My only copy", updatedAt: Date(),
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 1_768_473_000)))
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // A fresh coordinator: the conflict rehydrates, but `states` is empty (`.idle`).
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        let viewModel = EditorViewModel(
+            client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
+            contentCache: contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "the hold was rehydrated")
+        // The server holds the co-author's body, with an `updated_at` OLDER than the draft's
+        // clock — so rule 3 (and only rule 3) says `.push`.
+        stubLoadAndSavePipeline(content: "# Co-author edit", log: log)
+
+        await viewModel.load()
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a clock-tolerance push is not evidence the conflict is gone — releasing it here overwrites "
+                + "the co-author with no prompt")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# My only copy", "and the user's only copy survives")
+    }
+
     // MARK: - The conflict record's lifecycle
     //
     // The rule the four detection sites share: **a conflict record is meaningful only while
