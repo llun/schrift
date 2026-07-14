@@ -893,6 +893,18 @@ markdown write endpoint**. Understand this before touching the save path:
   `DocumentSaveCoordinator.lastConfirmedPush(documentID:)` — **not** from the stored draft,
   which is nil right after a save lands and would make our own just-pushed body read as a
   diverged server and raise a false conflict against the user.
+- **A held save must never read as a saved save — in the editing header either.** Detection
+  on the dirty branch means a push can now be held *mid-session*, so the surface the user is
+  actually looking at while typing is `EditorSaveBar`, not the reading caption. Its pure
+  resolver `saveStatusDisplay` therefore applies the same precedence rule 0 as `syncCaption`:
+  a recorded conflict outranks the save state, because nothing is being sent and **no
+  affordance here can send it** (`saveNow` re-enqueues straight back into the hold). It shows
+  a passive "Saved on this device" (`cloud_off`) rather than "Saving…"/"Saved" — which would
+  claim a sync that is not happening — and offers no `.failed` "tap to retry", which would
+  only re-park. The conflict pill (rendered during editing too) stays the sole affordance.
+  The one carve-out is `.dirty`, which keeps its **Save** funnel: the newest keystrokes are
+  not on disk until the flush writes the draft, so "Saved on this device" would be a lie
+  there, and the tap is exactly what persists them.
 - **Known limitation** (deliberate; written up in
   [`docs/offline-and-sync.md`](docs/offline-and-sync.md)): `DraftBaseline` records no
   **title**, so a remote *rename* is rule 2's body-equality `.push` and the replay's title

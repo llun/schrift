@@ -174,6 +174,8 @@ struct EditorView: View {
             if viewModel.isEditing {
                 EditorSaveBar(
                     saveState: viewModel.saveState,
+                    hasConflict: viewModel.syncConflict != nil,
+                    hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
                     onSaveTap: { viewModel.saveNow() },
                     onDone: { viewModel.finishEditing() }
                 )

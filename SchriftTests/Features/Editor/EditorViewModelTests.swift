@@ -2396,6 +2396,83 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "parked by the enqueue-hold")
     }
 
+    /// The dirty branch's `pendingSave == nil` gate, which is what keeps the coordinator's
+    /// invariant ("while a conflict is recorded, no save for that document is in flight")
+    /// true now that detection runs *on* that branch. `apply` is reachable with a save on the
+    /// wire — the marker is taken when the fetch is **issued**, so a save that starts
+    /// afterwards leaves `mayPredateSave` false — and `finish` drains the queued slot
+    /// **unconditionally**, so a conflict recorded mid-PATCH would have `finish` *start* the
+    /// held save behind the user's back. The dialog would be unanswerable anyway: an
+    /// already-sent full overwrite cannot be recalled, so "keep the server version" would
+    /// fetch back our own body.
+    ///
+    /// The second half matters just as much: deferring must not become a permanent blind
+    /// spot. The next revalidation, seeing the settled state, has to detect it.
+    func testNoConflictIsRecordedWhileOurSaveIsInFlightButTheNextRevalidationDetectsIt() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+
+        let baseBody = formattedBody(content: "# Base")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: baseBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine")
+
+        // The content PATCH is held open *longer* than the GET, so the co-author's body
+        // genuinely lands while our own save is still on the wire — the window the gate exists
+        // for.
+        let divergedBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: divergedBody, error: nil, delay: 0.3)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.8)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        // The GET must be issued BEFORE the save starts, or `mayPredateSave` would divert the
+        // response and the gate would never be reached. Pin that on the recorder — never on
+        // `async let` ordering, which answers a different question.
+        let getsBefore = log.count(ofMethod: "GET", urlContaining: "formatted-content")
+        let revalidation = Task { await viewModel.refresh() }
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") > getsBefore }
+        viewModel.flushPendingChanges()  // `enqueue` → `start` sets the in-flight save synchronously
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "our save is on the wire")
+        await revalidation.value
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "a conflict recorded mid-PATCH is unanswerable, and `finish` would start the held save")
+
+        // The save settles normally — it was never held.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertNil(coordinator.conflict(for: documentID), "…and nothing was recorded behind it")
+
+        // The divergence is real (the server body is neither our push nor the baseline), and
+        // the user is still typing — so the next revalidation must detect it.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine, still typing")
+        await viewModel.refresh()
+
+        XCTAssertEqual(
+            viewModel.syncConflict?.serverUpdatedAt,
+            ISO8601DateFormatter().date(from: "2026-02-20T10:30:00Z"),
+            "the deferred conflict is detected by the next revalidation — deferral is not a blind spot")
+    }
+
     /// The flip side, and the reason rule 1 must be fed from the coordinator rather than the
     /// stored draft: right after **our own** save lands there is no draft left to carry the
     /// stamp, and `serverBaseline` is deliberately not advanced by a save — so a revalidation
