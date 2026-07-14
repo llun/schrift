@@ -197,8 +197,18 @@ final class DocumentSaveCoordinator {
     /// The editor fetched a server body while a save was in flight, so it could not run the
     /// decision. Hand it over; `finish` re-decides once the save settles.
     func noteServerObservedDuringSave(documentID: UUID, serverUpdatedAt: Date, markdown: String) {
-        guard inFlightContent[documentID] != nil else { return }
+        guard hasSaveInFlight(documentID: documentID) else { return }
         serverObservedDuringSave[documentID] = (serverUpdatedAt: serverUpdatedAt, markdown: markdown)
+    }
+
+    /// Whether a save for this document is **on the wire** — which is what actually blocks
+    /// detection, and is NOT the same as `pendingSave(_:) != nil`. A save sitting in `queued`
+    /// with nothing in flight can only be one the conflict hold parked, so gating detection on
+    /// `pendingSave` also blocked it for exactly the documents that already have a conflict:
+    /// they could then never have it *released*, because no other site can decide while local
+    /// work exists. `finish` is where an in-flight save's observation is re-decided.
+    func hasSaveInFlight(documentID: UUID) -> Bool {
+        inFlightContent[documentID] != nil
     }
 
     func saveMarker(documentID: UUID) -> SaveMarker {
@@ -563,6 +573,13 @@ final class DocumentSaveCoordinator {
     private func finish(documentID: UUID, save: PendingSave, error: Error?, contentLanded: Bool) {
         inFlight[documentID] = nil
         inFlightContent[documentID] = nil
+        // Scoped to the save that has just settled — so it must be dropped here, on EVERY branch,
+        // not only the one that consumes it. Leaving it behind the `discardedDuringSave` early
+        // return let an observation outlive its save and be replayed against an unrelated later
+        // one, manufacturing a **phantom conflict**: the pill would tell the user the server had
+        // changed at a timestamp that no longer means anything, park every further save behind
+        // it, and let "Keep my version" advance the baseline to that bogus stamp.
+        let observed = serverObservedDuringSave.removeValue(forKey: documentID)
         // Any revalidation fetch still in flight was issued before this save
         // settled, so its response may predate it (see `mayPredateSave`).
         settledSaves[documentID, default: 0] += 1
@@ -645,9 +662,7 @@ final class DocumentSaveCoordinator {
         // Only when the content did NOT land: if it did, the server holds *our* body and the
         // observation is superseded (comparing against it would manufacture a false conflict
         // against the user's own writing).
-        if let observed = serverObservedDuringSave.removeValue(forKey: documentID), !contentLanded,
-            let draft = draftStore.draft(for: documentID)
-        {
+        if let observed, !contentLanded, let draft = draftStore.draft(for: documentID) {
             switch draftSyncDecision(
                 baseline: draft.baseline,
                 lastPushedMarkdown: draft.lastPushedMarkdown ?? lastConfirmedPushMarkdown[documentID],

@@ -61,13 +61,6 @@ func syncCaption(
         return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false)
     }
     if hasUnsavedLocalContent {
-        // A recorded conflict **holds** the push: nothing will sync, and no retry can run,
-        // until the user answers the pill (`saveNow` re-enqueues straight back into the
-        // hold). So the caption must neither promise a sync ("syncs when online") nor offer
-        // a retry that silently no-ops — both were live here, because the hold parks the
-        // save in `.pendingSync` and a conflict can also be recorded over a `.failed` one.
-        // It IS on the device, so say only that, and leave the pill as the sole affordance.
-        // (Handled above, ahead of every other tier.)
         if case .failed = saveState {
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }

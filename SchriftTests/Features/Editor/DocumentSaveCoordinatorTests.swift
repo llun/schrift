@@ -741,6 +741,72 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(makeProcess().conflict(for: documentID), "…and a fresh process sees no stale hold")
     }
 
+    /// **`finish`'s queued restart calls `start()` directly, bypassing `enqueue`'s hold.** So a
+    /// conflict detected *while that save was failing* — by the deferred re-decision below, or by
+    /// a sync pass — would be pushed straight over the moment the save settled. This is the one
+    /// place a just-detected conflict can be overwritten, and the guard must re-apply the hold.
+    func testAJustDetectedConflictIsNotPushedOverByTheQueuedRestart() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let coauthor = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        // The content PATCH is held open, then fails: NOTHING reaches the server.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+            }
+            return .init(statusCode: 200, headers: [:], body: coauthor, error: nil)
+        }
+        // Save A is on the wire; the user keeps typing, so B coalesces into `queued`.
+        coordinator.enqueue(
+            documentID: documentID, title: "Doc", markdown: "# A",
+            baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
+        coordinator.enqueue(
+            documentID: documentID, title: "Doc", markdown: "# B",
+            baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
+        XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, "# B", "B is queued behind A")
+
+        // A revalidation lands during A and sees the co-author's diverged body.
+        coordinator.noteServerObservedDuringSave(
+            documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000),
+            markdown: "# Co-author")
+
+        // A fails → `finish` re-decides, records the conflict … and must NOT start B.
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "the failed save's observation is re-decided")
+        XCTAssertEqual(
+            coordinator.pendingSave(documentID: documentID)?.markdown, "# B", "B is re-parked, not sent")
+        await waitAndConfirmNever { self.savesInFlight(log) > 1 }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+    }
+
+    /// The supersession rule. If the content PATCH **landed**, the server holds *our* body, so an
+    /// observation taken during that save is stale — deciding against it would manufacture a
+    /// conflict against the user's own writing.
+    func testAnObservationIsDiscardedWhenTheSaveActuallyLanded() async {
+        let log = RequestRecorder()
+        let (coordinator, _, _) = makeCoordinator()
+        stubSavePipeline(log: log, saveDelay: 0.3)
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        coordinator.noteServerObservedDuringSave(
+            documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000),
+            markdown: "# Some other body")
+
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        XCTAssertNil(
+            coordinator.conflict(for: documentID),
+            "the save landed, so the server holds OUR body — the observation is superseded and must never "
+                + "raise a conflict against the user's own writing")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {

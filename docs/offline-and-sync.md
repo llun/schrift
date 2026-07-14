@@ -558,8 +558,8 @@ choosing one whole version.
   copy changed *\<when\>*"), the one fact the user needs to choose a winner — and
   deliberately **no server markdown**, so "Keep the server version" re-fetches
   through the editor's guarded funnel rather than installing a body the coordinator
-  squirreled away. Both detection sites record the same way (`syncPendingDrafts`
-  inline; `reconcileDraft` via `recordConflict(...)`), and `conflict(for:)` is read
+  squirreled away. Every detection site records the same way — through
+  `recordConflict(...)`, never a direct write (see the single-writer rule below), and `conflict(for:)` is read
   by the VM's `syncConflict` so the pill appears/disappears live (`@Observable`).
   **The record is persisted, not just in-memory** — mirrored onto the draft as
   `PendingDraft.conflictServerUpdatedAt`, and rehydrated into `conflicts` in the

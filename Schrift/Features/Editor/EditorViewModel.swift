@@ -510,17 +510,21 @@ final class EditorViewModel {
             // hence `lastConfirmedPush(documentID:)`. Without it, `serverBaseline` (which a
             // save deliberately does not advance) would make our own just-pushed body read
             // as a diverged server.
-            // A save is on the wire, so detection cannot run (a conflict may only be recorded
-            // with no save in flight). **Do not throw the observation away**: if that save
-            // fails, nothing reached the server, the draft survives with a stale baseline, and
-            // the next flush would full-overwrite the body we just fetched and cached. Hand it
-            // to the coordinator, which re-decides in `finish` once the invariant holds again.
-            if saveCoordinator.pendingSave(documentID: documentID) != nil {
+            // A save **on the wire** is the only thing that blocks detection (a conflict may
+            // only be recorded with no save in flight). Note that this is *not* the same as
+            // `pendingSave != nil`: a save sitting in `queued` with nothing in flight can only
+            // be one the conflict hold parked, and gating on `pendingSave` would then block
+            // detection for exactly the documents that already have a conflict — so they could
+            // never have it released.
+            if saveCoordinator.hasSaveInFlight(documentID: documentID) {
+                // **Do not throw the observation away.** If that save fails, nothing reached the
+                // server, the draft survives with a stale baseline, and the next flush would
+                // full-overwrite the body we just fetched and cached. Hand it to the coordinator,
+                // which re-decides in `finish` once the invariant holds again.
                 saveCoordinator.noteServerObservedDuringSave(
                     documentID: documentID, serverUpdatedAt: formatted.updatedAt,
                     markdown: formatted.content ?? "")
-            }
-            if saveCoordinator.pendingSave(documentID: documentID) == nil {
+            } else {
                 // **Do not require a baseline.** `serverBaseline` is nil exactly for a *legacy*
                 // (baseline-less) draft — one written by a build from before `DraftBaseline`
                 // existed, which persists across the app update that adds it. Bailing out on nil
@@ -691,17 +695,21 @@ final class EditorViewModel {
             // is looking. No storm: `enqueue` makes `pendingSave` non-nil, so `apply`
             // short-circuits before `reconcileDraft` on every later fetch.
             cacheServerCopy(formatted)
-            // A save is on the wire, so detection cannot run (a conflict may only be recorded
-            // with no save in flight). **Do not throw the observation away**: if that save
-            // fails, nothing reached the server, the draft survives with a stale baseline, and
-            // the next flush would full-overwrite the body we just fetched and cached. Hand it
-            // to the coordinator, which re-decides in `finish` once the invariant holds again.
-            if saveCoordinator.pendingSave(documentID: documentID) != nil {
+            // A save **on the wire** is the only thing that blocks detection (a conflict may
+            // only be recorded with no save in flight). Note that this is *not* the same as
+            // `pendingSave != nil`: a save sitting in `queued` with nothing in flight can only
+            // be one the conflict hold parked, and gating on `pendingSave` would then block
+            // detection for exactly the documents that already have a conflict — so they could
+            // never have it released.
+            if saveCoordinator.hasSaveInFlight(documentID: documentID) {
+                // **Do not throw the observation away.** If that save fails, nothing reached the
+                // server, the draft survives with a stale baseline, and the next flush would
+                // full-overwrite the body we just fetched and cached. Hand it to the coordinator,
+                // which re-decides in `finish` once the invariant holds again.
                 saveCoordinator.noteServerObservedDuringSave(
                     documentID: documentID, serverUpdatedAt: formatted.updatedAt,
                     markdown: formatted.content ?? "")
-            }
-            if saveCoordinator.pendingSave(documentID: documentID) == nil {
+            } else {
                 saveCoordinator.enqueue(
                     documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
             }
@@ -1818,7 +1826,14 @@ final class EditorViewModel {
         }
         updateAvailable = false
         pendingFreshContent = nil
-        guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
+        guard !saveCoordinator.hasSaveInFlight(documentID: documentID) else {
+            // Same rule as `apply`: a stash abandoned while a save is on the wire is still an
+            // observed server body. Hand it over rather than dropping it — this was the one
+            // detection site left that discarded an observation instead of deferring it.
+            saveCoordinator.noteServerObservedDuringSave(
+                documentID: documentID, serverUpdatedAt: pending.serverUpdatedAt, markdown: pending.markdown)
+            return
+        }
         // Optional baseline, and the draft's own clock for rule 3 — see `apply`'s dirty branch:
         // a legacy (baseline-less) draft must not be the one case that gets no detection.
         let draft = saveCoordinator.storedDraft(documentID: documentID)
@@ -1838,12 +1853,16 @@ final class EditorViewModel {
     }
 
     private func markDirty() {
-        abandonPendingFreshContent()
-        isDirty = true
+        // `dirtySince` FIRST: `abandonPendingFreshContent` feeds it to rule 3 as the local clock
+        // for a baseline-less document, and a nil `dirtySince` there falls back to `Date()` —
+        // which is always within tolerance of the server, so rule 3 would answer `.push`
+        // unconditionally and drop the fetched server body with no conflict recorded.
         let now = Date()
         if dirtySince == nil {
             dirtySince = now
         }
+        abandonPendingFreshContent()
+        isDirty = true
         if let dirtySince, now.timeIntervalSince(dirtySince) >= Self.maxAutosaveDeferral {
             flushPendingChanges()
             return
