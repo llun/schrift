@@ -2038,6 +2038,88 @@ final class EditorViewModelTests: XCTestCase {
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
+    /// Keeping the server version must still work when the enqueue-hold has parked a save
+    /// in the queued slot (the user typed once more after the conflict landed). A held save
+    /// is **never sent**, so it cannot have raced the fetch — but `SaveMarker.hadPendingSave`
+    /// used to ask `pendingSave != nil`, which the hold pins true forever (nothing drains it
+    /// and `settledSaves` never advances). `mayPredateSave` was therefore true on every
+    /// attempt, permanently wedging the non-destructive resolution and leaving only the
+    /// overwrite the user had explicitly declined.
+    func testKeepingTheServerVersionWorksWithASaveHeldByTheConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The user keeps typing after the conflict lands; the flush is HELD, not pushed.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine again")
+        viewModel.flushPendingChanges()
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the save is parked by the hold")
+        XCTAssertEqual(savesInFlight(log), 0, "and never sent")
+
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNil(viewModel.syncConflict, "the resolution is not wedged by the held save")
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "the held save is dropped with the draft")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") }, "the server body is installed")
+        XCTAssertEqual(savesInFlight(log), 0, "keep-server never pushes")
+    }
+
+    /// "Keep mine" pushes the user's **newest in-progress** text, not the older stored
+    /// draft — which is what the load-bearing `flushPendingChanges()` in
+    /// `resolveConflictKeepingMine()` is for.
+    func testKeepingMineFromAnEditingSessionPushesTheNewestText() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Stored draft", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Newest in-progress text")
+
+        viewModel.resolveConflictKeepingMine()
+
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(viewModel.syncConflict)
+        XCTAssertTrue(
+            coordinator.pendingSave(documentID: documentID)?.markdown.contains("Newest in-progress text") != false,
+            "the released push carries the newest edit, not the stored draft")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
     /// reconcileClean's unchanged-body (else) branch advances the baseline's
     /// timestamp: a cache-restored entry with an unknown (void-save) server
     /// timestamp gets promoted to the real server clock once a clean revalidation

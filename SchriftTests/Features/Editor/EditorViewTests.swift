@@ -104,4 +104,16 @@ final class EditorViewTests: XCTestCase {
         XCTAssertFalse(caption.offersRetry)
         XCTAssertEqual(caption.text, .key(.editor_sync_just_now))
     }
+
+    // MARK: - Conflict sheet
+
+    /// The conflict sheet tells the user *when* the other copy changed — the one fact they
+    /// need to choose a winner — so the relative time must read as the past, not the future.
+    func testConflictServerChangedDateReadsAsThePast() {
+        let changed = conflictServerChangedDate(now.addingTimeInterval(-600), now: now, locale: locale)
+
+        XCTAssertTrue(
+            changed.localizedCaseInsensitiveContains("ago"),
+            "a server copy changed 10 minutes back must read as elapsed time, got \(changed)")
+    }
 }

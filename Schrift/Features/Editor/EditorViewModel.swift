@@ -1535,6 +1535,12 @@ final class EditorViewModel {
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
+        // The exact local work the user chose to discard. Only *this* may be destroyed —
+        // note the held save is part of it (the enqueue-hold parks one whenever they kept
+        // typing after the conflict landed), so this is a snapshot to compare against, not
+        // an expectation of "nothing pending".
+        let discardedDraft = saveCoordinator.storedDraft(documentID: documentID)
+        let discardedSave = saveCoordinator.pendingSave(documentID: documentID)
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
@@ -1546,6 +1552,18 @@ final class EditorViewModel {
                 showError(.editor_error_refresh)
                 return
             }
+            // The user can tap straight back into the document while this fetch is in
+            // flight — ending the editing session above does not lock the screen. Work
+            // made *after* they chose the server copy was never part of that choice, so
+            // installing over it would destroy an edit they never agreed to discard (on
+            // screen *and* on disk). Compare against the snapshot rather than demanding
+            // "nothing pending": a save already held by the enqueue-hold *is* part of what
+            // they chose to discard. Bail out and leave the conflict standing; the pill is
+            // still there, so they can decide again with the new edit in hand.
+            guard !isDirty,
+                saveCoordinator.pendingSave(documentID: documentID) == discardedSave,
+                saveCoordinator.storedDraft(documentID: documentID) == discardedDraft
+            else { return }
             // The winning body is in hand: now it is safe to cost the user their draft.
             saveCoordinator.resolveConflictKeepingServer(documentID: documentID)
             installFetched(formatted)
