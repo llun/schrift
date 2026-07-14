@@ -2277,6 +2277,51 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(savesInFlight(log), 0)
     }
 
+    /// Everything on screen must stay backed by disk. Keep-server used to clear `isDirty`
+    /// *without flushing*, so an edit typed after the pill appeared lived only in `blocks`:
+    /// on the failure path (the common one — the conflict is usually reviewed on the
+    /// connection that caused it) the reading surface went on rendering it while it existed
+    /// in **no draft and no funnel**, and `flushPendingChanges` early-returned forever.
+    /// Navigating away lost it silently. Reachable only because the pill now renders while
+    /// editing — which is exactly when it has to be safe.
+    func testKeepingTheServerVersionPersistsAnUnflushedEditWhenTheFetchFails() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The user types while the pill is up — the autosave debounce has NOT fired yet,
+        // so this text lives only in `blocks`.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Typed but never flushed")
+        XCTAssertTrue(viewModel.isDirty)
+
+        // They choose the server copy… and the fetch fails offline.
+        stubOffline()
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNotNil(viewModel.syncConflict, "the conflict survives a failed fetch")
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Typed but never flushed") == true,
+            "the in-progress edit must be on disk — the screen still shows it, so a funnel must own it")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Typed but never flushed") },
+            "…and it is still what the reading surface renders")
+        XCTAssertEqual(savesInFlight(log), 0, "the flush is held by the conflict, never pushed")
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "it is parked in the hold")
+    }
+
     /// reconcileClean's unchanged-body (else) branch advances the baseline's
     /// timestamp: a cache-restored entry with an unknown (void-save) server
     /// timestamp gets promoted to the real server clock once a clean revalidation

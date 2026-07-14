@@ -716,8 +716,13 @@ server is about to hold.
   "Document updated · tap to refresh" below the nav/offline banner and above the
   content; tapping calls `viewModel.applyPendingUpdate()`.
 - **Sync-conflict pill & sheet.** Render a `danger`-tinted "Sync conflict · tap
-  to review" pill (mirroring the "Updated" banner's placement/structure) when
-  `viewModel.syncConflict != nil && !viewModel.isEditing`; tapping presents
+  to review" pill (mirroring the "Updated" banner's placement/structure) whenever
+  `viewModel.syncConflict != nil` — **including while editing**, unlike the "Updated"
+  banner: the enqueue-hold parks an editing session's autosave, so a typist would
+  otherwise have no signal *and* no way out. For the same reason `syncCaption` takes
+  `hasConflict` and degrades to a passive "Saved on this device": while the push is held,
+  `.pendingSync`'s "syncs when online · tap to retry" would promise a sync that cannot
+  happen and offer a retry that re-enqueues straight back into the hold. Tapping presents
   `ConflictSheetView` — a flat `SheetHeader` list (per the design system) offering
   **Keep my version** (`resolveConflictKeepingMine()`) and a destructive,
   confirmation-gated **Keep the server version** (`resolveConflictKeepingServer()`),

@@ -32,18 +32,21 @@ struct SyncCaption: Equatable {
     let offersRetry: Bool
 }
 
-/// Caption precedence: (1) a **failed save** wins over everything, including the
-/// offline wording — it is the only affordance that unpins the document, because
-/// `reconcileDraft` deliberately no-ops every revalidation while a failed save's
-/// draft is on screen, and the reading surface has no other retry (tap-to-edit is
-/// itself blocked offline, which is when saves fail most). (1b) a **queued offline
-/// save** (`.pendingSync`) is its own tier just below: its "syncs when online"
-/// caption beats the generic offline wording, and it doubles as a manual retry
-/// when the device is online (where the auto-sync triggers can't fire). (2) other
-/// unsaved local content → save wording (a previously-synced doc with a stranded
+/// Caption precedence: (0) a **recorded sync conflict** outranks everything, because it
+/// *holds* the push — no retry here can run and no sync is coming until the user answers
+/// the pill, so the caption states only the true part ("Saved on this device") and offers
+/// no affordance. (1) a **failed save** wins over the rest, including the offline wording —
+/// it is the only affordance that unpins the document, because `reconcileDraft`
+/// deliberately no-ops every revalidation while a failed save's draft is on screen, and the
+/// reading surface has no other retry (tap-to-edit is itself blocked offline, which is when
+/// saves fail most). (1b) a **queued offline save** (`.pendingSync`) is its own tier just
+/// below: its "syncs when online" caption beats the generic offline wording, and it doubles
+/// as a manual retry when the device is online (where the auto-sync triggers can't fire).
+/// (2) other unsaved local content → save wording (a previously-synced doc with a stranded
 /// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
     hasUnsavedLocalContent: Bool,
+    hasConflict: Bool,
     isOffline: Bool,
     saveState: EditorViewModel.SaveState,
     lastSyncedAt: Date?,
@@ -51,6 +54,15 @@ func syncCaption(
     locale: Locale
 ) -> SyncCaption {
     if hasUnsavedLocalContent {
+        // A recorded conflict **holds** the push: nothing will sync, and no retry can run,
+        // until the user answers the pill (`saveNow` re-enqueues straight back into the
+        // hold). So the caption must neither promise a sync ("syncs when online") nor offer
+        // a retry that silently no-ops — both were live here, because the hold parks the
+        // save in `.pendingSync` and a conflict can also be recorded over a `.failed` one.
+        // It IS on the device, so say only that, and leave the pill as the sole affordance.
+        if hasConflict {
+            return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false)
+        }
         if case .failed = saveState {
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }
@@ -579,6 +591,7 @@ struct EditorView: View {
     private func currentSyncCaption(now: Date) -> SyncCaption {
         syncCaption(
             hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+            hasConflict: viewModel.syncConflict != nil,
             isOffline: isOffline,
             saveState: viewModel.saveState,
             lastSyncedAt: viewModel.lastSyncedAt,

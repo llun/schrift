@@ -1521,17 +1521,31 @@ final class EditorViewModel {
         saveCoordinator.resolveConflictKeepingLocal(documentID: documentID)
     }
 
-    /// "Keep the server version": the one sanctioned discard. End the editing session
-    /// **without** flushing (discard is the user's explicit choice), drop the local
-    /// draft, then `refresh()` so the server body installs through the existing
-    /// guarded funnel (`apply` → no draft → `reconcileClean` → `install`), which keeps
-    /// `mayPredateSave`, the generation checks and the dirty baseline all in force. No
-    /// content is ever taken from the conflict record itself.
+    /// "Keep the server version": the one sanctioned discard. In order: **flush** any
+    /// in-progress edit into the (held) draft, end the editing session, **fetch** the
+    /// server body, re-check that nothing changed under the await, and only then discard
+    /// the local work and install what was fetched. Nothing is destroyed until the body
+    /// that replaces it is in hand, and no content is ever taken from the conflict record
+    /// itself — it carries none by design.
     func resolveConflictKeepingServer() async {
         guard saveCoordinator.conflict(for: documentID) != nil else { return }
-        // End the editing session first: the user chose to discard local work, so no
-        // autosave may re-dirty it (or re-enqueue it) while we fetch. Nothing has left
-        // disk yet — this only stops new work being made.
+        // **Flush first — before ending the session.** Clearing `isDirty` without flushing
+        // stranded whatever the user had just typed: `blocks` still held it (the reading
+        // surface renders them), but it existed in no draft, and with `isDirty` false
+        // `flushPendingChanges` early-returns forever — so on every non-success exit below
+        // (the failed fetch, which is the *common* case here; `mayPredateSave`; a superseded
+        // generation) the screen kept showing text that no funnel would ever persist, and
+        // navigating away lost it silently. That path only became reachable once the pill
+        // started rendering during editing, which is exactly when it must be safe.
+        //
+        // Flushing costs nothing: the conflict is still recorded, so `enqueue` takes the
+        // hold — nothing is pushed, the edit merely lands in the draft/queued slot, which
+        // the snapshot below already treats as "part of what the user chose to discard".
+        // The success path discards it as intended; every failure path now leaves the
+        // screen exactly backed by disk.
+        flushPendingChanges()
+        // The user chose to discard local work, so no autosave may make more of it while
+        // we fetch.
         autosaveTask?.cancel()
         autosaveTask = nil
         dirtySince = nil

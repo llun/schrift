@@ -466,6 +466,37 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNotNil(draftStore.draft(for: documentID), "and it is never discarded from under the user")
     }
 
+    /// An overlapping sync trigger must be **coalesced, not dropped**. The pass in flight
+    /// may already have tried (and failed on) the very draft the new trigger cares about —
+    /// a reconnect landing mid-pass is exactly that — so returning early would lose it until
+    /// the next background→foreground cycle. Distinguished from simply dropping the trigger:
+    /// the first pass fails offline, a second trigger arrives *while it is still running*,
+    /// and the network is healthy by the time the coalesced pass runs.
+    func testAnOverlappingSyncTriggerIsCoalescedRatherThanDropped() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date()))
+
+        // Pass 1: the GET is held open, then fails — so the draft is not replayed.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(
+                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.3)
+        }
+        async let firstPass: Void = coordinator.syncPendingDrafts()
+
+        // A reconnect lands *during* that pass (pinned on the recorded in-flight GET).
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        stubSavePipeline(log: log)  // the network is healthy again
+        await coordinator.syncPendingDrafts()  // must be coalesced, not dropped
+        await firstPass
+
+        // The coalesced pass re-fetched and replayed the draft the failing pass gave up on.
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertGreaterThanOrEqual(savesInFlight(log), 1, "the coalesced pass replayed the draft")
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {
@@ -503,12 +534,21 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
 
+        // Land a save first, so the state is `.saved` — i.e. the exact state a held save
+        // must NOT be left reading as.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Landed")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
         coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the queued edit is retained")
         XCTAssertNotNil(draftStore.draft(for: documentID), "the write-ahead draft is retained")
-        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertTrue(
+            isPendingSync(coordinator.state(for: documentID)),
+            "a held save is NOT a saved save — leaving `.saved` here tells the user their work synced "
+                + "while it sits parked behind an unanswered conflict")
+        await waitAndConfirmNever { self.savesInFlight(log) > 1 }
     }
 
     /// "Keep mine" clears the record and releases the held push (last-writer-wins).

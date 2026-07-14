@@ -208,8 +208,14 @@ final class DocumentSaveCoordinator {
             // rendered exactly as it does after a successful save, telling the user their
             // work was safely synced while it was in fact parked behind a conflict they
             // had not answered. It *is* on the device (the write-ahead draft above), so
-            // `.pendingSync` — "Saved on this device" — is the truthful state. Only for the
-            // conflict hold: a save queued behind an in-flight one is already `.saving`.
+            // `.pendingSync` is the truthful state. Only for the conflict hold: a save
+            // queued behind an in-flight one is already `.saving`.
+            //
+            // The reading surface does NOT show `.pendingSync`'s usual "syncs when online ·
+            // tap to retry" copy while a conflict stands — that would promise a sync that is
+            // held and offer a retry that re-enqueues straight back into this hold.
+            // `syncCaption` takes `hasConflict` and degrades to a passive "Saved on this
+            // device", leaving the conflict pill as the sole affordance.
             if conflicts[documentID] != nil {
                 states[documentID] = .pendingSync
             }
