@@ -141,6 +141,17 @@ final class DocumentSaveCoordinator {
         conflicts[documentID]
     }
 
+    /// The markdown this coordinator last confirmed pushing for a document — i.e. what the
+    /// server holds if we were its most recent writer. Exposed so the **editor** can run
+    /// `draftSyncDecision` rule 1 for itself: without it, a decision taken while no draft
+    /// exists (the state right after a save lands) has no stamp to match, and the fetched
+    /// body — which is *our own* write — reads as a diverged server and raises a false
+    /// conflict against the user. Falls back to the persisted draft stamp so it survives a
+    /// relaunch, exactly as `enqueue` does.
+    func lastConfirmedPush(documentID: UUID) -> String? {
+        lastConfirmedPushMarkdown[documentID] ?? draftStore.draft(for: documentID)?.lastPushedMarkdown
+    }
+
     func saveMarker(documentID: UUID) -> SaveMarker {
         SaveMarker(
             documentID: documentID,
@@ -298,9 +309,11 @@ final class DocumentSaveCoordinator {
                 case .discardServerWins:
                     // Legacy (baseline-less) drafts only — rule 3's tolerance fallback.
                     switch state(for: draft.documentID) {
-                    case .pendingSync, .failed:
-                        // The user has *visible* unsaved work — the "syncs when online" or
-                        // "tap to retry" caption is on screen — that the server has already
+                    case .pendingSync:
+                        // (`.failed` cannot reach here — it `continue`s at the top of the loop,
+                        // owned by the reading surface's retry.)
+                        // The user has *visible* unsaved work — the "syncs when online"
+                        // caption is on screen — that the server has already
                         // moved past. Discarding it would delete content they are looking
                         // at. But silently skipping it (what this did) **stranded** them:
                         // never pushed, never discarded, and — because the decision is not
@@ -308,7 +321,7 @@ final class DocumentSaveCoordinator {
                         // retry tap, which full-overwrites the newer server copy with no
                         // prompt at all. Give it the same funnel a real conflict gets.
                         conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: formatted.updatedAt)
-                    default:
+                    case .idle, .saving, .saved, .failed:
                         // `recoverDrafts()` runs at launch, before any editor is on screen,
                         // so discarding there is safe — and that is the only place this used
                         // to run. It is now a **repeatable** trigger (reconnect, foreground),
@@ -448,13 +461,14 @@ final class DocumentSaveCoordinator {
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
         inFlight[documentID] = Task {
             do {
-                try await client.saveDocumentContent(documentID: documentID, title: save.title, markdown: save.markdown)
-                finish(documentID: documentID, save: save, error: nil, contentLanded: true)
-            } catch let partial as DocumentTitleSaveFailed {
-                // The body IS on the server; only the title PATCH failed. Classify
-                // retryability from the real error, but record the push — see `finish`.
-                finish(documentID: documentID, save: save, error: partial.underlying, contentLanded: true)
+                // A non-nil return means the CONTENT PATCH landed and only the title failed:
+                // the save still counts as failed (retryability is classified from the same
+                // error) but the server holds our body, so `finish` must record the push.
+                let titleFailure = try await client.saveDocumentContent(
+                    documentID: documentID, title: save.title, markdown: save.markdown)
+                finish(documentID: documentID, save: save, error: titleFailure, contentLanded: true)
             } catch {
+                // A throw means the content PATCH itself failed — nothing reached the server.
                 finish(documentID: documentID, save: save, error: error, contentLanded: false)
             }
             backgroundTasks.end(taskToken)
@@ -467,6 +481,33 @@ final class DocumentSaveCoordinator {
         // Any revalidation fetch still in flight was issued before this save
         // settled, so its response may predate it (see `mayPredateSave`).
         settledSaves[documentID, default: 0] += 1
+        // **Record the push the moment the CONTENT PATCH landed — before any early return.**
+        // The server's body is now ours whether or not the *save* as a whole succeeded, and
+        // whether or not the document was torn down while it was on the wire. Miss this and
+        // the next replay's rule 1 has no stamp to match, rule 2 sees a body diverged from a
+        // stale baseline, and the app raises a **sync conflict against the user's own
+        // content** — parking every further autosave behind a dialog about their own write,
+        // one answer to which discards their real unsaved work.
+        //
+        // Two paths reach it: a save whose title PATCH dropped (the content is on the server
+        // regardless), and a save that lands while the document is temporarily 404/403 —
+        // `suppressLocalWriteThrough` deliberately KEEPS the draft there, so a *newer* draft
+        // survives the discarded branch below and must carry the stamp too. Doing this after
+        // that branch's `return` left exactly that draft unstamped.
+        if contentLanded {
+            lastConfirmedPushMarkdown[documentID] = save.markdown
+            // Stamp whatever draft is on disk: its content descends from what this save just
+            // landed, whether it is a *newer* draft (the user kept typing) or the save's own
+            // draft surviving a failure (a half-land keeps an **identical** draft — stamping
+            // only a differing one missed exactly that case). The branches below remove it if
+            // it should not survive; stamping first is harmless and keeps the rule one line.
+            if let draft = draftStore.draft(for: documentID) {
+                draftStore.save(
+                    PendingDraft(
+                        documentID: documentID, title: draft.title, markdown: draft.markdown,
+                        updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown))
+            }
+        }
         // Deleted or revoked while this save was on the wire: write no local copy,
         // whatever the server made of the PATCH. `discardPendingWork` (delete) already
         // removed the draft; `suppressLocalWriteThrough` (404/403) kept it as the
@@ -485,38 +526,12 @@ final class DocumentSaveCoordinator {
             }
             return
         }
-        // The content PATCH landed — whether or not the *save* went on to succeed. The
-        // server's body is now ours, so record the push even on the failure path: a save
-        // whose title PATCH dropped (or whose response was lost) leaves the server holding
-        // exactly this text with a bumped `updated_at`, and without the stamp the next
-        // replay's rule 1 misses, rule 2 sees a diverged body, and the app raises a **sync
-        // conflict against the user's own content** — parking every further autosave behind
-        // a dialog about their own write, one answer to which discards the title edit that
-        // never landed. Persist it onto the surviving draft too, so it outlives a relaunch.
-        if contentLanded {
-            lastConfirmedPushMarkdown[documentID] = save.markdown
-            if error != nil, let draft = draftStore.draft(for: documentID) {
-                draftStore.save(
-                    PendingDraft(
-                        documentID: documentID, title: draft.title, markdown: draft.markdown,
-                        updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown))
-            }
-        }
         if error == nil {
             states[documentID] = .saved(Date())
-            if let draft = draftStore.draft(for: documentID) {
-                if draft.title == save.title, draft.markdown == save.markdown {
-                    draftStore.remove(documentID: documentID)
-                } else {
-                    // A newer draft survives (the user kept editing during the save):
-                    // its edits descend from what this save just landed, so stamp that
-                    // as its `lastPushedMarkdown` to kill a cross-relaunch false
-                    // conflict against our own write.
-                    draftStore.save(
-                        PendingDraft(
-                            documentID: documentID, title: draft.title, markdown: draft.markdown,
-                            updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown))
-                }
+            if let draft = draftStore.draft(for: documentID), draft.title == save.title,
+                draft.markdown == save.markdown
+            {
+                draftStore.remove(documentID: documentID)
             }
             // Keep the local copy consistent with what the server now holds.
             // The save PATCHes are void, so there is no server `updated_at` to

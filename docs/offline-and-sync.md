@@ -598,16 +598,20 @@ choosing one whole version.
   a merge, not a dialog). That is a change to a persisted model and to what the replay
   pushes, so it is deferred to its own change rather than bolted on here. The loss is
   title-only, immediately visible, and trivially undone.
-- **Known limitation — detection covers a *queued* draft, not a live typist.** A
-  revalidation that lands while the screen is **dirty** takes `apply`'s
-  silent-cache-update branch (`pendingSave != nil || isDirty` → `cacheServerCopy`), so
-  no conflict is recorded and the ensuing autosave full-overwrites a concurrent web
-  edit the app had already fetched. That is the pre-existing last-writer-wins model —
-  automatic multi-user merge is an explicit non-goal — and this feature does not change
-  it. Closing it means holding an **actively typing** user's autosave and surfacing the
-  pill only once they stop, which needs its own design (what the save caption says while
-  held, and how to avoid a false conflict against the user's *own* just-landed save,
-  which needs `lastConfirmedPushMarkdown` exposed to the editor). Deliberately deferred.
+- **Detection also runs in `apply`'s dirty branch** — it must, or the whole safety net
+  turns on **keystroke timing**. That branch (`pendingSave != nil || isDirty` →
+  `cacheServerCopy`) used to return without consulting the decision, so a queued offline
+  draft whose revalidation proved the server had moved on got its push held — *unless* the
+  user happened to type one character while that fetch was in flight, in which case
+  `isDirty` diverted here, nothing was recorded, and the next autosave full-overwrote the
+  web edit the app had just fetched. Whether a destructive push is checked cannot hinge on
+  a race with the user's fingers. Recording there is non-destructive (nothing is installed;
+  the edits and the draft stay put) and it engages the enqueue-hold, so the pending autosave
+  parks and the pill — which renders **while editing** — asks. Two constraints make it safe:
+  it is gated on `pendingSave == nil`, preserving the "no conflict while a save is in
+  flight" invariant; and rule 1 is fed from `lastConfirmedPush(documentID:)` rather than the
+  stored draft, which is nil right after a save lands and would otherwise make **our own
+  just-pushed body** read as a diverged server and raise a false conflict against the user.
 - **No false conflicts against our own writes.** After a confirmed save the
   coordinator remembers what it pushed (`lastConfirmedPushMarkdown`) and stamps it
   onto the next edit's draft as `lastPushedMarkdown`, so `draftSyncDecision` rule 1

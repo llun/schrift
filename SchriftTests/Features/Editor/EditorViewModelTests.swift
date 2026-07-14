@@ -2322,6 +2322,90 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "it is parked in the hold")
     }
 
+    /// **Whether a destructive push is checked must not hinge on keystroke timing.** `apply`
+    /// diverts to `cacheServerCopy` whenever the screen is dirty, so a single character typed
+    /// while the revalidation was in flight used to skip conflict detection entirely — and the
+    /// autosave that followed full-overwrote the web edit the app had just fetched. Detection
+    /// now runs in that branch too.
+    func testAKeystrokeDuringTheRevalidationCannotBypassConflictDetection() async {
+        let log = RequestRecorder()
+        // Default (10 s) autosave: the point is a keystroke that lands *inside* the fetch
+        // window WITHOUT the debounce firing. A debounce that fired first would push before
+        // the app had even seen the co-author's edit — a race no detection can win, and a
+        // different scenario entirely.
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // A queued offline draft (baseline B0) — the case this PR exists for.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        // Hold the revalidation open so the keystroke lands *inside* it; a co-author has
+        // edited the server since B0.
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil, delay: 0.3)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        async let load: Void = viewModel.load()
+        // The draft is rendered synchronously; type one character while the fetch is open.
+        await waitUntil { viewModel.hasLoadedContent }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine plus one")
+        XCTAssertTrue(viewModel.isDirty)
+        await load
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a keystroke racing the fetch must not disable detection — the server moved on and we saw it")
+        // …and the autosave that follows is HELD, not pushed over the co-author's edit.
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "parked by the enqueue-hold")
+    }
+
+    /// The flip side, and the reason rule 1 must be fed from the coordinator rather than the
+    /// stored draft: right after **our own** save lands there is no draft left to carry the
+    /// stamp, and `serverBaseline` is deliberately not advanced by a save — so a revalidation
+    /// arriving while the user keeps typing would compare our own just-pushed body against a
+    /// stale baseline and raise a conflict against the user's own write.
+    func testARevalidationAfterOurOwnSaveRaisesNoConflictWhileStillEditing() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Base", log: log)
+        await viewModel.load()
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+        viewModel.flushPendingChanges()
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertNil(draftStore.draft(for: documentID), "the save landed and cleared the draft")
+
+        // The server now returns OUR body with a newer updated_at, while the user types on.
+        let ourBody = formattedBody(content: serializeMarkdown(viewModel.blocks))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: ourBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit, still going")
+        XCTAssertTrue(viewModel.isDirty)
+        await viewModel.refresh()
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "the server's body is our own confirmed push — rule 1 must recognise it, not ask the user "
+                + "about their own write")
+    }
+
     /// reconcileClean's unchanged-body (else) branch advances the baseline's
     /// timestamp: a cache-restored entry with an unknown (void-save) server
     /// timestamp gets promoted to the real server clock once a clean revalidation

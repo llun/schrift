@@ -851,17 +851,22 @@ markdown write endpoint**. Understand this before touching the save path:
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
   never sent, and counting it wedged "keep the server version" permanently.
-- **Known limitations** (both deliberate, both written up in
-  [`docs/offline-and-sync.md`](docs/offline-and-sync.md)): conflict detection covers a
-  *queued* draft, so a revalidation landing while the screen is **dirty** still takes
-  `apply`'s silent-cache-update branch and a concurrent web edit observed mid-typing is
-  overwritten by the ensuing autosave (the pre-existing last-writer-wins model —
-  `docs/architecture.md` keeps automatic multi-user merge a non-goal; closing it means
-  holding an *active* typist's autosave, which needs its own design). And `DraftBaseline`
-  records no **title**, so a remote *rename* is rule 2's body-equality `.push` and the
-  replay's title PATCH silently reverts it; fixing that means adding a title to the
-  persisted baseline and having the replay *adopt* the server's title when the user
-  didn't change theirs.
+- **Detection runs in `apply`'s dirty branch too**, not only via `reconcileDraft`. That
+  branch (`pendingSave != nil || isDirty` → `cacheServerCopy`) used to return without
+  consulting the decision, which made the whole safety net depend on **keystroke timing**:
+  a queued offline draft whose revalidation proved the server had moved on got its push
+  held — *unless* the user happened to type one character while that fetch was in flight,
+  in which case nothing was recorded and the next autosave full-overwrote the web edit the
+  app had just fetched. Detection there is gated on `pendingSave == nil` (preserving the
+  no-save-in-flight invariant) and feeds rule 1 from
+  `DocumentSaveCoordinator.lastConfirmedPush(documentID:)` — **not** from the stored draft,
+  which is nil right after a save lands and would make our own just-pushed body read as a
+  diverged server and raise a false conflict against the user.
+- **Known limitation** (deliberate; written up in
+  [`docs/offline-and-sync.md`](docs/offline-and-sync.md)): `DraftBaseline` records no
+  **title**, so a remote *rename* is rule 2's body-equality `.push` and the replay's title
+  PATCH silently reverts it. Fixing it means adding a title to the persisted baseline and
+  having the replay *adopt* the server's title when the user didn't change theirs.
 - Content is cached on-device in **`DocumentContentCacheStore`** (one JSON per
   document under Application Support, backup-excluded, ≤50 entries by
   most-recent `syncedAt` via file mtime): `load()` shows a local copy

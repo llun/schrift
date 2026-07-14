@@ -207,13 +207,16 @@ final class EditorViewModel {
     /// This is read on every render of the reading surface (a 60 s `TimelineView`
     /// tick) and `storedDraft` decodes the whole draft store out of UserDefaults,
     /// so the in-memory checks come first. The two guarded reads below are
-    /// *exhaustive*, not a shortcut: `enqueue` is the **only** writer of a draft
-    /// (`PendingDraftStore.save` has no other caller) and it sets `pendingSave`
-    /// synchronously, so `draft != nil && !isDirty && pendingSave == nil` implies
-    /// either the save failed (`.failed`), or the draft was stranded by an earlier
-    /// session — and `restoreLocalContent` always installs *that* as `.draft`.
-    /// Add another `draftStore.save` caller, or make `enqueue` async, and this
-    /// stops being exhaustive: drop the guards and read the draft unconditionally.
+    /// *exhaustive*, not a shortcut: `enqueue` is the only thing that ever **creates**
+    /// a draft, and it sets `pendingSave` synchronously, so
+    /// `draft != nil && !isDirty && pendingSave == nil` implies either the save failed
+    /// (`.failed`/`.pendingSync`), or the draft was stranded by an earlier session — and
+    /// `restoreLocalContent` always installs *that* as `.draft`. The coordinator's three
+    /// other `draftStore.save` calls (`finish`'s surviving-draft stamp,
+    /// `resolveConflictKeepingLocal`'s baseline advance) only ever **rewrite an existing
+    /// draft in place**, so they create nothing these guards could miss. Add a caller that
+    /// *creates* one, or make `enqueue` async, and this stops being exhaustive: drop the
+    /// guards and read the draft unconditionally.
     var hasUnsavedLocalContent: Bool {
         guard hasLoadedContent else { return false }
         if isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil { return true }
@@ -487,6 +490,36 @@ final class EditorViewModel {
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
         if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
+            // **Detect before caching.** This branch used to return without ever consulting
+            // `draftSyncDecision`, which made the entire safety net depend on *keystroke
+            // timing*: a queued offline draft whose revalidation proved the server had moved
+            // on would be reconciled (and the push held) — unless the user happened to type
+            // one character while that fetch was in flight, in which case `isDirty` diverted
+            // here, no conflict was recorded, and the next autosave full-overwrote the web
+            // edit the app had just fetched. Whether a destructive push got checked must not
+            // hinge on a race with the user's fingers.
+            //
+            // Recording is non-destructive — nothing is installed, the edits and the draft
+            // stay exactly where they are — and it engages the enqueue-hold, so the pending
+            // autosave parks instead of pushing and the pill (which renders while editing)
+            // asks. Restricted to `pendingSave == nil` to preserve the coordinator's
+            // invariant that a conflict is only ever recorded with no save in flight.
+            //
+            // Rule 1 is what keeps this from firing against *our own* write: right after our
+            // save lands there is no draft, so the stamp has to come from the coordinator —
+            // hence `lastConfirmedPush(documentID:)`. Without it, `serverBaseline` (which a
+            // save deliberately does not advance) would make our own just-pushed body read
+            // as a diverged server.
+            if saveCoordinator.pendingSave(documentID: documentID) == nil, let baseline = serverBaseline,
+                case .conflict = draftSyncDecision(
+                    baseline: baseline,
+                    lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
+                    draftUpdatedAt: Date(),
+                    serverUpdatedAt: formatted.updatedAt,
+                    serverMarkdown: formatted.content ?? "")
+            {
+                saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+            }
             cacheServerCopy(formatted)
             return
         }
@@ -1529,32 +1562,25 @@ final class EditorViewModel {
     /// itself — it carries none by design.
     func resolveConflictKeepingServer() async {
         guard saveCoordinator.conflict(for: documentID) != nil else { return }
-        // **Flush first — before ending the session.** Clearing `isDirty` without flushing
-        // stranded whatever the user had just typed: `blocks` still held it (the reading
-        // surface renders them), but it existed in no draft, and with `isDirty` false
-        // `flushPendingChanges` early-returns forever — so on every non-success exit below
-        // (the failed fetch, which is the *common* case here; `mayPredateSave`; a superseded
-        // generation) the screen kept showing text that no funnel would ever persist, and
-        // navigating away lost it silently. That path only became reachable once the pill
-        // started rendering during editing, which is exactly when it must be safe.
+        // **End the editing session properly, and do it before the fetch.** `finishEditing()`
+        // is that teardown — flush, resync `rawMarkdown` to the edited blocks (only when they
+        // diverged), reset mode/focus/selection, clear the error — and reusing it is what
+        // keeps this in step with it. Hand-rolling the same steps had already drifted twice:
         //
-        // Flushing costs nothing: the conflict is still recorded, so `enqueue` takes the
-        // hold — nothing is pushed, the edit merely lands in the draft/queued slot, which
-        // the snapshot below already treats as "part of what the user chose to discard".
-        // The success path discards it as intended; every failure path now leaves the
-        // screen exactly backed by disk.
-        flushPendingChanges()
-        // The user chose to discard local work, so no autosave may make more of it while
-        // we fetch.
-        autosaveTask?.cancel()
-        autosaveTask = nil
-        dirtySince = nil
-        isDirty = false
-        mode = .reading
-        focusedBlockID = nil
-        cursorRequest = nil
-        selection = nil
-        slashQueryText = nil
+        // 1. It cleared `isDirty` **without flushing**, so text typed after the pill appeared
+        //    lived only in `blocks`. On every non-success exit below (the failed fetch — the
+        //    *common* case here; `mayPredateSave`; a superseded generation) the screen went on
+        //    rendering it while it existed in no draft, and with `isDirty` false
+        //    `flushPendingChanges` early-returns forever, so navigating away lost it silently.
+        // 2. It omitted the `rawMarkdown` resync, leaving the reading-mode source stale after
+        //    a flushed edit.
+        //
+        // Flushing here costs nothing: the conflict is still recorded, so `enqueue` takes the
+        // hold — nothing is pushed, the edit merely lands in the draft/queued slot, which the
+        // snapshot below already treats as "part of what the user chose to discard". The
+        // success path discards it as intended; every failure path leaves the screen exactly
+        // backed by disk.
+        finishEditing()
 
         // **Fetch before discarding.** Deleting the draft first and *then* refreshing
         // meant a failed fetch — the common case, since a conflict is usually reviewed

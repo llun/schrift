@@ -497,6 +497,85 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 
+    /// The push must be recorded even when the save settles into `finish`'s **discarded**
+    /// branch. `suppressLocalWriteThrough` (the 404/403 path) deliberately KEEPS the draft,
+    /// so a newer draft survives that branch — and recording the push after its `return` left
+    /// exactly that draft unstamped. The replay then raised a conflict against the user's own
+    /// landed save, and "keep the server version" would discard their real unsaved work.
+    func testASaveLandingWhileTheDocumentIs404StillRecordsThePushOnTheSurvivingDraft() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, saveDelay: 0.3)  // hold the content PATCH open
+        let (coordinator, draftStore, _) = makeCoordinator()
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Landed")
+        // The user keeps typing, so a NEWER draft is outstanding when the document 404s.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Newer")
+        coordinator.suppressLocalWriteThrough(documentID: documentID)  // 404/403: keeps the draft
+
+        // The first save then lands on the server.
+        await waitUntil { draftStore.draft(for: self.documentID)?.lastPushedMarkdown != nil }
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown, "# Landed",
+            "the surviving draft must carry what the landed save pushed, or the replay conflicts with it")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Newer", "and keep the user's newer work")
+    }
+
+    /// The half-land must record the push even when the title failure is **not** retryable
+    /// (a 4xx the server rejected on the merits → `.failed`). The content is on the server
+    /// either way, which is the only thing rule 1 cares about.
+    func testANonRetryableHalfLandedSaveStillRecordsThePush() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let serverBody = Self.formattedBody
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 400, headers: [:], body: Data(), error: nil)  // title rejected
+            }
+            return .init(statusCode: 200, headers: [:], body: serverBody, error: nil)
+        }
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+
+        await waitUntil { self.isFailed(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown, "# Mine",
+            "the content landed, so the push is recorded even though the save hard-failed")
+    }
+
+    /// A launch recovery that arrives *while a pass is already running* must still get its
+    /// launch semantics — it is the only place a stale legacy draft may be discarded outright.
+    func testALaunchRecoveryArrivingMidPassStillPerformsItsDiscard() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        // Baseline-less and far older than the 2026-01-15 fixture → `.discardServerWins`.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Stale",
+                updatedAt: Date(timeIntervalSince1970: 0)))
+        let body = Self.formattedBody
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.3)
+        }
+
+        // A mid-session pass starts (it will NOT discard) …
+        async let midSession: Void = coordinator.syncPendingDrafts()
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") >= 1 }
+        // … and launch recovery arrives while it is still in flight.
+        await coordinator.recoverDrafts()
+        await midSession
+
+        XCTAssertNil(
+            draftStore.draft(for: documentID),
+            "the coalesced pass must still carry the launch-recovery semantics, or the discard is lost")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {
