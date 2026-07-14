@@ -364,6 +364,108 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
+    /// **A save is two PATCHes and can half-land.** If the content PATCH applies but the
+    /// title PATCH drops (the flaky-network case this whole stack exists for), the server
+    /// already holds this exact body — so the push must be recorded even though the save
+    /// *failed*. Without it, rule 1 misses on the next replay, rule 2 sees a body diverged
+    /// from the stale baseline, and the app raises a **sync conflict against the user's own
+    /// text** — parking every further autosave behind a dialog about their own write.
+    func testAHalfLandedSaveRecordsThePushSoItIsNotLaterSeenAsAConflict() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        // Content PATCH succeeds; the title PATCH (PATCH on documents/{id}/) drops.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            // The server now holds exactly what we pushed, with a newer updated_at.
+            return .init(
+                statusCode: 200, headers: [:],
+                body: Data(
+                    """
+                    {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Mine", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+                    """.utf8), error: nil)
+        }
+        coordinator.enqueue(
+            documentID: documentID, title: "Doc", markdown: "# Mine",
+            baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base"))
+
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown, "# Mine",
+            "the landed content PATCH is recorded on the draft, even though the save failed")
+
+        // The replay must recognise its own write and push (to land the title), NOT conflict.
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            coordinator.conflict(for: documentID),
+            "the server's body is our own half-landed save — never a conflict against the user")
+        await waitUntil { self.savesInFlight(log) >= 2 }
+    }
+
+    /// `.discardServerWins` is the legacy (baseline-less) tolerance path. `syncPendingDrafts`
+    /// is now repeatable (reconnect/foreground), and the editor may be *displaying* that
+    /// draft — deleting it there would leave on-screen content with no disk backing, and the
+    /// next keystroke would full-overwrite the newer server body. Only launch recovery, which
+    /// runs before any editor exists, may discard outright.
+    func testAStaleLegacyDraftIsOnlyDiscardedByLaunchRecovery() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)  // server updated_at 2026-01-15
+        let (coordinator, draftStore, _) = makeCoordinator()
+        // Baseline-less, and far older than the server → `.discardServerWins`.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Stale",
+                updatedAt: Date(timeIntervalSince1970: 0)))
+
+        // A mid-session trigger (reconnect/foreground) must NOT delete it.
+        await coordinator.syncPendingDrafts()
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID),
+            "a repeatable trigger must not delete a draft an open editor may be displaying")
+
+        // Launch recovery may.
+        await coordinator.recoverDrafts()
+        XCTAssertNil(draftStore.draft(for: documentID), "launch recovery discards it")
+    }
+
+    /// A legacy (baseline-less) draft whose save is queued offline and whose server has
+    /// moved past the tolerance window had **no funnel at all**: never pushed, never
+    /// discarded, and — because the decision isn't `.conflict` — no pill either. The user
+    /// saw "syncs when online" forever, and the only escape (tapping retry) full-overwrote
+    /// the newer server copy with no prompt. It must be surfaced as a conflict instead.
+    func testAStrandedLegacyPendingSyncDraftIsSurfacedAsAConflict() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let futureBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            return .init(statusCode: 200, headers: [:], body: futureBody, error: nil)
+        }
+        // No baseline (a pre-upgrade draft); the save fails offline → `.pendingSync`.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            coordinator.conflict(for: documentID),
+            "a stranded legacy draft the server has moved past must get a UI funnel, not silence")
+        XCTAssertNotNil(draftStore.draft(for: documentID), "and it is never discarded from under the user")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {

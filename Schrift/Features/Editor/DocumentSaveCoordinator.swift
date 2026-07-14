@@ -90,6 +90,12 @@ final class DocumentSaveCoordinator {
     /// Re-entrancy guard for `syncPendingDrafts()`: it is repeatable (reconnect,
     /// foreground, launch), and overlapping triggers must not double-replay a draft.
     private var isSyncingDrafts = false
+    /// A trigger that arrived while a pass was running. Coalesced into another pass
+    /// rather than dropped — see `syncPendingDrafts`.
+    private var needsAnotherSyncPass = false
+    /// Whether a coalesced pass still owes the launch-recovery semantics (the only
+    /// place a stale legacy draft may be discarded outright).
+    private var pendingLaunchRecovery = false
     /// Documents whose queued draft conflicts with the server (the sync path or the
     /// editor detected the server moved on). The push is **held** until the user
     /// resolves it via `resolveConflictKeeping{Local,Server}`.
@@ -196,6 +202,17 @@ final class DocumentSaveCoordinator {
         // conflicting server copy the instant a conflict lands. "Keep mine" starts it.
         if conflicts[documentID] != nil || inFlight[documentID] != nil {
             queued[documentID] = save
+            // **A held save is not a saved save.** Nothing else moves the state on this
+            // path (`start` is never called), so it kept whatever it was — usually `.idle`
+            // — while `isDirty` flipped to false on the flush. The save indicator then
+            // rendered exactly as it does after a successful save, telling the user their
+            // work was safely synced while it was in fact parked behind a conflict they
+            // had not answered. It *is* on the device (the write-ahead draft above), so
+            // `.pendingSync` — "Saved on this device" — is the truthful state. Only for the
+            // conflict hold: a save queued behind an in-flight one is already `.saving`.
+            if conflicts[documentID] != nil {
+                states[documentID] = .pendingSync
+            }
             return
         }
         start(documentID: documentID, save: save)
@@ -207,7 +224,7 @@ final class DocumentSaveCoordinator {
     func recoverDrafts() async {
         guard !hasRecoveredDrafts else { return }
         hasRecoveredDrafts = true
-        await syncPendingDrafts()
+        await syncPendingDrafts(isLaunchRecovery: true)
     }
 
     /// Replays drafts left behind by a previous session (or a save that failed /
@@ -217,11 +234,28 @@ final class DocumentSaveCoordinator {
     ///
     /// Unlike `recoverDrafts()` this is **repeatable**: it is the funnel for the
     /// reconnect, foreground and launch triggers, so it self-guards against
-    /// overlapping runs (`isSyncingDrafts`) rather than running once per process.
-    func syncPendingDrafts() async {
-        guard !isSyncingDrafts else { return }
+    /// overlapping runs rather than running once per process. An overlapping trigger is
+    /// **coalesced, never dropped**: the run in flight may already have passed (and
+    /// failed on) the very drafts the new trigger cares about — a reconnect landing
+    /// mid-run is exactly that — so returning early would lose it until the next
+    /// background→foreground cycle.
+    func syncPendingDrafts(isLaunchRecovery: Bool = false) async {
+        if isLaunchRecovery { pendingLaunchRecovery = true }
+        guard !isSyncingDrafts else {
+            needsAnotherSyncPass = true
+            return
+        }
         isSyncingDrafts = true
         defer { isSyncingDrafts = false }
+        repeat {
+            needsAnotherSyncPass = false
+            let launchPass = pendingLaunchRecovery
+            pendingLaunchRecovery = false
+            await runSyncPass(isLaunchRecovery: launchPass)
+        } while needsAnotherSyncPass
+    }
+
+    private func runSyncPass(isLaunchRecovery: Bool) async {
         for draft in draftStore.allDrafts() {
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             // A save that FAILED this session is a retry candidate the user may still
@@ -256,11 +290,31 @@ final class DocumentSaveCoordinator {
                     // Record it and keep the draft: the pill/sheet asks the user.
                     conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: formatted.updatedAt)
                 case .discardServerWins:
-                    // Legacy (baseline-less) draft only. Never discard a queued offline
-                    // save (`.pendingSync`) even so — leave it for the user / a later
-                    // sync — matching the pre-decision protection.
-                    if case .pendingSync = state(for: draft.documentID) { continue }
-                    draftStore.remove(documentID: draft.documentID)
+                    // Legacy (baseline-less) drafts only — rule 3's tolerance fallback.
+                    switch state(for: draft.documentID) {
+                    case .pendingSync, .failed:
+                        // The user has *visible* unsaved work — the "syncs when online" or
+                        // "tap to retry" caption is on screen — that the server has already
+                        // moved past. Discarding it would delete content they are looking
+                        // at. But silently skipping it (what this did) **stranded** them:
+                        // never pushed, never discarded, and — because the decision is not
+                        // `.conflict` — no pill either, so the only remaining funnel was a
+                        // retry tap, which full-overwrites the newer server copy with no
+                        // prompt at all. Give it the same funnel a real conflict gets.
+                        conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: formatted.updatedAt)
+                    default:
+                        // `recoverDrafts()` runs at launch, before any editor is on screen,
+                        // so discarding there is safe — and that is the only place this used
+                        // to run. It is now a **repeatable** trigger (reconnect, foreground),
+                        // and the editor may be *displaying* this very draft: removing it
+                        // would leave on-screen content with no disk backing, and the next
+                        // keystroke would full-overwrite the newer server body. Off the
+                        // launch path, leave it to the editor's own `reconcileDraft`, which
+                        // discards **and installs** the winning body atomically, on the
+                        // screen that is actually showing it.
+                        guard isLaunchRecovery else { continue }
+                        draftStore.remove(documentID: draft.documentID)
+                    }
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
                 draftStore.remove(documentID: draft.documentID)
@@ -389,15 +443,19 @@ final class DocumentSaveCoordinator {
         inFlight[documentID] = Task {
             do {
                 try await client.saveDocumentContent(documentID: documentID, title: save.title, markdown: save.markdown)
-                finish(documentID: documentID, save: save, error: nil)
+                finish(documentID: documentID, save: save, error: nil, contentLanded: true)
+            } catch let partial as DocumentTitleSaveFailed {
+                // The body IS on the server; only the title PATCH failed. Classify
+                // retryability from the real error, but record the push — see `finish`.
+                finish(documentID: documentID, save: save, error: partial.underlying, contentLanded: true)
             } catch {
-                finish(documentID: documentID, save: save, error: error)
+                finish(documentID: documentID, save: save, error: error, contentLanded: false)
             }
             backgroundTasks.end(taskToken)
         }
     }
 
-    private func finish(documentID: UUID, save: PendingSave, error: Error?) {
+    private func finish(documentID: UUID, save: PendingSave, error: Error?, contentLanded: Bool) {
         inFlight[documentID] = nil
         inFlightContent[documentID] = nil
         // Any revalidation fetch still in flight was issued before this save
@@ -421,11 +479,25 @@ final class DocumentSaveCoordinator {
             }
             return
         }
+        // The content PATCH landed — whether or not the *save* went on to succeed. The
+        // server's body is now ours, so record the push even on the failure path: a save
+        // whose title PATCH dropped (or whose response was lost) leaves the server holding
+        // exactly this text with a bumped `updated_at`, and without the stamp the next
+        // replay's rule 1 misses, rule 2 sees a diverged body, and the app raises a **sync
+        // conflict against the user's own content** — parking every further autosave behind
+        // a dialog about their own write, one answer to which discards the title edit that
+        // never landed. Persist it onto the surviving draft too, so it outlives a relaunch.
+        if contentLanded {
+            lastConfirmedPushMarkdown[documentID] = save.markdown
+            if error != nil, let draft = draftStore.draft(for: documentID) {
+                draftStore.save(
+                    PendingDraft(
+                        documentID: documentID, title: draft.title, markdown: draft.markdown,
+                        updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown))
+            }
+        }
         if error == nil {
             states[documentID] = .saved(Date())
-            // The server's most recent writer is now us. Remember what we pushed so a
-            // later replay recognises it (rule 1 of `draftSyncDecision`).
-            lastConfirmedPushMarkdown[documentID] = save.markdown
             if let draft = draftStore.draft(for: documentID) {
                 if draft.title == save.title, draft.markdown == save.markdown {
                     draftStore.remove(documentID: documentID)

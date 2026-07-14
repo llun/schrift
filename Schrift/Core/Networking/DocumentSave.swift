@@ -1,5 +1,14 @@
 import Foundation
 
+/// The content PATCH of a save **landed**, but the title PATCH that follows it did not.
+/// The server therefore already holds this save's body: the caller must record the push
+/// (so a later replay recognises its own write instead of raising a conflict against the
+/// user's own text) while still treating the save as failed and classifying retryability
+/// from `underlying`.
+struct DocumentTitleSaveFailed: Error {
+    let underlying: Error
+}
+
 extension DocsAPIClient {
     /// Creates a new, empty document. The docs backend creates documents from a
     /// JSON body (`{"title": …}`); the multipart file-upload path is gated behind
@@ -32,9 +41,21 @@ extension DocsAPIClient {
     /// markdown is converted to a Yjs update on-device (`MarkdownYjs`) and PATCHed
     /// to the content endpoint — the docs backend only accepts base64 Yjs there
     /// and offers no markdown-to-Yjs conversion a client session can call.
+    ///
+    /// **A save is two requests, so it can half-land**, and the caller must be able to
+    /// tell: if the connection drops between them — precisely the flaky-network case the
+    /// offline stack exists for — the server already holds the new body (with a bumped
+    /// `updated_at`) while this call throws. A caller that sees only "it threw" does not
+    /// know it authored the server's current content, so its next replay compares its own
+    /// write against a stale baseline and raises a **sync conflict against the user's own
+    /// text**. `DocumentTitleSaveFailed` carries that fact out through the `throw`.
     func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws {
         let update = MarkdownYjs.encode(markdown: markdown)
         try await setContent(documentID: documentID, yjsUpdate: update)
-        try await updateTitle(documentID: documentID, title: title)
+        do {
+            try await updateTitle(documentID: documentID, title: title)
+        } catch {
+            throw DocumentTitleSaveFailed(underlying: error)
+        }
     }
 }
