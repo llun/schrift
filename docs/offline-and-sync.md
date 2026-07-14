@@ -579,6 +579,17 @@ choosing one whole version.
   full-overwrote the server copy the user had just chosen to keep. On failure the
   draft *and* the conflict both survive, so the pill and sheet stay available and
   everything on screen is still backed by disk.
+- **Known limitation — the baseline records no title, so a remote *rename* is not
+  detected.** `DraftBaseline` carries `serverUpdatedAt` + `markdown` only, and a save
+  PATCHes content **and** title. A web rename that leaves the body untouched is
+  therefore rule 2's body-equality `.push` (by design — it must not raise a conflict
+  dialog for a rename), and the replay's title PATCH then quietly reverts it to the
+  title the draft was made with. Detecting it means adding a `title` to the persisted
+  `DraftBaseline` and teaching the replay to *adopt* the server's title when the user
+  did not change theirs (title and body are independent fields, so the right answer is
+  a merge, not a dialog). That is a change to a persisted model and to what the replay
+  pushes, so it is deferred to its own change rather than bolted on here. The loss is
+  title-only, immediately visible, and trivially undone.
 - **Known limitation — detection covers a *queued* draft, not a live typist.** A
   revalidation that lands while the screen is **dirty** takes `apply`'s
   silent-cache-update branch (`pendingSave != nil || isDirty` → `cacheServerCopy`), so

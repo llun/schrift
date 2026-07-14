@@ -851,12 +851,17 @@ markdown write endpoint**. Understand this before touching the save path:
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
   never sent, and counting it wedged "keep the server version" permanently.
-- **Known limitation:** conflict detection covers a *queued* draft. A revalidation that
-  lands while the screen is **dirty** still takes `apply`'s silent-cache-update branch,
-  so a concurrent web edit observed mid-typing is overwritten by the ensuing autosave —
-  the pre-existing last-writer-wins model (`docs/architecture.md` keeps automatic
-  multi-user merge a non-goal). Closing that means holding an *active* typist's autosave,
-  which needs its own design.
+- **Known limitations** (both deliberate, both written up in
+  [`docs/offline-and-sync.md`](docs/offline-and-sync.md)): conflict detection covers a
+  *queued* draft, so a revalidation landing while the screen is **dirty** still takes
+  `apply`'s silent-cache-update branch and a concurrent web edit observed mid-typing is
+  overwritten by the ensuing autosave (the pre-existing last-writer-wins model —
+  `docs/architecture.md` keeps automatic multi-user merge a non-goal; closing it means
+  holding an *active* typist's autosave, which needs its own design). And `DraftBaseline`
+  records no **title**, so a remote *rename* is rule 2's body-equality `.push` and the
+  replay's title PATCH silently reverts it; fixing that means adding a title to the
+  persisted baseline and having the replay *adopt* the server's title when the user
+  didn't change theirs.
 - Content is cached on-device in **`DocumentContentCacheStore`** (one JSON per
   document under Application Support, backup-excluded, ≤50 entries by
   most-recent `syncedAt` via file mtime): `load()` shows a local copy
