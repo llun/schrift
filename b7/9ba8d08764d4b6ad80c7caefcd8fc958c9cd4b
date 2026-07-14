@@ -8,6 +8,7 @@ Schrift/Features/Editor/DocumentSaveCoordinator.swift
   s_b91c3ec7576796::t_16019eb18b31bd 409-413,417-420
   s_b91c3ec7576796::t_15d5b01cb655ed 378,387,393-400,403-404
   s_b91c3ec7576796::t_86b538f14a6e29 607-613
+  s_b91c3ec7576796::t_e8399453245293 379-386,388-392,401-402,405-408,414-416
 SchriftTests/Support/RequestBodyHelpers.swift
   s_b91c3ec7576796::t_6d393c5584c173 26-58
 SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
