@@ -286,7 +286,6 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(coordinator.conflict(for: documentID), "the server diverged from the baseline — a conflict")
-        XCTAssertEqual(coordinator.conflict(for: documentID)?.serverTitle, "Doc")
         XCTAssertNotNil(draftStore.draft(for: documentID), "the draft is preserved for the user to resolve")
         XCTAssertEqual(savesInFlight(log), 0, "a conflict never pushes")
     }
@@ -328,7 +327,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
 
-        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(), serverTitle: "Doc")
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the queued edit is retained")
@@ -342,7 +341,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
 
-        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(), serverTitle: "Doc")
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }  // confirm it was held
 
@@ -361,7 +360,7 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         stubSavePipeline(log: log)
         let (coordinator, draftStore, _) = makeCoordinator()
 
-        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(), serverTitle: "Doc")
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
         coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
 
         coordinator.resolveConflictKeepingServer(documentID: documentID)
@@ -388,6 +387,37 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(draftStore.draft(for: documentID)?.lastPushedMarkdown, "# v1")
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+    }
+
+    /// `finish`'s *surviving-draft* branch: when a save lands while a **newer** draft
+    /// has coalesced behind it (the user kept typing during the save), that draft must
+    /// be re-stamped with what we just pushed. Otherwise it keeps its enqueue-time
+    /// `lastPushedMarkdown` (nil here), decision rule 1 can't recognise our own write
+    /// after a relaunch, and the replay reports a **false conflict** against it. The
+    /// sibling test above only covers the enqueue-time stamp, where the prior save had
+    /// already settled and its draft was removed by the equality branch.
+    func testASurvivingNewerDraftIsStampedWithTheJustConfirmedPush() async {
+        let log = RequestRecorder()
+        // Hold the content PATCH open so a newer edit can coalesce behind the in-flight save.
+        stubSavePipeline(log: log, saveDelay: 0.3)
+        let (coordinator, draftStore, _) = makeCoordinator()
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# A")
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# B")  // queued behind A
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# B")
+        XCTAssertNil(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown, "nothing has been confirmed pushed yet")
+
+        // A lands → finish() re-stamps the surviving B draft with A's markdown.
+        await waitUntil { draftStore.draft(for: self.documentID)?.lastPushedMarkdown == "# A" }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# B", "B is still the unsaved work, only re-stamped")
+
+        await waitUntil {
+            self.isSaved(coordinator.state(for: self.documentID))
+                && coordinator.pendingSave(documentID: self.documentID) == nil
+        }
+        XCTAssertNil(draftStore.draft(for: documentID), "B then saved and cleared")
     }
 
     func testDocumentsSaveIndependently() async {
