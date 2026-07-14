@@ -673,7 +673,7 @@ server is about to hold.
   **Keep my version** (`resolveConflictKeepingMine()`) and a destructive,
   confirmation-gated **Keep the server version** (`resolveConflictKeepingServer()`),
   plus a footnote that overwritten versions are restorable from the web's version
-  history. See *Conflict detection & resolution* below.
+  history. See *Conflict detection & resolution* above.
 - **`OfflineBanner` gated on a real copy, with reading-oriented copy**
   (`EditorView.swift:54`). Show **"Reading the copy saved on this device"** only
   when `isOffline && viewModel.hasLocalCopy`. (Editing stays blocked offline —
