@@ -118,7 +118,7 @@ struct EditorView: View {
     @Environment(LocalizationStore.self) private var loc
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
-    @State private var isPresentingConflictSheet = false
+    @State private var conflictToResolve: IdentifiedSyncConflict?
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
@@ -181,7 +181,7 @@ struct EditorView: View {
 
             if viewModel.syncConflict != nil, !viewModel.isEditing {
                 Button {
-                    isPresentingConflictSheet = true
+                    conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
                 } label: {
                     HStack(spacing: DocsSpacing.space2xs) {
                         MaterialSymbol(.warning, size: 13)
@@ -291,8 +291,12 @@ struct EditorView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $isPresentingConflictSheet) {
+        // `.sheet(item:)`, not `isPresented`: the sheet renders the conflict's server
+        // timestamp, so it must never be presented without one. Both choices dismiss
+        // the sheet themselves before handing off to the view model.
+        .sheet(item: $conflictToResolve) { conflict in
             ConflictSheetView(
+                conflict: conflict.value,
                 onKeepMine: { viewModel.resolveConflictKeepingMine() },
                 onKeepServer: { Task { await viewModel.resolveConflictKeepingServer() } }
             )

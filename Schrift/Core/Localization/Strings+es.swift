@@ -173,6 +173,7 @@ enum Strings_es {
         .editor_conflict_title: "Conflicto de sincronización",
         .editor_conflict_body:
             "Este documento cambió en otro lugar mientras tus cambios esperaban sincronizarse. Elige qué versión conservar.",
+        .editor_conflict_server_changed: "La copia del servidor cambió %@.",
         .editor_conflict_keep_mine: "Conservar mi versión",
         .editor_conflict_keep_mine_detail: "Sobrescribe la copia del servidor",
         .editor_conflict_keep_server: "Conservar la versión del servidor",

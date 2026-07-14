@@ -180,6 +180,7 @@ enum Strings_sl {
         .editor_conflict_title: "Konflikt sinhronizacije",
         .editor_conflict_body:
             "Ta dokument je bil medtem, ko so vaše spremembe čakale na sinhronizacijo, spremenjen drugje. Izberite, katero različico obdržati.",
+        .editor_conflict_server_changed: "Strežniška kopija je bila spremenjena %@.",
         .editor_conflict_keep_mine: "Obdrži mojo različico",
         .editor_conflict_keep_mine_detail: "Prepiše kopijo na strežniku",
         .editor_conflict_keep_server: "Obdrži strežniško različico",

@@ -189,6 +189,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_conflict_title = "editor.conflict.title"  // "Sync conflict"
     // "This document changed elsewhere while your edits were waiting to sync. Choose which version to keep."
     case editor_conflict_body = "editor.conflict.body"
+    case editor_conflict_server_changed = "editor.conflict.server_changed"
     case editor_conflict_keep_mine = "editor.conflict.keep_mine"  // "Keep my version"
     case editor_conflict_keep_mine_detail = "editor.conflict.keep_mine_detail"  // "Overwrites the server copy"
     case editor_conflict_keep_server = "editor.conflict.keep_server"  // "Keep the server version"

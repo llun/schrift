@@ -168,6 +168,7 @@ enum Strings_th {
         .editor_conflict_pill_a11y: "ข้อขัดแย้งการซิงค์ แตะเพื่อตรวจสอบ",
         .editor_conflict_title: "ข้อขัดแย้งการซิงค์",
         .editor_conflict_body: "เอกสารนี้ถูกแก้ไขที่อื่นขณะที่การแก้ไขของคุณรอการซิงค์ เลือกเวอร์ชันที่จะเก็บไว้",
+        .editor_conflict_server_changed: "สำเนาบนเซิร์ฟเวอร์เปลี่ยนแปลงเมื่อ %@",
         .editor_conflict_keep_mine: "เก็บเวอร์ชันของฉัน",
         .editor_conflict_keep_mine_detail: "เขียนทับสำเนาบนเซิร์ฟเวอร์",
         .editor_conflict_keep_server: "เก็บเวอร์ชันของเซิร์ฟเวอร์",

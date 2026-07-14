@@ -170,6 +170,7 @@ enum Strings_en {
         .editor_conflict_title: "Sync conflict",
         .editor_conflict_body:
             "This document changed elsewhere while your edits were waiting to sync. Choose which version to keep.",
+        .editor_conflict_server_changed: "The server copy changed %@.",
         .editor_conflict_keep_mine: "Keep my version",
         .editor_conflict_keep_mine_detail: "Overwrites the server copy",
         .editor_conflict_keep_server: "Keep the server version",

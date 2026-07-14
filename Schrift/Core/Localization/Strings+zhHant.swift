@@ -166,6 +166,7 @@ enum Strings_zhHant {
         .editor_conflict_pill_a11y: "同步衝突。點按查看。",
         .editor_conflict_title: "同步衝突",
         .editor_conflict_body: "在你的變更等待同步時，此文件已在他處被修改。請選擇要保留的版本。",
+        .editor_conflict_server_changed: "伺服器副本於%@變更。",
         .editor_conflict_keep_mine: "保留我的版本",
         .editor_conflict_keep_mine_detail: "覆寫伺服器副本",
         .editor_conflict_keep_server: "保留伺服器版本",

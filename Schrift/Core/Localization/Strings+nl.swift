@@ -171,6 +171,7 @@ enum Strings_nl {
         .editor_conflict_title: "Synchronisatieconflict",
         .editor_conflict_body:
             "Dit document is elders gewijzigd terwijl je wijzigingen op synchronisatie wachtten. Kies welke versie je wilt behouden.",
+        .editor_conflict_server_changed: "De serverkopie is %@ gewijzigd.",
         .editor_conflict_keep_mine: "Mijn versie behouden",
         .editor_conflict_keep_mine_detail: "Overschrijft de serverkopie",
         .editor_conflict_keep_server: "Serverversie behouden",

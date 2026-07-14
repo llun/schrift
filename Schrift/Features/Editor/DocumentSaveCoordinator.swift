@@ -63,12 +63,13 @@ final class DocumentSaveCoordinator {
     }
 
     /// A detected conflict: the server changed under a queued offline draft. Carries
-    /// only what the conflict UI needs — deliberately **no server markdown**, so
-    /// "Keep the server version" re-fetches through the view model's guarded funnel
-    /// rather than installing a body the coordinator squirreled away.
+    /// only what the conflict UI needs — the server's `updated_at`, which the sheet
+    /// shows so the user can tell *when* the other copy changed before choosing a
+    /// winner — and deliberately **no server markdown**, so "Keep the server version"
+    /// re-fetches through the view model's guarded funnel rather than installing a
+    /// body the coordinator squirreled away.
     struct SyncConflict: Equatable, Sendable {
         let serverUpdatedAt: Date
-        let serverTitle: String?
     }
 
     private let client: DocsAPIClient
@@ -229,8 +230,7 @@ final class DocumentSaveCoordinator {
                         baseline: draft.baseline)
                 case .conflict:
                     // Record it and keep the draft: the pill/sheet asks the user.
-                    conflicts[draft.documentID] = SyncConflict(
-                        serverUpdatedAt: formatted.updatedAt, serverTitle: formatted.title)
+                    conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: formatted.updatedAt)
                 case .discardServerWins:
                     // Legacy (baseline-less) draft only. Never discard a queued offline
                     // save (`.pendingSync`) even so — leave it for the user / a later
@@ -249,8 +249,8 @@ final class DocumentSaveCoordinator {
     /// Record a conflict the editor's own revalidation (`reconcileDraft`) detected,
     /// so the pill/sheet and the enqueue-hold apply just as they do for a conflict
     /// found by `syncPendingDrafts`.
-    func recordConflict(documentID: UUID, serverUpdatedAt: Date, serverTitle: String?) {
-        conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt, serverTitle: serverTitle)
+    func recordConflict(documentID: UUID, serverUpdatedAt: Date) {
+        conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
     }
 
     /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
