@@ -335,6 +335,12 @@ final class DocumentSaveCoordinator {
         conflicts[documentID] = nil
         queued[documentID] = nil
         draftStore.remove(documentID: documentID)
+        // The conflict is almost always reached from a `.failed`/`.pendingSync` draft, and
+        // discarding it leaves nothing to save — so the state must not keep claiming one.
+        // Left alone it strands the reading surface's "Couldn't save · tap to retry" (or
+        // "syncs when online") caption on a document with no unsaved work, offering a retry
+        // that `saveNow` would no-op. Mirrors `finish`'s discarded branch.
+        states[documentID] = .idle
     }
 
     /// Removes a stored draft only if it is still exactly the given draft —

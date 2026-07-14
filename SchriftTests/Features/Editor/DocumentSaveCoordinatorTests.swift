@@ -489,6 +489,28 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
+    /// A conflict is nearly always reached from a `.pendingSync`/`.failed` draft, and
+    /// discarding it leaves nothing to save — so the save state must stop claiming one.
+    /// Left alone it strands the reading surface's "Couldn't save · tap to retry" caption
+    /// on a document with no unsaved work, offering a retry `saveNow` would no-op.
+    func testKeepingTheServerVersionResetsAStaleFailedSaveState() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, contentStatus: 400)  // non-retryable → `.failed`
+        let (coordinator, draftStore, _) = makeCoordinator()
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { self.isFailed(coordinator.state(for: self.documentID)) }
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+
+        coordinator.resolveConflictKeepingServer(documentID: documentID)
+
+        XCTAssertNil(coordinator.conflict(for: documentID))
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertFalse(
+            isFailed(coordinator.state(for: documentID)),
+            "a discarded conflict leaves nothing to save, so nothing may still report a failed save")
+    }
+
     /// After a save the coordinator remembers what it pushed, and the *next* edit's
     /// draft carries it as `lastPushedMarkdown` — so a cross-relaunch replay recognises
     /// our own write (decision rule 1) instead of flagging a false conflict.

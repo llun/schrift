@@ -1499,6 +1499,20 @@ final class EditorViewModel {
     /// an unchecked, last-writer-wins overwrite the user chose (the overwritten
     /// server version is recoverable from the web's version history).
     func resolveConflictKeepingMine() {
+        guard let conflict = saveCoordinator.conflict(for: documentID) else { return }
+        // Advance the **editor's** baseline too, not just the draft's. The coordinator's
+        // `resolveConflictKeepingLocal` rewrites the stored draft so a failed push isn't
+        // re-detected as the same conflict forever — but `enqueue` rebuilds the draft from
+        // whatever baseline its *caller* passes, and `flushPendingChanges` passes this one.
+        // So a stale `serverBaseline` here would clobber that advance on the very next
+        // autosave (the likely sequence: the released push fails offline, the user keeps
+        // typing) and the identical conflict would be re-detected and re-held — silently
+        // undoing the answer they just gave. The user acknowledged the server's copy and
+        // chose to overwrite it, so the on-screen content now descends from *that* server
+        // state. Only the timestamp is knowable (`SyncConflict` carries no server markdown),
+        // and only the timestamp is needed: rule 2's date check short-circuits first.
+        serverBaseline = DraftBaseline(
+            serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? "")
         flushPendingChanges()
         saveCoordinator.resolveConflictKeepingLocal(documentID: documentID)
     }

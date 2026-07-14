@@ -2120,6 +2120,105 @@ final class EditorViewModelTests: XCTestCase {
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
+    /// The post-await guard in `resolveConflictKeepingServer()`: ending the editing session
+    /// does not lock the screen, so the user can tap back in and type **while the fetch is
+    /// in flight**. That work was never part of the choice they made, so it must not be
+    /// destroyed. Held open with `Stub(delay:)` and pinned on the recorded GET so the edit
+    /// really does land inside the await.
+    func testKeepingTheServerVersionAbandonsIfTheUserEditsDuringTheFetch() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        // The FIRST GET (load) answers immediately; the resolution's GET is held open.
+        MockURLProtocol.stubHandler = { request in
+            let priorGets = log.count(ofMethod: "GET", urlContaining: "formatted-content")
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:], body: coauthorBody, error: nil,
+                    delay: priorGets == 0 ? 0 : 0.4)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+        let getsAfterLoad = log.count(ofMethod: "GET", urlContaining: "formatted-content")
+
+        async let resolution: Void = viewModel.resolveConflictKeepingServer()
+        // Wait until the resolution's fetch is genuinely in flight, then type into it.
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") > getsAfterLoad }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Typed after choosing the server copy")
+        viewModel.flushPendingChanges()
+        await resolution
+
+        XCTAssertNotNil(
+            viewModel.syncConflict, "the conflict stands, so the user can decide again with the new edit in hand")
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Typed after choosing the server copy") == true,
+            "the post-choice edit must survive on disk")
+        XCTAssertFalse(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") },
+            "the server body must not be installed over an edit the user never agreed to discard")
+        XCTAssertEqual(savesInFlight(log), 0, "and the held save is still held")
+        _ = coordinator
+    }
+
+    /// Keep-mine's baseline advance has to survive the *next autosave flush*. The
+    /// coordinator rewrites the stored draft's baseline, but `enqueue` rebuilds the draft
+    /// from whatever baseline its caller passes — and `flushPendingChanges` passes the
+    /// editor's `serverBaseline`. If that stayed stale, the very next keystroke after a
+    /// failed push would clobber the advance and the identical conflict would be
+    /// re-detected and re-held, silently undoing the answer the user just gave.
+    func testKeepingMineAdvancesTheEditorBaselineSoALaterFlushDoesNotResurrectTheConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")  // updated_at = 2026-01-15
+        // The push fails transiently, exactly as it does on the connection that caused the conflict.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.resolveConflictKeepingMine()
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+
+        // The user keeps typing after the failed push. This flush re-enqueues with the
+        // editor's baseline — which must now be the one they chose to overwrite.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Still mine")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, fetchedUpdatedAt,
+            "the flush must not clobber the advanced baseline with the stale pre-conflict one")
+        // …so a later sync does not re-raise the conflict the user already answered.
+        await coordinator.syncPendingDrafts()
+        XCTAssertNil(coordinator.conflict(for: documentID), "the answered conflict must not come back")
+    }
+
     /// reconcileClean's unchanged-body (else) branch advances the baseline's
     /// timestamp: a cache-restored entry with an unknown (void-save) server
     /// timestamp gets promoted to the real server clock once a clean revalidation
