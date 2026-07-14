@@ -510,6 +510,16 @@ final class EditorViewModel {
             // hence `lastConfirmedPush(documentID:)`. Without it, `serverBaseline` (which a
             // save deliberately does not advance) would make our own just-pushed body read
             // as a diverged server.
+            // A save is on the wire, so detection cannot run (a conflict may only be recorded
+            // with no save in flight). **Do not throw the observation away**: if that save
+            // fails, nothing reached the server, the draft survives with a stale baseline, and
+            // the next flush would full-overwrite the body we just fetched and cached. Hand it
+            // to the coordinator, which re-decides in `finish` once the invariant holds again.
+            if saveCoordinator.pendingSave(documentID: documentID) != nil {
+                saveCoordinator.noteServerObservedDuringSave(
+                    documentID: documentID, serverUpdatedAt: formatted.updatedAt,
+                    markdown: formatted.content ?? "")
+            }
             if saveCoordinator.pendingSave(documentID: documentID) == nil {
                 // **Do not require a baseline.** `serverBaseline` is nil exactly for a *legacy*
                 // (baseline-less) draft — one written by a build from before `DraftBaseline`
@@ -681,6 +691,16 @@ final class EditorViewModel {
             // is looking. No storm: `enqueue` makes `pendingSave` non-nil, so `apply`
             // short-circuits before `reconcileDraft` on every later fetch.
             cacheServerCopy(formatted)
+            // A save is on the wire, so detection cannot run (a conflict may only be recorded
+            // with no save in flight). **Do not throw the observation away**: if that save
+            // fails, nothing reached the server, the draft survives with a stale baseline, and
+            // the next flush would full-overwrite the body we just fetched and cached. Hand it
+            // to the coordinator, which re-decides in `finish` once the invariant holds again.
+            if saveCoordinator.pendingSave(documentID: documentID) != nil {
+                saveCoordinator.noteServerObservedDuringSave(
+                    documentID: documentID, serverUpdatedAt: formatted.updatedAt,
+                    markdown: formatted.content ?? "")
+            }
             if saveCoordinator.pendingSave(documentID: documentID) == nil {
                 saveCoordinator.enqueue(
                     documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
@@ -799,7 +819,7 @@ final class EditorViewModel {
                 // Stash behind the "Updated" banner without installing. The
                 // on-screen (older) body still owns `serverBaseline` — the caret is
                 // in it, so any edit descends from it, not from this stashed copy.
-                // `startEditing` *hides* the banner but deliberately **keeps** this stash
+                // NOTE: `startEditing` *hides* the banner but deliberately **keeps** this stash
                 // (destroying it there would blind `markDirty`); `markDirty` is what drops
                 // it — and records a conflict as it does, since abandoning a server body we
                 // fetched and showed the user is exactly what the next autosave would

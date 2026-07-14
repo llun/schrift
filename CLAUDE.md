@@ -919,7 +919,10 @@ markdown write endpoint**. Understand this before touching the save path:
   in the *clean* branch: a revalidation landing while an **editing session**
   holds the caret (the user taps into the synchronously-rendered local copy
   while the fetch is still in flight). It surfaces when editing ends, and
-  `startEditing`/`markDirty` drop the stash so local work always wins.
+  `markDirty` drops the stash — and **records a conflict as it does** (a server body the app
+  fetched *and showed the user* cannot be silently overwritten by the next autosave);
+  `startEditing` only hides the banner and deliberately **keeps** the stash, or the first
+  real keystroke would have nothing left to detect.
   `reconcileDraft`'s server-wins rule still installs directly even mid-edit,
   which is why `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`
   — every content swap re-identifies the blocks.

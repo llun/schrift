@@ -131,6 +131,18 @@ final class EditorViewTests: XCTestCase {
         XCTAssertFalse(overFailed.offersRetry, "a retry that re-enqueues straight back into the hold is not an offer")
     }
 
+    /// A standing conflict outranks even "Synced X ago". Nested inside `hasUnsavedLocalContent`,
+    /// a conflict that is still recorded and still holding every push could render as "Synced
+    /// 5 min ago" — telling the user they are in sync while their next save is parked behind a
+    /// question they have not answered.
+    func testAConflictOutranksTheSyncedCaption() {
+        let caption = syncCaption(
+            hasUnsavedLocalContent: false, hasConflict: true, isOffline: false, saveState: .saved,
+            lastSyncedAt: now.addingTimeInterval(-300), now: now, locale: locale)
+
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
+    }
+
     // MARK: - Conflict sheet
 
     /// The conflict sheet tells the user *when* the other copy changed — the one fact they

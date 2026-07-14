@@ -53,6 +53,13 @@ func syncCaption(
     now: Date,
     locale: Locale
 ) -> SyncCaption {
+    // A standing conflict outranks *everything*, including "Synced X ago". It was nested inside
+    // `hasUnsavedLocalContent`, so a conflict that is still recorded and still holding every push
+    // could render as "Synced 5 min ago" — telling the user they are in sync while their next
+    // save is parked behind a question they have not answered.
+    if hasConflict {
+        return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false)
+    }
     if hasUnsavedLocalContent {
         // A recorded conflict **holds** the push: nothing will sync, and no retry can run,
         // until the user answers the pill (`saveNow` re-enqueues straight back into the
@@ -60,9 +67,7 @@ func syncCaption(
         // a retry that silently no-ops — both were live here, because the hold parks the
         // save in `.pendingSync` and a conflict can also be recorded over a `.failed` one.
         // It IS on the device, so say only that, and leave the pill as the sole affordance.
-        if hasConflict {
-            return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false)
-        }
+        // (Handled above, ahead of every other tier.)
         if case .failed = saveState {
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
         }

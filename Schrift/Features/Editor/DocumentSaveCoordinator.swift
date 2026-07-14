@@ -100,6 +100,14 @@ final class DocumentSaveCoordinator {
     /// editor detected the server moved on). The push is **held** until the user
     /// resolves it via `resolveConflictKeeping{Local,Server}`.
     private var conflicts: [UUID: SyncConflict] = [:]
+    /// A server body the editor **observed while one of our own saves was on the wire**.
+    /// Detection is skipped in that window (a conflict may only be recorded with no save in
+    /// flight — every resolver depends on it), but the observation must not be thrown away:
+    /// if the save then FAILS, nothing reached the server, the draft survives with a stale
+    /// baseline and no push stamp, and the very next flush would full-overwrite the body the
+    /// app had already fetched and cached. Re-decided in `finish`, where the invariant holds
+    /// again. Deliberately in-memory: it is only meaningful until that save settles.
+    private var serverObservedDuringSave: [UUID: (serverUpdatedAt: Date, markdown: String)] = [:]
     /// The markdown of the last save this coordinator confirmed for each document,
     /// so `draftSyncDecision` rule 1 ("the server's most recent writer was us") can
     /// fire — including across a relaunch, via the persisted `lastPushedMarkdown`
@@ -184,6 +192,13 @@ final class DocumentSaveCoordinator {
     /// relaunch, exactly as `enqueue` does.
     func lastConfirmedPush(documentID: UUID) -> String? {
         lastConfirmedPushMarkdown[documentID] ?? draftStore.draft(for: documentID)?.lastPushedMarkdown
+    }
+
+    /// The editor fetched a server body while a save was in flight, so it could not run the
+    /// decision. Hand it over; `finish` re-decides once the save settles.
+    func noteServerObservedDuringSave(documentID: UUID, serverUpdatedAt: Date, markdown: String) {
+        guard inFlightContent[documentID] != nil else { return }
+        serverObservedDuringSave[documentID] = (serverUpdatedAt: serverUpdatedAt, markdown: markdown)
     }
 
     func saveMarker(documentID: UUID) -> SaveMarker {
@@ -625,8 +640,38 @@ final class DocumentSaveCoordinator {
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")
         }
+        // A revalidation landed while this save was on the wire, so detection was skipped. Now
+        // that it has settled the invariant holds again — so decide, before anything can push.
+        // Only when the content did NOT land: if it did, the server holds *our* body and the
+        // observation is superseded (comparing against it would manufacture a false conflict
+        // against the user's own writing).
+        if let observed = serverObservedDuringSave.removeValue(forKey: documentID), !contentLanded,
+            let draft = draftStore.draft(for: documentID)
+        {
+            switch draftSyncDecision(
+                baseline: draft.baseline,
+                lastPushedMarkdown: draft.lastPushedMarkdown ?? lastConfirmedPushMarkdown[documentID],
+                localMarkdown: draft.markdown,
+                draftUpdatedAt: draft.updatedAt,
+                serverUpdatedAt: observed.serverUpdatedAt,
+                serverMarkdown: observed.markdown)
+            {
+            case .conflict, .discardServerWins:
+                recordConflict(documentID: documentID, serverUpdatedAt: observed.serverUpdatedAt)
+            case .push:
+                break
+            }
+        }
         if let next = queued.removeValue(forKey: documentID) {
             if error == nil, next == save {
+                return
+            }
+            // **The queued restart calls `start` directly, so it bypasses `enqueue`'s hold.**
+            // Re-apply it here, or a conflict detected while this save was failing (just above,
+            // or by a sync pass) would be pushed straight over the moment the save settled.
+            guard conflicts[documentID] == nil else {
+                queued[documentID] = next
+                states[documentID] = .pendingSync
                 return
             }
             start(documentID: documentID, save: next)

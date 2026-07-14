@@ -414,7 +414,9 @@ branch instead of popping a banner. Outcomes:
   clean): swapping blocks under the caret is destructive, so stash the fresh body
   in `pendingFreshContent`, set `updateAvailable = true` (drives the banner), and
   leave the displayed blocks alone; the banner renders once editing ends.
-  `startEditing()`/`markDirty()` drop the stash, so local work always wins.
+  `markDirty()` drops the stash — and **records a conflict as it does**; `startEditing()`
+  only hides the banner and **keeps** the stash, or the first real keystroke would have
+  nothing left to detect. See §Conflict detection & resolution.
 - **Displayed source was an in-flight save (source 1) that has since settled:**
   reaching this branch proves the save is no longer pending (the dirty rule above
   intercepts the in-flight case) *and* that this fetch postdates it (the
