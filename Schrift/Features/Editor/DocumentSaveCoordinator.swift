@@ -139,7 +139,18 @@ final class DocumentSaveCoordinator {
         SaveMarker(
             documentID: documentID,
             settledSaves: settledSaves[documentID] ?? 0,
-            hadPendingSave: pendingSave(documentID: documentID) != nil
+            // "Did a save actually reach the network?" — NOT `pendingSave(...) != nil`.
+            // The two were equivalent until the conflict enqueue-hold existed: `queued`
+            // was only ever filled *behind an in-flight save* (coalescing), so a queued
+            // save implied a sent one. The hold broke that: it parks a save in `queued`
+            // that is never started, and nothing drains it until the user resolves. Using
+            // `pendingSave` here therefore pinned `mayPredateSave` to true forever, which
+            // permanently wedged "Keep the server version" (it snapshots a marker before
+            // its fetch) the moment the user typed once more after a conflict was
+            // recorded — leaving the destructive "Keep mine" as the only way out of a
+            // dialog they had already declined. A never-sent save cannot have raced the
+            // fetch, so it must not count here.
+            hadPendingSave: inFlightContent[documentID] != nil
         )
     }
 
@@ -277,13 +288,36 @@ final class DocumentSaveCoordinator {
     /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
     /// wins — an accepted race, recoverable from the server's version history).
     func resolveConflictKeepingLocal(documentID: UUID) {
+        let resolved = conflicts[documentID]
         conflicts[documentID] = nil
         // Defensive only, per the invariant above: were a save somehow in flight, its
         // `finish` would pick the held slot up anyway, so dropping out here is safe.
         guard inFlight[documentID] == nil else { return }
+        // The choice has to **stick on the draft**, not just in the in-memory map. The
+        // released push very often fails (a conflict is usually reviewed on the same
+        // flaky connection that produced it), and the draft would then survive carrying
+        // its original, now-superseded baseline — so the next sync trigger would re-run
+        // `draftSyncDecision`, re-detect the *identical* conflict and hold the push
+        // again. The user's answer would silently evaporate, and they would be asked the
+        // same question forever. Advancing the baseline to the server state they chose to
+        // overwrite makes rule 2 (`serverUpdatedAt <= baselineDate`) return `.push` on the
+        // retry. Only the timestamp is needed — and only the timestamp is knowable, since
+        // `SyncConflict` deliberately carries no server markdown. If the server moves on
+        // *again* the timestamp advances past it once more: a genuinely new conflict,
+        // which is exactly what should be asked about.
+        if let resolved, let draft = draftStore.draft(for: documentID) {
+            draftStore.save(
+                PendingDraft(
+                    documentID: documentID, title: draft.title, markdown: draft.markdown,
+                    updatedAt: draft.updatedAt,
+                    baseline: DraftBaseline(
+                        serverUpdatedAt: resolved.serverUpdatedAt, markdown: draft.baseline?.markdown ?? ""),
+                    lastPushedMarkdown: draft.lastPushedMarkdown))
+        }
         if let held = queued.removeValue(forKey: documentID) {
             start(documentID: documentID, save: held)
         } else if let draft = draftStore.draft(for: documentID) {
+            // Re-read: the draft above may have just had its baseline advanced.
             enqueue(
                 documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
         }

@@ -427,6 +427,50 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(draftStore.draft(for: documentID), "the pushed draft is cleared")
     }
 
+    /// "Keep mine" has to **stick on the draft**, not just in the in-memory conflict map.
+    /// The released push very often fails (a conflict is usually reviewed on the same flaky
+    /// connection that produced it); the draft then survives, and if it still carried its
+    /// original baseline the next sync would re-run the decision, re-detect the *identical*
+    /// conflict and hold the push again — the user's answer would silently evaporate and
+    /// they would be asked forever. Advancing the baseline past the server state they chose
+    /// to overwrite makes the retry a `.push`.
+    func testKeepingLocalSurvivesAFailedPushAndDoesNotReDetectTheSameConflict() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let divergedBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        // The server is diverged; every content PATCH fails transiently (still offline).
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            return .init(statusCode: 200, headers: [:], body: divergedBody, error: nil)
+        }
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base")))
+        await coordinator.syncPendingDrafts()
+        XCTAssertNotNil(coordinator.conflict(for: documentID))
+
+        // The user chooses their version. The push is released — and fails (still offline).
+        coordinator.resolveConflictKeepingLocal(documentID: documentID)
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        XCTAssertNotNil(draftStore.draft(for: documentID), "the failed push keeps the draft")
+
+        // The next sync trigger must NOT re-raise the conflict the user already answered.
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            coordinator.conflict(for: documentID),
+            "the resolution stuck: the same conflict is not re-detected after a failed push")
+        await waitUntil { self.savesInFlight(log) >= 2 }  // it retried the push instead
+    }
+
     /// "Keep the server version" clears the record and drops the local draft/queued
     /// work without pushing — the editor re-fetches the server body separately.
     func testResolveConflictKeepingServerDropsTheDraftWithoutPushing() async {
