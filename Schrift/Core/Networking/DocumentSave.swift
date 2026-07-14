@@ -41,9 +41,17 @@ extension DocsAPIClient {
     /// write against a stale baseline and raises a **sync conflict against the user's own
     /// text**. Hence the split return:
     ///
-    /// - **throws** ⇒ the *content* PATCH failed, so nothing reached the server;
+    /// - **throws** ⇒ the *content* PATCH was not **confirmed**;
     /// - **returns non-nil** ⇒ the content landed and only the *title* PATCH failed;
     /// - **returns nil** ⇒ both landed.
+    ///
+    /// Note the throw case says *unconfirmed*, not "nothing reached the server": a dropped or
+    /// timed-out response can hide a content PATCH the server actually applied, and that is
+    /// precisely the flaky case this exists for. So the throw cannot be trusted to mean the
+    /// server is unchanged — which is why `draftSyncDecision`'s **rule 0** ("the server body
+    /// already equals our local body ⇒ `.push`") is the backstop: it catches exactly the state
+    /// an unconfirmed-but-applied PATCH leaves behind, and stops the app raising a sync
+    /// conflict against the user's own writing.
     ///
     /// Reporting the half-land as a return value rather than a second thrown type keeps
     /// `DocsAPIError` the one error type crossing this layer (see CLAUDE.md, Networking).

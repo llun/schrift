@@ -5,6 +5,41 @@ import XCTest
 final class DraftSyncDecisionTests: XCTestCase {
     private let base = Date(timeIntervalSince1970: 1_000_000)
 
+    // MARK: - Rule 0: the server already holds our local body
+
+    /// The backstop rule 1 cannot provide. A content PATCH whose *response* was lost leaves
+    /// the server holding our text while nothing recorded a push — so `lastPushedMarkdown` is
+    /// nil and the baseline is stale, and rules 1-2 would raise a **conflict against the
+    /// user's own writing**. If the server body already equals ours there is, by definition,
+    /// nothing for a push to overwrite.
+    func testServerAlreadyHoldingOurLocalBodyIsNeverAConflict() {
+        let decision = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Old server"),
+            lastPushedMarkdown: nil,  // the save threw: nothing was recorded
+            localMarkdown: "# My text",
+            draftUpdatedAt: base,
+            serverUpdatedAt: base.addingTimeInterval(3600),  // …but the server applied it anyway
+            serverMarkdown: "# My text"
+        )
+
+        XCTAssertEqual(decision, .push, "the server already holds our body — there is nothing to conflict about")
+    }
+
+    /// It must not swallow a *real* conflict: a server body that differs from ours still
+    /// conflicts, exactly as before.
+    func testRuleZeroDoesNotMaskADivergedServer() {
+        let decision = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Old server"),
+            lastPushedMarkdown: nil,
+            localMarkdown: "# My text",
+            draftUpdatedAt: base,
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: "# Co-author text"
+        )
+
+        XCTAssertEqual(decision, .conflict)
+    }
+
     // MARK: - Rule 1: server body still equals our last push
 
     func testServerMatchingLastPushedMarkdownPushes() {
@@ -14,6 +49,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Old"),
             lastPushedMarkdown: "# Mine",
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Mine"
@@ -27,6 +63,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: nil,
             lastPushedMarkdown: "* a\n* b",
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(10_000),
             serverMarkdown: "- a\n- b"
@@ -40,6 +77,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let within = draftSyncDecision(
             baseline: nil,
             lastPushedMarkdown: "# Something else",
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(60),
             serverMarkdown: "# Server",
@@ -50,6 +88,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let beyond = draftSyncDecision(
             baseline: nil,
             lastPushedMarkdown: "# Something else",
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Server",
@@ -66,6 +105,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base body"),
             lastPushedMarkdown: "# Something we pushed earlier",
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# A co-author's edit"
@@ -79,6 +119,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base,
             serverMarkdown: "# Whatever"
@@ -90,6 +131,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(-500),
             serverMarkdown: "# Different"
@@ -103,6 +145,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base body"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Base body"
@@ -114,6 +157,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "* one"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "- one"
@@ -125,6 +169,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Base body"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# A co-author's edit"
@@ -138,6 +183,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let matching = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: nil, markdown: "# Base"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Base"
@@ -147,6 +193,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let diverged = draftSyncDecision(
             baseline: DraftBaseline(serverUpdatedAt: nil, markdown: "# Base"),
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Server changed"
@@ -165,6 +212,7 @@ final class DraftSyncDecisionTests: XCTestCase {
                 let decision = draftSyncDecision(
                     baseline: DraftBaseline(serverUpdatedAt: base, markdown: "- Base"),
                     lastPushedMarkdown: nil,
+                    localMarkdown: "# Local draft body",
                     draftUpdatedAt: base,
                     serverUpdatedAt: base.addingTimeInterval(offset),
                     serverMarkdown: body,
@@ -184,6 +232,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: nil,
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(60),
             serverMarkdown: "# Server",
@@ -196,6 +245,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: nil,
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(3600),
             serverMarkdown: "# Server",
@@ -208,6 +258,7 @@ final class DraftSyncDecisionTests: XCTestCase {
         let decision = draftSyncDecision(
             baseline: nil,
             lastPushedMarkdown: nil,
+            localMarkdown: "# Local draft body",
             draftUpdatedAt: base,
             serverUpdatedAt: base.addingTimeInterval(120),
             serverMarkdown: "# Server",

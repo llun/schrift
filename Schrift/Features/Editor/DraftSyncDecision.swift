@@ -40,6 +40,13 @@ func canonicalMarkdown(_ markdown: String) -> String {
 ///
 /// Rules, applied in order (every markdown comparison is canonical-form):
 ///
+/// 0. The server body **already equals our local body** → there is nothing to conflict
+///    about: replaying is a content no-op (it still lands the title). This is the backstop
+///    for the case rule 1 cannot see — a content PATCH whose *response* was lost. The save
+///    threw, so nothing recorded a push, but the server applied it anyway; without this the
+///    next reconcile would compare our own text against a stale baseline and raise a
+///    **conflict against the user's own writing**. It can never destroy a real conflict:
+///    if the bodies are equal there is nothing for a push to overwrite.
 /// 1. The server body still equals what we last pushed → the server's most recent
 ///    writer was us, so replaying is safe. This kills false conflicts right after
 ///    our own mid-session saves, including across a relaunch: `DocumentSaveCoordinator`
@@ -58,12 +65,17 @@ func canonicalMarkdown(_ markdown: String) -> String {
 func draftSyncDecision(
     baseline: DraftBaseline?,
     lastPushedMarkdown: String?,
+    localMarkdown: String,
     draftUpdatedAt: Date,
     serverUpdatedAt: Date,
     serverMarkdown: String,
     tolerance: TimeInterval = pendingDraftClockTolerance
 ) -> DraftSyncDecision {
     let serverCanonical = canonicalMarkdown(serverMarkdown)
+
+    if canonicalMarkdown(localMarkdown) == serverCanonical {
+        return .push
+    }
 
     if let lastPushedMarkdown, canonicalMarkdown(lastPushedMarkdown) == serverCanonical {
         return .push

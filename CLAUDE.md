@@ -859,6 +859,21 @@ markdown write endpoint**. Understand this before touching the save path:
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
   never sent, and counting it wedged "keep the server version" permanently.
+- **The conflict record's lifecycle is an invariant, not a detail: a record is meaningful
+  *only while local work exists that would overwrite the observed server body*.** Record it
+  the moment such work appears; release it the moment it is gone. Both halves are
+  load-bearing, and both were got wrong before they were stated: recording where there is no
+  local work (entering edit mode) leaves a **phantom** pill and an enqueue-hold that nothing
+  clears and whose "Keep my version" has nothing to push; failing to release a record that
+  has become moot (the co-author reverted, the user discarded, our own push landed) **parks
+  every future save for that document forever** behind a question with nothing left to ask,
+  and leaves a destructive "Keep the server version" armed against unrelated new work. So:
+  `markDirty` records (local work is being created) but `startEditing` does **not** (it only
+  hides the banner — and it must *keep* the stash, or the first real keystroke has nothing
+  left to detect); `reconcileClean` **clears**, because `apply` only reaches it with no
+  pending save, no draft and not dirty, i.e. no local work by construction. Only a `.push`
+  decision clears at the other sites — `.discardServerWins` is **not** "no conflict", it is
+  rule 3 firing for a legacy draft the server has moved past, which `runSyncPass` records.
 - **Detection runs in `apply`'s dirty branch too**, not only via `reconcileDraft`. That
   branch (`pendingSave != nil || isDirty` → `cacheServerCopy`) used to return without
   consulting the decision, which made the whole safety net depend on **keystroke timing**:

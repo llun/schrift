@@ -295,6 +295,7 @@ final class DocumentSaveCoordinator {
                 let decision = draftSyncDecision(
                     baseline: draft.baseline,
                     lastPushedMarkdown: draft.lastPushedMarkdown,
+                    localMarkdown: draft.markdown,
                     draftUpdatedAt: draft.updatedAt,
                     serverUpdatedAt: formatted.updatedAt,
                     serverMarkdown: formatted.content ?? "")
@@ -393,8 +394,14 @@ final class DocumentSaveCoordinator {
                 PendingDraft(
                     documentID: documentID, title: draft.title, markdown: draft.markdown,
                     updatedAt: draft.updatedAt,
+                    // A legacy draft has no baseline body to carry forward. Fabricating `""`
+                    // made rule 2's content tiebreak match any *empty* server document — so
+                    // use the draft's own body: if a later fetch shows the server holding it,
+                    // that is our own push having landed (idempotent), and anything else is a
+                    // genuinely new conflict, which is exactly the discrimination we want.
                     baseline: DraftBaseline(
-                        serverUpdatedAt: resolved.serverUpdatedAt, markdown: draft.baseline?.markdown ?? ""),
+                        serverUpdatedAt: resolved.serverUpdatedAt,
+                        markdown: draft.baseline?.markdown ?? draft.markdown),
                     lastPushedMarkdown: draft.lastPushedMarkdown))
         }
         if let held = queued.removeValue(forKey: documentID) {

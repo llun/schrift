@@ -567,6 +567,15 @@ choosing one whole version.
   (`saveNow` enqueues straight through) full-overwrites the web edit the app had
   already fetched. Recording is non-destructive — nothing is installed, the draft
   stays — and strictly more protective.
+- **Lifecycle: a conflict record is meaningful only while local work exists.** Record it
+  when such work appears (`markDirty`, a queued draft, a dirty revalidation); release it when
+  it is gone (`reconcileClean`, which `apply` reaches only with no pending save, no draft and
+  not dirty — so a record there cannot be live). Get the first half wrong and a *phantom*
+  conflict wedges a document with no unsaved changes; get the second wrong and a conflict
+  that has become moot parks every future save behind a question with nothing left to ask.
+  Only a `.push` decision releases it: `.discardServerWins` is **not** "no conflict" — it is
+  rule 3 firing for a legacy draft the server has moved past, which is exactly the state
+  `runSyncPass` records a conflict for.
 - **Hold the push.** While a conflict is recorded, `enqueue` writes the draft and
   the queued slot (write-ahead, so `pendingSave()`/`hasUnsavedLocalContent` keep
   working) but does **not** start a save — an autosave flush must never overwrite

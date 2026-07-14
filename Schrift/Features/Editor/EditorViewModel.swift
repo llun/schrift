@@ -514,6 +514,7 @@ final class EditorViewModel {
                 if case .conflict = draftSyncDecision(
                     baseline: baseline,
                     lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
+                    localMarkdown: currentMarkdown(),
                     draftUpdatedAt: Date(),
                     serverUpdatedAt: formatted.updatedAt,
                     serverMarkdown: formatted.content ?? "")
@@ -610,16 +611,26 @@ final class EditorViewModel {
             // full-overwrites the very web edit we already fetched. Recording is
             // non-destructive — the draft still stays on screen and nothing is installed —
             // and it is strictly more protective: the retry is held and the pill asks first.
-            if case .conflict = draftSyncDecision(
+            // Exhaustive, NOT `if case .conflict … else clear`. `.discardServerWins` is not
+            // "no conflict": it is rule 3 firing for a **legacy** (baseline-less) draft the
+            // server has moved past — and `runSyncPass` deliberately records a conflict for
+            // exactly that state, because the draft is visible unsaved work and the only other
+            // funnel is a retry tap that overwrites the newer server copy with no prompt.
+            // Treating it as "resolved" here cleared that record on the next pull-to-refresh
+            // and re-opened the very hole it was added to close.
+            switch draftSyncDecision(
                 baseline: draft.baseline,
                 lastPushedMarkdown: draft.lastPushedMarkdown,
+                localMarkdown: draft.markdown,
                 draftUpdatedAt: draft.updatedAt,
                 serverUpdatedAt: formatted.updatedAt,
                 serverMarkdown: formatted.content ?? "")
             {
+            case .conflict, .discardServerWins:
                 saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-            } else {
-                // No longer a conflict — release any hold, or it parks every save forever.
+            case .push:
+                // Genuinely nothing left to ask about — release any hold, or it parks every
+                // save for this document forever.
                 saveCoordinator.clearResolvedConflict(documentID: documentID)
             }
             cacheServerCopy(formatted)
@@ -633,6 +644,7 @@ final class EditorViewModel {
         switch draftSyncDecision(
             baseline: draft.baseline,
             lastPushedMarkdown: draft.lastPushedMarkdown,
+            localMarkdown: draft.markdown,
             draftUpdatedAt: draft.updatedAt,
             serverUpdatedAt: formatted.updatedAt,
             serverMarkdown: formatted.content ?? "")
@@ -705,6 +717,15 @@ final class EditorViewModel {
     /// never reaches here — `apply` returns early — and `startEditing`/
     /// `markDirty` drop the stash, so local work always wins.)
     private func reconcileClean(_ formatted: FormattedDocumentContent) {
+        // `apply` only reaches here with **no pending save, no stored draft, and not dirty** —
+        // i.e. no local work exists at all. A conflict record therefore has nothing left to
+        // protect and cannot be a live one, so release it. Nothing else would: every other
+        // clear happens on a path that requires local work, so a conflict that has become moot
+        // (the co-author reverted; our own push landed; the user discarded their edit) would
+        // otherwise park every future save for this document forever behind a question with
+        // nothing left to ask — and leave a destructive "Keep the server version" armed
+        // against whatever the user typed next.
+        saveCoordinator.clearResolvedConflict(documentID: documentID)
         let fetched = formatted.content ?? ""
         let now = Date()
         if let fetchedTitle = formatted.title, fetchedTitle != title {
@@ -929,7 +950,15 @@ final class EditorViewModel {
     func startEditing(focusing blockID: UUID? = nil) {
         guard hasLoadedContent else { return }
         clearError()
-        abandonPendingFreshContent()
+        // Hide the banner while the caret is in the document (`applyPendingUpdate` is guarded
+        // on `!isEditing` anyway) — but **keep the stash, and record nothing**. Entering edit
+        // mode is not local work: there is nothing yet that could overwrite the server's copy,
+        // so a conflict recorded here would be a *phantom* — a pill and an enqueue-hold on a
+        // document with no unsaved changes, which nothing on the clean path would clear and
+        // whose "Keep my version" would have nothing to push. And destroying the stash here
+        // would blind `markDirty`, which is where the real detection has to happen: it is the
+        // moment local work first exists.
+        updateAvailable = false
         if blocks.isEmpty {
             let seed = EditorBlock(kind: .paragraph)
             blocks = [seed]
@@ -1548,6 +1577,18 @@ final class EditorViewModel {
     /// server version is recoverable from the web's version history).
     func resolveConflictKeepingMine() {
         guard let conflict = saveCoordinator.conflict(for: documentID) else { return }
+        // The sheet promises "Overwrites the server copy", so it must never be a silent no-op.
+        // By the lifecycle rule a conflict only stands while local work exists, so this is a
+        // belt-and-braces check rather than an expected branch — but if there is genuinely
+        // nothing to push, the record is moot and pushing the *on-screen* body would overwrite
+        // the co-author with the server's own older copy. Release it instead.
+        guard
+            isDirty || saveCoordinator.pendingSave(documentID: documentID) != nil
+                || saveCoordinator.storedDraft(documentID: documentID) != nil
+        else {
+            saveCoordinator.clearResolvedConflict(documentID: documentID)
+            return
+        }
         // Advance the **editor's** baseline too, not just the draft's. The coordinator's
         // `resolveConflictKeepingLocal` rewrites the stored draft so a failed push isn't
         // re-detected as the same conflict forever — but `enqueue` rebuilds the draft from
@@ -1677,6 +1718,7 @@ final class EditorViewModel {
         if case .conflict = draftSyncDecision(
             baseline: baseline,
             lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
+            localMarkdown: currentMarkdown(),
             draftUpdatedAt: Date(),
             serverUpdatedAt: pending.serverUpdatedAt,
             serverMarkdown: pending.markdown)
