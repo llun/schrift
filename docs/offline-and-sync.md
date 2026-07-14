@@ -559,6 +559,14 @@ choosing one whole version.
   squirreled away. Both detection sites record the same way (`syncPendingDrafts`
   inline; `reconcileDraft` via `recordConflict(...)`), and `conflict(for:)` is read
   by the VM's `syncConflict` so the pill appears/disappears live (`@Observable`).
+  **The record is persisted, not just in-memory** — mirrored onto the draft as
+  `PendingDraft.conflictServerUpdatedAt`, and rehydrated into `conflicts` in the
+  coordinator's `init` (which runs at app start, before any editor exists). It has to be:
+  on launch the editor renders a stored draft *synchronously* and unblocks editing before
+  any revalidation returns, so with an in-memory-only record a Done tap could reach
+  `enqueue` with no hold in force and full-overwrite the co-author's body the user had
+  already been warned about. The baseline and rule 1's stamp are persisted for the same
+  reason; the hold is no different.
   **`reconcileDraft` records a conflict even in its `.pendingSync`/`.failed` early
   return.** That branch exists so the tolerance rule can't discard content the retry
   affordance is holding — but skipping *detection* there left the hole this whole

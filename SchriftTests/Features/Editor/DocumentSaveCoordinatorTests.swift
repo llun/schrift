@@ -610,6 +610,51 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
                 + "make the content tiebreak match any empty server document")
     }
 
+    /// **The hold must survive a relaunch.** A conflict the app already detected and *showed
+    /// the user* used to evaporate on process death, because the record was in-memory only. On
+    /// the next launch the editor renders the stored draft synchronously and unblocks editing
+    /// **before** any revalidation returns — so a Done tap or an autosave reached `enqueue`
+    /// with `conflicts` empty and pushed a full overwrite over the co-author's body the user
+    /// had literally just been warned about. Rule 1 and the baseline are persisted for exactly
+    /// this reason; the hold is no different.
+    func testAConflictHoldSurvivesARelaunch() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        func makeProcess() -> DocumentSaveCoordinator {
+            DocumentSaveCoordinator(
+                client: DocsAPIClient(
+                    baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        }
+
+        // Process 1: a queued draft, and a conflict detected against it.
+        let first = makeProcess()
+        first.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        first.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        XCTAssertNotNil(first.conflict(for: documentID))
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+
+        // Process 2: same draft store, brand-new coordinator (the app was killed).
+        let second = makeProcess()
+
+        XCTAssertNotNil(
+            second.conflict(for: documentID), "the unanswered conflict must be in force from the first instant")
+        // The decisive property: the very first enqueue of the new process is HELD, without
+        // waiting for any revalidation to come back and re-derive the conflict.
+        second.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine, edited after relaunch")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(draftStore.draft(for: documentID), "and the edit is still safely on disk")
+
+        // Answering it releases the hold — on disk as well as in memory.
+        second.resolveConflictKeepingLocal(documentID: documentID)
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(makeProcess().conflict(for: documentID), "a third process sees no stale hold")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {

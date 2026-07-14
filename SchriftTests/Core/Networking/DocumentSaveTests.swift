@@ -110,8 +110,10 @@ final class DocumentSaveClientTests: XCTestCase {
         }
         let client = makeClient()
 
-        try await client.saveDocumentContent(
+        let titleFailure = try await client.saveDocumentContent(
             documentID: realDocumentID, title: "Notes", markdown: "# Hi\n\nHello **world**")
+
+        XCTAssertNil(titleFailure, "both PATCHes landed")
 
         // Content is written first, then the title.
         XCTAssertEqual(log.requests.map(\.httpMethod), ["PATCH", "PATCH"])
@@ -131,5 +133,53 @@ final class DocumentSaveClientTests: XCTestCase {
         XCTAssertEqual(decoded.first, 0x01)
 
         XCTAssertEqual(jsonBody(log.requests[1])?["title"], "Notes")
+    }
+
+    // MARK: - The split return: a save is two requests and can half-land
+
+    /// The contract the offline stack depends on. If the connection drops **between** the two
+    /// PATCHes, the server already holds the new body while the save failed — and a caller that
+    /// only learns "it failed" would compare its own write against a stale baseline on the next
+    /// reconcile and raise a **sync conflict against the user's own writing**. So a title-only
+    /// failure must NOT throw: it comes back as a value, with the content confirmed landed.
+    func testATitleOnlyFailureReturnsTheErrorInsteadOfThrowing() async throws {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)  // the title PATCH
+        }
+        let client = makeClient()
+
+        let titleFailure = try await client.saveDocumentContent(
+            documentID: realDocumentID, title: "Notes", markdown: "# Hi")
+
+        XCTAssertEqual(
+            titleFailure, .server(statusCode: 500), "the content landed — report the title failure, do not throw")
+        XCTAssertEqual(log.requests.map(\.httpMethod), ["PATCH", "PATCH"], "both were attempted")
+    }
+
+    /// The other half: a **content** PATCH failure throws, because nothing was confirmed — and
+    /// the title PATCH must not even be attempted.
+    func testAContentFailureThrowsAndNeverAttemptsTheTitle() async {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.saveDocumentContent(documentID: realDocumentID, title: "Notes", markdown: "# Hi")
+            XCTFail("a failed content PATCH must throw")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 500))
+        } catch {
+            XCTFail("expected DocsAPIError, got \(error)")
+        }
+        XCTAssertEqual(log.requests.count, 1, "the title PATCH must not be attempted after the content failed")
     }
 }

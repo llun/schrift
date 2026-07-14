@@ -21,6 +21,17 @@ struct PendingDraft: Codable, Equatable, Sendable {
     let updatedAt: Date
     let baseline: DraftBaseline?
     let lastPushedMarkdown: String?
+    /// The server `updated_at` of a **detected but unanswered sync conflict**, mirrored here
+    /// from `DocumentSaveCoordinator.conflicts` so the **enqueue-hold survives a relaunch**.
+    ///
+    /// It has to be persisted, not merely re-derivable. The in-memory record alone meant a
+    /// conflict the app had already *detected and shown the user* evaporated on process death:
+    /// on the next launch `restoreLocalContent` puts the draft on screen synchronously and
+    /// `hasLoadedContent` unblocks editing **before** any revalidation returns, so a Done tap
+    /// or an autosave could reach `enqueue` with `conflicts` still empty — and push a full
+    /// overwrite over the co-author's body the user had literally just been warned about. Rule
+    /// 1 and the baseline are persisted for the same reason; the hold is no different.
+    let conflictServerUpdatedAt: Date?
 
     init(
         documentID: UUID,
@@ -28,7 +39,8 @@ struct PendingDraft: Codable, Equatable, Sendable {
         markdown: String,
         updatedAt: Date,
         baseline: DraftBaseline? = nil,
-        lastPushedMarkdown: String? = nil
+        lastPushedMarkdown: String? = nil,
+        conflictServerUpdatedAt: Date? = nil
     ) {
         self.documentID = documentID
         self.title = title
@@ -36,6 +48,7 @@ struct PendingDraft: Codable, Equatable, Sendable {
         self.updatedAt = updatedAt
         self.baseline = baseline
         self.lastPushedMarkdown = lastPushedMarkdown
+        self.conflictServerUpdatedAt = conflictServerUpdatedAt
     }
 }
 

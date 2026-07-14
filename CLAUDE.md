@@ -859,6 +859,14 @@ markdown write endpoint**. Understand this before touching the save path:
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
   never sent, and counting it wedged "keep the server version" permanently.
+- **The conflict record is persisted with the draft** (`PendingDraft.conflictServerUpdatedAt`,
+  rehydrated into `conflicts` in the coordinator's `init`). An in-memory-only record meant a
+  conflict the app had already *detected and shown the user* evaporated on process death: on
+  the next launch the editor renders the stored draft synchronously and unblocks editing
+  **before** any revalidation returns, so a Done tap reached `enqueue` with no hold in force
+  and full-overwrote the body the user had just been warned about. `enqueue` rebuilds the
+  whole draft, so every draft write must carry the stamp forward or the next keystroke erases
+  the hold.
 - **The conflict record's lifecycle is an invariant, not a detail: a record is meaningful
   *only while local work exists that would overwrite the observed server body*.** Record it
   the moment such work appears; release it the moment it is gone. Both halves are

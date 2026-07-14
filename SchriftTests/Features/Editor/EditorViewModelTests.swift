@@ -2522,6 +2522,52 @@ final class EditorViewModelTests: XCTestCase {
                 + "the next retry overwrite the newer server copy with no prompt")
     }
 
+    /// The **editor-side** half of "never fabricate an empty baseline body". It is the half that
+    /// actually decides what lands on disk: `resolveConflictKeepingMine` sets `serverBaseline`
+    /// and then `flushPendingChanges()` → `enqueue` persists *that* verbatim, over whatever the
+    /// coordinator wrote. `serverBaseline` is nil exactly for a legacy (baseline-less) draft, so
+    /// this is the only path where the fallback fires — and an empty body would make rule 2's
+    /// content tiebreak match any **empty server document**, silently full-overwriting a
+    /// co-author who deliberately emptied the doc.
+    func testKeepingMineOnALegacyDraftPersistsARealBaselineBodyNotAnEmptyOne() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // A server far beyond the tolerance window, so a baseline-less draft decides
+        // `.discardServerWins` → `reconcileDraft` records the conflict.
+        let futureServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: futureServer, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        // Legacy: no baseline. Its save fails offline → `.pendingSync`.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+        XCTAssertNil(
+            draftStore.draft(for: documentID)?.baseline,
+            "a legacy draft has no baseline — which is what leaves the editor's `serverBaseline` nil")
+
+        viewModel.resolveConflictKeepingMine()
+
+        let persisted = draftStore.draft(for: documentID)?.baseline?.markdown
+        XCTAssertNotNil(persisted)
+        XCTAssertFalse(
+            persisted?.isEmpty == true,
+            "an empty baseline body makes rule 2's tiebreak match any empty server document — so a "
+                + "co-author who deliberately empties the doc would be silently overwritten")
+    }
+
     // MARK: - The conflict record's lifecycle
     //
     // The rule the four detection sites share: **a conflict record is meaningful only while

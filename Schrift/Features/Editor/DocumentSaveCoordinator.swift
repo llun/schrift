@@ -116,6 +116,33 @@ final class DocumentSaveCoordinator {
         self.draftStore = draftStore
         self.contentCache = contentCache
         self.backgroundTasks = backgroundTasks
+        // **Rehydrate the holds before anything can enqueue.** The coordinator is built once,
+        // at app start, before any editor exists — so a conflict persisted by a previous
+        // process is in force from the very first `enqueue` of this one, rather than only
+        // after a revalidation happens to return. That ordering is the whole point: on launch
+        // the editor renders a stored draft synchronously and unblocks editing immediately,
+        // so a Done tap could otherwise beat the fetch and push a full overwrite over the body
+        // the user was already warned about.
+        for draft in draftStore.allDrafts() {
+            if let serverUpdatedAt = draft.conflictServerUpdatedAt {
+                conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+            }
+        }
+    }
+
+    /// Mirror the in-memory conflict onto the stored draft so the hold outlives the process.
+    /// The map is authoritative within a session; this keeps disk agreeing with it. Only writes
+    /// when the value actually changes — a gratuitous rewrite would break the identity
+    /// comparisons `discardStoredDraft` and `resolveConflictKeepingServer`'s snapshot rely on.
+    private func persistConflictOnDraft(documentID: UUID) {
+        guard let draft = draftStore.draft(for: documentID) else { return }
+        let stamp = conflicts[documentID]?.serverUpdatedAt
+        guard draft.conflictServerUpdatedAt != stamp else { return }
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: draft.title, markdown: draft.markdown,
+                updatedAt: draft.updatedAt, baseline: draft.baseline,
+                lastPushedMarkdown: draft.lastPushedMarkdown, conflictServerUpdatedAt: stamp))
     }
 
     func state(for documentID: UUID) -> DocSaveState {
@@ -205,7 +232,10 @@ final class DocumentSaveCoordinator {
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: title, markdown: markdown, updatedAt: Date(), baseline: baseline,
-                lastPushedMarkdown: lastPushed))
+                lastPushedMarkdown: lastPushed,
+                // Carry the hold through: `enqueue` rebuilds the whole draft, so omitting this
+                // would silently erase a persisted conflict on the next keystroke.
+                conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
         // Enqueue-hold: while a conflict is recorded, persist the draft and the
         // queued slot (write-ahead, so `pendingSave()` still sees it and the editor's
         // dirty short-circuit / `hasUnsavedLocalContent` keep working) but do NOT
@@ -348,7 +378,10 @@ final class DocumentSaveCoordinator {
     /// branch) detected, so the pill/sheet and the enqueue-hold apply just as they do for a
     /// conflict found by `syncPendingDrafts`.
     func recordConflict(documentID: UUID, serverUpdatedAt: Date) {
-        conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+        let conflict = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+        guard conflicts[documentID] != conflict else { return }
+        conflicts[documentID] = conflict
+        persistConflictOnDraft(documentID: documentID)
     }
 
     /// A later decision proved the conflict is **gone** (the server came back to the
@@ -358,7 +391,9 @@ final class DocumentSaveCoordinator {
     /// a question that no longer has anything to ask about. Only the detection sites call
     /// this, and only on a non-`.conflict` decision, so it can never discard a live one.
     func clearResolvedConflict(documentID: UUID) {
+        guard conflicts[documentID] != nil else { return }
         conflicts[documentID] = nil
+        persistConflictOnDraft(documentID: documentID)
     }
 
     /// **Invariant both resolvers rely on: while a conflict is recorded, no save for
@@ -402,7 +437,9 @@ final class DocumentSaveCoordinator {
                     baseline: DraftBaseline(
                         serverUpdatedAt: resolved.serverUpdatedAt,
                         markdown: draft.baseline?.markdown ?? draft.markdown),
-                    lastPushedMarkdown: draft.lastPushedMarkdown))
+                    lastPushedMarkdown: draft.lastPushedMarkdown,
+                    // The user answered: the hold is released, on disk as well as in memory.
+                    conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
         }
         if let held = queued.removeValue(forKey: documentID) {
             start(documentID: documentID, save: held)
@@ -522,7 +559,8 @@ final class DocumentSaveCoordinator {
                 draftStore.save(
                     PendingDraft(
                         documentID: documentID, title: draft.title, markdown: draft.markdown,
-                        updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown))
+                        updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown,
+                        conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
             }
         }
         // Deleted or revoked while this save was on the wire: write no local copy,
