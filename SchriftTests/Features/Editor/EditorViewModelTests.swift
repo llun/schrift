@@ -2112,11 +2112,21 @@ final class EditorViewModelTests: XCTestCase {
 
         viewModel.resolveConflictKeepingMine()
 
+        // Snapshot SYNCHRONOUSLY. `enqueue`/`start` set the pending save before returning,
+        // and `finish` clears it the moment the save settles — so reading it after an await
+        // races the (immediately-stubbed) PATCH, and an `Optional?.contains(...) != false`
+        // test would then pass **vacuously** on nil, whatever was actually pushed.
+        let released = coordinator.pendingSave(documentID: documentID)
+        XCTAssertNotNil(released, "keep-mine released a push")
+        XCTAssertTrue(
+            released?.markdown.contains("Newest in-progress text") == true,
+            "the released push must carry the newest in-progress edit")
+        XCTAssertFalse(
+            released?.markdown.contains("Stored draft") == true,
+            "…and not the older stored draft — which is what `flushPendingChanges()` is for")
+
         await waitUntil { self.savesInFlight(log) >= 1 }
         XCTAssertNil(viewModel.syncConflict)
-        XCTAssertTrue(
-            coordinator.pendingSave(documentID: documentID)?.markdown.contains("Newest in-progress text") != false,
-            "the released push carries the newest edit, not the stored draft")
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
@@ -2214,9 +2224,57 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, fetchedUpdatedAt,
             "the flush must not clobber the advanced baseline with the stale pre-conflict one")
+
+        // Settle that flush's save first: `syncPendingDrafts` skips any document with an
+        // in-flight or queued save *before* it fetches, so re-syncing while it is still in
+        // flight would skip the draft entirely and leave `conflict(for:)` trivially nil —
+        // passing no matter whether the baseline advance stuck.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
         // …so a later sync does not re-raise the conflict the user already answered.
         await coordinator.syncPendingDrafts()
         XCTAssertNil(coordinator.conflict(for: documentID), "the answered conflict must not come back")
+    }
+
+    /// The destructive resolver's 404/403 branch tears the document down *before* the draft
+    /// is discarded, so a transient 404 (a proxy hiccup) must leave the user's only copy of
+    /// the edit intact — a regression that reordered the discard ahead of the fetch would
+    /// destroy it here with nothing to catch it. The conflict *record* is deliberately
+    /// cleared, because `becomeUnavailable` → `suppressLocalWriteThrough` must not leave a
+    /// stale record on a torn-down document; it is re-detected once the document is
+    /// reachable again (both `syncPendingDrafts` and `reconcileDraft` re-run the decision).
+    func testKeepingTheServerVersionKeepsTheDraftWhenTheDocumentIs404() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The resolution's fetch 404s (which may be transient — a proxy hiccup).
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Mine",
+            "a 404 must not cost the user their only copy of the edit — the discard never ran")
+        XCTAssertTrue(viewModel.isUnavailable, "the document is torn down, as on any 404")
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "the record is cleared with the teardown (no stale conflict on a gone document); it is re-detected "
+                + "by the decision once the document is reachable again")
+        XCTAssertEqual(savesInFlight(log), 0)
     }
 
     /// reconcileClean's unchanged-body (else) branch advances the baseline's

@@ -220,10 +220,13 @@ final class EditorViewModel {
         // A failed or pending-sync save leaves the draft as the user's only copy of
         // that edit (the server hasn't confirmed it), so it is unsaved local content
         // whatever `displaySource` says.
+        // Exhaustive on purpose: this is one of the two save funnels the CLAUDE.md
+        // invariants are written around, so a new coordinator state must be a compile
+        // error here, not fall silently into the least-protective branch.
         switch saveCoordinator.state(for: documentID) {
         case .failed, .pendingSync:
             return saveCoordinator.storedDraft(documentID: documentID) != nil
-        default:
+        case .idle, .saving, .saved:
             return displaySource == .draft && saveCoordinator.storedDraft(documentID: documentID) != nil
         }
     }
@@ -1482,12 +1485,13 @@ final class EditorViewModel {
         // fire, so this manual retry is the only resync without a background cycle.
         // The retry re-pushes the draft's content, so it descends from that draft's
         // own recorded baseline.
+        // Exhaustive on purpose — see `hasUnsavedLocalContent`.
         switch saveCoordinator.state(for: documentID) {
         case .failed, .pendingSync:
             saveCoordinator.enqueue(
                 documentID: documentID, title: savedTitle, markdown: savedMarkdown,
                 baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline)
-        default:
+        case .idle, .saving, .saved:
             break
         }
     }

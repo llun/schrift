@@ -179,7 +179,11 @@ struct EditorView: View {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
             }
 
-            if viewModel.syncConflict != nil, !viewModel.isEditing {
+            // Shown while EDITING too, unlike the "Updated" banner. The enqueue-hold parks
+            // an editing session's autosave, so without the pill the user has no affordance
+            // and no signal at all — they would keep typing into content that is silently
+            // not being pushed.
+            if viewModel.syncConflict != nil {
                 Button {
                     conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
                 } label: {
