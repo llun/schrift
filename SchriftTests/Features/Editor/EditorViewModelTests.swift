@@ -1823,9 +1823,79 @@ final class EditorViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertNotNil(viewModel.syncConflict, "the reading surface exposes the detected conflict")
-        XCTAssertEqual(viewModel.syncConflict?.serverTitle, "Doc")
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.markdown, "# Mine", "the draft is not overwritten by the server body")
+    }
+
+    /// The hole this PR exists to close. `reconcileDraft` returns early for a
+    /// `.pendingSync`/`.failed` draft so the tolerance rule can't discard visible
+    /// content — but it must still *detect* a conflict on the way out. Without that,
+    /// a revalidation proves the server moved on, records nothing, and the user's next
+    /// "tap to retry" (`saveNow` enqueues straight through) full-overwrites the web
+    /// edit the app had already fetched. Detection engages the enqueue-hold, so the
+    /// retry is held and the pill asks first.
+    func testPendingSyncDraftDetectsAConflictSoARetryCannotOverwriteTheServer() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+
+        // 1. Load the server copy (baseline "# Base" @ the fixture's 2026-01-15), edit
+        //    it, and let the save fail transiently → .pendingSync with a draft.
+        let baseBody = formattedBody(content: "# Base")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: baseBody, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine")
+        viewModel.flushPendingChanges()
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        let savesBeforeRetry = savesInFlight(log)
+        // The user's only copy of the edit. Every assertion below compares against this
+        // snapshot rather than a literal, so the test pins *preservation*, not the
+        // serializer's exact output.
+        let queuedDraft = draftStore.draft(for: documentID)?.markdown
+        XCTAssertNotNil(queuedDraft)
+        XCTAssertTrue(queuedDraft?.contains("Mine") == true, "the draft holds the offline edit")
+
+        // 2. A co-author edits on the web: the server body diverges from the baseline
+        //    and its updated_at moves past it. The save PATCH would now SUCCEED.
+        let divergedBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: divergedBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        // 3. A pull-to-refresh observes the divergence while still .pendingSync.
+        await viewModel.refresh()
+
+        XCTAssertNotNil(viewModel.syncConflict, "the observed web edit must be recorded as a conflict")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, queuedDraft,
+            "the queued edit is still the user's only copy — never discarded here")
+
+        // 4. The user taps retry. It must be HELD by the conflict, not pushed: pushing
+        //    would full-overwrite "# Co-author edit" with the "# Base"-derived draft.
+        viewModel.saveNow()
+
+        await waitAndConfirmNever { self.savesInFlight(log) > savesBeforeRetry }
+        XCTAssertNotNil(viewModel.syncConflict, "still awaiting the user's choice")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, queuedDraft, "the held retry keeps the draft intact")
     }
 
     /// "Keep mine" flushes any in-progress edit, clears the conflict, and pushes the

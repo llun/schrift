@@ -560,6 +560,23 @@ final class EditorViewModel {
         // PATCH failed) can then read as "newer than the draft".
         switch saveCoordinator.state(for: documentID) {
         case .failed, .pendingSync:
+            // Keeping the draft is not the same as staying blind to the server. Skipping
+            // *detection* here — not just the discard — left the one hole this whole PR
+            // exists to close: this fetch has just proved the server moved on, but with
+            // no conflict recorded the coordinator's enqueue-hold never engages, so the
+            // user's next "tap to retry" (`saveNow`, which enqueues straight through)
+            // full-overwrites the very web edit we already fetched. Recording is
+            // non-destructive — the draft still stays on screen and nothing is installed —
+            // and it is strictly more protective: the retry is held and the pill asks first.
+            if case .conflict = draftSyncDecision(
+                baseline: draft.baseline,
+                lastPushedMarkdown: draft.lastPushedMarkdown,
+                draftUpdatedAt: draft.updatedAt,
+                serverUpdatedAt: formatted.updatedAt,
+                serverMarkdown: formatted.content ?? "")
+            {
+                saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+            }
             cacheServerCopy(formatted)
             return
         default:
@@ -594,8 +611,7 @@ final class EditorViewModel {
             // on screen (never install), and let the coordinator's enqueue-hold block
             // any autosave push until the user resolves it. `markAvailableAgain` is
             // unaffected — this never installs, so `isUnavailable` gating is untouched.
-            saveCoordinator.recordConflict(
-                documentID: documentID, serverUpdatedAt: formatted.updatedAt, serverTitle: formatted.title)
+            saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
             cacheServerCopy(formatted)
         case .discardServerWins:
             // Legacy (baseline-less) stranded draft the server has moved past — server
