@@ -674,6 +674,18 @@ final class EditorViewModel {
             saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
             cacheServerCopy(formatted)
         case .discardServerWins:
+            // **Never discard a draft the user is being asked about.** `runSyncPass` refuses to
+            // touch a draft under a recorded conflict; this path had no such guard, and the
+            // save *state* does not survive a relaunch even though the conflict now does — so a
+            // legacy draft whose conflict was rehydrated came back as `.idle`, skipped the
+            // `.failed`/`.pendingSync` branch above, fell to rule 3, and had the very work the
+            // pill was asking about **deleted from under the question**. Keep it and re-record:
+            // the conflict is exactly what `runSyncPass` records for this state.
+            if saveCoordinator.conflict(for: documentID) != nil {
+                saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
+                cacheServerCopy(formatted)
+                return
+            }
             // Legacy (baseline-less) stranded draft the server has moved past — server
             // wins, and the draft goes. `discardStoredDraft` re-checks identity; install
             // only on success. Installing over a surviving draft would leave unsaved work
@@ -683,6 +695,8 @@ final class EditorViewModel {
                 cacheServerCopy(formatted)
                 return
             }
+            // The local work is gone, so no conflict record may outlive it (the lifecycle rule).
+            saveCoordinator.clearResolvedConflict(documentID: documentID)
             installFetched(formatted)
         }
     }

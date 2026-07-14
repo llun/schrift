@@ -655,6 +655,92 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(makeProcess().conflict(for: documentID), "a third process sees no stale hold")
     }
 
+    /// The relaunch hold must cover the **sync pass** — the primary detection path for the
+    /// offline-replay case this whole feature exists for. It wrote the conflict straight into
+    /// the in-memory map, bypassing the on-disk mirror, so the hold it established died at the
+    /// next launch: the user comes back, taps into the document, taps Done, and the co-author's
+    /// body is gone with no pill and no prompt.
+    func testAConflictDetectedByTheSyncPassSurvivesARelaunch() async {
+        let log = RequestRecorder()
+        let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        func makeProcess() -> DocumentSaveCoordinator {
+            DocumentSaveCoordinator(
+                client: DocsAPIClient(
+                    baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        }
+        let divergedBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: divergedBody, error: nil)
+        }
+
+        // Process 1: a queued offline draft whose server has diverged. The SYNC PASS detects it.
+        let first = makeProcess()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base")))
+        await first.syncPendingDrafts()
+        XCTAssertNotNil(first.conflict(for: documentID), "the sync pass detected it")
+        XCTAssertEqual(savesInFlight(log), 0, "and held the push")
+
+        // Process 2: the app was killed. The user did not type again in process 1.
+        let second = makeProcess()
+
+        XCTAssertNotNil(
+            second.conflict(for: documentID),
+            "a conflict the app already detected and showed the user must not evaporate on process death")
+        second.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine, edited after relaunch")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+    }
+
+    /// The mirror must follow **every** in-memory clear, not just the resolvers.
+    /// `suppressLocalWriteThrough` (404/403) deliberately drops the conflict while KEEPING the
+    /// draft — so a bare in-memory nil left the stamp on disk, and the next launch resurrected a
+    /// hold this path had explicitly dropped: a destructive "Keep the server version" re-armed
+    /// against a draft with no conflict, and a sync pass that skips the document forever.
+    func testAConflictDroppedOnA404StaysDroppedAcrossARelaunch() async {
+        let suiteName = "DocumentSaveCoordinatorTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        func makeProcess() -> DocumentSaveCoordinator {
+            DocumentSaveCoordinator(
+                client: DocsAPIClient(
+                    baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+                draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        }
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+
+        let first = makeProcess()
+        first.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil { self.isSaved(first.state(for: self.documentID)) }
+        draftStore.save(PendingDraft(documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date()))
+        first.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        XCTAssertNotNil(draftStore.draft(for: documentID)?.conflictServerUpdatedAt, "the hold is on disk")
+
+        // A 404/403 tears the document down: the conflict is dropped, the draft deliberately kept.
+        first.suppressLocalWriteThrough(documentID: documentID)
+        XCTAssertNil(first.conflict(for: documentID))
+
+        XCTAssertNil(
+            draftStore.draft(for: documentID)?.conflictServerUpdatedAt,
+            "the clear must reach disk, or the next launch resurrects a hold this path dropped")
+        XCTAssertNil(makeProcess().conflict(for: documentID), "…and a fresh process sees no stale hold")
+    }
+
     /// A web edit that only bumped `updated_at` (a title rename) without touching the
     /// body still matches the baseline body → `.push`, not a conflict.
     func testSyncPendingDraftsPushesWhenTheServerBodyStillMatchesTheBaseline() async {

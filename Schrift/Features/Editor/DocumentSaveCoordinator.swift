@@ -131,9 +131,16 @@ final class DocumentSaveCoordinator {
     }
 
     /// Mirror the in-memory conflict onto the stored draft so the hold outlives the process.
-    /// The map is authoritative within a session; this keeps disk agreeing with it. Only writes
-    /// when the value actually changes — a gratuitous rewrite would break the identity
-    /// comparisons `discardStoredDraft` and `resolveConflictKeepingServer`'s snapshot rely on.
+    ///
+    /// **`conflicts` has exactly three writers: `init`'s rehydration (which reads *from* disk),
+    /// `recordConflict`, and `clearResolvedConflict` — and the last two both come through here.
+    /// Nothing else may touch the map.** That rule is the whole point: when `runSyncPass` and
+    /// `suppressLocalWriteThrough` wrote it directly, the in-memory record and its on-disk
+    /// mirror diverged, so a hold established by the *primary* detection path silently died at
+    /// the next relaunch, and a hold explicitly dropped on a 404 came back from the dead. A
+    /// mirror with several writers is not a mirror.
+    ///
+    /// Skips the UserDefaults round-trip when the stamp is already what it should be.
     private func persistConflictOnDraft(documentID: UUID) {
         guard let draft = draftStore.draft(for: documentID) else { return }
         let stamp = conflicts[documentID]?.serverUpdatedAt
@@ -335,8 +342,11 @@ final class DocumentSaveCoordinator {
                         documentID: draft.documentID, title: draft.title, markdown: draft.markdown,
                         baseline: draft.baseline)
                 case .conflict:
-                    // Record it and keep the draft: the pill/sheet asks the user.
-                    conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: formatted.updatedAt)
+                    // Record it and keep the draft: the pill/sheet asks the user. Through
+                    // `recordConflict`, NOT a direct map write — this is the primary detection
+                    // path for the offline-replay case, and a direct write skipped the on-disk
+                    // mirror, so the hold it established silently died at the next relaunch.
+                    recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
                 case .discardServerWins:
                     // Legacy (baseline-less) drafts only — rule 3's tolerance fallback.
                     switch state(for: draft.documentID) {
@@ -351,7 +361,7 @@ final class DocumentSaveCoordinator {
                         // `.conflict` — no pill either, so the only remaining funnel was a
                         // retry tap, which full-overwrites the newer server copy with no
                         // prompt at all. Give it the same funnel a real conflict gets.
-                        conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: formatted.updatedAt)
+                        recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
                     case .idle, .saving, .saved, .failed:
                         // `recoverDrafts()` runs at launch, before any editor is on screen,
                         // so discarding there is safe — and that is the only place this used
@@ -378,9 +388,7 @@ final class DocumentSaveCoordinator {
     /// branch) detected, so the pill/sheet and the enqueue-hold apply just as they do for a
     /// conflict found by `syncPendingDrafts`.
     func recordConflict(documentID: UUID, serverUpdatedAt: Date) {
-        let conflict = SyncConflict(serverUpdatedAt: serverUpdatedAt)
-        guard conflicts[documentID] != conflict else { return }
-        conflicts[documentID] = conflict
+        conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
         persistConflictOnDraft(documentID: documentID)
     }
 
@@ -391,7 +399,6 @@ final class DocumentSaveCoordinator {
     /// a question that no longer has anything to ask about. Only the detection sites call
     /// this, and only on a non-`.conflict` decision, so it can never discard a live one.
     func clearResolvedConflict(documentID: UUID) {
-        guard conflicts[documentID] != nil else { return }
         conflicts[documentID] = nil
         persistConflictOnDraft(documentID: documentID)
     }
@@ -408,7 +415,7 @@ final class DocumentSaveCoordinator {
     /// wins — an accepted race, recoverable from the server's version history).
     func resolveConflictKeepingLocal(documentID: UUID) {
         let resolved = conflicts[documentID]
-        conflicts[documentID] = nil
+        clearResolvedConflict(documentID: documentID)
         // Defensive only, per the invariant above: were a save somehow in flight, its
         // `finish` would pick the held slot up anyway, so dropping out here is safe.
         guard inFlight[documentID] == nil else { return }
@@ -459,7 +466,7 @@ final class DocumentSaveCoordinator {
     /// nothing. The conflict record deliberately carries no server markdown, so there is
     /// nothing to install from here.
     func resolveConflictKeepingServer(documentID: UUID) {
-        conflicts[documentID] = nil
+        clearResolvedConflict(documentID: documentID)
         queued[documentID] = nil
         draftStore.remove(documentID: documentID)
         // The conflict is almost always reached from a `.failed`/`.pendingSync` draft, and
@@ -485,7 +492,7 @@ final class DocumentSaveCoordinator {
     /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
         queued[documentID] = nil
-        conflicts[documentID] = nil  // the document is gone — the conflict is moot
+        clearResolvedConflict(documentID: documentID)  // the document is gone — the conflict is moot
         lastConfirmedPushMarkdown[documentID] = nil
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {
@@ -504,7 +511,13 @@ final class DocumentSaveCoordinator {
         // Clear any conflict record: on a 404/403 the draft survives (it's the user's
         // only unsaved work), and `syncPendingDrafts` re-detects a conflict after the
         // document becomes reachable again — a stale record must not linger.
-        conflicts[documentID] = nil
+        //
+        // Through `clearResolvedConflict`, so the clear reaches **disk** too. This is the one
+        // clear where the draft deliberately *survives*, so a bare in-memory nil left the
+        // stamp on it: the next launch would rehydrate a conflict this path had explicitly
+        // dropped, re-arming a destructive "Keep the server version" against a draft that has
+        // no conflict, and wedging the sync pass (which skips any document that has one).
+        clearResolvedConflict(documentID: documentID)
         guard inFlight[documentID] != nil else { return }
         discardedDuringSave.insert(documentID)
     }
