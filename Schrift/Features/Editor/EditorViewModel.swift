@@ -1510,6 +1510,10 @@ final class EditorViewModel {
     /// `mayPredateSave`, the generation checks and the dirty baseline all in force. No
     /// content is ever taken from the conflict record itself.
     func resolveConflictKeepingServer() async {
+        guard saveCoordinator.conflict(for: documentID) != nil else { return }
+        // End the editing session first: the user chose to discard local work, so no
+        // autosave may re-dirty it (or re-enqueue it) while we fetch. Nothing has left
+        // disk yet — this only stops new work being made.
         autosaveTask?.cancel()
         autosaveTask = nil
         dirtySince = nil
@@ -1519,8 +1523,46 @@ final class EditorViewModel {
         cursorRequest = nil
         selection = nil
         slashQueryText = nil
-        saveCoordinator.resolveConflictKeepingServer(documentID: documentID)
-        await refresh()
+
+        // **Fetch before discarding.** Deleting the draft first and *then* refreshing
+        // meant a failed fetch — the common case, since a conflict is usually reviewed
+        // on the same flaky connection that caused it — left the discarded body still on
+        // screen with nothing backing it on disk, the conflict record cleared, and the
+        // stale baseline intact. The next keystroke would then full-overwrite the server
+        // copy the user had explicitly chosen to keep. The draft may only be destroyed
+        // once the body that replaces it is actually in hand.
+        clearError()
+        revalidationGeneration += 1
+        let generation = revalidationGeneration
+        let diagnosticsMarker = diagnostics?.marker()
+        do {
+            let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
+            let formatted = try await client.formattedContent(documentID: documentID)
+            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            // A body that may predate one of our own saves must never be installed (it
+            // would resurrect what that save replaced, and the next full-overwrite save
+            // would push it back). Keep the draft and the conflict so the user can retry.
+            guard !saveCoordinator.mayPredateSave(saveMarker) else {
+                showError(.editor_error_refresh)
+                return
+            }
+            // The winning body is in hand: now it is safe to cost the user their draft.
+            saveCoordinator.resolveConflictKeepingServer(documentID: documentID)
+            installFetched(formatted)
+            markAvailableAgain()
+            await loadChildren()
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            guard generation == revalidationGeneration else { return }
+            becomeUnavailable()
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+        } catch {
+            guard generation == revalidationGeneration else { return }
+            // The draft and the conflict record both survive, so the pill and sheet stay
+            // available and everything on screen is still backed by disk.
+            showError(
+                .editor_error_refresh,
+                detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics))
+        }
     }
 
     private func markDirty() {

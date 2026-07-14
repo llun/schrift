@@ -1960,6 +1960,84 @@ final class EditorViewModelTests: XCTestCase {
             "the server body is re-fetched and installed")
     }
 
+    /// "Keep the server version" must **fetch before it discards**. A conflict is usually
+    /// reviewed on the same flaky connection that caused it, so the fetch failing is the
+    /// common case — and discarding first left the user staring at the body they had just
+    /// thrown away, with it gone from disk, the conflict record cleared and the stale
+    /// baseline intact. The next keystroke then full-overwrote the server copy they had
+    /// explicitly chosen to keep. Nothing may be destroyed until the winning body is in hand.
+    func testKeepingTheServerVersionKeepsTheDraftWhenTheFetchFails() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The device drops offline before the user commits to the server's copy.
+        stubOffline()
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID), "a failed fetch must not cost the user their only copy")
+        XCTAssertNotNil(viewModel.syncConflict, "the conflict survives, so the pill and sheet stay available")
+        XCTAssertNotNil(viewModel.errorKey, "the failure is surfaced")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Mine") },
+            "the draft is still on screen — and still backed by disk")
+        XCTAssertEqual(savesInFlight(log), 0)
+    }
+
+    /// The destructive resolution taken from inside a dirty editing session: the edit is
+    /// discarded (not re-drafted, not pushed) and the autosave debounce must not fire a
+    /// save after the fact.
+    func testKeepingTheServerVersionFromADirtyEditingSessionPushesNothing() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment(autosaveInterval: .milliseconds(50))
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The user keeps typing, arming the autosave debounce, then chooses the server copy.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine and more")
+        XCTAssertTrue(viewModel.isDirty)
+
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNil(viewModel.syncConflict)
+        XCTAssertNil(draftStore.draft(for: documentID), "the discarded edit leaves no draft behind")
+        XCTAssertFalse(viewModel.isDirty, "the editing session ended")
+        XCTAssertEqual(viewModel.mode, .reading)
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") }, "the server body is installed")
+        // Past the (50ms) autosave window: the armed debounce must not resurrect the edit.
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
     /// reconcileClean's unchanged-body (else) branch advances the baseline's
     /// timestamp: a cache-restored entry with an unknown (void-save) server
     /// timestamp gets promoted to the real server clock once a clean revalidation
