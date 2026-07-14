@@ -211,9 +211,9 @@ final class EditorViewModel {
     /// a draft, and it sets `pendingSave` synchronously, so
     /// `draft != nil && !isDirty && pendingSave == nil` implies either the save failed
     /// (`.failed`/`.pendingSync`), or the draft was stranded by an earlier session — and
-    /// `restoreLocalContent` always installs *that* as `.draft`. The coordinator's two other
-    /// `draftStore.save` calls (`finish`'s surviving-draft stamp and
-    /// `resolveConflictKeepingLocal`'s baseline advance) only ever **rewrite an existing
+    /// `restoreLocalContent` always installs *that* as `.draft`. The coordinator's other
+    /// `draftStore.save` calls (`finish`'s surviving-draft stamp, `resolveConflictKeepingLocal`'s
+    /// baseline advance, and `persistConflictOnDraft`'s mirror) only ever **rewrite an existing
     /// draft in place**, so they create nothing these guards could miss. Add a caller that
     /// *creates* one, or make `enqueue` async, and this stops being exhaustive: drop the
     /// guards and read the draft unconditionally.
@@ -510,20 +510,37 @@ final class EditorViewModel {
             // hence `lastConfirmedPush(documentID:)`. Without it, `serverBaseline` (which a
             // save deliberately does not advance) would make our own just-pushed body read
             // as a diverged server.
-            if saveCoordinator.pendingSave(documentID: documentID) == nil, let baseline = serverBaseline {
-                if case .conflict = draftSyncDecision(
-                    baseline: baseline,
+            if saveCoordinator.pendingSave(documentID: documentID) == nil {
+                // **Do not require a baseline.** `serverBaseline` is nil exactly for a *legacy*
+                // (baseline-less) draft — one written by a build from before `DraftBaseline`
+                // existed, which persists across the app update that adds it. Bailing out on nil
+                // meant such a draft, once dirty, got **no detection at all**: the fetch proved
+                // the server had moved on, nothing was recorded, no hold engaged, and the next
+                // autosave full-overwrote the co-author's edit the app had just fetched. That is
+                // the very keystroke-timing hole this branch exists to close, still open on the
+                // one class of draft that has no baseline to protect it. `draftSyncDecision`
+                // takes an Optional baseline and falls to rule 3 (the legacy clock tolerance) —
+                // which needs the **draft's own clock**, not `Date()`: `Date()` is always within
+                // tolerance of the server, so rule 3 would answer `.push` unconditionally and the
+                // `else` below would clear a live conflict.
+                let draft = saveCoordinator.storedDraft(documentID: documentID)
+                switch draftSyncDecision(
+                    baseline: serverBaseline,
                     lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
                     localMarkdown: currentMarkdown(),
-                    draftUpdatedAt: Date(),
+                    draftUpdatedAt: draft?.updatedAt ?? dirtySince ?? Date(),
                     serverUpdatedAt: formatted.updatedAt,
                     serverMarkdown: formatted.content ?? "")
                 {
+                case .conflict, .discardServerWins:
+                    // `.discardServerWins` is not "no conflict" — it is rule 3 firing for a
+                    // legacy draft the server has moved past, which is visible unsaved work.
+                    // `runSyncPass` and `reconcileDraft` both record a conflict for it.
                     saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-                } else {
-                    // The decision says there is nothing to ask about any more (the server came
-                    // back to the baseline, or its body is one we pushed). Release the hold —
-                    // nothing else would, and it parks every save for this document forever.
+                case .push:
+                    // Nothing left to ask about (the server came back to the baseline, or its
+                    // body is one we pushed). Release the hold — nothing else would, and it
+                    // parks every save for this document forever.
                     saveCoordinator.clearResolvedConflict(documentID: documentID)
                 }
             }
@@ -1740,18 +1757,22 @@ final class EditorViewModel {
         }
         updateAvailable = false
         pendingFreshContent = nil
-        guard saveCoordinator.pendingSave(documentID: documentID) == nil, let baseline = serverBaseline else {
-            return
-        }
-        if case .conflict = draftSyncDecision(
-            baseline: baseline,
+        guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
+        // Optional baseline, and the draft's own clock for rule 3 — see `apply`'s dirty branch:
+        // a legacy (baseline-less) draft must not be the one case that gets no detection.
+        let draft = saveCoordinator.storedDraft(documentID: documentID)
+        switch draftSyncDecision(
+            baseline: serverBaseline,
             lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
             localMarkdown: currentMarkdown(),
-            draftUpdatedAt: Date(),
+            draftUpdatedAt: draft?.updatedAt ?? dirtySince ?? Date(),
             serverUpdatedAt: pending.serverUpdatedAt,
             serverMarkdown: pending.markdown)
         {
+        case .conflict, .discardServerWins:
             saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: pending.serverUpdatedAt)
+        case .push:
+            break  // nothing to ask about; the stash is simply abandoned
         }
     }
 

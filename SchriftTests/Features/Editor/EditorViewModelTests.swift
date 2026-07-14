@@ -2568,6 +2568,115 @@ final class EditorViewModelTests: XCTestCase {
                 + "co-author who deliberately empties the doc would be silently overwritten")
     }
 
+    /// **The relaunch case, end to end in the editor.** The conflict now persists but the save
+    /// *state* does not — so a legacy (baseline-less) draft comes back as `.idle`, skips the
+    /// `.failed`/`.pendingSync` branch, and falls to rule 3, which for a server past the
+    /// tolerance window answers `.discardServerWins`. Without the guard, `reconcileDraft` hands
+    /// it to `discardStoredDraft` and **deletes the very work the pill is asking about**.
+    func testAfterARelaunchAStaleLegacyDraftUnderAConflictIsNotDeleted() async {
+        let log = RequestRecorder()
+        let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        // A legacy draft (no baseline) carrying an unanswered conflict, as left by a previous
+        // process. The fresh coordinator rehydrates the conflict; `states` starts empty.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# My only copy",
+                updatedAt: Date(timeIntervalSince1970: 1_000_000),
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000)))
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        let viewModel = EditorViewModel(
+            client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
+            contentCache: contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "the hold was rehydrated")
+        if case .idle = coordinator.state(for: documentID) {
+        } else {
+            XCTFail("a fresh process has no save state — that asymmetry is the whole point")
+        }
+        // A server far beyond the tolerance window → rule 3 says `.discardServerWins`.
+        let futureServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: futureServer, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# My only copy",
+            "the work the pill is asking about must not be deleted from under the question")
+        XCTAssertNotNil(viewModel.syncConflict, "and the conflict still stands")
+        XCTAssertFalse(
+            viewModel.blocks.contains { $0.text.contains("Co-author") },
+            "the server body must not be installed over it")
+    }
+
+    /// A **legacy** (baseline-less) draft that goes dirty must still be protected. Both editor
+    /// detection sites used to require a non-nil `serverBaseline` — which is nil for exactly this
+    /// draft — so it was the one class that got no detection at all: the fetch proved the server
+    /// had moved on, nothing was recorded, and the next autosave full-overwrote the co-author.
+    func testALegacyDraftGoingDirtyStillDetectsAConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // Legacy: no baseline at all.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine",
+                updatedAt: Date(timeIntervalSince1970: 1_000_000)))
+        let futureServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: futureServer, error: nil, delay: 0.3)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        async let load: Void = viewModel.load()
+        await waitUntil { viewModel.hasLoadedContent }
+        // Type while the revalidation is in flight → `apply` diverts to the dirty branch.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine plus one")
+        await load
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a baseline-less draft is still visible unsaved work — it cannot be the one case with no detection")
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the push is held")
+    }
+
+    /// "Keep my version" must never be a silent no-op: if there is no local work to push, the
+    /// record is moot and pushing the on-screen body would overwrite the co-author with the
+    /// server's own older copy. It releases the record instead.
+    func testKeepingMineWithNoLocalWorkReleasesTheRecordInsteadOfPushing() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+        XCTAssertFalse(viewModel.isDirty)
+
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.resolveConflictKeepingMine()
+
+        XCTAssertNil(viewModel.syncConflict, "a moot record is released")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
     // MARK: - The conflict record's lifecycle
     //
     // The rule the four detection sites share: **a conflict record is meaningful only while

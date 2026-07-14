@@ -535,7 +535,10 @@ final class DocumentSaveCoordinator {
                     documentID: documentID, title: save.title, markdown: save.markdown)
                 finish(documentID: documentID, save: save, error: titleFailure, contentLanded: true)
             } catch {
-                // A throw means the content PATCH itself failed — nothing reached the server.
+                // A throw means the content PATCH was not **confirmed** — NOT that nothing
+                // reached the server: a dropped or timed-out response can hide a PATCH the
+                // server applied. All we know is that we cannot *record* the push, which is
+                // exactly what `draftSyncDecision`'s rule 0 backstops.
                 finish(documentID: documentID, save: save, error: error, contentLanded: false)
             }
             backgroundTasks.end(taskToken)

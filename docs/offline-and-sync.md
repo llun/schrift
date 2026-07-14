@@ -575,6 +575,19 @@ choosing one whole version.
   (`saveNow` enqueues straight through) full-overwrites the web edit the app had
   already fetched. Recording is non-destructive — nothing is installed, the draft
   stays — and strictly more protective.
+- **Superseded plan decision — conflict detection is NOT limited to the draft-replay path.**
+  The approved plan locked "the online 10 s autosave loop stays last-write-wins; the conflict
+  check runs only on the draft replay path". That decision does not survive contact with the
+  code, and review found the data loss it permits, twice: `apply` diverts to
+  `cacheServerCopy` the moment the screen is dirty, so **a single keystroke landing while a
+  revalidation is in flight** skipped detection entirely and the ensuing autosave
+  full-overwrote a web edit the app had *already fetched*; and the "Updated" stash — a server
+  body the app fetched **and showed the user a banner for** — was thrown away on the first
+  keystroke with nothing recorded. In both cases whether the destructive push got checked was
+  decided by *when the user's finger landed*, which is not a policy anyone chose. Detection
+  therefore also runs in `apply`'s dirty branch and in `abandonPendingFreshContent`. It is
+  still **not** a live-collaboration feature: the app never merges, and a conflict only ever
+  arises from a body the app has already fetched.
 - **Lifecycle: a conflict record is meaningful only while local work exists.** Record it
   when such work appears (`markDirty`, a queued draft, a dirty revalidation); release it when
   it is gone (`reconcileClean`, which `apply` reaches only with no pending save, no draft and
