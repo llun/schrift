@@ -288,6 +288,80 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNotNil(coordinator.conflict(for: documentID), "the server diverged from the baseline — a conflict")
         XCTAssertNotNil(draftStore.draft(for: documentID), "the draft is preserved for the user to resolve")
         XCTAssertEqual(savesInFlight(log), 0, "a conflict never pushes")
+
+        // A later sync trigger (reconnect/foreground fires this repeatedly) must skip a
+        // conflicted draft entirely: it waits for the user's choice, so it neither pushes
+        // over the server nor re-fetches to re-decide.
+        let getsAfterDetection = log.count(ofMethod: "GET", urlContaining: "formatted-content")
+        let draftAfterDetection = draftStore.draft(for: documentID)
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "the conflict still awaits the user")
+        XCTAssertEqual(draftStore.draft(for: documentID), draftAfterDetection, "the draft is untouched")
+        XCTAssertEqual(savesInFlight(log), 0, "still no push")
+        XCTAssertEqual(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), getsAfterDetection,
+            "a conflicted draft is skipped before the fetch")
+    }
+
+    /// `lastConfirmedPushMarkdown` is in-memory, so on a fresh process it is empty. An
+    /// `enqueue` must NOT write that emptiness over the stamp `finish` persisted onto the
+    /// draft last process — that would destroy decision rule 1 with the first
+    /// post-relaunch enqueue (exactly the replay it exists to serve), and the document
+    /// would then report the user's *own* earlier save as a sync conflict.
+    func testEnqueueOnAFreshCoordinatorPreservesTheStoredLastPushedMarkdown() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, saveDelay: 0.3)
+        // A draft left by a previous process, already stamped with what that process pushed.
+        let (coordinator, draftStore, _) = makeCoordinator()  // fresh: the in-memory map is empty
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Draft", updatedAt: Date(),
+                baseline: DraftBaseline(
+                    serverUpdatedAt: Date(timeIntervalSince1970: 1_800_000_000), markdown: "# Base"),
+                lastPushedMarkdown: "# Pushed last process"))
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Draft edited")
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown, "# Pushed last process",
+            "a fresh process must carry the persisted stamp forward, not erase it")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+    }
+
+    /// The purge paths must clear the conflict record, or it wedges the document's save
+    /// pipeline forever: the enqueue-hold would keep holding every future push for a
+    /// conflict the user can no longer see or resolve.
+    func testSuppressLocalWriteThroughClearsTheConflictAndUnwedgesSaving() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+
+        coordinator.suppressLocalWriteThrough(documentID: documentID)
+
+        XCTAssertNil(coordinator.conflict(for: documentID), "the stale record is cleared")
+        // 404/403 revokes access, it does not delete unsaved work — the draft survives…
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# After")
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+        // …and saving is no longer held.
+        await waitUntil { self.savesInFlight(log) >= 1 }
+    }
+
+    func testDiscardPendingWorkClearsTheConflictAndTheDraft() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")  // held
+
+        coordinator.discardPendingWork(documentID: documentID)
+
+        XCTAssertNil(coordinator.conflict(for: documentID), "the deleted document's conflict is moot")
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID))
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
     /// A web edit that only bumped `updated_at` (a title rename) without touching the

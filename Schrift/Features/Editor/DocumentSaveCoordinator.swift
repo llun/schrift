@@ -161,10 +161,23 @@ final class DocumentSaveCoordinator {
         let save = PendingSave(title: title, markdown: markdown)
         // The draft carries the last-confirmed-push so `draftSyncDecision` rule 1 can
         // recognise our own writes on the next replay (even across a relaunch).
+        //
+        // `lastConfirmedPushMarkdown` is in-memory, so on a fresh process it is EMPTY.
+        // Writing it straight through would erase the stamp `finish` persisted onto the
+        // draft in the previous process — destroying rule 1 with the very first
+        // post-relaunch enqueue, which is exactly the replay it exists to serve. The
+        // document would then report our *own* earlier save as a "sync conflict" and the
+        // enqueue-hold would wedge its save pipeline until the user answered a dialog
+        // about their own write. So fall back to what the stored draft already carries.
+        // Carrying it forward can never be wrong: the stamp only goes stale when someone
+        // *else* writes the server, and rule 1 compares against the server body, so a
+        // stale stamp simply stops matching and rule 2 takes over.
+        let lastPushed =
+            lastConfirmedPushMarkdown[documentID] ?? draftStore.draft(for: documentID)?.lastPushedMarkdown
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: title, markdown: markdown, updatedAt: Date(), baseline: baseline,
-                lastPushedMarkdown: lastConfirmedPushMarkdown[documentID]))
+                lastPushedMarkdown: lastPushed))
         // Enqueue-hold: while a conflict is recorded, persist the draft and the
         // queued slot (write-ahead, so `pendingSave()` still sees it and the editor's
         // dirty short-circuit / `hasUnsavedLocalContent` keep working) but do NOT
@@ -253,11 +266,20 @@ final class DocumentSaveCoordinator {
         conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
     }
 
+    /// **Invariant both resolvers rely on: while a conflict is recorded, no save for
+    /// that document is in flight.** Nothing can record one during a save — `apply`
+    /// diverts to `cacheServerCopy` whenever `pendingSave(documentID:) != nil`, so
+    /// `reconcileDraft` is unreachable then, and `syncPendingDrafts` guards on both
+    /// `inFlight` and `queued` — and nothing can *start* one afterwards, because the
+    /// enqueue-hold below only ever fills the queued slot. So a resolver never has to
+    /// reason about a save landing underneath it and resurrecting the losing body.
+    ///
     /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
     /// wins — an accepted race, recoverable from the server's version history).
     func resolveConflictKeepingLocal(documentID: UUID) {
         conflicts[documentID] = nil
-        // A save already in flight will pick up the held slot on `finish`.
+        // Defensive only, per the invariant above: were a save somehow in flight, its
+        // `finish` would pick the held slot up anyway, so dropping out here is safe.
         guard inFlight[documentID] == nil else { return }
         if let held = queued.removeValue(forKey: documentID) {
             start(documentID: documentID, save: held)
@@ -267,9 +289,14 @@ final class DocumentSaveCoordinator {
         }
     }
 
-    /// Keep-server: clear the record and drop the local draft/queued work. The editor
-    /// re-fetches the server body through its own guarded funnel — the conflict record
-    /// carries no server markdown by design.
+    /// Keep-server: clear the record and drop the local draft/queued work. Safe to drop
+    /// unconditionally by the invariant above — no in-flight save can land afterwards and
+    /// write the discarded body back into the content cache (or push it to the server).
+    ///
+    /// The caller must already hold the winning server body: the editor fetches it
+    /// **before** calling this and installs it after, so a failed fetch costs the user
+    /// nothing. The conflict record deliberately carries no server markdown, so there is
+    /// nothing to install from here.
     func resolveConflictKeepingServer(documentID: UUID) {
         conflicts[documentID] = nil
         queued[documentID] = nil
