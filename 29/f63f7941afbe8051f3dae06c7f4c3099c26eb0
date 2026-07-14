@@ -13,6 +13,7 @@ Schrift/Features/Editor/EditorViewModel.swift
   s_b91c3ec7576796::t_1c873d6085e94e 1562
   s_b91c3ec7576796::t_1eac76ec05ec4a 1644
   s_b91c3ec7576796::t_4c8fe1f7c8e5bd 653
+  s_b91c3ec7576796::t_37ef7e0702c5ea 655-659
 SchriftTests/Features/Editor/EditorViewModelTests.swift
   s_b91c3ec7576796::t_c4fe28c6204bea 2924
   s_b91c3ec7576796::t_fcacf3348a48ec 86
