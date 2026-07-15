@@ -45,6 +45,9 @@ final class DocumentCollaborationManager {
     /// palette — so this stays a plain value.
     private var localAwareness: LocalAwarenessState?
 
+    /// Per-document change-signal counters (see `remoteChangeToken(for:)`).
+    private var remoteChangeTokens: [UUID: Int] = [:]
+
     private let serverBaseURL: URL
     private let cookieProvider: @Sendable () -> [HTTPCookie]
     private let featureEnabled: @MainActor () -> Bool
@@ -114,6 +117,15 @@ final class DocumentCollaborationManager {
         entries[documentID]?.session?.peers ?? []
     }
 
+    /// A monotonic token that increments each time a peer signals a change to the
+    /// document (a Yjs sync update over the live socket). The editor observes it
+    /// (`onChange`) and debounces a silent revalidation — the signal is only a
+    /// *prompt* to re-fetch, never applied content (there is no CRDT yet). Survives
+    /// session rebuilds; reset when the document's entry is torn down.
+    func remoteChangeToken(for documentID: UUID) -> Int {
+        remoteChangeTokens[documentID] ?? 0
+    }
+
     /// The current gate result, in the roadmap's fixed order.
     var availability: LiveCollaborationAvailability {
         liveCollaborationAvailability(
@@ -169,6 +181,7 @@ final class DocumentCollaborationManager {
             entry.session?.stop()
             if entry.refCount == 0 {
                 entries.removeValue(forKey: id)
+                remoteChangeTokens.removeValue(forKey: id)
             } else {
                 entries[id]?.session = nil
                 entries[id]?.lingerTask = nil
@@ -205,7 +218,8 @@ final class DocumentCollaborationManager {
         else { return nil }
         let transport = CollaborationTransport(socket: socketFactory(request))
         let session = DocumentCollaborationSession(
-            documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness)
+            documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness,
+            onRemoteChange: { [weak self] in self?.remoteChangeTokens[documentID, default: 0] += 1 })
         session.start()
         return session
     }
@@ -226,6 +240,7 @@ final class DocumentCollaborationManager {
         guard let entry = entries[documentID], entry.refCount == 0 else { return }
         entry.session?.stop()
         entries.removeValue(forKey: documentID)
+        remoteChangeTokens.removeValue(forKey: documentID)
     }
 }
 
