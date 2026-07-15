@@ -8,6 +8,10 @@ struct LocalAwarenessState: Equatable, Sendable {
     let name: String
     let color: String
 
+    /// The `{name, color}` object as a JSON string, the value that rides inside an
+    /// awareness entry's `stateJSON`. Built with `JSONSerialization` (slashes
+    /// left unescaped to match `JSON.stringify`); `"{}"` if encoding somehow
+    /// fails, so a broadcast never carries a malformed body.
     func json() -> String {
         let object = ["name": name, "color": color]
         guard
@@ -15,14 +19,6 @@ struct LocalAwarenessState: Equatable, Sendable {
             let string = String(data: data, encoding: .utf8)
         else { return "{}" }
         return string
-    }
-
-    /// The local user's awareness, colored by the same name-hash palette the
-    /// app's avatars use, so a web peer paints our caret the colour our avatar
-    /// shows here. `name` is the display name (`CurrentUser.displayName`).
-    static func forDisplayName(_ name: String) -> LocalAwarenessState {
-        let (light, _) = avatarColorHexPair(for: name)
-        return LocalAwarenessState(name: name, color: String(format: "#%06x", light & 0xFF_FFFF))
     }
 }
 

@@ -174,6 +174,61 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         await waitUntil { session.state == .ended(.closed) }
     }
 
+    func testPeersAccumulateAcrossSeparateFrames() async {
+        let fake = FakeWebSocket()
+        let session = makePresenceSession(fake, clientID: 42)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 2 }
+
+        // Two independent frames — the second must not drop the first peer
+        // (y-awareness updates are incremental).
+        fake.deliver(message: awarenessFrame([peerEntry(1, "Ada")]))
+        await waitUntil { session.peers.map(\.clientID) == [1] }
+        fake.deliver(message: awarenessFrame([peerEntry(2, "Bo")]))
+        await waitUntil { session.peers.map(\.clientID) == [1, 2] }
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testIgnoresFramesForADifferentDocument() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake),
+            clientID: 42, localState: LocalAwarenessState(name: "Me", color: "#abcdef"),
+            onRemoteChange: { counter.count += 1 })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 2 }
+
+        // A frame for the wrong room must inject no peer and fire no change signal.
+        let otherDoc = "22222222-2222-4222-8222-222222222222"
+        let otherAwareness = AwarenessCodec.encodePayload([peerEntry(1, "Ada")])
+        fake.deliver(
+            message: HocuspocusMessage(documentName: otherDoc, type: .awareness, payload: otherAwareness).encoded())
+        let otherSync = SyncMessage(step: .update, data: Data([0x00])).encodedPayload()
+        fake.deliver(message: HocuspocusMessage(documentName: otherDoc, type: .sync, payload: otherSync).encoded())
+        await waitAndConfirmNever { !session.peers.isEmpty || counter.count > 0 }
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testDisconnectClearsPeers() async {
+        let fake = FakeWebSocket()
+        let session = makePresenceSession(fake, clientID: 42)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 2 }
+
+        fake.deliver(message: awarenessFrame([peerEntry(1, "Ada")]))
+        await waitUntil { session.peers.count == 1 }
+
+        // A transient drop leaves no live presence info — peers clear.
+        fake.failTransport()
+        await waitUntil { session.state == .reconnecting }
+        XCTAssertTrue(session.peers.isEmpty)
+    }
+
     func testServerCloseWith1000EndsWithPermissionsReset() async {
         let fake = FakeWebSocket()
         let counter = ChangeCounter()

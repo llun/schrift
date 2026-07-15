@@ -136,6 +136,10 @@ final class DocumentCollaborationSession {
                 return  // unknown / other types are tolerated
             }
         case .disconnected(let reason):
+            // The socket is gone, so our knowledge of who is present is stale —
+            // drop it. On reconnect the manager builds a fresh session that
+            // repopulates `peers` from the new room's awareness.
+            peers = []
             switch reason {
             case .permissionsReset: state = .ended(.permissionsReset)
             case .selfClosed: state = .ended(.closed)

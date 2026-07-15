@@ -30,26 +30,6 @@ final class CollaborationPresenceTests: XCTestCase {
         XCTAssertFalse(json.contains("a\\/b"))
     }
 
-    // MARK: - LocalAwarenessState.forDisplayName
-
-    func testForDisplayNameCarriesTheName() {
-        XCTAssertEqual(LocalAwarenessState.forDisplayName("Camille Moreau").name, "Camille Moreau")
-    }
-
-    func testForDisplayNameColorMatchesAvatarPalette() {
-        // The awareness color must be the same palette hue our avatar shows, so a
-        // web peer paints our caret to match.
-        let name = "Camille Moreau"
-        let (light, _) = avatarColorHexPair(for: name)
-        XCTAssertEqual(LocalAwarenessState.forDisplayName(name).color, String(format: "#%06x", light & 0xFF_FFFF))
-    }
-
-    func testForDisplayNameColorIsSixDigitHex() {
-        let color = LocalAwarenessState.forDisplayName("Zed").color
-        XCTAssertEqual(color.count, 7)  // "#" + 6 hex digits
-        XCTAssertEqual(color.first, "#")
-    }
-
     // MARK: - CollaborationPeer parsing
 
     func testParsesAValidPeer() throws {
@@ -73,6 +53,11 @@ final class CollaborationPresenceTests: XCTestCase {
     func testRejectsMissingName() {
         // The web sometimes broadcasts a color-only state before a name is set.
         XCTAssertNil(CollaborationPeer(clientID: 1, stateJSON: ##"{"color":"#000000"}"##))
+    }
+
+    func testRejectsMissingColor() {
+        // A name-only state has no colour to paint the peer with — drop it.
+        XCTAssertNil(CollaborationPeer(clientID: 1, stateJSON: ##"{"name":"Ada"}"##))
     }
 
     func testRejectsUnparseableState() {
