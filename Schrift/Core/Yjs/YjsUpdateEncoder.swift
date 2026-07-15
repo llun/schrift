@@ -53,21 +53,91 @@ struct Lib0Encoder {
         writeVarUInt(UInt(bytes.count))
         data.append(bytes)
     }
+
+    /// lib0 `writeAny` — the tagged encoding of an arbitrary JSON-ish value. The
+    /// inverse of `Lib0Decoder.readAny`; the float/bigint blobs are re-emitted as
+    /// the exact bytes they decoded from, so a decode→encode round-trip is
+    /// byte-identical without re-deriving lib0's number-classification. The five
+    /// original cases (string/int/bool/null/undefined) emit the same bytes the
+    /// document-update encoder always did — the golden fixtures gate that.
+    mutating func writeAny(_ value: YAnyValue) {
+        switch value {
+        case .string(let s):
+            writeUInt8(119)
+            writeVarString(s)
+        case .int(let n):
+            writeUInt8(125)
+            writeVarInt(n)
+        case .negativeZero:
+            writeUInt8(125)
+            writeUInt8(0x40)
+        case .float32(let bytes):
+            writeUInt8(124)
+            data.append(bytes)
+        case .float64(let bytes):
+            writeUInt8(123)
+            data.append(bytes)
+        case .bigInt(let bytes):
+            writeUInt8(122)
+            data.append(bytes)
+        case .bool(let b): writeUInt8(b ? 120 : 121)
+        case .null: writeUInt8(126)
+        case .undefined: writeUInt8(127)
+        case .object(let entries):
+            writeUInt8(118)
+            writeVarUInt(UInt(entries.count))
+            for entry in entries {
+                writeVarString(entry.key)
+                writeAny(entry.value)
+            }
+        case .array(let values):
+            writeUInt8(117)
+            writeVarUInt(UInt(values.count))
+            for value in values { writeAny(value) }
+        case .uint8Array(let bytes):
+            writeUInt8(116)
+            writeVarUint8Array(bytes)
+        }
+    }
 }
 
 // MARK: - Yjs struct model (a single-client, from-scratch document update)
 
-/// A JSON-representable attribute value stored inside a `ContentAny`.
-enum YAnyValue: Equatable {
-    case string(String)
-    case int(Int)
-    case bool(Bool)
-    case null
+/// An ordered `object` entry inside a `YAnyValue.object` — lib0 preserves JS
+/// object insertion order on the wire, so entries are an array, not a dictionary.
+struct YAnyObjectEntry: Equatable, Sendable {
+    let key: String
+    let value: YAnyValue
+}
+
+/// A JSON-representable attribute value — lib0's `readAny`/`writeAny` domain.
+///
+/// The original five cases (string/int/bool/null/undefined) are all a
+/// from-scratch BlockNote document needs to *write*; the rest were added for the
+/// read side (decoding arbitrary remote updates), so the full lib0 tag set
+/// round-trips. Floats and bigints are held as their **raw wire bytes** rather
+/// than a `Double`/`Int64`, so a decode→re-encode is byte-identical without
+/// replaying lib0's integer-vs-float32-vs-float64 classification (an
+/// interpretation the projection layer can do later, when it needs the value).
+enum YAnyValue: Equatable, Sendable {
+    case string(String)  // tag 119
+    case int(Int)  // tag 125 (lib0 signed varint)
+    /// JS `-0`, which yjs writes as tag 125 + the byte `0x40`. Swift `Int` can't
+    /// hold negative zero, so it needs its own case to round-trip byte-identically.
+    case negativeZero  // tag 125, byte 0x40
+    case float32(Data)  // tag 124 — raw 4 big-endian bytes
+    case float64(Data)  // tag 123 — raw 8 big-endian bytes
+    case bigInt(Data)  // tag 122 — raw 8 big-endian bytes
+    case bool(Bool)  // tags 120 (true) / 121 (false)
+    case null  // tag 126
     /// JS `undefined`, distinct from `null` on the wire (lib0 `writeAny` emits
     /// 127 for undefined, 126 for null). BlockNote serializes an unset optional
     /// prop — e.g. the image block's `previewWidth` — as `undefined`, so a
     /// byte-exact image block needs this case.
-    case undefined
+    case undefined  // tag 127
+    case object([YAnyObjectEntry])  // tag 118
+    case array([YAnyValue])  // tag 117
+    case uint8Array(Data)  // tag 116
 }
 
 /// The content payload of a Yjs `Item`. Only the variants a from-scratch
@@ -174,21 +244,7 @@ enum YjsUpdateEncoder {
             e.writeVarString(valueJSON)
         case .any(let values):
             e.writeVarUInt(UInt(values.count))
-            for value in values { writeAny(&e, value) }
-        }
-    }
-
-    private static func writeAny(_ e: inout Lib0Encoder, _ value: YAnyValue) {
-        switch value {
-        case .string(let s):
-            e.writeUInt8(119)
-            e.writeVarString(s)
-        case .int(let n):
-            e.writeUInt8(125)
-            e.writeVarInt(n)
-        case .bool(let b): e.writeUInt8(b ? 120 : 121)
-        case .null: e.writeUInt8(126)
-        case .undefined: e.writeUInt8(127)
+            for value in values { e.writeAny(value) }
         }
     }
 }
