@@ -118,7 +118,10 @@ final class EditorViewModel {
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
     private var dirtySince: Date?
-    private var pendingFreshContent: (markdown: String, syncedAt: Date, serverUpdatedAt: Date)?
+    /// `title` is the server's title as of the fetch that stashed this body — the same fetch
+    /// `reconcileClean` already applied it from (titles are never stashed, only bodies) — so
+    /// `applyPendingUpdate` can build a baseline that describes the server state it installs.
+    private var pendingFreshContent: (markdown: String, title: String?, syncedAt: Date, serverUpdatedAt: Date)?
     /// The server state the on-screen content descends from: a fetched (or
     /// cache-restored) server body's own `updated_at`, or — when a draft is what's
     /// on screen — that draft's own recorded baseline (continuity across a reopen).
@@ -308,7 +311,8 @@ final class EditorViewModel {
             displaySource = .draft
         } else if let cached = contentCache.content(for: documentID) {
             install(markdown: cached.markdown, title: cached.title, syncedAt: cached.syncedAt)
-            serverBaseline = DraftBaseline(serverUpdatedAt: cached.serverUpdatedAt, markdown: cached.markdown)
+            serverBaseline = DraftBaseline(
+                serverUpdatedAt: cached.serverUpdatedAt, markdown: cached.markdown, title: cached.title)
             displaySource = .clean
         } else {
             displaySource = .none
@@ -487,6 +491,14 @@ final class EditorViewModel {
             unpinSettledPendingSave()
             return
         }
+        // Past that guard this response postdates our own saves, so its title is the newest the
+        // server is known to hold. Record it here — the one point every branch below passes
+        // through — so `adoptQueuedTitleIfUnseen` can never prefer a title older than one we
+        // have actually seen. It is *not* applied to the screen here: which branch may touch the
+        // on-screen title, and when, is the subject of the rules below.
+        if let serverTitle = formatted.title {
+            saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
+        }
         // Classify against *current* state: edits may have begun while the
         // fetch was in flight.
         if saveCoordinator.pendingSave(documentID: documentID) != nil || isDirty {
@@ -537,12 +549,18 @@ final class EditorViewModel {
                 // which needs the **draft's own clock**, not `Date()`: `Date()` is always within
                 // tolerance of the server, so rule 3 would answer `.push` unconditionally and the
                 // `else` below would clear a live conflict.
+                // The title the decision weighs here is the **on-screen** one, because that is
+                // what the pending autosave would PATCH: a live typist who renamed the document
+                // while a co-author renamed it differently is a genuine conflict, exactly as a
+                // queued draft's two renames are.
                 let draft = saveCoordinator.storedDraft(documentID: documentID)
                 switch draftSyncDecision(
                     baseline: serverBaseline,
                     lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
                     localMarkdown: currentMarkdown(),
+                    draftTitle: title,
                     draftUpdatedAt: draft?.updatedAt ?? dirtySince ?? Date(),
+                    serverTitle: formatted.title,
                     serverUpdatedAt: formatted.updatedAt,
                     serverMarkdown: formatted.content ?? "")
                 {
@@ -551,10 +569,17 @@ final class EditorViewModel {
                     // legacy draft the server has moved past, which is visible unsaved work.
                     // `runSyncPass` and `reconcileDraft` both record a conflict for it.
                     saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-                case .push(let evidence):
+                case .push(let pushTitle, let evidence):
                     // Nothing left to ask about — but only if the push is *proven*, not merely
                     // clock-tolerated. See `releaseConflictIfProven`.
                     _ = releaseConflictIfProven(evidence, serverUpdatedAt: formatted.updatedAt)
+                    // A one-sided rename must be merged here, not left to the flush.
+                    // `reconcileDraft` — the other adopter — is unreachable while the screen is
+                    // dirty (this branch returns first), so a stored draft would keep its
+                    // pre-rename title; and `adoptQueuedTitleIfUnseen` prefers a draft's title
+                    // over the server's, because unsaved local work normally *is* the newer one.
+                    // The rename would then be PATCHed away by the very flush meant to merge it.
+                    adoptServerTitle(pushTitle)
                 }
             }
             cacheServerCopy(formatted)
@@ -652,15 +677,24 @@ final class EditorViewModel {
                 baseline: draft.baseline,
                 lastPushedMarkdown: draft.lastPushedMarkdown,
                 localMarkdown: draft.markdown,
+                draftTitle: draft.title,
                 draftUpdatedAt: draft.updatedAt,
+                serverTitle: formatted.title,
                 serverUpdatedAt: formatted.updatedAt,
                 serverMarkdown: formatted.content ?? "")
             {
             case .conflict, .discardServerWins:
                 saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-            case .push(let evidence):
+            case .push(let pushTitle, let evidence):
                 // Genuinely nothing left to ask about — but only on *proven* evidence.
                 _ = releaseConflictIfProven(evidence, serverUpdatedAt: formatted.updatedAt)
+                // A co-author renamed the document and the user didn't (the only way the resolved
+                // title can differ from the draft's). The retry funnel for this state is
+                // `saveNow`, which PATCHes `savedTitle` straight through with no reconcile of its
+                // own — so without adopting here, tapping "retry" reverts their rename. Adopting
+                // is non-destructive: it is *their* draft body that is retried, only under the
+                // title the document actually has now.
+                adoptServerTitle(pushTitle)
             }
             cacheServerCopy(formatted)
             return
@@ -674,11 +708,13 @@ final class EditorViewModel {
             baseline: draft.baseline,
             lastPushedMarkdown: draft.lastPushedMarkdown,
             localMarkdown: draft.markdown,
+            draftTitle: draft.title,
             draftUpdatedAt: draft.updatedAt,
+            serverTitle: formatted.title,
             serverUpdatedAt: formatted.updatedAt,
             serverMarkdown: formatted.content ?? "")
         {
-        case .push(let evidence):
+        case .push(let pushTitle, let evidence):
             // No longer a conflict (if it ever was): release any stale hold before enqueuing,
             // or the enqueue below would simply park again behind it. But a **clock-only** push
             // is not proof the conflict is gone — releasing on that basis would push a full
@@ -687,6 +723,12 @@ final class EditorViewModel {
                 cacheServerCopy(formatted)
                 return
             }
+            // `pushTitle`, never `draft.title`: the replay PATCHes a title too, and pushing the
+            // one the draft was made with is what silently reverted a co-author's rename. Take it
+            // on screen as well, so the title the user sees is the title being pushed — and so
+            // `flushPendingChanges`, which PATCHes `title`, can't put the stale one back on the
+            // next keystroke.
+            adoptServerTitle(pushTitle)
             // The draft still descends from the server (or the server's last writer is
             // us). Cache the fresh body and hand the draft back to the save pipeline —
             // otherwise a stored draft that wins with no save pushing it and no
@@ -711,7 +753,8 @@ final class EditorViewModel {
                     markdown: formatted.content ?? "")
             } else {
                 saveCoordinator.enqueue(
-                    documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
+                    documentID: documentID, title: pushTitle, markdown: draft.markdown,
+                    baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: pushTitle))
             }
         case .conflict:
             // The server moved on under a baseline-carrying draft. Record it so the
@@ -832,11 +875,14 @@ final class EditorViewModel {
                 // it — and records a conflict as it does, since abandoning a server body we
                 // fetched and showed the user is exactly what the next autosave would
                 // otherwise overwrite unasked. See `abandonPendingFreshContent`.
-                pendingFreshContent = (markdown: fetched, syncedAt: now, serverUpdatedAt: formatted.updatedAt)
+                pendingFreshContent = (
+                    markdown: fetched, title: formatted.title, syncedAt: now, serverUpdatedAt: formatted.updatedAt
+                )
                 updateAvailable = true
             } else {
                 install(markdown: fetched, title: nil, syncedAt: now)
-                serverBaseline = DraftBaseline(serverUpdatedAt: formatted.updatedAt, markdown: fetched)
+                serverBaseline = DraftBaseline(
+                    serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
                 updateAvailable = false
                 pendingFreshContent = nil
             }
@@ -848,7 +894,8 @@ final class EditorViewModel {
             // The server holds what's on screen, so advance the baseline's server
             // timestamp; and any body stashed by an earlier fetch (server since
             // reverted) has nothing left to offer.
-            serverBaseline = DraftBaseline(serverUpdatedAt: formatted.updatedAt, markdown: fetched)
+            serverBaseline = DraftBaseline(
+                serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
             updateAvailable = false
             pendingFreshContent = nil
         }
@@ -876,8 +923,11 @@ final class EditorViewModel {
         guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return }
         guard !isEditing, !isDirty, let pending = pendingFreshContent else { return }
         install(markdown: pending.markdown, title: nil, syncedAt: pending.syncedAt)
-        // The stashed body is now on screen, so it becomes the baseline.
-        serverBaseline = DraftBaseline(serverUpdatedAt: pending.serverUpdatedAt, markdown: pending.markdown)
+        // The stashed body is now on screen, so it becomes the baseline. Its title came from the
+        // same fetch and `reconcileClean` applied it on the spot (titles are never stashed), so
+        // the baseline records that server state whole.
+        serverBaseline = DraftBaseline(
+            serverUpdatedAt: pending.serverUpdatedAt, markdown: pending.markdown, title: pending.title)
         displaySource = .clean
         updateAvailable = false
         pendingFreshContent = nil
@@ -920,7 +970,18 @@ final class EditorViewModel {
     private func installFetched(_ formatted: FormattedDocumentContent) {
         let now = Date()
         install(markdown: formatted.content ?? "", title: formatted.title, syncedAt: now)
-        serverBaseline = DraftBaseline(serverUpdatedAt: formatted.updatedAt, markdown: formatted.content ?? "")
+        serverBaseline = DraftBaseline(
+            serverUpdatedAt: formatted.updatedAt, markdown: formatted.content ?? "", title: formatted.title)
+        // …and record its title, because **not every install comes through `apply`**:
+        // `resolveConflictKeepingServer` fetches and installs directly, and it is the one path
+        // that also drops the draft — so `adoptQueuedTitleIfUnseen` would fall all the way
+        // through to `knownServerTitle` on the next flush and PATCH a title from *before* the
+        // copy the user just chose to keep, silently reverting the co-author's rename by way of
+        // the very backstop that exists to preserve it. Idempotent for the `apply` paths, which
+        // have already noted the same title.
+        if let serverTitle = formatted.title {
+            saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
+        }
         displaySource = .clean
         hasLocalCopy = true
         contentCache.save(
@@ -1616,6 +1677,7 @@ final class EditorViewModel {
         // document from acquiring a fresh draft and a doomed PATCH. This is the
         // funnel that must never be bypassed.
         guard !isDocumentDiscarded, hasLoadedContent, isDirty else { return }
+        adoptQueuedTitleIfUnseen()
         isDirty = false
         let markdown = currentMarkdown()
         if markdown == savedMarkdown, title == savedTitle {
@@ -1639,6 +1701,7 @@ final class EditorViewModel {
             flushPendingChanges()
         }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return }
+        adoptQueuedTitleIfUnseen()
         // Retry a hard failure (`.failed`) or a queued transient one (`.pendingSync`).
         // The latter matters when the failure happened while online (a 5xx / rate
         // limit / HTTP-3 stall): the reconnect/foreground auto-sync triggers won't
@@ -1654,6 +1717,48 @@ final class EditorViewModel {
         case .idle, .saving, .saved:
             break
         }
+    }
+
+    /// Puts a title resolved by `draftSyncDecision` on screen, and on the stored draft so every
+    /// replay funnel pushes the same one.
+    ///
+    /// Call sites pass the title of **any** `.push`; the guard below is what makes it an adopt.
+    /// A push that keeps the draft's own title resolves to the title already on screen and no-ops
+    /// — so the only thing that ever gets through is a title the decision took from the server,
+    /// i.e. a co-author's rename the user's draft has no claim on (they never renamed it
+    /// themselves; had they, the decision would say `.conflict` or keep theirs).
+    ///
+    /// `savedTitle` follows, so this can't read as an unsaved title edit and enqueue a spurious
+    /// save: the adopted title is already in the draft (and in the push that carries it).
+    private func adoptServerTitle(_ resolved: String) {
+        guard resolved != title else { return }
+        title = resolved
+        savedTitle = resolved
+        saveCoordinator.adoptServerTitle(documentID: documentID, title: resolved)
+    }
+
+    /// A background `syncPendingDrafts` replay can adopt a co-author's rename into this
+    /// document's queued work while this screen is open — and the editor **never refetches on
+    /// foreground** (it only flushes), which is exactly when that replay runs. Both save funnels
+    /// PATCH a title, so pushing the on-screen one would revert the rename the replay just
+    /// adopted.
+    ///
+    /// Unsaved local work outranks the server: a queued save (or the draft behind it) holds a
+    /// title the server does not have yet, written either by this editor or by a replay that has
+    /// just resolved it. Only when there is none does the newest **known server** title apply —
+    /// which is how the rename still survives once the adopted save has landed and taken its
+    /// draft with it. The one thing that outranks both is an **unflushed local rename** (`title
+    /// != savedTitle`): the user's own edit, and what makes a reconcile call two titles a
+    /// conflict rather than a merge.
+    private func adoptQueuedTitleIfUnseen() {
+        guard title == savedTitle,
+            let newestTitle = saveCoordinator.pendingSave(documentID: documentID)?.title
+                ?? saveCoordinator.storedDraft(documentID: documentID)?.title
+                ?? saveCoordinator.knownServerTitle(documentID: documentID),
+            newestTitle != title
+        else { return }
+        title = newestTitle
+        savedTitle = newestTitle
     }
 
     // MARK: - Conflict resolution
@@ -1696,9 +1801,15 @@ final class EditorViewModel {
         // the coordinator's protection is dead code on exactly the path (a dirty editor
         // resolving a conflict) it was written for. `currentMarkdown()` is precisely the body
         // the flush is about to push, so the tiebreak can only ever match our own writing.
+        //
+        // The **title** rides along unchanged, and the advanced timestamp is what makes the
+        // answer stick for it too: `draftTitleOutcome` keeps the draft's title whenever the
+        // server is no newer than the baseline, so the retry after a failed push pushes the title
+        // the user chose rather than re-raising the title conflict they just answered.
         let baselineBeforeResolving = serverBaseline
         serverBaseline = DraftBaseline(
-            serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown())
+            serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown(),
+            title: serverBaseline?.title)
         flushPendingChanges()
         // **Re-check after the flush.** `isDirty` is not proof there is anything to push:
         // `flushPendingChanges` enqueues nothing when the content serializes back to
@@ -1836,12 +1947,20 @@ final class EditorViewModel {
         }
         // Optional baseline, and the draft's own clock for rule 3 — see `apply`'s dirty branch:
         // a legacy (baseline-less) draft must not be the one case that gets no detection.
+        // The stash carries the title of the fetch that produced it, and `reconcileClean` already
+        // applied that title on the spot (titles are never stashed, only bodies) — so an
+        // untouched on-screen title still equals it and nothing here conflicts. If the user
+        // renamed it since, the two disagree against a baseline older than both: the "renamed on
+        // both sides" conflict, asked about rather than full-overwritten. Nothing is adopted
+        // here: the title is already on screen.
         let draft = saveCoordinator.storedDraft(documentID: documentID)
         switch draftSyncDecision(
             baseline: serverBaseline,
             lastPushedMarkdown: saveCoordinator.lastConfirmedPush(documentID: documentID),
             localMarkdown: currentMarkdown(),
+            draftTitle: title,
             draftUpdatedAt: draft?.updatedAt ?? dirtySince ?? Date(),
+            serverTitle: pending.title,
             serverUpdatedAt: pending.serverUpdatedAt,
             serverMarkdown: pending.markdown)
         {
