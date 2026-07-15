@@ -43,6 +43,16 @@ struct Lib0Encoder {
         writeVarUInt(UInt(bytes.count))
         data.append(contentsOf: bytes)
     }
+
+    /// varUint(byte count) followed by the raw bytes. lib0's
+    /// `writeVarUint8Array`, used to length-prefix Yjs sync updates, state
+    /// vectors, and awareness payloads inside a Hocuspocus frame. Additive: the
+    /// document-update path never calls it, so the golden encoder bytes are
+    /// unchanged.
+    mutating func writeVarUint8Array(_ bytes: Data) {
+        writeVarUInt(UInt(bytes.count))
+        data.append(bytes)
+    }
 }
 
 // MARK: - Yjs struct model (a single-client, from-scratch document update)
