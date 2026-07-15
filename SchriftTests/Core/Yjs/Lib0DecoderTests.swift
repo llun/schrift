@@ -17,6 +17,11 @@ final class Lib0DecoderTests: XCTestCase {
         let cases: [(UInt, String)] = [
             (0, "00"), (1, "01"), (127, "7f"), (128, "8001"), (255, "ff01"), (300, "ac02"),
             (16383, "ff7f"), (16384, "808001"), (0xDEAD_BEEF, "effdb6f50d"), (4_294_967_295, "ffffffff0f"),
+            // 6–8 byte encodings exercise the high-shift accumulation path with a
+            // value check (a `shift % 35`-style mutation corrupts these).
+            (34_359_738_368, "808080808001"),  // 2^35
+            (562_949_953_421_312, "8080808080808001"),  // 2^49
+            (4_503_599_627_370_495, "ffffffffffffff07"),  // 2^52 - 1
         ]
         for (value, hex) in cases {
             var decoder = Lib0Decoder(Data(hex: hex))
@@ -105,7 +110,15 @@ final class Lib0DecoderTests: XCTestCase {
     // MARK: round-trips against Lib0Encoder
 
     func testVarUIntRoundTrips() throws {
-        for value: UInt in [0, 1, 63, 64, 127, 128, 255, 256, 16383, 16384, 1_000_000, 0xDEAD_BEEF, 4_294_967_295] {
+        // Includes the full 64-bit range — UInt(Int.max) (9 bytes) and UInt.max
+        // (10 bytes) value-verify shifts 56/63, beyond what lib0's JS encoder can
+        // emit (it caps at 2^53). The Swift encoder covers them, so the round-trip
+        // is the value check for the top of the shift path.
+        let values: [UInt] = [
+            0, 1, 63, 64, 127, 128, 255, 256, 16383, 16384, 1_000_000, 0xDEAD_BEEF, 4_294_967_295,
+            UInt(Int.max), UInt.max,
+        ]
+        for value in values {
             var encoder = Lib0Encoder()
             encoder.writeVarUInt(value)
             var decoder = Lib0Decoder(encoder.data)
