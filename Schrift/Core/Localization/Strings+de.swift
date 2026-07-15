@@ -247,6 +247,8 @@ enum Strings_de {
         .editor_divider_a11y: "Trennlinie",
         .editor_checklist_done_a11y: "Als erledigt markieren",
         .editor_checklist_not_done_a11y: "Als nicht erledigt markieren",
+        .editor_presence_count_one: "%d Person hier",
+        .editor_presence_count_other: "%d Personen hier",
 
         // Profile
         .profile_title: "Profil",

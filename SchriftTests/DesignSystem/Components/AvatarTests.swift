@@ -38,6 +38,22 @@ final class AvatarTests: XCTestCase {
         XCTAssertEqual(avatarColorHex(for: ""), avatarColorPalette[0].light)
     }
 
+    // The `#rrggbb` string is what we broadcast as our live-collaboration
+    // awareness colour; it must be the same hue as the avatar, six lowercase
+    // hex digits, zero-padded.
+    func testColorHexStringMatchesTheAvatarLightHex() {
+        let name = "Camille Moreau"
+        XCTAssertEqual(avatarColorHexString(for: name), String(format: "#%06x", avatarColorHex(for: name) & 0xFF_FFFF))
+    }
+
+    func testColorHexStringIsSixLowercaseHexDigits() {
+        let hex = avatarColorHexString(for: "Alfredo Levin")
+        XCTAssertEqual(hex.count, 7)  // "#" + 6 digits
+        XCTAssertEqual(hex.first, "#")
+        XCTAssertEqual(hex, hex.lowercased())
+        XCTAssertTrue(hex.dropFirst().allSatisfy { $0.isHexDigit })
+    }
+
     // The pair accessor is what the view renders through `Color(lightHex:darkHex:)`.
     func testColorHexPairMatchesTheSameIndexAsTheLightHex() {
         XCTAssertEqual(avatarColorHexPair(for: "Camille Moreau").light, avatarColorPalette[6].light)

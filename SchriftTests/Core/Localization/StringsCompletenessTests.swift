@@ -11,6 +11,7 @@ final class StringsCompletenessTests: XCTestCase {
         .search_results_two, .search_results_few,
         .shared_count_two, .shared_count_few,
         .share_members_two, .share_members_few,
+        .editor_presence_count_two, .editor_presence_count_few,
     ]
 
     /// The English `other` form each extended key is a plural sibling of — used
@@ -19,6 +20,8 @@ final class StringsCompletenessTests: XCTestCase {
         .search_results_two: .search_results_other, .search_results_few: .search_results_other,
         .shared_count_two: .shared_count_other, .shared_count_few: .shared_count_other,
         .share_members_two: .share_members_other, .share_members_few: .share_members_other,
+        .editor_presence_count_two: .editor_presence_count_other,
+        .editor_presence_count_few: .editor_presence_count_other,
     ]
 
     /// Count of `%@` / `%d` / `%lld` placeholders (ignoring escaped `%%`).

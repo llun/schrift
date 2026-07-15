@@ -11,6 +11,8 @@ struct EditorSaveBar: View {
     /// A conflict is recorded, so the push is **held** — see `saveStatusDisplay`.
     var hasConflict: Bool = false
     var hasUnsavedLocalContent: Bool = false
+    /// Peers currently in the document — presence avatars, empty when alone.
+    var peers: [CollaborationPeer] = []
     var onSaveTap: () -> Void
     var onDone: () -> Void
 
@@ -26,6 +28,8 @@ struct EditorSaveBar: View {
                 onTap: onSaveTap)
 
             Spacer(minLength: DocsSpacing.spaceXS)
+
+            PresenceBar(peers: peers)
 
             IconButton(
                 icon: .check,

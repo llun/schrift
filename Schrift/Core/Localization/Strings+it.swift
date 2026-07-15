@@ -243,6 +243,8 @@ enum Strings_it {
         .editor_divider_a11y: "Divisore",
         .editor_checklist_done_a11y: "Contrassegna come completato",
         .editor_checklist_not_done_a11y: "Contrassegna come non completato",
+        .editor_presence_count_one: "%d persona qui",
+        .editor_presence_count_other: "%d persone qui",
 
         // Profile
         .profile_title: "Profilo",

@@ -239,6 +239,8 @@ enum Strings_zhHant {
         .editor_divider_a11y: "分隔線",
         .editor_checklist_done_a11y: "標示為完成",
         .editor_checklist_not_done_a11y: "標示為未完成",
+        .editor_presence_count_one: "%d 人在此",
+        .editor_presence_count_other: "%d 人在此",
 
         // Profile
         .profile_title: "個人檔案",

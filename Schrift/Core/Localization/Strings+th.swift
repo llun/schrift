@@ -241,6 +241,8 @@ enum Strings_th {
         .editor_divider_a11y: "เส้นแบ่ง",
         .editor_checklist_done_a11y: "ทำเครื่องหมายว่าเสร็จ",
         .editor_checklist_not_done_a11y: "ทำเครื่องหมายว่ายังไม่เสร็จ",
+        .editor_presence_count_one: "มี %d คนอยู่ที่นี่",
+        .editor_presence_count_other: "มี %d คนอยู่ที่นี่",
 
         // Profile
         .profile_title: "โปรไฟล์",
