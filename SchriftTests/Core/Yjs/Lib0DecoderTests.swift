@@ -121,7 +121,13 @@ final class Lib0DecoderTests: XCTestCase {
     }
 
     func testVarIntRoundTrips() throws {
-        for value in [0, 1, -1, 63, -63, 64, -64, 127, -128, 8191, -8192, 1_000_000, -1_000_000, Int(Int32.max)] {
+        // Includes the full Int boundaries: Int.min (magnitude 2^63) and Int.max
+        // must round-trip without the decoder trapping on the narrowing back to Int.
+        let values = [
+            0, 1, -1, 63, -63, 64, -64, 127, -128, 8191, -8192, 1_000_000, -1_000_000,
+            Int(Int32.max), Int(Int32.min), Int.max, Int.min,
+        ]
+        for value in values {
             var encoder = Lib0Encoder()
             encoder.writeVarInt(value)
             var decoder = Lib0Decoder(encoder.data)
@@ -194,12 +200,40 @@ final class Lib0DecoderTests: XCTestCase {
         assertTruncated { _ = try decoder.readVarString() }
     }
 
+    func testOverlongVarUIntThrowsMalformed() {
+        // 11 continuation bytes: byte 11 is read at shift 70, tripping the
+        // shift > 63 guard. (10 continuation bytes throw `.truncated` instead,
+        // because the 11th read finds no byte — asserted below.)
+        var overlong = Lib0Decoder(Data(repeating: 0x80, count: 11))
+        assertMalformed { _ = try overlong.readVarUInt() }
+        var justTruncated = Lib0Decoder(Data(repeating: 0x80, count: 10))
+        assertTruncated { _ = try justTruncated.readVarUInt() }
+    }
+
+    func testOutOfRangeVarIntThrowsMalformed() {
+        // A negative varInt whose accumulated magnitude is 2^63 + 1 — larger than
+        // any valid Int — must throw rather than trap on the signed reconstruction.
+        var decoder = Lib0Decoder(Data([0xC1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02]))
+        assertMalformed { _ = try decoder.readVarInt() }
+    }
+
     private func assertTruncated(_ body: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {
         do {
             try body()
             XCTFail("expected truncated", file: file, line: line)
         } catch let error as Lib0DecodingError {
             XCTAssertEqual(error, .truncated, file: file, line: line)
+        } catch {
+            XCTFail("unexpected error \(error)", file: file, line: line)
+        }
+    }
+
+    private func assertMalformed(_ body: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {
+        do {
+            try body()
+            XCTFail("expected malformedVarInt", file: file, line: line)
+        } catch let error as Lib0DecodingError {
+            XCTAssertEqual(error, .malformedVarInt, file: file, line: line)
         } catch {
             XCTFail("unexpected error \(error)", file: file, line: line)
         }

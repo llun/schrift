@@ -45,7 +45,10 @@ enum AwarenessCodec {
         var decoder = Lib0Decoder(data)
         let count = try decoder.readVarUInt()
         var entries: [AwarenessEntry] = []
-        entries.reserveCapacity(Int(exactly: count) ?? 0)
+        // Bound the reservation by the bytes actually present: a hostile `count`
+        // (a ~5-byte varUint can claim billions of entries) must not force a huge
+        // speculative allocation before the per-entry read hits `.truncated`.
+        entries.reserveCapacity(min(Int(exactly: count) ?? 0, decoder.remainingCount))
         for _ in 0..<count {
             let clientID = try decoder.readVarUInt()
             let clock = try decoder.readVarUInt()

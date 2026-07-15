@@ -93,14 +93,24 @@ struct Lib0Decoder {
             result |= UInt(byte & 0x7F) << shift
             shift += 7
         }
-        let magnitude = Int(result)
-        return negative ? -magnitude : magnitude
+        // Reconstruct the signed value without a trapping narrowing conversion:
+        // `Int(bitPattern:)` reinterprets and never traps, while the guards reject
+        // a magnitude too large to be a valid `Int` of that sign (a malformed
+        // stream) — yet still admit `Int.min` (magnitude 2^63, negative), so the
+        // full `Int` range that `Lib0Encoder.writeVarInt` can emit round-trips.
+        if negative {
+            guard result <= UInt(Int.max) &+ 1 else { throw Lib0DecodingError.malformedVarInt }
+            return Int(bitPattern: ~result &+ 1)  // two's-complement negation
+        } else {
+            guard result <= UInt(Int.max) else { throw Lib0DecodingError.malformedVarInt }
+            return Int(bitPattern: result)
+        }
     }
 
-    /// `varUInt(utf8 byte length)` followed by that many UTF-8 bytes.
+    /// `varUInt(utf8 byte length)` followed by that many UTF-8 bytes. Reuses
+    /// `readUint8Array` so the length + clamped-read logic lives in one place.
     mutating func readVarString() throws -> String {
-        let length = try readVarUInt()
-        let data = try readBytes(Int(exactly: length) ?? Int.max)
+        let data = try readUint8Array()
         guard let string = String(data: data, encoding: .utf8) else {
             throw Lib0DecodingError.invalidUTF8
         }

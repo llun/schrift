@@ -59,6 +59,12 @@ final class AwarenessCodecTests: XCTestCase {
         XCTAssertEqual(try AwarenessCodec.decode(AwarenessCodec.encode(entries)), entries)
     }
 
+    func testEmptyUpdateBoundary() throws {
+        // Zero clients encodes as a single varUint(0); decoding it yields no entries.
+        XCTAssertEqual(AwarenessCodec.encode([]).hexString, "00")
+        XCTAssertEqual(try AwarenessCodec.decode(Data([0x00])), [])
+    }
+
     // MARK: frame payload (the extra varUint8Array wrap)
 
     func testEncodePayloadWrapsUpdateInVarUint8Array() {
