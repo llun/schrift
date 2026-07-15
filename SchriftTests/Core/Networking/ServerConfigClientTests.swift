@@ -38,4 +38,35 @@ final class ServerConfigClientTests: XCTestCase {
 
         XCTAssertNil(config.version)
     }
+
+    func testDecodesCollaborationWsUrlAndAdvertisesSupport() async throws {
+        let body = #"{"RELEASE_VERSION":"5.4.1","COLLABORATION_WS_URL":"wss://docs.example.org/collaboration/ws/"}"#
+            .data(using: .utf8)!
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+
+        let config = try await makeClient().serverConfig()
+
+        XCTAssertEqual(config.collaborationWsUrl, "wss://docs.example.org/collaboration/ws/")
+        XCTAssertTrue(config.supportsLiveCollaboration)
+    }
+
+    func testAbsentCollaborationWsUrlMeansNoLiveSupport() async throws {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: "{}".data(using: .utf8)!, error: nil)
+        }
+
+        let config = try await makeClient().serverConfig()
+
+        XCTAssertNil(config.collaborationWsUrl)
+        XCTAssertFalse(config.supportsLiveCollaboration)
+    }
+
+    func testEmptyCollaborationWsUrlIsNotSupport() async throws {
+        let body = #"{"COLLABORATION_WS_URL":""}"#.data(using: .utf8)!
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+
+        let config = try await makeClient().serverConfig()
+
+        XCTAssertFalse(config.supportsLiveCollaboration)
+    }
 }
