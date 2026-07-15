@@ -66,4 +66,9 @@ final class SyncMessageTests: XCTestCase {
         // subtype 3 + empty uint8Array — 3 is not a modeled sync sub-type.
         assertThrows(SyncMessageError.unknownStep(3)) { _ = try SyncMessage(decodingPayload: Data(hex: "0300")) }
     }
+
+    func testTruncatedPayloadThrows() {
+        // step-2, then a varUint8Array claiming 0x39 = 57 bytes but supplying one.
+        assertThrows(Lib0DecodingError.truncated) { _ = try SyncMessage(decodingPayload: Data(hex: "013900")) }
+    }
 }
