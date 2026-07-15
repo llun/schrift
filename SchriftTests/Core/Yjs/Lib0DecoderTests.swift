@@ -107,10 +107,18 @@ final class Lib0DecoderTests: XCTestCase {
         }
     }
 
-    func testReadAnyRejectsUnmodeledTag() {
-        // 124 is lib0's float32 tag — not modeled until the CRDT core (PR B1).
-        var decoder = Lib0Decoder(Data(hex: "7c00000000"))
-        assertThrows(Lib0DecodingError.unsupportedAnyTag(124)) { _ = try decoder.readAny() }
+    func testReadAnyDecodesFloat32AsRawBytes() throws {
+        // 124 is lib0's float32 tag — now modeled (B1) as its raw 4 big-endian
+        // bytes, so a decode→writeAny round-trip is byte-identical.
+        var decoder = Lib0Decoder(Data(hex: "7c3fc00000"))  // 1.5
+        XCTAssertEqual(try decoder.readAny(), .float32(Data(hex: "3fc00000")))
+    }
+
+    func testReadAnyRejectsATagBelowTheLib0Range() {
+        // lib0 `writeAny` only ever emits tags 116–127; anything lower is
+        // malformed input and must throw rather than trap.
+        var decoder = Lib0Decoder(Data(hex: "7300000000"))  // 0x73 = 115
+        assertThrows(Lib0DecodingError.unsupportedAnyTag(115)) { _ = try decoder.readAny() }
     }
 
     // MARK: - round-trips against Lib0Encoder

@@ -149,10 +149,29 @@ struct Lib0Decoder {
         switch tag {
         case 119: return .string(try readVarString())
         case 125: return .int(try readVarInt())
+        case 124: return .float32(try readBytes(4))  // big-endian, re-emitted verbatim
+        case 123: return .float64(try readBytes(8))
+        case 122: return .bigInt(try readBytes(8))
         case 120: return .bool(true)
         case 121: return .bool(false)
         case 126: return .null
         case 127: return .undefined
+        case 118:  // object: varUint(count) then count × (varString key, any value)
+            let count = try readVarUInt()
+            var entries: [YAnyObjectEntry] = []
+            entries.reserveCapacity(min(Int(exactly: count) ?? 0, remainingCount))
+            for _ in 0..<count {
+                let key = try readVarString()
+                entries.append(YAnyObjectEntry(key: key, value: try readAny()))
+            }
+            return .object(entries)
+        case 117:  // array: varUint(count) then count × any value
+            let count = try readVarUInt()
+            var values: [YAnyValue] = []
+            values.reserveCapacity(min(Int(exactly: count) ?? 0, remainingCount))
+            for _ in 0..<count { values.append(try readAny()) }
+            return .array(values)
+        case 116: return .uint8Array(try readVarUint8Array())
         default: throw Lib0DecodingError.unsupportedAnyTag(tag)
         }
     }
