@@ -1,0 +1,29 @@
+SchriftTests/Core/Yjs/YUpdateDecoderTests.swift
+  s_8c1f6116e89b3c::t_e3ac2a843673d2 152-206,209-211,214-238
+  s_8c1f6116e89b3c::t_d1826c5fe1a952 12-18
+  s_8c1f6116e89b3c::t_174de52e5bbbd0 35-53
+Schrift/Core/Yjs/YjsUpdateEncoder.swift
+  s_8c1f6116e89b3c::t_1e9626f9c3bbdd 125-127
+  s_8c1f6116e89b3c::t_2e3f6f8f1cc93c 71-73
+Schrift/Core/Yjs/Lib0Decoder.swift
+  s_8c1f6116e89b3c::t_bd540d49c690a2 155-163
+  s_8c1f6116e89b3c::t_158da2078567b9 148-150
+  s_8c1f6116e89b3c::t_e99d35ab0e5f36 13-14
+  s_8c1f6116e89b3c::t_41b1a220bcd984 48-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "7efb05086b0dba29982f10218192a69fb61eaac9",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
