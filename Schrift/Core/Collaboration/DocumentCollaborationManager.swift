@@ -92,7 +92,17 @@ final class DocumentCollaborationManager {
         let resolved = await localStateProvider()
         guard resolved != localAwareness else { return }
         localAwareness = resolved
-        if !isSuspended { rebuildActiveSessions() }
+        guard !isSuspended else { return }
+        rebuildActiveSessions()
+        // A lingering (released, refCount 0) entry keeps a session built before
+        // our identity resolved; `rebuildActiveSessions` skips it. Drop that
+        // session so a reopen *within the linger window* rebuilds a fresh one that
+        // announces us, instead of reusing the silent session (its localState is
+        // immutable). The entry keeps lingering for the quick-reopen path.
+        for id in Array(entries.keys) where entries[id]?.refCount == 0 {
+            entries[id]?.session?.stop()
+            entries[id]?.session = nil
+        }
     }
 
     /// The peers currently present in a document, or `[]` when no live session

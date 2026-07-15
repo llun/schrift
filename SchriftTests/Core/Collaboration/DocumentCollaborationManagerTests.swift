@@ -48,7 +48,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
     }
 
     private func makeAwarenessManager(
-        provider: @escaping @Sendable () async -> LocalAwarenessState?, spy: SocketFactorySpy
+        provider: @escaping @Sendable () async -> LocalAwarenessState?, spy: SocketFactorySpy, linger: Double = 0.05
     ) -> DocumentCollaborationManager {
         let manager = DocumentCollaborationManager(
             serverBaseURL: baseURL,
@@ -58,7 +58,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
             serverConfigProvider: { nil },
             localStateProvider: provider,
             socketFactory: spy.factory,
-            lingerSeconds: 0.05)
+            lingerSeconds: linger)
         manager.serverSupportsLiveCollaboration = true
         return manager
     }
@@ -123,6 +123,27 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertEqual(awareness.knownType, .awareness)
         let entries = try AwarenessCodec.decodePayload(awareness.payload)
         XCTAssertEqual(CollaborationPeer(clientID: entries[0].clientID, stateJSON: entries[0].stateJSON)?.name, "Ada")
+        manager.release(docID)
+    }
+
+    func testResolvingAwarenessDropsALingeringSilentSessionSoAReopenBroadcasts() async throws {
+        let spy = SocketFactorySpy()
+        // Long linger so the reopen lands inside the window.
+        let manager = makeAwarenessManager(
+            provider: { LocalAwarenessState(name: "Ada", color: "#30bced") }, spy: spy, linger: 5)
+        _ = manager.session(for: docID)  // silent observer (awareness not yet refreshed)
+        await waitUntil { spy.sockets.count == 1 }
+        await waitAndConfirmNever { spy.sockets[0].sentFrames.count > 1 }
+        manager.release(docID)  // refCount 0, lingering
+
+        await manager.refreshLocalAwareness()  // drops the lingering silent session
+
+        // Reopen within the linger window rebuilds a fresh session that announces us,
+        // rather than reusing the retained silent one.
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 2 && spy.sockets[1].sentFrames.count == 2 }
+        let awareness = try HocuspocusMessage(decoding: spy.sockets[1].sentFrames[1])
+        XCTAssertEqual(awareness.knownType, .awareness)
         manager.release(docID)
     }
 
