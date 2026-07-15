@@ -1,0 +1,26 @@
+SchriftTests/Core/Collaboration/AwarenessCodecTests.swift
+  s_8c1f6116e89b3c::t_e88d728a67dd12 97,104,109,121
+  s_8c1f6116e89b3c::t_839bf07d5c8f8e 114-116
+SchriftTests/Core/Collaboration/HocuspocusMessageTests.swift
+  s_8c1f6116e89b3c::t_20a3deae4c8712 79
+SchriftTests/Core/Collaboration/SyncMessageTests.swift
+  s_8c1f6116e89b3c::t_e6c914e4b91764 67
+SchriftTests/Support/AssertThrows.swift
+  s_8c1f6116e89b3c::t_5e5dcbd5cc1c2b 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "7c1ea313fed455834443bc0f07871e98f2e03618",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
