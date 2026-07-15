@@ -905,11 +905,35 @@ markdown write endpoint**. Understand this before touching the save path:
   The one carve-out is `.dirty`, which keeps its **Save** funnel: the newest keystrokes are
   not on disk until the flush writes the draft, so "Saved on this device" would be a lie
   there, and the tap is exactly what persists them.
-- **Known limitation** (deliberate; written up in
-  [`docs/offline-and-sync.md`](docs/offline-and-sync.md)): `DraftBaseline` records no
-  **title**, so a remote *rename* is rule 2's body-equality `.push` and the replay's title
-  PATCH silently reverts it. Fixing it means adding a title to the persisted baseline and
-  having the replay *adopt* the server's title when the user didn't change theirs.
+- **A save PATCHes the title too, so the title gets its own rule — a *merge*, not a
+  dialog.** Title and body are independent fields, so `DraftBaseline` carries the server's
+  **`title`** next to its `markdown`, and `draftSyncDecision` returns
+  **`.push(title:evidence:)`** — the title the replay must PATCH, resolved by
+  `draftTitleOutcome`, never the caller's to pick (the `evidence` is the body half, from
+  `PushEvidence`, and rides through untouched). Given the baseline's title `b`, the draft's
+  `d`, the server's `s`: `d == b` (only the server renamed) ⇒ **adopt `s`**; `s == b` or
+  `s == d` ⇒ push `d`; all three differ (two renames) ⇒ **`.conflict`**; `b`/`s` unknown, or
+  the server no newer than the baseline, ⇒ push `d` (so a **titleless legacy baseline behaves
+  exactly as before** — nothing adopted, no conflict invented). Before this, a web rename left
+  the body untouched, so it *was* rule 2's body-equality `.push` — correctly — and the replay's
+  title PATCH then silently reverted the co-author's rename with no prompt. Adopting a title
+  advances the baseline's **title** with it (`adoptedBaseline`) — otherwise a *second* remote
+  rename reads as "both renamed" — and the date short-circuit is what makes **"keep mine"
+  stick**: `resolveConflictKeepingLocal` advances the baseline's timestamp, so a failed push's
+  retry can't re-raise the title conflict the user just answered.
+- **The editor must not push a title behind the replay's back.** It **never refetches on
+  foreground** (it only flushes) — and foreground/reconnect is exactly when
+  `syncPendingDrafts` runs — so a background replay can adopt a rename, push it, and land it
+  entirely behind an open screen still showing the old title, whose next flush would PATCH the
+  old name straight back. So: `reconcileDraft` **and** `apply`'s dirty branch adopt a resolved
+  title onto the screen and the stored draft (`adoptServerTitle`, which rewrites the draft
+  without starting a save); the coordinator tracks `knownServerTitles` (a landed save, plus
+  every fetch that clears `mayPredateSave`, via `noteServerTitle` in both `apply` and
+  `installFetched`); and `adoptQueuedTitleIfUnseen` runs in **both** save funnels, preferring
+  the queued save's title, then the draft's, then the known server title — unsaved local work
+  holds a title the server doesn't have yet. An **unflushed local rename** (`title !=
+  savedTitle`) outranks all of them; it is what makes a reconcile call two titles a conflict
+  rather than a merge.
 - Content is cached on-device in **`DocumentContentCacheStore`** (one JSON per
   document under Application Support, backup-excluded, ≤50 entries by
   most-recent `syncedAt` via file mtime): `load()` shows a local copy

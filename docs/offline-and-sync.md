@@ -631,17 +631,69 @@ choosing one whole version.
   full-overwrote the server copy the user had just chosen to keep. On failure the
   draft *and* the conflict both survive, so the pill and sheet stay available and
   everything on screen is still backed by disk.
-- **Known limitation — the baseline records no title, so a remote *rename* is not
-  detected.** `DraftBaseline` carries `serverUpdatedAt` + `markdown` only, and a save
-  PATCHes content **and** title. A web rename that leaves the body untouched is
-  therefore rule 2's body-equality `.push` (by design — it must not raise a conflict
-  dialog for a rename), and the replay's title PATCH then quietly reverts it to the
-  title the draft was made with. Detecting it means adding a `title` to the persisted
-  `DraftBaseline` and teaching the replay to *adopt* the server's title when the user
-  did not change theirs (title and body are independent fields, so the right answer is
-  a merge, not a dialog). That is a change to a persisted model and to what the replay
-  pushes, so it is deferred to its own change rather than bolted on here. The loss is
-  title-only, immediately visible, and trivially undone.
+- **A remote rename is merged, not reverted and not dialogued.** A save PATCHes content
+  **and** title, so the title needs a rule of its own — and it is a *merge*, because
+  title and body are independent fields. `DraftBaseline` therefore carries the server's
+  `title` alongside its `markdown`, and `draftSyncDecision` resolves **which title a
+  `.push` PATCHes** (`draftTitleOutcome`), rather than leaving the caller to reach for
+  `draft.title`. With `b` = the baseline's title, `d` = the draft's, `s` = the server's:
+
+  | | |
+  |---|---|
+  | `b` or `s` unknown, or the server is no newer than the baseline | push `d` |
+  | `s == d` (already agree) | push `d` |
+  | `d == b` — only the server renamed | **adopt `s`** |
+  | `s == b` — only the user renamed | push `d` |
+  | all three differ — two different renames | **`.conflict`** |
+
+  Without this, a web rename left the body untouched, so it *was* rule 2's body-equality
+  `.push` — correctly, since a rename must not raise a conflict dialog — and the replay's
+  title PATCH then quietly reverted it to the title the draft was made with. The
+  co-author's rename disappeared with no prompt. A titleless baseline (`b == nil`: a
+  draft or cache entry written before the field existed) keeps the old behavior exactly:
+  nothing to compare against, so nothing is adopted and no conflict is invented. The
+  `.push`'s `PushEvidence` rides through the title resolution untouched — a one-sided
+  rename is a fact about the title, not the body, so it can't weaken the body evidence a
+  standing conflict is released on.
+
+  **Adopting a title advances the baseline's title with it** (`adoptedBaseline`). The
+  draft now descends from that server title, and a baseline left on the old one would
+  make the adopted title look like a *local* rename to the next reconcile — so a
+  **second** remote rename would read as "both renamed, differently" and raise a
+  `.conflict` the user never created. A push that keeps the draft's own title advances
+  nothing: writing the *user's* rename into the baseline would make the next reconcile
+  mistake the server's older title for a rename they never made and adopt it back over
+  theirs.
+
+  The date short-circuit in the first row is also what makes a **"keep mine" answer
+  stick**: that resolution advances the draft's baseline to the server state the user
+  chose to overwrite, so the retry after a failed push sees a server no newer than the
+  baseline and pushes their title — rather than re-raising the identical title conflict
+  they just answered, forever.
+- **The editor must not push a title behind the replay's back.** The editor **never
+  refetches on foreground** — it only flushes — and foreground/reconnect is exactly when
+  `syncPendingDrafts` runs. So a background replay can adopt a co-author's rename into a
+  document's queued work, push it, and land it entirely behind an open screen still
+  showing the pre-rename title; the next keystroke's flush PATCHes `title` and would put
+  the old name straight back. Three things close that, and each has a named regression
+  test:
+  - `reconcileDraft` adopts a resolved title onto the screen **and** onto the stored
+    draft (`DocumentSaveCoordinator.adoptServerTitle`, which rewrites the draft without
+    starting a save). It does this in its `.pendingSync`/`.failed` early return too, and
+    in `apply`'s **dirty** branch — that state's funnel is the user's retry (`saveNow`)
+    or the next flush, both of which PATCH `savedTitle` with no reconcile of their own.
+  - `DocumentSaveCoordinator.knownServerTitles` records the newest title anything knows
+    the server holds — written by a landed save (the server now holds *our* title) and by
+    every editor fetch that clears `mayPredateSave` (`noteServerTitle`, called in **both**
+    `apply` and `installFetched`; the latter covers the one install that does not go
+    through `apply`, `resolveConflictKeepingServer`, which is also the one that drops the
+    draft — a stale entry there would be exactly what the next flush PATCHed).
+  - `EditorViewModel.adoptQueuedTitleIfUnseen` runs in both save funnels
+    (`flushPendingChanges`, `saveNow`) and takes the newest of: the queued save's title,
+    the stored draft's, then the known server title — in that order, because unsaved local
+    work holds a title the server does not have yet. An **unflushed local rename**
+    (`title != savedTitle`) outranks all of them: that is the user's own edit, and it is
+    what makes a reconcile call two titles a conflict rather than a merge.
 - **Detection also runs in `apply`'s dirty branch** — it must, or the whole safety net
   turns on **keystroke timing**. That branch (`pendingSave != nil || isDirty` →
   `cacheServerCopy`) used to return without consulting the decision, so a queued offline
