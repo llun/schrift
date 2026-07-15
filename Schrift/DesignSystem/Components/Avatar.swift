@@ -40,6 +40,14 @@ func avatarColorHex(for name: String) -> UInt32 {
     avatarColorHexPair(for: name).light
 }
 
+/// The name's avatar colour as a `#rrggbb` string — the value broadcast as our
+/// live-collaboration awareness colour, so a web peer paints our caret the same
+/// hue our avatar shows here. Lives with the palette so `Core` never reaches into
+/// the design system to derive it.
+func avatarColorHexString(for name: String) -> String {
+    String(format: "#%06x", avatarColorHex(for: name) & 0xFF_FFFF)
+}
+
 struct Avatar: View {
     let name: String
     var imageURL: URL? = nil
