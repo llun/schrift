@@ -10,9 +10,8 @@ enum Lib0DecodingError: Error, Equatable {
     case malformedVarInt
     /// A `readVarString` payload was not valid UTF-8.
     case invalidUTF8
-    /// `readAny` met a lib0 type tag this decoder does not yet model. The full
-    /// tag set is completed additively by the CRDT core (roadmap PR B1); the
-    /// wire codecs in this PR never exercise `readAny`.
+    /// `readAny` met a byte outside lib0 `writeAny`'s tag range (116–127) — i.e.
+    /// malformed input, since lib0 never emits anything else.
     case unsupportedAnyTag(UInt8)
 }
 
@@ -44,6 +43,11 @@ struct Lib0Decoder {
         guard offset < bytes.count else { throw Lib0DecodingError.truncated }
         defer { offset += 1 }
         return bytes[offset]
+    }
+
+    /// The next byte without advancing the cursor, or nil at end of buffer.
+    func peekUInt8() -> UInt8? {
+        offset < bytes.count ? bytes[offset] : nil
     }
 
     /// Reads `count` raw bytes.
@@ -141,14 +145,22 @@ struct Lib0Decoder {
         return try readBytes(Int(exactly: length) ?? Int.max)
     }
 
-    /// A lib0 `readAny` value, limited to the tags `Lib0Encoder.writeAny`
-    /// currently emits. Any other tag throws `unsupportedAnyTag`; the CRDT core
-    /// (PR B1) extends both sides together.
+    /// Decodes a lib0 `readAny` value — the full tag set (116–127), the inverse of
+    /// `Lib0Encoder.writeAny`. A byte outside that range is malformed input and
+    /// throws `unsupportedAnyTag`.
     mutating func readAny() throws -> YAnyValue {
         let tag = try readUInt8()
         switch tag {
         case 119: return .string(try readVarString())
-        case 125: return .int(try readVarInt())
+        case 125:
+            // lib0's -0 is exactly the single byte 0x40 (sign bit set, magnitude 0,
+            // no continuation). Swift `Int` can't hold -0, so keep it distinct to
+            // round-trip byte-identically; every other varint round-trips as `.int`.
+            if peekUInt8() == 0x40 {
+                _ = try readUInt8()
+                return .negativeZero
+            }
+            return .int(try readVarInt())
         case 124: return .float32(try readBytes(4))  // big-endian, re-emitted verbatim
         case 123: return .float64(try readBytes(8))
         case 122: return .bigInt(try readBytes(8))

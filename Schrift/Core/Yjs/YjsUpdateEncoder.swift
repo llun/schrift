@@ -68,6 +68,9 @@ struct Lib0Encoder {
         case .int(let n):
             writeUInt8(125)
             writeVarInt(n)
+        case .negativeZero:
+            writeUInt8(125)
+            writeUInt8(0x40)
         case .float32(let bytes):
             writeUInt8(124)
             data.append(bytes)
@@ -119,6 +122,9 @@ struct YAnyObjectEntry: Equatable, Sendable {
 enum YAnyValue: Equatable, Sendable {
     case string(String)  // tag 119
     case int(Int)  // tag 125 (lib0 signed varint)
+    /// JS `-0`, which yjs writes as tag 125 + the byte `0x40`. Swift `Int` can't
+    /// hold negative zero, so it needs its own case to round-trip byte-identically.
+    case negativeZero  // tag 125, byte 0x40
     case float32(Data)  // tag 124 — raw 4 big-endian bytes
     case float64(Data)  // tag 123 — raw 8 big-endian bytes
     case bigInt(Data)  // tag 122 — raw 8 big-endian bytes
