@@ -204,11 +204,14 @@ Schrift/
 │   │                    the WebSocket transport (WebSocketConnecting seam +
 │   │                    URLSessionWebSocket adapter, CollaborationTransport actor,
 │   │                    CollaborationEvents), the signal-only session state
-│   │                    machine (DocumentCollaborationSession) and its
-│   │                    availability gating (LiveCollaborationAvailability +
-│   │                    ServerConfig.collaborationWsUrl); the app-scoped manager
-│   │                    (lifecycle, reconnect/backoff, scenePhase) and CRDT sync
-│   │                    land in later PRs
+│   │                    machine (DocumentCollaborationSession) with availability
+│   │                    gating (LiveCollaborationAvailability + LiveCollaboration‐
+│   │                    Preference + ServerConfig.collaborationWsUrl), and the
+│   │                    app-scoped DocumentCollaborationManager (keyed sessions,
+│   │                    refcount/linger, scenePhase suspend/resume, reconnect on
+│   │                    the ConnectivityMonitor edge) wired in RootView, dormant
+│   │                    behind the default-off flag; CRDT sync + presence UI land
+│   │                    in later PRs
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions

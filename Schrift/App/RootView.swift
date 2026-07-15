@@ -15,6 +15,7 @@ func shouldSyncOnScenePhase(_ phase: ScenePhase) -> Bool {
 
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
+    @State private var collaboration: DocumentCollaborationManager
     let serverURL: URL
     let serverHost: String
     let sessionStore: SessionStore
@@ -37,6 +38,18 @@ private struct AuthenticatedHomeContainer: View {
             onRequestFailure: { failure in diagnostics.record(failure) }
         )
         _viewModel = State(initialValue: HomeViewModel(client: client, diagnostics: diagnostics))
+        // The app-scoped live-collaboration manager. Built once per authenticated
+        // server session (it needs the server origin + cookies); dormant until the
+        // `schrift.liveCollaboration` toggle is on AND the server advertises the
+        // collaboration WebSocket (learned from `/config/` in `.task` below). The
+        // dialed socket URL and cookies are always origin-derived.
+        _collaboration = State(
+            initialValue: DocumentCollaborationManager(
+                serverBaseURL: serverURL,
+                cookieProvider: { HTTPCookieStorage.shared.cookies(for: serverURL) ?? [] },
+                featureEnabled: { LiveCollaborationPreference.isEnabled() },
+                isOffline: { UserDefaults.standard.bool(forKey: "schrift.workOffline") },
+                socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         self.sessionStore = sessionStore
@@ -76,13 +89,28 @@ private struct AuthenticatedHomeContainer: View {
         // is harmless.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
             guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
+            collaboration.reconnect()
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
+            // Live sockets follow the scene: closed in the background, rebuilt on
+            // return. (No-op while the manager holds no sessions.)
+            switch phase {
+            case .active: collaboration.resume()
+            case .background, .inactive: collaboration.suspend()
+            @unknown default: break
+            }
             guard shouldSyncOnScenePhase(phase) else { return }
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
+        }
+        .environment(collaboration)
+        .task {
+            // Best-effort: learn whether this deployment runs the collaboration
+            // server, so the availability gate can open once the toggle is on.
+            let config = try? await viewModel.client.serverConfig()
+            collaboration.serverSupportsLiveCollaboration = config?.supportsLiveCollaboration ?? false
         }
     }
 }
