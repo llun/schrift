@@ -332,7 +332,13 @@ final class EditorViewModel {
     /// Task. Classification of the outcome happens when the fetch completes.
     /// `generation` guards against a superseded fetch (an earlier load() or
     /// refresh()) applying its outcome after a newer one has already run.
-    private func revalidate(generation: Int) async {
+    ///
+    /// `terminalOnUnavailable` — whether a 404/403 tears the screen down. True for
+    /// the user-facing paths (open, pull-to-refresh); **false** for a background
+    /// remote-change prompt, which is no evidence the document is gone (a transient
+    /// 404/proxy hiccup, or a co-author's own permission flap) and must never eject
+    /// an active editing session over another user's activity.
+    private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -348,6 +354,11 @@ final class EditorViewModel {
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
+            // A background remote-change prompt never tears the screen down: a
+            // transient 404/403 here would eject an editing session over a peer's
+            // activity. A genuine deletion still surfaces on the next open, pull-to
+            // -refresh, or save.
+            guard terminalOnUnavailable else { return }
             becomeUnavailable()
             // "No longer available" is a guess: a 404 also means a route this server does
             // not have, or a proxy hiccup. Say what the server actually answered.
@@ -398,7 +409,9 @@ final class EditorViewModel {
         // content (teardown, discard), and a fresh save/refresh may be in flight.
         guard hasLoadedContent, !isDocumentDiscarded else { return }
         revalidationGeneration += 1
-        await revalidate(generation: revalidationGeneration)
+        // Non-terminal: a peer's edit is only a prompt to re-fetch, so a transient
+        // 404/403 must not tear down the (possibly editing) screen.
+        await revalidate(generation: revalidationGeneration, terminalOnUnavailable: false)
     }
 
     /// Explicit pull-to-refresh. It applies the same content rules as the

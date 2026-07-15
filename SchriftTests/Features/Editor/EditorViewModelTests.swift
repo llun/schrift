@@ -428,6 +428,37 @@ final class EditorViewModelTests: XCTestCase {
         await waitAndConfirmNever { recorder.count(ofMethod: "GET", urlContaining: "content") > afterLoad + 1 }
     }
 
+    func testRemoteChangeSignal404WhileEditingDoesNotTearDown() async {
+        let (viewModel, _, _, _) = makeEnvironment(remoteChangeDebounce: .milliseconds(1))
+        stubLoad(content: "# Body")
+        await viewModel.load()
+        viewModel.startEditing()
+
+        // A peer's edit prompts a revalidation that 404s (a transient hiccup, or a
+        // co-author's own permission flap). A background prompt must never eject an
+        // active editing session — unlike an on-open / pull-to-refresh 404.
+        stubStatus(404)
+        viewModel.noteRemoteChange()
+        await waitAndConfirmNever { viewModel.isUnavailable }
+        XCTAssertTrue(viewModel.hasLoadedContent)
+        XCTAssertTrue(viewModel.isEditing)
+        XCTAssertEqual(viewModel.rawMarkdown, "# Body")
+    }
+
+    func testRemoteChangeSignalAfterDeleteIssuesNoFetch() async {
+        let recorder = RequestRecorder()
+        let (viewModel, _, _, _) = makeEnvironment(remoteChangeDebounce: .milliseconds(1))
+        stubLoad(content: "# Body", log: recorder)
+        await viewModel.load()
+        let afterLoad = recorder.count(ofMethod: "GET", urlContaining: "content")
+
+        // A late signal after the document is deleted must not fetch (the task is
+        // cancelled and `revalidateFromRemoteChange` re-checks `isDocumentDiscarded`).
+        viewModel.handleDidDelete()
+        viewModel.noteRemoteChange()
+        await waitAndConfirmNever { recorder.count(ofMethod: "GET", urlContaining: "content") > afterLoad }
+    }
+
     /// Reopening the screen (`.task` refires on pop-back) must keep applying
     /// remote edits, not strand the first-loaded copy.
     func testSecondLoadAppliesContentChangedSinceTheFirst() async {
