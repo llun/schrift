@@ -44,4 +44,24 @@ enum CollaborationEndpoint {
         guard !cookies.isEmpty else { return nil }
         return cookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
     }
+
+    /// The full `URLRequest` for the collaboration WebSocket upgrade: the
+    /// origin-pinned `wss` URL, an explicit `Origin` header (URLSession does not
+    /// add one for a WebSocket, and y-provider requires it), and an explicit
+    /// `Cookie` header assembled from the stored cookies. Cookie handling is
+    /// turned **off** so URLSession does not *also* attach cookies (which would
+    /// duplicate them); we forward exactly the origin's cookies ourselves.
+    /// Returns nil when the base URL can't be pinned to a `ws(s)` origin.
+    static func webSocketRequest(serverBaseURL: URL, documentID: UUID, cookies: [HTTPCookie]) -> URLRequest? {
+        guard let url = webSocketURL(serverBaseURL: serverBaseURL, documentID: documentID) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpShouldHandleCookies = false
+        if let origin = originHeader(serverBaseURL: serverBaseURL) {
+            request.setValue(origin, forHTTPHeaderField: "Origin")
+        }
+        if let cookie = cookieHeader(cookies: cookies) {
+            request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        }
+        return request
+    }
 }

@@ -85,4 +85,14 @@ final class URLSessionWebSocket: WebSocketConnecting, @unchecked Sendable {
     }
 
     var closeCode: URLSessionWebSocketTask.CloseCode { task.closeCode }
+
+    /// A `WebSocketFactory` backed by a real `URLSession` — the production way the
+    /// manager opens sockets. Tests inject a factory that returns a `FakeWebSocket`.
+    static func factory(session: URLSession = .shared) -> WebSocketFactory {
+        { request in URLSessionWebSocket(task: session.webSocketTask(with: request)) }
+    }
 }
+
+/// Builds a `WebSocketConnecting` for an upgrade request. Injected into the
+/// manager so tests can substitute a `FakeWebSocket`.
+typealias WebSocketFactory = @Sendable (URLRequest) -> WebSocketConnecting
