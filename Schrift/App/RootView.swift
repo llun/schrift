@@ -65,6 +65,13 @@ private struct AuthenticatedHomeContainer: View {
                 featureEnabled: { LiveCollaborationPreference.isEnabled() },
                 isOffline: { UserDefaults.standard.bool(forKey: "schrift.workOffline") },
                 serverConfigProvider: { try? await client.serverConfig() },
+                // Our awareness: display name + the avatar-palette colour, derived
+                // here (App layer) so `Core` never reaches into the design system.
+                localStateProvider: {
+                    guard let user = try? await client.currentUser() else { return nil }
+                    let name = user.displayName
+                    return LocalAwarenessState(name: name, color: avatarColorHexString(for: name))
+                },
                 socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
@@ -125,10 +132,12 @@ private struct AuthenticatedHomeContainer: View {
         .environment(collaboration)
         .task {
             // Learn whether this deployment runs the collaboration server, so the
-            // availability gate can open once the toggle is on. The fetch lives on
-            // the manager (its injected provider), not here — the view never does
+            // availability gate can open once the toggle is on, and our own
+            // presence identity, so a session announces us. Both fetches live on
+            // the manager (its injected providers), not here — the view never does
             // networking directly.
             await collaboration.refreshServerSupport()
+            await collaboration.refreshLocalAwareness()
         }
     }
 }

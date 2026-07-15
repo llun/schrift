@@ -126,6 +126,7 @@ struct EditorView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(LocalizationStore.self) private var loc
+    @Environment(DocumentCollaborationManager.self) private var collaboration
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
     @State private var conflictToResolve: IdentifiedSyncConflict?
@@ -176,6 +177,7 @@ struct EditorView: View {
                     saveState: viewModel.saveState,
                     hasConflict: viewModel.syncConflict != nil,
                     hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+                    peers: collaborationPeers,
                     onSaveTap: { viewModel.saveNow() },
                     onDone: { viewModel.finishEditing() }
                 )
@@ -267,8 +269,17 @@ struct EditorView: View {
         .task {
             await viewModel.load()
         }
+        // Presence: request a live session while this document is on screen (a
+        // no-op unless live collaboration is available), so our avatar shows to
+        // peers and theirs to us. Reference-counted + balanced with `release` on
+        // disappear; the manager owns the socket lifecycle (linger, suspend,
+        // reconnect), so a background/foreground cycle is handled there.
+        .onAppear {
+            _ = collaboration.session(for: viewModel.documentID)
+        }
         .onDisappear {
             viewModel.flushPendingChanges()
+            collaboration.release(viewModel.documentID)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background || phase == .inactive {
@@ -477,6 +488,14 @@ struct EditorView: View {
     /// header (moved out of the nav bar to match the handoff — the bar keeps
     /// only the back button and trailing actions), then the reach pill and the
     /// sync caption on the row beneath it.
+    /// Peers present in this document, read through the manager so the value
+    /// tracks both a peer joining/leaving and the manager swapping in a fresh
+    /// session — the view never caches a stale session reference. `[]` (bar
+    /// hidden) whenever live collaboration is unavailable or nobody else is here.
+    private var collaborationPeers: [CollaborationPeer] {
+        collaboration.peers(for: viewModel.documentID)
+    }
+
     private var headerBlock: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
             Text(viewModel.title)
@@ -510,6 +529,9 @@ struct EditorView: View {
                             .foregroundStyle(DocsColor.textTertiary)
                     }
                 }
+
+                Spacer(minLength: DocsSpacing.spaceXS)
+                PresenceBar(peers: collaborationPeers, size: 22, max: 3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -640,4 +662,5 @@ struct EditorView: View {
         serverHost: "docs.llun.dev"
     )
     .environment(LocalizationStore())
+    .environment(DocumentCollaborationManager.inert())
 }
