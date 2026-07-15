@@ -22,7 +22,8 @@ struct PresenceBar: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
                     loc.plural(
-                        peers.count, one: .editor_presence_count_one, other: .editor_presence_count_other))
+                        peers.count, one: .editor_presence_count_one, other: .editor_presence_count_other,
+                        two: .editor_presence_count_two, few: .editor_presence_count_few))
         }
     }
 }

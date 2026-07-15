@@ -255,6 +255,8 @@ enum Strings_sl {
         .editor_checklist_not_done_a11y: "Označi kot neopravljeno",
         .editor_presence_count_one: "%d oseba tukaj",
         .editor_presence_count_other: "%d oseb tukaj",
+        .editor_presence_count_two: "%d osebi tukaj",
+        .editor_presence_count_few: "%d osebe tukaj",
 
         // Profile
         .profile_title: "Profil",

@@ -269,9 +269,13 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_checklist_not_done_a11y = "editor.checklist.not_done_a11y"  // "Mark as not done"
 
     // Live-collaboration presence: the accessibility label for the avatars of
-    // peers currently in the document (count excludes the local user).
+    // peers currently in the document (count excludes the local user). `two`/`few`
+    // are Slovene-only (its dual/paucal forms); other languages fall back to
+    // `other`, so those two keys live only in the Slovene table.
     case editor_presence_count_one = "editor.presence.count.one"  // "%d person here"
     case editor_presence_count_other = "editor.presence.count.other"  // "%d people here"
+    case editor_presence_count_two = "editor.presence.count.two"  // Slovene dual
+    case editor_presence_count_few = "editor.presence.count.few"  // Slovene paucal
 
     // Profile
     case profile_title = "profile.title"  // "Profile"
