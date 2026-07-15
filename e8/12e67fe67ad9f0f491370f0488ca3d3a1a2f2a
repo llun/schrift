@@ -1,0 +1,21 @@
+SchriftTests/Core/Collaboration/AwarenessCodecTests.swift
+  s_8c1f6116e89b3c::t_280e65c55bbbca 92-133
+SchriftTests/Core/Yjs/Lib0DecoderTests.swift
+  s_8c1f6116e89b3c::t_9d939a5fcaa151 220-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "e812e67fe67ad9f0f491370f0488ca3d3a1a2f2a",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
