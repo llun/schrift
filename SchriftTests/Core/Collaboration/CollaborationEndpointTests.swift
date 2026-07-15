@@ -79,6 +79,32 @@ final class CollaborationEndpointTests: XCTestCase {
         XCTAssertNil(CollaborationEndpoint.cookieHeader(cookies: []))
     }
 
+    func testWebSocketRequestPinsURLAndSetsHeadersWithoutAutoCookies() {
+        let cookie = makeCookie(name: "sessionid", value: "abc")
+        let request = CollaborationEndpoint.webSocketRequest(
+            serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, documentID: docID, cookies: [cookie])
+        XCTAssertEqual(
+            request?.url?.absoluteString,
+            "wss://docs.example.org/collaboration/ws/?room=11111111-1111-4111-8111-111111111111")
+        XCTAssertEqual(request?.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+        XCTAssertEqual(request?.value(forHTTPHeaderField: "Cookie"), "sessionid=abc")
+        // We forward cookies explicitly, so URLSession must not add them too.
+        XCTAssertEqual(request?.httpShouldHandleCookies, false)
+    }
+
+    func testWebSocketRequestOmitsCookieHeaderWhenNoCookies() {
+        let request = CollaborationEndpoint.webSocketRequest(
+            serverBaseURL: URL(string: "https://docs.example.org/")!, documentID: docID, cookies: [])
+        XCTAssertNil(request?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertEqual(request?.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+    }
+
+    func testWebSocketRequestNilForNonHTTPBase() {
+        XCTAssertNil(
+            CollaborationEndpoint.webSocketRequest(
+                serverBaseURL: URL(string: "ftp://docs.example.org/")!, documentID: docID, cookies: []))
+    }
+
     private func makeCookie(name: String, value: String) -> HTTPCookie {
         HTTPCookie(properties: [
             .domain: "docs.example.org", .path: "/", .name: name, .value: value,

@@ -16,4 +16,12 @@ final class SyncTriggerTests: XCTestCase {
         XCTAssertFalse(shouldSyncOnScenePhase(.inactive))
         XCTAssertFalse(shouldSyncOnScenePhase(.background))
     }
+
+    func testCollaborationScenePhaseActionIgnoresTransientInactive() {
+        // Only a real background closes sockets; `.inactive` is a transient blip
+        // and must not tear down + rebuild every live socket.
+        XCTAssertEqual(collaborationScenePhaseAction(.active), .resume)
+        XCTAssertEqual(collaborationScenePhaseAction(.background), .suspend)
+        XCTAssertEqual(collaborationScenePhaseAction(.inactive), .ignore)
+    }
 }

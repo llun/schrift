@@ -13,8 +13,24 @@ func shouldSyncOnScenePhase(_ phase: ScenePhase) -> Bool {
     phase == .active
 }
 
+/// What a scene-phase change should do to live collaboration sockets. Only a
+/// real `.background` closes them; `.inactive` is a transient blip (control
+/// centre, an incoming-call banner) and must not tear down and immediately
+/// rebuild every socket. Pure so it is unit-testable without SwiftUI.
+enum CollaborationScenePhaseAction: Equatable { case resume, suspend, ignore }
+
+func collaborationScenePhaseAction(_ phase: ScenePhase) -> CollaborationScenePhaseAction {
+    switch phase {
+    case .active: return .resume
+    case .background: return .suspend
+    case .inactive: return .ignore
+    @unknown default: return .ignore
+    }
+}
+
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
+    @State private var collaboration: DocumentCollaborationManager
     let serverURL: URL
     let serverHost: String
     let sessionStore: SessionStore
@@ -37,6 +53,19 @@ private struct AuthenticatedHomeContainer: View {
             onRequestFailure: { failure in diagnostics.record(failure) }
         )
         _viewModel = State(initialValue: HomeViewModel(client: client, diagnostics: diagnostics))
+        // The app-scoped live-collaboration manager. Built once per authenticated
+        // server session (it needs the server origin + cookies); dormant until the
+        // `schrift.liveCollaboration` toggle is on AND the server advertises the
+        // collaboration WebSocket (learned from `/config/` in `.task` below). The
+        // dialed socket URL and cookies are always origin-derived.
+        _collaboration = State(
+            initialValue: DocumentCollaborationManager(
+                serverBaseURL: serverURL,
+                cookieProvider: { HTTPCookieStorage.shared.cookies(for: serverURL) ?? [] },
+                featureEnabled: { LiveCollaborationPreference.isEnabled() },
+                isOffline: { UserDefaults.standard.bool(forKey: "schrift.workOffline") },
+                serverConfigProvider: { try? await client.serverConfig() },
+                socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         self.sessionStore = sessionStore
@@ -76,13 +105,30 @@ private struct AuthenticatedHomeContainer: View {
         // is harmless.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
             guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
+            collaboration.reconnect()
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
+            // Live sockets follow the scene: closed on real background, rebuilt on
+            // return; a transient `.inactive` blip is ignored. (No-op while the
+            // manager holds no sessions.)
+            switch collaborationScenePhaseAction(phase) {
+            case .resume: collaboration.resume()
+            case .suspend: collaboration.suspend()
+            case .ignore: break
+            }
             guard shouldSyncOnScenePhase(phase) else { return }
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
+        }
+        .environment(collaboration)
+        .task {
+            // Learn whether this deployment runs the collaboration server, so the
+            // availability gate can open once the toggle is on. The fetch lives on
+            // the manager (its injected provider), not here — the view never does
+            // networking directly.
+            await collaboration.refreshServerSupport()
         }
     }
 }
