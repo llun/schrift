@@ -1,0 +1,33 @@
+SchriftTests/Core/Collaboration/CollaborationTransportTests.swift
+  s_8c1f6116e89b3c::t_9a819cffa41b65 10
+  s_8c1f6116e89b3c::t_44957fa55781b3 1-9,11-133,135-137,139-143
+  s_8c1f6116e89b3c::t_bb94a7d375c8b2 134,138
+SchriftTests/Core/Collaboration/CollaborationDisconnectTests.swift
+  s_8c1f6116e89b3c::t_4851e1262693e1 1-32
+SchriftTests/Core/Collaboration/FakeWebSocket.swift
+  s_8c1f6116e89b3c::t_45f94b1d70d6ab 1-85
+Schrift/Core/Collaboration/CollaborationTransport.swift
+  s_8c1f6116e89b3c::t_ea137066fc7e1d 1-71
+Schrift/Core/Collaboration/WebSocketConnecting.swift
+  s_8c1f6116e89b3c::t_d6017ab1d8476e 1-88
+Schrift/Core/Collaboration/HocuspocusMessage.swift
+  s_8c1f6116e89b3c::t_12773bf13022a6 33
+Schrift/Core/Collaboration/CollaborationEvents.swift
+  s_8c1f6116e89b3c::t_c53bfa2f41ba18 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "72006577b67a6b58d03183d2011342215c07a0f3",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

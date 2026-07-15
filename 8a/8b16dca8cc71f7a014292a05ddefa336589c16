@@ -1,0 +1,24 @@
+Schrift/Core/Networking/SiteOrigin.swift
+  s_8c1f6116e89b3c::t_b509d7be538ba5 1-23
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_8c1f6116e89b3c::t_2135f447f0fea0 39-41,43-47
+SchriftTests/Core/Networking/SiteOriginTests.swift
+  s_8c1f6116e89b3c::t_48f7e6ba8580fc 32
+  s_8c1f6116e89b3c::t_10a26aa296d77a 1-31,33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "8a8b16dca8cc71f7a014292a05ddefa336589c16",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
