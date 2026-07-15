@@ -30,7 +30,7 @@ enum HocuspocusMessageType: UInt, Equatable, CaseIterable {
 /// unknown inbound type survives decoding intact (the protocol rule is to
 /// ignore unknown inbound types, never to fail on them, and never to send one).
 /// Interpret a known type through `knownType`.
-struct HocuspocusMessage: Equatable {
+struct HocuspocusMessage: Equatable, Sendable {
     var documentName: String
     var type: UInt
     var payload: Data
