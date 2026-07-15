@@ -20,13 +20,6 @@ final class CollaborationDisconnectTests: XCTestCase {
     }
 
     func testWebSocketDataRejectsTextFrame() {
-        do {
-            _ = try webSocketData(from: .string("oops"))
-            XCTFail("expected unexpectedTextFrame")
-        } catch let error as WebSocketProtocolError {
-            XCTAssertEqual(error, .unexpectedTextFrame)
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        assertThrows(WebSocketProtocolError.unexpectedTextFrame) { _ = try webSocketData(from: .string("oops")) }
     }
 }
