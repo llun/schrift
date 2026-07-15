@@ -245,6 +245,8 @@ enum Strings_nl {
         .editor_divider_a11y: "Scheidingslijn",
         .editor_checklist_done_a11y: "Markeren als voltooid",
         .editor_checklist_not_done_a11y: "Markeren als niet voltooid",
+        .editor_presence_count_one: "%d persoon hier",
+        .editor_presence_count_other: "%d personen hier",
 
         // Profile
         .profile_title: "Profiel",

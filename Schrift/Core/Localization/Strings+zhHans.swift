@@ -239,6 +239,8 @@ enum Strings_zhHans {
         .editor_divider_a11y: "分隔线",
         .editor_checklist_done_a11y: "标记为已完成",
         .editor_checklist_not_done_a11y: "标记为未完成",
+        .editor_presence_count_one: "%d 人在此",
+        .editor_presence_count_other: "%d 人在此",
 
         // Profile
         .profile_title: "个人资料",

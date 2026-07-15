@@ -268,6 +268,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_checklist_done_a11y = "editor.checklist.done_a11y"  // "Mark as done"
     case editor_checklist_not_done_a11y = "editor.checklist.not_done_a11y"  // "Mark as not done"
 
+    // Live-collaboration presence: the accessibility label for the avatars of
+    // peers currently in the document (count excludes the local user).
+    case editor_presence_count_one = "editor.presence.count.one"  // "%d person here"
+    case editor_presence_count_other = "editor.presence.count.other"  // "%d people here"
+
     // Profile
     case profile_title = "profile.title"  // "Profile"
     case profile_user = "profile.user"  // "User"
