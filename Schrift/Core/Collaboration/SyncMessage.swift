@@ -46,7 +46,7 @@ struct SyncMessage: Equatable {
         guard let step = SyncStep(rawValue: rawStep) else {
             throw SyncMessageError.unknownStep(rawStep)
         }
-        self.init(step: step, data: try decoder.readUint8Array())
+        self.init(step: step, data: try decoder.readVarUint8Array())
     }
 }
 

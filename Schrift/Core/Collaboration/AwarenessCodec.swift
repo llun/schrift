@@ -62,6 +62,6 @@ enum AwarenessCodec {
     /// Reads a `.awareness` frame payload back into entries.
     static func decodePayload(_ payload: Data) throws -> [AwarenessEntry] {
         var decoder = Lib0Decoder(payload)
-        return try decode(decoder.readUint8Array())
+        return try decode(decoder.readVarUint8Array())
     }
 }
