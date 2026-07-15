@@ -42,6 +42,7 @@ final class DocumentCollaborationManager {
     private let cookieProvider: @Sendable () -> [HTTPCookie]
     private let featureEnabled: @MainActor () -> Bool
     private let isOffline: @MainActor () -> Bool
+    private let serverConfigProvider: @Sendable () async -> ServerConfig?
     private let socketFactory: WebSocketFactory
     private let lingerSeconds: Double
 
@@ -50,6 +51,7 @@ final class DocumentCollaborationManager {
         cookieProvider: @escaping @Sendable () -> [HTTPCookie],
         featureEnabled: @escaping @MainActor () -> Bool,
         isOffline: @escaping @MainActor () -> Bool,
+        serverConfigProvider: @escaping @Sendable () async -> ServerConfig?,
         socketFactory: @escaping WebSocketFactory,
         lingerSeconds: Double = 5
     ) {
@@ -57,8 +59,16 @@ final class DocumentCollaborationManager {
         self.cookieProvider = cookieProvider
         self.featureEnabled = featureEnabled
         self.isOffline = isOffline
+        self.serverConfigProvider = serverConfigProvider
         self.socketFactory = socketFactory
         self.lingerSeconds = lingerSeconds
+    }
+
+    /// Learns whether this deployment runs the collaboration server (from
+    /// `GET /config/`), so the view doesn't reach past its view model to do
+    /// networking. Best-effort — a failed fetch leaves live collaboration off.
+    func refreshServerSupport() async {
+        serverSupportsLiveCollaboration = await serverConfigProvider()?.supportsLiveCollaboration ?? false
     }
 
     /// The current gate result, in the roadmap's fixed order.

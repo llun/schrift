@@ -64,6 +64,7 @@ private struct AuthenticatedHomeContainer: View {
                 cookieProvider: { HTTPCookieStorage.shared.cookies(for: serverURL) ?? [] },
                 featureEnabled: { LiveCollaborationPreference.isEnabled() },
                 isOffline: { UserDefaults.standard.bool(forKey: "schrift.workOffline") },
+                serverConfigProvider: { try? await client.serverConfig() },
                 socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
@@ -123,10 +124,11 @@ private struct AuthenticatedHomeContainer: View {
         }
         .environment(collaboration)
         .task {
-            // Best-effort: learn whether this deployment runs the collaboration
-            // server, so the availability gate can open once the toggle is on.
-            let config = try? await viewModel.client.serverConfig()
-            collaboration.serverSupportsLiveCollaboration = config?.supportsLiveCollaboration ?? false
+            // Learn whether this deployment runs the collaboration server, so the
+            // availability gate can open once the toggle is on. The fetch lives on
+            // the manager (its injected provider), not here — the view never does
+            // networking directly.
+            await collaboration.refreshServerSupport()
         }
     }
 }

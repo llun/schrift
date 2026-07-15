@@ -32,17 +32,37 @@ final class DocumentCollaborationManagerTests: XCTestCase {
 
     private func makeManager(
         feature: Bool = true, offline: Bool = false, server: Bool = true,
-        cookies: [HTTPCookie] = [], linger: Double = 0.05, spy: SocketFactorySpy
+        cookies: [HTTPCookie] = [], linger: Double = 0.05,
+        config: ServerConfig? = nil, spy: SocketFactorySpy
     ) -> DocumentCollaborationManager {
         let manager = DocumentCollaborationManager(
             serverBaseURL: baseURL,
             cookieProvider: { cookies },
             featureEnabled: { feature },
             isOffline: { offline },
+            serverConfigProvider: { config },
             socketFactory: spy.factory,
             lingerSeconds: linger)
         manager.serverSupportsLiveCollaboration = server
         return manager
+    }
+
+    // MARK: server-support learning
+
+    func testRefreshServerSupportReadsCollaborationWsUrl() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(
+            server: false, config: ServerConfig(collaborationWsUrl: "wss://docs.example.org/collaboration/ws/"),
+            spy: spy)
+        await manager.refreshServerSupport()
+        XCTAssertTrue(manager.serverSupportsLiveCollaboration)
+    }
+
+    func testRefreshServerSupportFalseWhenConfigAbsent() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(server: true, config: nil, spy: spy)
+        await manager.refreshServerSupport()
+        XCTAssertFalse(manager.serverSupportsLiveCollaboration)
     }
 
     // MARK: availability gating
