@@ -1,0 +1,23 @@
+SchriftTests/Core/Collaboration/CollaborationEndpointTests.swift
+  s_8c1f6116e89b3c::t_491fc91fb024eb 82-107
+Schrift/Core/Collaboration/WebSocketConnecting.swift
+  s_8c1f6116e89b3c::t_57b2c4aad3623c 88-93,95-98
+Schrift/Core/Collaboration/CollaborationEndpoint.swift
+  s_8c1f6116e89b3c::t_77b8a2f56c2d0b 47-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "eabeb48dfd840dabead7a6334b23e0eb1b421a46",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
