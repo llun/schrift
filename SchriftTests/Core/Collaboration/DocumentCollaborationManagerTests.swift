@@ -47,7 +47,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         return manager
     }
 
-    // MARK: server-support learning
+    // MARK: - server-support learning
 
     func testRefreshServerSupportReadsCollaborationWsUrl() async {
         let spy = SocketFactorySpy()
@@ -65,7 +65,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertFalse(manager.serverSupportsLiveCollaboration)
     }
 
-    // MARK: availability gating
+    // MARK: - availability gating
 
     func testNoSessionWhenFeatureDisabled() {
         let spy = SocketFactorySpy()
@@ -87,7 +87,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertTrue(spy.sockets.isEmpty)
     }
 
-    // MARK: creation, reuse, refcount
+    // MARK: - creation, reuse, refcount
 
     func testCreatesAndConnectsSessionWhenAvailable() async {
         let spy = SocketFactorySpy()
@@ -127,16 +127,31 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertEqual(manager.activeDocumentCount, 1)
     }
 
-    // MARK: release + linger teardown
+    // MARK: - release + linger teardown
 
     func testReleaseLingersThenTearsDown() async {
         let spy = SocketFactorySpy()
         let manager = makeManager(linger: 0.05, spy: spy)
         _ = manager.session(for: docID)
         manager.release(docID)
-        // Still present during the linger window, gone after it.
+        // Still present immediately after release (retained through the linger),
+        // gone once the linger elapses.
+        XCTAssertEqual(manager.activeDocumentCount, 1)
         await waitUntil { manager.activeDocumentCount == 0 }
         await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
+    }
+
+    func testSessionRequestWhileSuspendedDoesNotOpenSocket() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        manager.suspend()
+        await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
+
+        // A request while backgrounded must not reopen a socket.
+        XCTAssertNil(manager.session(for: docID))
+        await waitAndConfirmNever { spy.sockets.count > 1 }
     }
 
     func testOutstandingReferenceKeepsSession() async {
@@ -161,7 +176,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         await waitAndConfirmNever(timeout: 0.4) { manager.activeDocumentCount == 0 }
     }
 
-    // MARK: suspend / resume / reconnect
+    // MARK: - suspend / resume / reconnect
 
     func testSuspendClosesSocketAndResumeRebuilds() async {
         let spy = SocketFactorySpy()

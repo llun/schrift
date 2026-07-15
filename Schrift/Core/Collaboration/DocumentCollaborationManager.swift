@@ -82,7 +82,9 @@ final class DocumentCollaborationManager {
     /// request (reference-counted). Returns nil when live editing is unavailable
     /// or the socket URL can't be pinned to the server origin.
     func session(for documentID: UUID) -> DocumentCollaborationSession? {
-        guard availability == .available else { return nil }
+        // Never open a socket while backgrounded — `resume()` is the only rebuild
+        // path when suspended (upholds the same invariant as `reconnect()`).
+        guard !isSuspended, availability == .available else { return nil }
         if var entry = entries[documentID] {
             entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
             entry.lingerTask = nil
