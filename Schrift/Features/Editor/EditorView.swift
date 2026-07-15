@@ -286,6 +286,11 @@ struct EditorView: View {
         .onChange(of: collaboration.availability) { _, _ in
             requestCollaborationSessionIfNeeded()
         }
+        // Live refresh: a peer touched the document (a change signal on the socket
+        // bumps this token), so debounce a silent revalidation.
+        .onChange(of: collaboration.remoteChangeToken(for: viewModel.documentID)) { _, _ in
+            viewModel.noteRemoteChange()
+        }
         .onDisappear {
             viewModel.flushPendingChanges()
             if holdsCollaborationSession {
