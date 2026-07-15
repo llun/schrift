@@ -84,13 +84,13 @@ final class Lib0DecoderTests: XCTestCase {
         XCTAssertEqual(try decoder.readVarString(), "\u{FEFF}hi")
     }
 
-    // MARK: - readUint8Array
+    // MARK: - readVarUint8Array
 
-    func testReadUint8ArrayGoldenValues() throws {
+    func testReadVarUint8ArrayGoldenValues() throws {
         let cases: [(String, String)] = [("", "00"), ("000102", "03000102"), ("ff007f80", "04ff007f80")]
         for (bodyHex, hex) in cases {
             var decoder = Lib0Decoder(Data(hex: hex))
-            XCTAssertEqual(try decoder.readUint8Array(), Data(hex: bodyHex), "decoding \(hex)")
+            XCTAssertEqual(try decoder.readVarUint8Array(), Data(hex: bodyHex), "decoding \(hex)")
         }
     }
 
@@ -173,7 +173,7 @@ final class Lib0DecoderTests: XCTestCase {
             var encoder = Lib0Encoder()
             encoder.writeVarUint8Array(body)
             var decoder = Lib0Decoder(encoder.data)
-            XCTAssertEqual(try decoder.readUint8Array(), body)
+            XCTAssertEqual(try decoder.readVarUint8Array(), body)
         }
     }
 
@@ -186,7 +186,7 @@ final class Lib0DecoderTests: XCTestCase {
         XCTAssertEqual(decoder.offset, 3)
         XCTAssertEqual(try decoder.readVarUInt(), 300)
         XCTAssertEqual(decoder.offset, 5)
-        XCTAssertEqual(try decoder.readUint8Array(), Data([0, 1, 2]))
+        XCTAssertEqual(try decoder.readVarUint8Array(), Data([0, 1, 2]))
         XCTAssertFalse(decoder.hasMoreData)
         XCTAssertEqual(decoder.remainingCount, 0)
     }
@@ -278,11 +278,11 @@ final class Lib0DecoderTests: XCTestCase {
         assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readVarInt() }
     }
 
-    func testUint8ArrayLengthBeyondIntMaxThrowsTruncated() {
+    func testVarUint8ArrayLengthBeyondIntMaxThrowsTruncated() {
         // A length varUint of 2^63 exceeds Int.max, so `Int(exactly:) ?? Int.max`
         // clamps it to Int.max and readBytes reports truncation instead of trapping
         // on the narrowing conversion. (Mutating the guard to `Int(length)` traps.)
         var decoder = Lib0Decoder(Data(hex: "80808080808080808001"))
-        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readUint8Array() }
+        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readVarUint8Array() }
     }
 }
