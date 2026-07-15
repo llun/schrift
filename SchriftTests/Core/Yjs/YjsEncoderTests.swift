@@ -9,7 +9,6 @@ import XCTest
 final class YjsEncoderTests: XCTestCase {
     private let clientID: UInt32 = 0xDEAD_BEEF
 
-    private func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
     private func U(_ n: Int) -> String { String(format: "%04x", n) + "0000-0000-4000-8000-000000000000" }
     private var P: [(key: String, value: YAnyValue)] {
         [
@@ -24,7 +23,8 @@ final class YjsEncoderTests: XCTestCase {
         _ blocks: [BlockNoteBlock], _ expected: String, _ message: String = "", file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        XCTAssertEqual(hex(BlockNoteYjs.encode(blocks, clientID: clientID)), expected, message, file: file, line: line)
+        XCTAssertEqual(
+            BlockNoteYjs.encode(blocks, clientID: clientID).hexString, expected, message, file: file, line: line)
     }
 
     func testEmptyParagraph() {

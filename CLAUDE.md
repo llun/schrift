@@ -198,6 +198,10 @@ Schrift/
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
+│   ├── Collaboration/   pure Hocuspocus/Yjs live-collaboration wire codecs —
+│   │                    HocuspocusMessage (frame), SyncMessage, AwarenessCodec
+│   │                    (the WebSocket transport + session land in later
+│   │                    live-editing roadmap PRs)
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
@@ -207,7 +211,9 @@ Schrift/
 │   │                    the reconnect trigger for draft sync)
 │   └── Yjs/             on-device Markdown→BlockNote→Yjs encoder that builds the
 │                        base64 content payload for saves (MarkdownYjs,
-│                        BlockNoteDocument, InlineMarkdown, YjsUpdateEncoder)
+│                        BlockNoteDocument, InlineMarkdown, YjsUpdateEncoder) +
+│                        Lib0Decoder, the read-side lib0 primitives shared with
+│                        Core/Collaboration
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
 │   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
