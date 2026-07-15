@@ -169,4 +169,41 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         await waitUntil { spy.sockets.count == 2 }
         await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
     }
+
+    func testSuspendDuringLingerDropsIdleEntry() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(linger: 0.5, spy: spy)
+        _ = manager.session(for: docID)  // refCount 1
+        manager.release(docID)  // refCount 0, linger scheduled (0.5s)
+        manager.suspend()  // within the linger window
+        await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
+        // The idle entry is dropped, not stranded as a zombie.
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        manager.resume()
+        await waitAndConfirmNever { manager.activeDocumentCount > 0 || spy.sockets.count > 1 }
+    }
+
+    func testReconnectIgnoredWhileSuspended() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        manager.suspend()
+        await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
+
+        manager.reconnect()  // backgrounded — must not reopen a socket
+        await waitAndConfirmNever { spy.sockets.count > 1 }
+    }
+
+    func testRebuildWhileNoLongerAvailableTearsDownWithoutReopening() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        manager.serverSupportsLiveCollaboration = false  // availability dropped
+        manager.reconnect()
+        await waitUntil { spy.sockets[0].cancelCloseCode == .goingAway }
+        await waitAndConfirmNever { spy.sockets.count > 1 }
+    }
 }

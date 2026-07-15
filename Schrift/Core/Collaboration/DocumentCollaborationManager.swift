@@ -27,6 +27,10 @@ final class DocumentCollaborationManager {
     }
 
     private var entries: [UUID: Entry] = [:]
+    /// True between `suspend()` and `resume()` (app backgrounded). While set,
+    /// `resume()` is the only path that rebuilds, and a reconnect edge is ignored
+    /// (we don't reopen sockets in the background).
+    private var isSuspended = false
 
     /// Whether the server advertises a collaboration WebSocket. Set by whoever
     /// owns the manager once `GET /config/` resolves (`ServerConfig
@@ -99,24 +103,40 @@ final class DocumentCollaborationManager {
         entries[documentID] = entry
     }
 
-    /// scenePhase background: close every socket (1001) but keep the entries and
-    /// their refcounts, so `resume()` can rebuild the ones still in use.
+    /// scenePhase background: close every socket (1001). Still-referenced entries
+    /// keep their refcount (session nilled) so `resume()` can rebuild them; an
+    /// idle entry mid-linger is dropped here (cancelling its linger would
+    /// otherwise strand it, since `resume()` only rebuilds referenced entries).
     func suspend() {
+        isSuspended = true
         for (id, entry) in entries {
             entry.lingerTask?.cancel()
             entry.session?.stop()
-            entries[id]?.session = nil
-            entries[id]?.lingerTask = nil
+            if entry.refCount == 0 {
+                entries.removeValue(forKey: id)
+            } else {
+                entries[id]?.session = nil
+                entries[id]?.lingerTask = nil
+            }
         }
     }
 
     /// scenePhase foreground: rebuild a fresh session for every still-referenced
-    /// document (idle entries were already torn down by their linger).
-    func resume() { rebuildActiveSessions() }
+    /// document. A no-op unless we were suspended (a brief `.inactive` blip never
+    /// suspended, so there is nothing to rebuild).
+    func resume() {
+        guard isSuspended else { return }
+        isSuspended = false
+        rebuildActiveSessions()
+    }
 
     /// Reconnect trigger, shared with draft sync: on the `ConnectivityMonitor`
-    /// false→true edge, rebuild sessions that have dropped.
-    func reconnect() { rebuildActiveSessions() }
+    /// false→true edge, rebuild sessions that have dropped. Ignored while
+    /// suspended — the app is backgrounded and must not reopen sockets.
+    func reconnect() {
+        guard !isSuspended else { return }
+        rebuildActiveSessions()
+    }
 
     /// Test/inspection: how many documents currently hold a session.
     var activeDocumentCount: Int { entries.count }
@@ -136,9 +156,14 @@ final class DocumentCollaborationManager {
     }
 
     private func rebuildActiveSessions() {
+        // Availability can have changed since these sessions were created (the
+        // toggle flipped, went offline): if live is no longer available, drop the
+        // sockets and leave the entries session-less rather than reopening. A
+        // later reconnect rebuilds them once available again.
+        let available = availability == .available
         for (id, entry) in entries where entry.refCount > 0 {
             entry.session?.stop()
-            entries[id]?.session = makeSession(for: id)
+            entries[id]?.session = available ? makeSession(for: id) : nil
         }
     }
 

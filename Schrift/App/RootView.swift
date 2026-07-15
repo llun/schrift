@@ -13,6 +13,21 @@ func shouldSyncOnScenePhase(_ phase: ScenePhase) -> Bool {
     phase == .active
 }
 
+/// What a scene-phase change should do to live collaboration sockets. Only a
+/// real `.background` closes them; `.inactive` is a transient blip (control
+/// centre, an incoming-call banner) and must not tear down and immediately
+/// rebuild every socket. Pure so it is unit-testable without SwiftUI.
+enum CollaborationScenePhaseAction: Equatable { case resume, suspend, ignore }
+
+func collaborationScenePhaseAction(_ phase: ScenePhase) -> CollaborationScenePhaseAction {
+    switch phase {
+    case .active: return .resume
+    case .background: return .suspend
+    case .inactive: return .ignore
+    @unknown default: return .ignore
+    }
+}
+
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
@@ -94,12 +109,13 @@ private struct AuthenticatedHomeContainer: View {
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
-            // Live sockets follow the scene: closed in the background, rebuilt on
-            // return. (No-op while the manager holds no sessions.)
-            switch phase {
-            case .active: collaboration.resume()
-            case .background, .inactive: collaboration.suspend()
-            @unknown default: break
+            // Live sockets follow the scene: closed on real background, rebuilt on
+            // return; a transient `.inactive` blip is ignored. (No-op while the
+            // manager holds no sessions.)
+            switch collaborationScenePhaseAction(phase) {
+            case .resume: collaboration.resume()
+            case .suspend: collaboration.suspend()
+            case .ignore: break
             }
             guard shouldSyncOnScenePhase(phase) else { return }
             let homeViewModel = viewModel
