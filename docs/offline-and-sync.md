@@ -770,7 +770,16 @@ server is about to hold.
   otherwise have no signal *and* no way out. For the same reason `syncCaption` takes
   `hasConflict` and degrades to a passive "Saved on this device": while the push is held,
   `.pendingSync`'s "syncs when online · tap to retry" would promise a sync that cannot
-  happen and offer a retry that re-enqueues straight back into the hold. Tapping presents
+  happen and offer a retry that re-enqueues straight back into the hold.
+  **The editing header applies the identical precedence** — `saveStatusDisplay`
+  (`EditorSaveBar.swift`), the pure resolver behind `SaveStatusIndicator`: it is the surface
+  the user is actually looking at while typing, and detection on the dirty branch means a
+  save can now be held *mid-session*, where the raw state would render as "Saving…"/"Saved"
+  (a sync that is not happening) or offer a `.failed` "tap to retry" that only re-parks. Under
+  a held conflict it shows a passive "Saved on this device" (`cloud_off`) and offers nothing,
+  leaving the pill as the sole affordance. `.dirty` keeps its **Save** funnel: the newest
+  keystrokes are not on disk until the flush writes the draft, so "Saved on this device"
+  would be a lie there — and the tap still persists them (held, but safe). Tapping the pill presents
   `ConflictSheetView` — a flat `SheetHeader` list (per the design system) offering
   **Keep my version** (`resolveConflictKeepingMine()`) and a destructive,
   confirmation-gated **Keep the server version** (`resolveConflictKeepingServer()`),
