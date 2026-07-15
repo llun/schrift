@@ -13,7 +13,7 @@ final class AwarenessCodecTests: XCTestCase {
     private let twoClientUpdate =
         "020101207b226e616d65223a22416461222c22636f6c6f72223a2223304537433636227d2a011f7b226e616d65223a22426f222c22636f6c6f72223a2223423534373038227d"
 
-    // MARK: decode (inner update)
+    // MARK: - decode (inner update)
 
     func testDecodesOneClient() throws {
         let entries = try AwarenessCodec.decode(Data(hex: oneClientUpdate))
@@ -36,7 +36,7 @@ final class AwarenessCodecTests: XCTestCase {
         XCTAssertEqual(entries, [AwarenessEntry(clientID: 7, clock: 3, stateJSON: "null")])
     }
 
-    // MARK: encode (inner update)
+    // MARK: - encode (inner update)
 
     func testEncodesOneClientGolden() {
         let data = AwarenessCodec.encode([AwarenessEntry(clientID: 1, clock: 1, stateJSON: adaJSON)])
@@ -65,7 +65,7 @@ final class AwarenessCodecTests: XCTestCase {
         XCTAssertEqual(try AwarenessCodec.decode(Data([0x00])), [])
     }
 
-    // MARK: frame payload (the extra varUint8Array wrap)
+    // MARK: - frame payload (the extra varUint8Array wrap)
 
     func testEncodePayloadWrapsUpdateInVarUint8Array() {
         // The awareness frame payload is varUint8Array(inner update): the inner
@@ -90,7 +90,7 @@ final class AwarenessCodecTests: XCTestCase {
             "2431313131313131312d313131312d343131312d383131312d3131313131313131313131310124" + oneClientUpdate)
     }
 
-    // MARK: hostile / malformed input (this codec parses untrusted network bytes)
+    // MARK: - hostile / malformed input (this codec parses untrusted network bytes)
 
     func testDecodeTruncatedInnerUpdateThrows() {
         // Claims 5 clients, supplies none.

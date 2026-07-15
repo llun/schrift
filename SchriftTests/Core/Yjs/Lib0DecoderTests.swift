@@ -11,7 +11,7 @@ import XCTest
 /// (pinned lib0 0.2.117); it is never committed (zero-dependency rule).
 final class Lib0DecoderTests: XCTestCase {
 
-    // MARK: readVarUInt
+    // MARK: - readVarUInt
 
     func testReadVarUIntGoldenValues() throws {
         let cases: [(UInt, String)] = [
@@ -30,7 +30,7 @@ final class Lib0DecoderTests: XCTestCase {
         }
     }
 
-    // MARK: readVarInt
+    // MARK: - readVarInt
 
     func testReadVarIntGoldenValues() throws {
         let cases: [(Int, String)] = [
@@ -46,7 +46,7 @@ final class Lib0DecoderTests: XCTestCase {
         }
     }
 
-    // MARK: readVarString
+    // MARK: - readVarString
 
     func testReadVarStringGoldenValues() throws {
         let cases: [(String, String)] = [
@@ -78,7 +78,7 @@ final class Lib0DecoderTests: XCTestCase {
         XCTAssertEqual(try decoder.readVarString(), "\u{FEFF}hi")
     }
 
-    // MARK: readUint8Array
+    // MARK: - readUint8Array
 
     func testReadUint8ArrayGoldenValues() throws {
         let cases: [(String, String)] = [("", "00"), ("000102", "03000102"), ("ff007f80", "04ff007f80")]
@@ -88,7 +88,7 @@ final class Lib0DecoderTests: XCTestCase {
         }
     }
 
-    // MARK: readAny
+    // MARK: - readAny
 
     func testReadAnyModeledTags() throws {
         let cases: [(YAnyValue, String)] = [
@@ -107,7 +107,7 @@ final class Lib0DecoderTests: XCTestCase {
         assertThrows(Lib0DecodingError.unsupportedAnyTag(124)) { _ = try decoder.readAny() }
     }
 
-    // MARK: round-trips against Lib0Encoder
+    // MARK: - round-trips against Lib0Encoder
 
     func testVarUIntRoundTrips() throws {
         // Includes the full 64-bit range — UInt(Int.max) (9 bytes) and UInt.max
@@ -171,7 +171,7 @@ final class Lib0DecoderTests: XCTestCase {
         }
     }
 
-    // MARK: cursor & truncation
+    // MARK: - cursor & truncation
 
     func testCursorTracksOffsetAcrossMixedReads() throws {
         // varString("hi") + varUint(300) + uint8Array([0,1,2])

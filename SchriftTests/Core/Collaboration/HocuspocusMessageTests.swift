@@ -15,7 +15,7 @@ final class HocuspocusMessageTests: XCTestCase {
     private let syncStep1EmptyFrame =
         "2431313131313131312d313131312d343131312d383131312d31313131313131313131313100000100"
 
-    // MARK: decode
+    // MARK: - decode
 
     func testDecodesSyncFrame() throws {
         let message = try HocuspocusMessage(decoding: Data(hex: syncStep1EmptyFrame))
@@ -36,7 +36,7 @@ final class HocuspocusMessageTests: XCTestCase {
         XCTAssertTrue(query.payload.isEmpty)
     }
 
-    // MARK: encode
+    // MARK: - encode
 
     func testEncodesSyncFrameGolden() {
         let message = HocuspocusMessage(documentName: doc, type: .sync, payload: Data(hex: "000100"))
@@ -56,7 +56,7 @@ final class HocuspocusMessageTests: XCTestCase {
         XCTAssertEqual(decoded.payload, payload)
     }
 
-    // MARK: unknown types are tolerated, not fatal
+    // MARK: - unknown types are tolerated, not fatal
 
     func testUnknownInboundTypeSurvivesAsRawValue() throws {
         // 99 is not a modeled type (e.g. a future/unconfirmed message kind).

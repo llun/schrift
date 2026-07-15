@@ -11,7 +11,7 @@ final class SyncMessageTests: XCTestCase {
     private let updateHex =
         "0103effdb6f50d0007010e646f63756d656e742d73746f726503097061726167726170680700effdb6f50d00060400effdb6f50d0102686900"
 
-    // MARK: decode
+    // MARK: - decode
 
     func testDecodesStep1EmptyStateVector() throws {
         // writeSyncStep1 over an empty Y.Doc: subtype 0 + varUint8Array([0x00]).
@@ -38,7 +38,7 @@ final class SyncMessageTests: XCTestCase {
         XCTAssertEqual(message.data, Data(hex: updateHex))
     }
 
-    // MARK: encode
+    // MARK: - encode
 
     func testEncodesStep1EmptyStateVectorGolden() {
         let message = SyncMessage(step: .step1, data: Data([0x00]))
@@ -60,7 +60,7 @@ final class SyncMessageTests: XCTestCase {
         }
     }
 
-    // MARK: unknown sub-types
+    // MARK: - unknown sub-types
 
     func testUnknownSyncStepThrows() {
         // subtype 3 + empty uint8Array — 3 is not a modeled sync sub-type.
