@@ -213,8 +213,14 @@ final class Lib0DecoderTests: XCTestCase {
     func testOutOfRangeVarIntThrowsMalformed() {
         // A negative varInt whose accumulated magnitude is 2^63 + 1 — larger than
         // any valid Int — must throw rather than trap on the signed reconstruction.
-        var decoder = Lib0Decoder(Data([0xC1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02]))
-        assertMalformed { _ = try decoder.readVarInt() }
+        var negative = Lib0Decoder(Data([0xC1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02]))
+        assertMalformed { _ = try negative.readVarInt() }
+
+        // The positive mirror: magnitude 2^63 with the sign bit clear. Without the
+        // positive guard this would decode via Int(bitPattern:) to Int.min — a
+        // positive wire value silently returned as a large negative Int.
+        var positive = Lib0Decoder(Data([0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02]))
+        assertMalformed { _ = try positive.readVarInt() }
     }
 
     func testOverlongVarIntTripsShiftGuard() {
