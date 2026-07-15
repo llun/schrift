@@ -198,10 +198,13 @@ Schrift/
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
-│   ├── Collaboration/   pure Hocuspocus/Yjs live-collaboration wire codecs —
-│   │                    HocuspocusMessage (frame), SyncMessage, AwarenessCodec
-│   │                    (the WebSocket transport + session land in later
-│   │                    live-editing roadmap PRs)
+│   ├── Collaboration/   Hocuspocus/Yjs live-collaboration layer — pure wire
+│   │                    codecs (HocuspocusMessage, SyncMessage, AwarenessCodec),
+│   │                    origin-pinned endpoint builders (CollaborationEndpoint),
+│   │                    and the WebSocket transport (WebSocketConnecting seam +
+│   │                    URLSessionWebSocket adapter, CollaborationTransport actor,
+│   │                    CollaborationEvents); the higher-level session/manager
+│   │                    (reconnect, backoff, sync/awareness) lands in a later PR
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions

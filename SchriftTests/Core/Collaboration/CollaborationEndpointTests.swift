@@ -46,6 +46,14 @@ final class CollaborationEndpointTests: XCTestCase {
         XCTAssertEqual(url?.query, "room=abcdef01-1111-4111-8111-111111111111")
     }
 
+    func testUsesTrueHostNotEmbeddedUserinfo() {
+        // The dialed socket must target the real host, not embedded credentials.
+        let url = CollaborationEndpoint.webSocketURL(
+            serverBaseURL: URL(string: "https://docs.example.org@evil.com/api/")!, documentID: docID)
+        XCTAssertEqual(url?.host, "evil.com")
+        XCTAssertEqual(url?.scheme, "wss")
+    }
+
     func testNonHTTPSchemeYieldsNil() {
         for base in ["ftp://docs.example.org/", "wss://docs.example.org/", "file:///x", "javascript:alert(1)"] {
             XCTAssertNil(
