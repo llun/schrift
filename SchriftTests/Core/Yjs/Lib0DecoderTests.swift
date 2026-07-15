@@ -217,6 +217,21 @@ final class Lib0DecoderTests: XCTestCase {
         assertMalformed { _ = try decoder.readVarInt() }
     }
 
+    func testOverlongVarIntTripsShiftGuard() {
+        // Mirrors testOverlongVarUIntThrowsMalformed for readVarInt: nine 0x80
+        // continuation bytes push shift past 63, so the tenth continuation read
+        // trips the shift guard (distinct from the magnitude guard above — every
+        // group carries value 0, so without the shift guard this would decode to -1).
+        var decoder = Lib0Decoder(Data([0xC1] + Array(repeating: 0x80, count: 9) + [0x00]))
+        assertMalformed { _ = try decoder.readVarInt() }
+    }
+
+    func testUnterminatedVarIntThrowsTruncated() {
+        // First byte sets the continuation bit but no further byte follows.
+        var decoder = Lib0Decoder(Data([0xC1]))
+        assertTruncated { _ = try decoder.readVarInt() }
+    }
+
     func testUint8ArrayLengthBeyondIntMaxThrowsTruncated() {
         // A length varUint of 2^63 exceeds Int.max, so `Int(exactly:) ?? Int.max`
         // clamps it to Int.max and readBytes reports truncation instead of trapping
