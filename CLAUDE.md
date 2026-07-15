@@ -201,10 +201,14 @@ Schrift/
 │   ├── Collaboration/   Hocuspocus/Yjs live-collaboration layer — pure wire
 │   │                    codecs (HocuspocusMessage, SyncMessage, AwarenessCodec),
 │   │                    origin-pinned endpoint builders (CollaborationEndpoint),
-│   │                    and the WebSocket transport (WebSocketConnecting seam +
+│   │                    the WebSocket transport (WebSocketConnecting seam +
 │   │                    URLSessionWebSocket adapter, CollaborationTransport actor,
-│   │                    CollaborationEvents); the higher-level session/manager
-│   │                    (reconnect, backoff, sync/awareness) lands in a later PR
+│   │                    CollaborationEvents), the signal-only session state
+│   │                    machine (DocumentCollaborationSession) and its
+│   │                    availability gating (LiveCollaborationAvailability +
+│   │                    ServerConfig.collaborationWsUrl); the app-scoped manager
+│   │                    (lifecycle, reconnect/backoff, scenePhase) and CRDT sync
+│   │                    land in later PRs
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
