@@ -1,0 +1,19 @@
+Schrift/Core/Collaboration/HocuspocusMessage.swift
+  s_8c1f6116e89b3c::t_bd875024211c5a 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "31c0dbf85c7769be60b5cc8598fb9f0fa6fbb35f",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
