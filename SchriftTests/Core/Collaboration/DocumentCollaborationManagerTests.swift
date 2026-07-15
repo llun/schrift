@@ -47,6 +47,81 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         return manager
     }
 
+    private func makeAwarenessManager(
+        provider: @escaping @Sendable () async -> LocalAwarenessState?, spy: SocketFactorySpy
+    ) -> DocumentCollaborationManager {
+        let manager = DocumentCollaborationManager(
+            serverBaseURL: baseURL,
+            cookieProvider: { [] },
+            featureEnabled: { true },
+            isOffline: { false },
+            serverConfigProvider: { nil },
+            localStateProvider: provider,
+            socketFactory: spy.factory,
+            lingerSeconds: 0.05)
+        manager.serverSupportsLiveCollaboration = true
+        return manager
+    }
+
+    // MARK: - local awareness (presence identity)
+
+    func testRefreshedLocalAwarenessIsBroadcastByNewSessions() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeAwarenessManager(
+            provider: { LocalAwarenessState(name: "Ada", color: "#30bced") }, spy: spy)
+        await manager.refreshLocalAwareness()
+
+        let session = manager.session(for: docID)
+        // Frame 0 is the handshake; frame 1 announces our presence.
+        await waitUntil { spy.sockets.count == 1 && spy.sockets[0].sentFrames.count == 2 }
+        let awareness = try HocuspocusMessage(decoding: spy.sockets[0].sentFrames[1])
+        XCTAssertEqual(awareness.knownType, .awareness)
+        let entries = try AwarenessCodec.decodePayload(awareness.payload)
+        XCTAssertEqual(CollaborationPeer(clientID: entries[0].clientID, stateJSON: entries[0].stateJSON)?.name, "Ada")
+        session?.stop()
+    }
+
+    func testWithoutRefreshSessionsJoinAsSilentObservers() async {
+        let spy = SocketFactorySpy()
+        // A provider exists, but refreshLocalAwareness() is never called.
+        let manager = makeAwarenessManager(
+            provider: { LocalAwarenessState(name: "Ada", color: "#30bced") }, spy: spy)
+
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        // Only the handshake — no presence announced.
+        await waitAndConfirmNever { spy.sockets[0].sentFrames.count > 1 }
+        session?.stop()
+    }
+
+    // MARK: - peers accessor
+
+    func testPeersForReflectsTheSessionsPeers() async {
+        let spy = SocketFactorySpy()
+        let manager = makeAwarenessManager(provider: { nil }, spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        let payload = AwarenessCodec.encodePayload([
+            AwarenessEntry(clientID: 7, clock: 1, stateJSON: ##"{"name":"Bo","color":"#111111"}"##)
+        ])
+        let frame = HocuspocusMessage(
+            documentName: docID.uuidString.lowercased(), type: .awareness, payload: payload
+        ).encoded()
+        spy.sockets[0].deliver(message: frame)
+
+        await waitUntil { manager.peers(for: docID).map(\.name) == ["Bo"] }
+        // An unknown document has no session, hence no peers.
+        XCTAssertTrue(manager.peers(for: UUID(uuidString: "99999999-9999-4999-8999-999999999999")!).isEmpty)
+        session?.stop()
+    }
+
+    func testPeersForIsEmptyWhenNoSession() {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        XCTAssertTrue(manager.peers(for: docID).isEmpty)
+    }
+
     // MARK: - server-support learning
 
     func testRefreshServerSupportReadsCollaborationWsUrl() async {

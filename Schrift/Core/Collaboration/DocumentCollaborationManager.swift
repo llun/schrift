@@ -38,11 +38,19 @@ final class DocumentCollaborationManager {
     /// a live closure. Defaults false, so nothing connects before it is known.
     var serverSupportsLiveCollaboration = false
 
+    /// Our own awareness (`{name, color}`) broadcast to every session, learned once
+    /// via `refreshLocalAwareness()`. nil until then (and if the current-user fetch
+    /// fails), in which case sessions join as silent observers. The colour is
+    /// derived by the App-layer provider — Core never reaches into the avatar
+    /// palette — so this stays a plain value.
+    private var localAwareness: LocalAwarenessState?
+
     private let serverBaseURL: URL
     private let cookieProvider: @Sendable () -> [HTTPCookie]
     private let featureEnabled: @MainActor () -> Bool
     private let isOffline: @MainActor () -> Bool
     private let serverConfigProvider: @Sendable () async -> ServerConfig?
+    private let localStateProvider: @Sendable () async -> LocalAwarenessState?
     private let socketFactory: WebSocketFactory
     private let lingerSeconds: Double
 
@@ -52,6 +60,7 @@ final class DocumentCollaborationManager {
         featureEnabled: @escaping @MainActor () -> Bool,
         isOffline: @escaping @MainActor () -> Bool,
         serverConfigProvider: @escaping @Sendable () async -> ServerConfig?,
+        localStateProvider: @escaping @Sendable () async -> LocalAwarenessState? = { nil },
         socketFactory: @escaping WebSocketFactory,
         lingerSeconds: Double = 5
     ) {
@@ -60,6 +69,7 @@ final class DocumentCollaborationManager {
         self.featureEnabled = featureEnabled
         self.isOffline = isOffline
         self.serverConfigProvider = serverConfigProvider
+        self.localStateProvider = localStateProvider
         self.socketFactory = socketFactory
         self.lingerSeconds = lingerSeconds
     }
@@ -69,6 +79,24 @@ final class DocumentCollaborationManager {
     /// networking. Best-effort — a failed fetch leaves live collaboration off.
     func refreshServerSupport() async {
         serverSupportsLiveCollaboration = await serverConfigProvider()?.supportsLiveCollaboration ?? false
+    }
+
+    /// Learns our own awareness (display name + colour) once, so new sessions
+    /// announce our presence. Best-effort — a failed fetch leaves sessions as
+    /// silent observers (they still track peers). Does not disturb live sessions;
+    /// presence is broadcast when a session starts, which is early and cheap to
+    /// re-establish, so this is called at launch before any document opens.
+    func refreshLocalAwareness() async {
+        localAwareness = await localStateProvider()
+    }
+
+    /// The peers currently present in a document, or `[]` when no live session
+    /// exists for it. Reading this in a view body tracks both the manager's
+    /// session map and the session's `peers`, so the presence UI re-renders when a
+    /// peer joins/leaves *and* when the manager swaps in a fresh session (resume /
+    /// reconnect) — the editor never holds a stale session reference.
+    func peers(for documentID: UUID) -> [CollaborationPeer] {
+        entries[documentID]?.session?.peers ?? []
     }
 
     /// The current gate result, in the roadmap's fixed order.
@@ -162,7 +190,7 @@ final class DocumentCollaborationManager {
         else { return nil }
         let transport = CollaborationTransport(socket: socketFactory(request))
         let session = DocumentCollaborationSession(
-            documentName: documentID.uuidString.lowercased(), transport: transport)
+            documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness)
         session.start()
         return session
     }
@@ -183,5 +211,21 @@ final class DocumentCollaborationManager {
         guard let entry = entries[documentID], entry.refCount == 0 else { return }
         entry.session?.stop()
         entries.removeValue(forKey: documentID)
+    }
+}
+
+extension DocumentCollaborationManager {
+    /// A manager that never opens a socket — for `#Preview`s (and any view test)
+    /// that only needs the environment value present. Gated off (`featureEnabled`
+    /// false), so `session(for:)` always returns nil and the socket factory is
+    /// never invoked.
+    static func inert() -> DocumentCollaborationManager {
+        DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://example.com/api/v1.0/")!,
+            cookieProvider: { [] },
+            featureEnabled: { false },
+            isOffline: { true },
+            serverConfigProvider: { nil },
+            socketFactory: URLSessionWebSocket.factory())
     }
 }
