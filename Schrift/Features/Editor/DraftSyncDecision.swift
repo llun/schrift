@@ -16,10 +16,28 @@ struct DraftBaseline: Codable, Equatable, Sendable {
     let markdown: String
 }
 
+/// *Why* a replay is safe. The distinction is load-bearing: three of the four rules prove
+/// something about **content** (the server holds our body, or ours descends from it), but rule
+/// 3 proves nothing at all — it only says the draft's *client* clock is within tolerance of the
+/// server's `updated_at`. Releasing an already-surfaced conflict on that basis pushed a full
+/// overwrite over the co-author with no prompt, because the user typing *after* the conflict
+/// landed bumps the draft's clock past the server's and rule 3 then starts answering `.push`.
+enum PushEvidence: Equatable, Sendable {
+    /// Rule 0: the server body already **equals our local body** — a push overwrites nothing.
+    case serverHoldsOurBody
+    /// Rule 1: the server body is what **we last pushed** — its most recent writer was us.
+    case serverHoldsOurLastPush
+    /// Rule 2: the draft still **descends from the server** (baseline evidence).
+    case descendsFromBaseline
+    /// Rule 3: **no content evidence at all** — only the legacy client-vs-server clock
+    /// tolerance, for a baseline-less draft. Never sufficient to release a standing conflict.
+    case clockToleranceOnly
+}
+
 /// What to do with a queued draft when reconciling it against the current server copy.
 enum DraftSyncDecision: Equatable {
-    /// Replay the draft over the server (full-overwrite save).
-    case push
+    /// Replay the draft over the server (full-overwrite save), and *why* that is safe.
+    case push(PushEvidence)
     /// The server changed under the draft — surface it and ask the user; never
     /// silently pick a winner.
     case conflict
@@ -40,13 +58,18 @@ func canonicalMarkdown(_ markdown: String) -> String {
 ///
 /// Rules, applied in order (every markdown comparison is canonical-form):
 ///
+/// 0. The server body **already equals our local body** → there is nothing to conflict
+///    about: replaying is a content no-op (it still lands the title). This is the backstop
+///    for the case rule 1 cannot see — a content PATCH whose *response* was lost. The save
+///    threw, so nothing recorded a push, but the server applied it anyway; without this the
+///    next reconcile would compare our own text against a stale baseline and raise a
+///    **conflict against the user's own writing**. It can never destroy a real conflict:
+///    if the bodies are equal there is nothing for a push to overwrite.
 /// 1. The server body still equals what we last pushed → the server's most recent
-///    writer was us, so replaying is safe. This is designed to kill false
-///    conflicts right after our own mid-session saves, including across a relaunch
-///    once `DocumentSaveCoordinator` persists `lastPushedMarkdown` onto the
-///    surviving draft. (That coordinator maintenance lands with the PR that wires
-///    this decision in; until then `lastPushedMarkdown` is always nil here and this
-///    rule never fires.)
+///    writer was us, so replaying is safe. This kills false conflicts right after
+///    our own mid-session saves, including across a relaunch: `DocumentSaveCoordinator`
+///    persists `lastPushedMarkdown` onto the draft (`enqueue`/`finish`), so a draft
+///    written after a confirmed save carries it here even on a fresh process.
 /// 2. A baseline is present (the draft was made from a known server state): the
 ///    draft still descends from the server copy when the server is no newer than
 ///    the baseline (`serverUpdatedAt <= baseline.serverUpdatedAt`, when the baseline
@@ -60,6 +83,7 @@ func canonicalMarkdown(_ markdown: String) -> String {
 func draftSyncDecision(
     baseline: DraftBaseline?,
     lastPushedMarkdown: String?,
+    localMarkdown: String,
     draftUpdatedAt: Date,
     serverUpdatedAt: Date,
     serverMarkdown: String,
@@ -67,22 +91,26 @@ func draftSyncDecision(
 ) -> DraftSyncDecision {
     let serverCanonical = canonicalMarkdown(serverMarkdown)
 
+    if canonicalMarkdown(localMarkdown) == serverCanonical {
+        return .push(.serverHoldsOurBody)
+    }
+
     if let lastPushedMarkdown, canonicalMarkdown(lastPushedMarkdown) == serverCanonical {
-        return .push
+        return .push(.serverHoldsOurLastPush)
     }
 
     if let baseline {
         if let baselineDate = baseline.serverUpdatedAt, serverUpdatedAt <= baselineDate {
-            return .push
+            return .push(.descendsFromBaseline)
         }
         if canonicalMarkdown(baseline.markdown) == serverCanonical {
-            return .push
+            return .push(.descendsFromBaseline)
         }
         return .conflict
     }
 
     if serverUpdatedAt <= draftUpdatedAt.addingTimeInterval(tolerance) {
-        return .push
+        return .push(.clockToleranceOnly)
     }
     return .discardServerWins
 }

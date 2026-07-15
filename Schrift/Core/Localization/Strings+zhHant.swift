@@ -162,6 +162,16 @@ enum Strings_zhHant {
         .editor_sync_just_now: "剛剛同步",
         .editor_sync_ago: "%@ 同步",
         .editor_sync_not_synced_yet: "尚未同步",
+        .editor_conflict_pill: "同步衝突 · 點按查看",
+        .editor_conflict_pill_a11y: "同步衝突。點按查看。",
+        .editor_conflict_title: "同步衝突",
+        .editor_conflict_body: "在你的變更等待同步時，此文件已在他處被修改。請選擇要保留的版本。",
+        .editor_conflict_server_changed: "伺服器副本於%@變更。",
+        .editor_conflict_keep_mine: "保留我的版本",
+        .editor_conflict_keep_mine_detail: "覆寫伺服器副本",
+        .editor_conflict_keep_server: "保留伺服器版本",
+        .editor_conflict_keep_server_detail: "捨棄此裝置上的變更",
+        .editor_conflict_restore_hint: "被覆寫的版本可從網頁端的版本歷史中還原。",
 
         // Editor - errors
         .editor_error_load: "無法載入此文件。下拉重新整理以再試一次。",

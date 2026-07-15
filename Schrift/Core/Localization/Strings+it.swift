@@ -164,6 +164,18 @@ enum Strings_it {
         .editor_sync_just_now: "Sincronizzato proprio ora",
         .editor_sync_ago: "Sincronizzato %@",
         .editor_sync_not_synced_yet: "Non ancora sincronizzato",
+        .editor_conflict_pill: "Conflitto di sincronizzazione · tocca per rivedere",
+        .editor_conflict_pill_a11y: "Conflitto di sincronizzazione. Tocca per rivedere.",
+        .editor_conflict_title: "Conflitto di sincronizzazione",
+        .editor_conflict_body:
+            "Questo documento è stato modificato altrove mentre le tue modifiche attendevano la sincronizzazione. Scegli quale versione mantenere.",
+        .editor_conflict_server_changed: "La copia sul server è stata modificata %@.",
+        .editor_conflict_keep_mine: "Mantieni la mia versione",
+        .editor_conflict_keep_mine_detail: "Sovrascrive la copia sul server",
+        .editor_conflict_keep_server: "Mantieni la versione del server",
+        .editor_conflict_keep_server_detail: "Ignora le modifiche su questo dispositivo",
+        .editor_conflict_restore_hint:
+            "Le versioni sovrascritte possono essere ripristinate dalla cronologia delle versioni sul web.",
 
         // Editor - errors
         .editor_error_load: "Impossibile caricare questo documento. Trascina per aggiornare e riprova.",

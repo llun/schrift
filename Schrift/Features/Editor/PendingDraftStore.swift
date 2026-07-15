@@ -9,10 +9,11 @@ import Foundation
 /// let the sync path distinguish "the server moved on while I was offline" from
 /// "the server only changed because my own save landed" — see `draftSyncDecision`.
 /// `baseline` is supplied by the editor (the server state the edit descends from).
-/// `lastPushedMarkdown` is a persisted foundation piece that stays **nil in this
-/// step of the offline-sync stack** — the PR that wires `draftSyncDecision` into
-/// the replay path also has `DocumentSaveCoordinator` populate it (rule 1); until
-/// then nothing writes it and rule 1 simply never fires.
+/// `lastPushedMarkdown` is the markdown `DocumentSaveCoordinator` last confirmed
+/// pushed for this document (copied from `lastConfirmedPushMarkdown` by `enqueue`
+/// and refreshed on a surviving draft in `finish`), so `draftSyncDecision` rule 1
+/// can recognise our own write — including across a relaunch — and not flag a
+/// false conflict against it.
 struct PendingDraft: Codable, Equatable, Sendable {
     let documentID: UUID
     let title: String
@@ -20,6 +21,17 @@ struct PendingDraft: Codable, Equatable, Sendable {
     let updatedAt: Date
     let baseline: DraftBaseline?
     let lastPushedMarkdown: String?
+    /// The server `updated_at` of a **detected but unanswered sync conflict**, mirrored here
+    /// from `DocumentSaveCoordinator.conflicts` so the **enqueue-hold survives a relaunch**.
+    ///
+    /// It has to be persisted, not merely re-derivable. The in-memory record alone meant a
+    /// conflict the app had already *detected and shown the user* evaporated on process death:
+    /// on the next launch `restoreLocalContent` puts the draft on screen synchronously and
+    /// `hasLoadedContent` unblocks editing **before** any revalidation returns, so a Done tap
+    /// or an autosave could reach `enqueue` with `conflicts` still empty — and push a full
+    /// overwrite over the co-author's body the user had literally just been warned about. Rule
+    /// 1 and the baseline are persisted for the same reason; the hold is no different.
+    let conflictServerUpdatedAt: Date?
 
     init(
         documentID: UUID,
@@ -27,7 +39,8 @@ struct PendingDraft: Codable, Equatable, Sendable {
         markdown: String,
         updatedAt: Date,
         baseline: DraftBaseline? = nil,
-        lastPushedMarkdown: String? = nil
+        lastPushedMarkdown: String? = nil,
+        conflictServerUpdatedAt: Date? = nil
     ) {
         self.documentID = documentID
         self.title = title
@@ -35,6 +48,7 @@ struct PendingDraft: Codable, Equatable, Sendable {
         self.updatedAt = updatedAt
         self.baseline = baseline
         self.lastPushedMarkdown = lastPushedMarkdown
+        self.conflictServerUpdatedAt = conflictServerUpdatedAt
     }
 }
 

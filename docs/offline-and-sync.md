@@ -414,7 +414,9 @@ branch instead of popping a banner. Outcomes:
   clean): swapping blocks under the caret is destructive, so stash the fresh body
   in `pendingFreshContent`, set `updateAvailable = true` (drives the banner), and
   leave the displayed blocks alone; the banner renders once editing ends.
-  `startEditing()`/`markDirty()` drop the stash, so local work always wins.
+  `markDirty()` drops the stash — and **records a conflict as it does**; `startEditing()`
+  only hides the banner and **keeps** the stash, or the first real keystroke would have
+  nothing left to detect. See §Conflict detection & resolution.
 - **Displayed source was an in-flight save (source 1) that has since settled:**
   reaching this branch proves the save is no longer pending (the dirty rule above
   intercepts the in-flight case) *and* that this fetch postdates it (the
@@ -452,14 +454,26 @@ branch instead of popping a banner. Outcomes:
   on screen, exactly why `reconcileDraft` returns early on
   `saveState == .failed`. A transient/transport save failure (offline, 5xx, rate
   limit) is classified as **`.pendingSync`** rather than `.failed` (see the save
-  states below), and gets the same protection on **both** sides: `syncPendingDrafts`
-  **preserves** a beyond-window `.pendingSync` draft (`else if case .pendingSync …
-  { continue }`) instead of discarding it — a queued offline edit the server has
-  moved past is a *conflict*, not a stale draft — and `reconcileDraft`'s early
-  return covers `.failed` **and** `.pendingSync`, so a plain pull-to-refresh can't
-  drop it either. Applying the tolerance rule to either deletes visible content.
-  (An *idle* stranded draft beyond the window may still be reconciled mid-session,
-  matching what `reconcileDraft` already does on that document's own screen.) The comparison mixes clocks — `draft.updatedAt` is the device's,
+  states below), and gets the same protection on **both** sides: a beyond-window
+  `.pendingSync` draft is **never discarded** — `runSyncPass` records a **`SyncConflict`**
+  for it instead (the `.discardServerWins` → `case .pendingSync` arm), so a queued offline
+  edit the server has moved past becomes a *question*, not a silent deletion and not a
+  silent overwrite. (Merely *skipping* it, as an earlier revision did, stranded it: never
+  pushed, never discarded, and — the decision not being `.conflict` — no pill either, so the
+  only escape left was a retry tap that overwrote the newer server copy with no prompt at
+  all.) `reconcileDraft`'s early return covers `.failed` **and** `.pendingSync` so a plain
+  pull-to-refresh can't drop it either — and it still **records a conflict on the way out**,
+  because keeping the draft is not the same as staying blind to the server. Applying the
+  tolerance rule to either deletes visible content.
+  An *idle* stranded (legacy, baseline-less) draft beyond the window is discarded **only on
+  the launch pass** (`syncPendingDrafts(isLaunchRecovery:)`, which only `recoverDrafts()`
+  sets): mid-session the editor may be *displaying* that draft, and removing it there leaves
+  on-screen content with no disk backing — the next keystroke would then full-overwrite the
+  newer server body. Off the launch path it is left to `reconcileDraft`, which discards
+  **and installs** the winning body atomically, on the screen actually showing it.
+  Overlapping triggers are **coalesced, not dropped**: a reconnect landing during an
+  in-progress (failing) pass would otherwise be lost until the next foreground cycle.
+  The comparison mixes clocks — `draft.updatedAt` is the device's,
   `formatted.updatedAt` the server's **last write** — so a slow device shrinks the
   window from the draft's side, and even the user's own partially-landed save
   (content PATCH applied, title PATCH failed) can then read as "newer than the
@@ -527,6 +541,127 @@ func refresh() async               // explicit pull-to-refresh (below)
 func applyPendingUpdate()
 func handleDidDelete()             // §6
 ```
+
+#### Conflict detection & resolution
+
+The whole point of carrying `DraftBaseline` on a draft is this: when a queued
+offline edit is reconciled against the server (by `syncPendingDrafts` on a
+reconnect/foreground/launch trigger, or by the editor's own `reconcileDraft`
+revalidation) and `draftSyncDecision` returns **`.conflict`** — the server body
+moved on *and* it no longer matches the baseline the edit descended from — the app
+**detects and asks** rather than silently picking a winner. There is no on-device
+Yjs *decoder* and no CRDT merge, by design (Non-goals); a conflict is resolved by
+choosing one whole version.
+
+- **Record.** `DocumentSaveCoordinator` keeps `conflicts: [UUID: SyncConflict]`.
+  `SyncConflict` carries only `serverUpdatedAt` — which the sheet shows ("The server
+  copy changed *\<when\>*"), the one fact the user needs to choose a winner — and
+  deliberately **no server markdown**, so "Keep the server version" re-fetches
+  through the editor's guarded funnel rather than installing a body the coordinator
+  squirreled away. Every detection site records the same way — through
+  `recordConflict(...)`, never a direct write (see the single-writer rule below), and `conflict(for:)` is read
+  by the VM's `syncConflict` so the pill appears/disappears live (`@Observable`).
+  **The record is persisted, not just in-memory** — mirrored onto the draft as
+  `PendingDraft.conflictServerUpdatedAt`, and rehydrated into `conflicts` in the
+  coordinator's `init` (which runs at app start, before any editor exists). It has to be:
+  on launch the editor renders a stored draft *synchronously* and unblocks editing before
+  any revalidation returns, so with an in-memory-only record a Done tap could reach
+  `enqueue` with no hold in force and full-overwrite the co-author's body the user had
+  already been warned about. The baseline and rule 1's stamp are persisted for the same
+  reason; the hold is no different.
+  **`reconcileDraft` records a conflict even in its `.pendingSync`/`.failed` early
+  return.** That branch exists so the tolerance rule can't discard content the retry
+  affordance is holding — but skipping *detection* there left the hole this whole
+  feature exists to close: the fetch has just proved the server moved on, and with no
+  record the enqueue-hold never engages, so the user's next "tap to retry"
+  (`saveNow` enqueues straight through) full-overwrites the web edit the app had
+  already fetched. Recording is non-destructive — nothing is installed, the draft
+  stays — and strictly more protective.
+- **Superseded plan decision — conflict detection is NOT limited to the draft-replay path.**
+  The approved plan locked "the online 10 s autosave loop stays last-write-wins; the conflict
+  check runs only on the draft replay path". That decision does not survive contact with the
+  code, and review found the data loss it permits, twice: `apply` diverts to
+  `cacheServerCopy` the moment the screen is dirty, so **a single keystroke landing while a
+  revalidation is in flight** skipped detection entirely and the ensuing autosave
+  full-overwrote a web edit the app had *already fetched*; and the "Updated" stash — a server
+  body the app fetched **and showed the user a banner for** — was thrown away on the first
+  keystroke with nothing recorded. In both cases whether the destructive push got checked was
+  decided by *when the user's finger landed*, which is not a policy anyone chose. Detection
+  therefore also runs in `apply`'s dirty branch and in `abandonPendingFreshContent`. It is
+  still **not** a live-collaboration feature: the app never merges, and a conflict only ever
+  arises from a body the app has already fetched.
+- **Lifecycle: a conflict record is meaningful only while local work exists.** Record it
+  when such work appears (`markDirty`, a queued draft, a dirty revalidation); release it when
+  it is gone (`reconcileClean`, which `apply` reaches only with no pending save, no draft and
+  not dirty — so a record there cannot be live). Get the first half wrong and a *phantom*
+  conflict wedges a document with no unsaved changes; get the second wrong and a conflict
+  that has become moot parks every future save behind a question with nothing left to ask.
+  Only a `.push` decision releases it: `.discardServerWins` is **not** "no conflict" — it is
+  rule 3 firing for a legacy draft the server has moved past, which is exactly the state
+  `runSyncPass` records a conflict for.
+- **Hold the push.** While a conflict is recorded, `enqueue` writes the draft and
+  the queued slot (write-ahead, so `pendingSave()`/`hasUnsavedLocalContent` keep
+  working) but does **not** start a save — an autosave flush must never overwrite
+  the conflicting server copy unasked. `syncPendingDrafts` likewise skips a
+  conflicted draft entirely. Together these give the **invariant both resolvers rely
+  on: while a conflict is recorded, no save for that document is in flight** (nothing
+  can record one *during* a save either — `apply` diverts to `cacheServerCopy`
+  whenever `pendingSave != nil`, so `reconcileDraft` is unreachable then). No save can
+  land underneath a resolver and resurrect the losing body.
+- **Keep mine** (`resolveConflictKeepingLocal`): clear the record and release the
+  held push — an unchecked, last-writer-wins overwrite the user chose (the
+  overwritten server version is recoverable from the web's version history). The VM
+  wrapper `flushPendingChanges()` first, so the push captures the newest content.
+  **It also advances the baseline** — on the stored draft *and* on the editor's
+  in-memory `serverBaseline` — to the server timestamp the user chose to overwrite.
+  Both halves are load-bearing: the released push very often fails (the conflict is
+  usually reviewed on the connection that caused it), and a surviving draft with its
+  original baseline would make the next sync re-detect the identical conflict and hold
+  the push again — the answer evaporating, forever. Advancing only the draft is not
+  enough either, because `enqueue` rebuilds the draft from the baseline its *caller*
+  passes and the next autosave flush passes the editor's.
+- **Keep the server version** (`resolveConflictKeepingServer`): the one sanctioned
+  discard — and it **fetches before it discards**. The VM ends the editing session,
+  fetches the server body, and only once that body is *in hand* (generation still
+  current, `mayPredateSave` false) drops the draft/queued work and installs it.
+  Discarding first and refreshing after was a real data-loss path: a conflict is
+  usually reviewed on the same flaky connection that caused it, and a failed fetch
+  then left the discarded body still on screen with nothing backing it on disk, the
+  conflict record cleared and the stale baseline intact — so the next keystroke
+  full-overwrote the server copy the user had just chosen to keep. On failure the
+  draft *and* the conflict both survive, so the pill and sheet stay available and
+  everything on screen is still backed by disk.
+- **Known limitation — the baseline records no title, so a remote *rename* is not
+  detected.** `DraftBaseline` carries `serverUpdatedAt` + `markdown` only, and a save
+  PATCHes content **and** title. A web rename that leaves the body untouched is
+  therefore rule 2's body-equality `.push` (by design — it must not raise a conflict
+  dialog for a rename), and the replay's title PATCH then quietly reverts it to the
+  title the draft was made with. Detecting it means adding a `title` to the persisted
+  `DraftBaseline` and teaching the replay to *adopt* the server's title when the user
+  did not change theirs (title and body are independent fields, so the right answer is
+  a merge, not a dialog). That is a change to a persisted model and to what the replay
+  pushes, so it is deferred to its own change rather than bolted on here. The loss is
+  title-only, immediately visible, and trivially undone.
+- **Detection also runs in `apply`'s dirty branch** — it must, or the whole safety net
+  turns on **keystroke timing**. That branch (`pendingSave != nil || isDirty` →
+  `cacheServerCopy`) used to return without consulting the decision, so a queued offline
+  draft whose revalidation proved the server had moved on got its push held — *unless* the
+  user happened to type one character while that fetch was in flight, in which case
+  `isDirty` diverted here, nothing was recorded, and the next autosave full-overwrote the
+  web edit the app had just fetched. Whether a destructive push is checked cannot hinge on
+  a race with the user's fingers. Recording there is non-destructive (nothing is installed;
+  the edits and the draft stay put) and it engages the enqueue-hold, so the pending autosave
+  parks and the pill — which renders **while editing** — asks. Two constraints make it safe:
+  it is gated on `pendingSave == nil`, preserving the "no conflict while a save is in
+  flight" invariant; and rule 1 is fed from `lastConfirmedPush(documentID:)` rather than the
+  stored draft, which is nil right after a save lands and would otherwise make **our own
+  just-pushed body** read as a diverged server and raise a false conflict against the user.
+- **No false conflicts against our own writes.** After a confirmed save the
+  coordinator remembers what it pushed (`lastConfirmedPushMarkdown`) and stamps it
+  onto the next edit's draft as `lastPushedMarkdown`, so `draftSyncDecision` rule 1
+  recognises "the server's most recent writer was us" — even across a relaunch —
+  and pushes instead of flagging a conflict. A web title-only rename (body still
+  equals the baseline) is rule 2's body-equality push, also not a conflict.
 
 #### Pull-to-refresh (explicit refresh)
 
@@ -628,6 +763,19 @@ server is about to hold.
   `viewModel.updateAvailable && !viewModel.isEditing` — a subtle, tappable
   "Document updated · tap to refresh" below the nav/offline banner and above the
   content; tapping calls `viewModel.applyPendingUpdate()`.
+- **Sync-conflict pill & sheet.** Render a `danger`-tinted "Sync conflict · tap
+  to review" pill (mirroring the "Updated" banner's placement/structure) whenever
+  `viewModel.syncConflict != nil` — **including while editing**, unlike the "Updated"
+  banner: the enqueue-hold parks an editing session's autosave, so a typist would
+  otherwise have no signal *and* no way out. For the same reason `syncCaption` takes
+  `hasConflict` and degrades to a passive "Saved on this device": while the push is held,
+  `.pendingSync`'s "syncs when online · tap to retry" would promise a sync that cannot
+  happen and offer a retry that re-enqueues straight back into the hold. Tapping presents
+  `ConflictSheetView` — a flat `SheetHeader` list (per the design system) offering
+  **Keep my version** (`resolveConflictKeepingMine()`) and a destructive,
+  confirmation-gated **Keep the server version** (`resolveConflictKeepingServer()`),
+  plus a footnote that overwritten versions are restorable from the web's version
+  history. See *Conflict detection & resolution* above.
 - **`OfflineBanner` gated on a real copy, with reading-oriented copy**
   (`EditorView.swift:54`). Show **"Reading the copy saved on this device"** only
   when `isOffline && viewModel.hasLocalCopy`. (Editing stays blocked offline —
@@ -741,12 +889,18 @@ XCTest, mirroring the source tree. New/updated:
     tolerance is discarded and the server copy installed;
   - revalidate, **title** changed, body identical → title + cache + `savedTitle`
     updated silently (no spurious save), no banner;
-  - revalidate while dirty → three cases: in-flight save → untouched; stored
-    draft within tolerance → untouched, cache updated; stored draft **stale**
-    (server newer beyond tolerance, no session edits) → server content installed,
-    draft removed, cache updated;
-  - banner then edit: `updateAvailable == true`, then `startEditing()` →
-    `updateAvailable == false`, blocks unchanged; `applyPendingUpdate()` while
+  - revalidate while dirty → the fetched body is cached silently and the edits are
+    untouched, but the **decision still runs** (`pendingSave == nil`): a diverged server
+    records a `SyncConflict`, so the ensuing autosave is *held* rather than overwriting a
+    web edit the app has just fetched. Whether a destructive push gets checked must not
+    depend on whether a keystroke landed before or after the fetch resolved;
+  - a stored draft is reconciled by **`draftSyncDecision`**, not the bare tolerance rule:
+    a baseline-carrying draft is never silently discarded — it either pushes or becomes a
+    `.conflict`. The tolerance rule survives only as rule 3, for legacy baseline-less drafts;
+  - banner then edit: `updateAvailable == true`, then `startEditing()` / the first keystroke
+    → `updateAvailable == false`, blocks unchanged — **and the abandoned stash records a
+    conflict**, because it is a server body the app fetched and *showed the user*, which the
+    next autosave would otherwise full-overwrite unasked; `applyPendingUpdate()` while
     dirty/editing is a no-op;
   - second `load()` during an in-flight revalidation → latest-wins, no stale
     banner; content turning dirty mid-fetch → no banner;

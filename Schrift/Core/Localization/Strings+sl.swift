@@ -175,6 +175,17 @@ enum Strings_sl {
         .editor_sync_just_now: "Pravkar sinhronizirano",
         .editor_sync_ago: "Sinhronizirano %@",
         .editor_sync_not_synced_yet: "Še ni sinhronizirano",
+        .editor_conflict_pill: "Konflikt sinhronizacije · tapnite za pregled",
+        .editor_conflict_pill_a11y: "Konflikt sinhronizacije. Tapnite za pregled.",
+        .editor_conflict_title: "Konflikt sinhronizacije",
+        .editor_conflict_body:
+            "Ta dokument je bil medtem, ko so vaše spremembe čakale na sinhronizacijo, spremenjen drugje. Izberite, katero različico obdržati.",
+        .editor_conflict_server_changed: "Strežniška kopija je bila spremenjena %@.",
+        .editor_conflict_keep_mine: "Obdrži mojo različico",
+        .editor_conflict_keep_mine_detail: "Prepiše kopijo na strežniku",
+        .editor_conflict_keep_server: "Obdrži strežniško različico",
+        .editor_conflict_keep_server_detail: "Zavrže spremembe v tej napravi",
+        .editor_conflict_restore_hint: "Prepisane različice je mogoče obnoviti iz zgodovine različic na spletu.",
 
         // Editor - errors
         .editor_error_load: "Tega dokumenta ni bilo mogoče naložiti. Povlecite za osvežitev in poskusite znova.",

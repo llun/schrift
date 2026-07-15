@@ -85,6 +85,33 @@ final class EditorViewModelTests: XCTestCase {
         }
     }
 
+    /// A co-author's body: changed content **and a newer `updated_at`** than the shared fixture.
+    private func divergedServerBody(content: String) -> Data {
+        Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "\(content)", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+    }
+
+    /// A co-author's write: a changed body **and a newer `updated_at`**. The shared
+    /// `formattedBody` fixture pins `updated_at` to 2026-01-15, so reusing it for a "server
+    /// changed" scenario silently makes rule 2 say the server has *not* moved past the
+    /// baseline — a test written that way passes for the wrong reason. Saves go through.
+    private func stubDivergedServer(content: String, log: RequestRecorder) {
+        let body = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "\(content)", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+    }
+
     /// Every request fails as if the device were offline — the way to reach an
     /// installed-from-cache screen whose revalidation never landed.
     private func stubOffline() {
@@ -1765,15 +1792,16 @@ final class EditorViewModelTests: XCTestCase {
             "the write-ahead teardown flush persists the baseline the edit descended from")
     }
 
-    /// A stored draft plus a successful fetch reaches reconcileDraft's tolerance
+    /// A stored draft plus a successful fetch reaches reconcileDraft's push
     /// (draft-wins) branch, which re-enqueues the draft. That re-enqueue must carry
     /// the draft's own baseline through — the draft-replay reconciliation the
     /// baseline exists to serve.
     func testReconcileDraftReplayCarriesTheBaseline() async {
         let (viewModel, coordinator, draftStore, _) = makeEnvironment()
-        let serverDate = Date(timeIntervalSince1970: 1_700_000_000)
-        // Draft written "now" is newer than the fixture's 2026-01-15 server
-        // updated_at, so the fetch lands in reconcileDraft's tolerance-push branch.
+        // Baseline no older than the fixture's 2026-01-15 server updated_at, so
+        // `draftSyncDecision` rule 2 pushes (the server has not moved past the baseline)
+        // and reconcileDraft re-enqueues with the draft's baseline.
+        let serverDate = Date(timeIntervalSince1970: 1_800_000_000)
         draftStore.save(
             PendingDraft(
                 documentID: documentID, title: "Doc", markdown: "# Draft body", updatedAt: Date(),
@@ -1790,7 +1818,7 @@ final class EditorViewModelTests: XCTestCase {
             return MockURLProtocol.Stub(statusCode: 200, headers: [:], body: Data(), error: nil)
         }
 
-        await viewModel.load()  // reconcileDraft tolerance-push re-enqueues with draft.baseline
+        await viewModel.load()  // reconcileDraft baseline-push re-enqueues with draft.baseline
 
         // The replay must actually have fired (not just left the identical draft
         // untouched): the re-enqueued save is in flight, held open by the stub.
@@ -1801,6 +1829,1131 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(baseline?.markdown, "# Server base")
         XCTAssertEqual(baseline?.serverUpdatedAt, serverDate)
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    // MARK: - Sync conflicts
+
+    /// A stored draft whose baseline has diverged from the server (newer server
+    /// `updated_at` *and* a different body) makes `reconcileDraft` record a conflict:
+    /// the reading surface exposes it (`syncConflict`), and the draft — the user's
+    /// only copy — stays on screen rather than being overwritten by the server body.
+    func testReconcileDraftRecordsAConflictWhenTheServerDiverges() async {
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        stubLoad(content: "# Co-author edit")
+
+        await viewModel.load()
+
+        XCTAssertNotNil(viewModel.syncConflict, "the reading surface exposes the detected conflict")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Mine", "the draft is not overwritten by the server body")
+    }
+
+    /// The hole this PR exists to close. `reconcileDraft` returns early for a
+    /// `.pendingSync`/`.failed` draft so the tolerance rule can't discard visible
+    /// content — but it must still *detect* a conflict on the way out. Without that,
+    /// a revalidation proves the server moved on, records nothing, and the user's next
+    /// "tap to retry" (`saveNow` enqueues straight through) full-overwrites the web
+    /// edit the app had already fetched. Detection engages the enqueue-hold, so the
+    /// retry is held and the pill asks first.
+    func testPendingSyncDraftDetectsAConflictSoARetryCannotOverwriteTheServer() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+
+        // 1. Load the server copy (baseline "# Base" @ the fixture's 2026-01-15), edit
+        //    it, and let the save fail transiently → .pendingSync with a draft.
+        let baseBody = formattedBody(content: "# Base")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: baseBody, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load()
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine")
+        viewModel.flushPendingChanges()
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        let savesBeforeRetry = savesInFlight(log)
+        // The user's only copy of the edit. Every assertion below compares against this
+        // snapshot rather than a literal, so the test pins *preservation*, not the
+        // serializer's exact output.
+        let queuedDraft = draftStore.draft(for: documentID)?.markdown
+        XCTAssertNotNil(queuedDraft)
+        XCTAssertTrue(queuedDraft?.contains("Mine") == true, "the draft holds the offline edit")
+
+        // 2. A co-author edits on the web: the server body diverges from the baseline
+        //    and its updated_at moves past it. The save PATCH would now SUCCEED.
+        let divergedBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: divergedBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        // 3. A pull-to-refresh observes the divergence while still .pendingSync.
+        await viewModel.refresh()
+
+        XCTAssertNotNil(viewModel.syncConflict, "the observed web edit must be recorded as a conflict")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, queuedDraft,
+            "the queued edit is still the user's only copy — never discarded here")
+
+        // 4. The user taps retry. It must be HELD by the conflict, not pushed: pushing
+        //    would full-overwrite "# Co-author edit" with the "# Base"-derived draft.
+        viewModel.saveNow()
+
+        await waitAndConfirmNever { self.savesInFlight(log) > savesBeforeRetry }
+        XCTAssertNotNil(viewModel.syncConflict, "still awaiting the user's choice")
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, queuedDraft, "the held retry keeps the draft intact")
+    }
+
+    /// "Keep mine" flushes any in-progress edit, clears the conflict, and pushes the
+    /// draft (last-writer-wins).
+    func testResolveConflictKeepingMinePushesTheDraft() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)  // content / title PATCH
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.resolveConflictKeepingMine()
+
+        // The push is asynchronous — wait for its content PATCH to land, not just for
+        // the (synchronously cleared) conflict record.
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(viewModel.syncConflict, "resolving clears the conflict record")
+        await waitUntil { viewModel.saveCoordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// "Keep the server version" clears the conflict, discards the local draft, and
+    /// re-fetches so the server body installs through the normal guarded funnel —
+    /// never pushing, and taking no content from the conflict record itself.
+    func testResolveConflictKeepingServerDiscardsTheDraftAndShowsTheServerBody() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNil(viewModel.syncConflict, "the conflict is resolved")
+        XCTAssertNil(draftStore.draft(for: documentID), "the local draft is discarded")
+        XCTAssertEqual(savesInFlight(log), 0, "keep-server never pushes")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") },
+            "the server body is re-fetched and installed")
+    }
+
+    /// "Keep the server version" must **fetch before it discards**. A conflict is usually
+    /// reviewed on the same flaky connection that caused it, so the fetch failing is the
+    /// common case — and discarding first left the user staring at the body they had just
+    /// thrown away, with it gone from disk, the conflict record cleared and the stale
+    /// baseline intact. The next keystroke then full-overwrote the server copy they had
+    /// explicitly chosen to keep. Nothing may be destroyed until the winning body is in hand.
+    func testKeepingTheServerVersionKeepsTheDraftWhenTheFetchFails() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The device drops offline before the user commits to the server's copy.
+        stubOffline()
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNotNil(
+            draftStore.draft(for: documentID), "a failed fetch must not cost the user their only copy")
+        XCTAssertNotNil(viewModel.syncConflict, "the conflict survives, so the pill and sheet stay available")
+        XCTAssertNotNil(viewModel.errorKey, "the failure is surfaced")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Mine") },
+            "the draft is still on screen — and still backed by disk")
+        XCTAssertEqual(savesInFlight(log), 0)
+    }
+
+    /// The destructive resolution taken from inside a dirty editing session: the edit is
+    /// discarded (not re-drafted, not pushed) and the autosave debounce must not fire a
+    /// save after the fact.
+    func testKeepingTheServerVersionFromADirtyEditingSessionPushesNothing() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment(autosaveInterval: .milliseconds(50))
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The user keeps typing, arming the autosave debounce, then chooses the server copy.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine and more")
+        XCTAssertTrue(viewModel.isDirty)
+
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNil(viewModel.syncConflict)
+        XCTAssertNil(draftStore.draft(for: documentID), "the discarded edit leaves no draft behind")
+        XCTAssertFalse(viewModel.isDirty, "the editing session ended")
+        XCTAssertEqual(viewModel.mode, .reading)
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") }, "the server body is installed")
+        // Past the (50ms) autosave window: the armed debounce must not resurrect the edit.
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
+    /// Keeping the server version must still work when the enqueue-hold has parked a save
+    /// in the queued slot (the user typed once more after the conflict landed). A held save
+    /// is **never sent**, so it cannot have raced the fetch — but `SaveMarker.hadPendingSave`
+    /// used to ask `pendingSave != nil`, which the hold pins true forever (nothing drains it
+    /// and `settledSaves` never advances). `mayPredateSave` was therefore true on every
+    /// attempt, permanently wedging the non-destructive resolution and leaving only the
+    /// overwrite the user had explicitly declined.
+    func testKeepingTheServerVersionWorksWithASaveHeldByTheConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The user keeps typing after the conflict lands; the flush is HELD, not pushed.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine again")
+        viewModel.flushPendingChanges()
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the save is parked by the hold")
+        XCTAssertEqual(savesInFlight(log), 0, "and never sent")
+
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNil(viewModel.syncConflict, "the resolution is not wedged by the held save")
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "the held save is dropped with the draft")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") }, "the server body is installed")
+        XCTAssertEqual(savesInFlight(log), 0, "keep-server never pushes")
+    }
+
+    /// "Keep mine" pushes the user's **newest in-progress** text, not the older stored
+    /// draft — which is what the load-bearing `flushPendingChanges()` in
+    /// `resolveConflictKeepingMine()` is for.
+    func testKeepingMineFromAnEditingSessionPushesTheNewestText() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Stored draft", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Newest in-progress text")
+
+        viewModel.resolveConflictKeepingMine()
+
+        // Snapshot SYNCHRONOUSLY. `enqueue`/`start` set the pending save before returning,
+        // and `finish` clears it the moment the save settles — so reading it after an await
+        // races the (immediately-stubbed) PATCH, and an `Optional?.contains(...) != false`
+        // test would then pass **vacuously** on nil, whatever was actually pushed.
+        let released = coordinator.pendingSave(documentID: documentID)
+        XCTAssertNotNil(released, "keep-mine released a push")
+        XCTAssertTrue(
+            released?.markdown.contains("Newest in-progress text") == true,
+            "the released push must carry the newest in-progress edit")
+        XCTAssertFalse(
+            released?.markdown.contains("Stored draft") == true,
+            "…and not the older stored draft — which is what `flushPendingChanges()` is for")
+
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(viewModel.syncConflict)
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
+    /// The post-await guard in `resolveConflictKeepingServer()`: ending the editing session
+    /// does not lock the screen, so the user can tap back in and type **while the fetch is
+    /// in flight**. That work was never part of the choice they made, so it must not be
+    /// destroyed. Held open with `Stub(delay:)` and pinned on the recorded GET so the edit
+    /// really does land inside the await.
+    func testKeepingTheServerVersionAbandonsIfTheUserEditsDuringTheFetch() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        // The FIRST GET (load) answers immediately; the resolution's GET is held open.
+        MockURLProtocol.stubHandler = { request in
+            let priorGets = log.count(ofMethod: "GET", urlContaining: "formatted-content")
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:], body: coauthorBody, error: nil,
+                    delay: priorGets == 0 ? 0 : 0.4)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+        let getsAfterLoad = log.count(ofMethod: "GET", urlContaining: "formatted-content")
+
+        async let resolution: Void = viewModel.resolveConflictKeepingServer()
+        // Wait until the resolution's fetch is genuinely in flight, then type into it.
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") > getsAfterLoad }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Typed after choosing the server copy")
+        viewModel.flushPendingChanges()
+        await resolution
+
+        XCTAssertNotNil(
+            viewModel.syncConflict, "the conflict stands, so the user can decide again with the new edit in hand")
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Typed after choosing the server copy") == true,
+            "the post-choice edit must survive on disk")
+        XCTAssertFalse(
+            viewModel.blocks.contains { $0.text.contains("Co-author edit") },
+            "the server body must not be installed over an edit the user never agreed to discard")
+        XCTAssertEqual(savesInFlight(log), 0, "and the held save is still held")
+        _ = coordinator
+    }
+
+    /// Keep-mine's baseline advance has to survive the *next autosave flush*. The
+    /// coordinator rewrites the stored draft's baseline, but `enqueue` rebuilds the draft
+    /// from whatever baseline its caller passes — and `flushPendingChanges` passes the
+    /// editor's `serverBaseline`. If that stayed stale, the very next keystroke after a
+    /// failed push would clobber the advance and the identical conflict would be
+    /// re-detected and re-held, silently undoing the answer the user just gave.
+    func testKeepingMineAdvancesTheEditorBaselineSoALaterFlushDoesNotResurrectTheConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")  // updated_at = 2026-01-15
+        // The push fails transiently, exactly as it does on the connection that caused the conflict.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.resolveConflictKeepingMine()
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+
+        // The user keeps typing after the failed push. This flush re-enqueues with the
+        // editor's baseline — which must now be the one they chose to overwrite.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Still mine")
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, fetchedUpdatedAt,
+            "the flush must not clobber the advanced baseline with the stale pre-conflict one")
+
+        // Settle that flush's save first: `syncPendingDrafts` skips any document with an
+        // in-flight or queued save *before* it fetches, so re-syncing while it is still in
+        // flight would skip the draft entirely and leave `conflict(for:)` trivially nil —
+        // passing no matter whether the baseline advance stuck.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        // …so a later sync does not re-raise the conflict the user already answered.
+        await coordinator.syncPendingDrafts()
+        XCTAssertNil(coordinator.conflict(for: documentID), "the answered conflict must not come back")
+    }
+
+    /// The destructive resolver's 404/403 branch tears the document down *before* the draft
+    /// is discarded, so a transient 404 (a proxy hiccup) must leave the user's only copy of
+    /// the edit intact — a regression that reordered the discard ahead of the fetch would
+    /// destroy it here with nothing to catch it. The conflict *record* is deliberately
+    /// cleared, because `becomeUnavailable` → `suppressLocalWriteThrough` must not leave a
+    /// stale record on a torn-down document; it is re-detected once the document is
+    /// reachable again (both `syncPendingDrafts` and `reconcileDraft` re-run the decision).
+    func testKeepingTheServerVersionKeepsTheDraftWhenTheDocumentIs404() async {
+        let log = RequestRecorder()
+        let (viewModel, _, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The resolution's fetch 404s (which may be transient — a proxy hiccup).
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Mine",
+            "a 404 must not cost the user their only copy of the edit — the discard never ran")
+        XCTAssertTrue(viewModel.isUnavailable, "the document is torn down, as on any 404")
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "the record is cleared with the teardown (no stale conflict on a gone document); it is re-detected "
+                + "by the decision once the document is reachable again")
+        XCTAssertEqual(savesInFlight(log), 0)
+    }
+
+    /// Everything on screen must stay backed by disk. Keep-server used to clear `isDirty`
+    /// *without flushing*, so an edit typed after the pill appeared lived only in `blocks`:
+    /// on the failure path (the common one — the conflict is usually reviewed on the
+    /// connection that caused it) the reading surface went on rendering it while it existed
+    /// in **no draft and no funnel**, and `flushPendingChanges` early-returned forever.
+    /// Navigating away lost it silently. Reachable only because the pill now renders while
+    /// editing — which is exactly when it has to be safe.
+    func testKeepingTheServerVersionPersistsAnUnflushedEditWhenTheFetchFails() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        // The user types while the pill is up — the autosave debounce has NOT fired yet,
+        // so this text lives only in `blocks`.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Typed but never flushed")
+        XCTAssertTrue(viewModel.isDirty)
+
+        // They choose the server copy… and the fetch fails offline.
+        stubOffline()
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNotNil(viewModel.syncConflict, "the conflict survives a failed fetch")
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Typed but never flushed") == true,
+            "the in-progress edit must be on disk — the screen still shows it, so a funnel must own it")
+        XCTAssertTrue(
+            viewModel.blocks.contains { $0.text.contains("Typed but never flushed") },
+            "…and it is still what the reading surface renders")
+        XCTAssertEqual(savesInFlight(log), 0, "the flush is held by the conflict, never pushed")
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "it is parked in the hold")
+    }
+
+    /// **Whether a destructive push is checked must not hinge on keystroke timing.** `apply`
+    /// diverts to `cacheServerCopy` whenever the screen is dirty, so a single character typed
+    /// while the revalidation was in flight used to skip conflict detection entirely — and the
+    /// autosave that followed full-overwrote the web edit the app had just fetched. Detection
+    /// now runs in that branch too.
+    func testAKeystrokeDuringTheRevalidationCannotBypassConflictDetection() async {
+        let log = RequestRecorder()
+        // Default (10 s) autosave: the point is a keystroke that lands *inside* the fetch
+        // window WITHOUT the debounce firing. A debounce that fired first would push before
+        // the app had even seen the co-author's edit — a race no detection can win, and a
+        // different scenario entirely.
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // A queued offline draft (baseline B0) — the case this PR exists for.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        // Hold the revalidation open so the keystroke lands *inside* it; a co-author has
+        // edited the server since B0.
+        let coauthorBody = formattedBody(content: "# Co-author edit")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil, delay: 0.3)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        async let load: Void = viewModel.load()
+        // The draft is rendered synchronously; type one character while the fetch is open.
+        await waitUntil { viewModel.hasLoadedContent }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine plus one")
+        XCTAssertTrue(viewModel.isDirty)
+        await load
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a keystroke racing the fetch must not disable detection — the server moved on and we saw it")
+        // …and the autosave that follows is HELD, not pushed over the co-author's edit.
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "parked by the enqueue-hold")
+    }
+
+    /// The flip side, and the reason rule 1 must be fed from the coordinator rather than the
+    /// stored draft: right after **our own** save lands there is no draft left to carry the
+    /// stamp, and `serverBaseline` is deliberately not advanced by a save — so a revalidation
+    /// arriving while the user keeps typing would compare our own just-pushed body against a
+    /// stale baseline and raise a conflict against the user's own write.
+    func testARevalidationAfterOurOwnSaveRaisesNoConflictWhileStillEditing() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Base", log: log)
+        await viewModel.load()
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+        viewModel.flushPendingChanges()
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertNil(draftStore.draft(for: documentID), "the save landed and cleared the draft")
+
+        // The server now returns OUR body with a newer updated_at, while the user types on.
+        let ourBody = formattedBody(content: serializeMarkdown(viewModel.blocks))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: ourBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit, still going")
+        XCTAssertTrue(viewModel.isDirty)
+        await viewModel.refresh()
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "the server's body is our own confirmed push — rule 1 must recognise it, not ask the user "
+                + "about their own write")
+    }
+
+    /// The other side of the same race. A revalidation landing on a **clean, open editing
+    /// session** stashes the fetched body behind the "Updated" banner — and the first
+    /// keystroke used to throw that stash away with nothing recorded, so the ensuing autosave
+    /// full-overwrote a web edit the app had fetched, cached, *and shown the user a banner
+    /// for*. Type one character **before** the fetch resolves and the push is held and the
+    /// user asked; type one character **after** it resolves and the identical push went
+    /// through unchecked. Abandoning the stash now records the conflict.
+    func testAbandoningTheUpdatedStashRecordsAConflictInsteadOfOverwritingIt() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        // An open editing session, still clean. A co-author's edit lands as the stash — with a
+        // NEWER `updated_at` than the baseline, which is what a real server write does. (The
+        // shared fixture's timestamp is fixed, so reusing it would make rule 2 correctly say
+        // "the server has not moved past the baseline" and decline to conflict.)
+        viewModel.startEditing()
+        let coauthorBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author edit", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-02-20T10:30:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "the fetched body is stashed behind the banner")
+        XCTAssertNil(viewModel.syncConflict, "…and is merely offered, not yet a conflict")
+
+        // The user ignores the banner and types.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+
+        XCTAssertFalse(viewModel.updateAvailable, "the stash is dropped…")
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "…but a server body we fetched AND showed the user cannot be silently overwritten by the "
+                + "next autosave — abandoning it must record the conflict")
+
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the push is held, not sent")
+    }
+
+    /// `.discardServerWins` is **not** "no conflict". It is rule 3 firing for a *legacy*
+    /// (baseline-less) draft the server has moved past — and `runSyncPass` deliberately
+    /// records a conflict for exactly that state, because the draft is visible unsaved work
+    /// whose only other funnel is a retry tap that overwrites the newer server copy unasked.
+    /// Treating it as "resolved" in `reconcileDraft` cleared that record on the next
+    /// pull-to-refresh and re-opened the hole.
+    func testAPullToRefreshDoesNotClearTheConflictOnAStaleLegacyDraft() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // The server is well BEYOND the clock-tolerance window (a 2099 `updated_at`), which is
+        // what makes rule 3 return `.discardServerWins` for a baseline-less draft — the state
+        // this test exists for. A merely "newer body" is not enough: with a server timestamp
+        // older than the draft, rule 3 correctly says `.push`.
+        let staleForServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        // Legacy: the draft is written with NO baseline, and its save fails offline.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: staleForServer, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        draftStore.save(
+            PendingDraft(documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date()))
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        await viewModel.load()
+
+        // The sync pass records the conflict for the stranded legacy draft.
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000))
+        XCTAssertNotNil(viewModel.syncConflict)
+        XCTAssertNil(draftStore.draft(for: documentID)?.baseline, "a legacy, baseline-less draft")
+
+        // A pull-to-refresh must NOT quietly release the hold.
+        await viewModel.refresh()
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a stale legacy draft the server has moved past is still a conflict — clearing it here would let "
+                + "the next retry overwrite the newer server copy with no prompt")
+    }
+
+    /// The **editor-side** half of "never fabricate an empty baseline body". It is the half that
+    /// actually decides what lands on disk: `resolveConflictKeepingMine` sets `serverBaseline`
+    /// and then `flushPendingChanges()` → `enqueue` persists *that* verbatim, over whatever the
+    /// coordinator wrote. `serverBaseline` is nil exactly for a legacy (baseline-less) draft, so
+    /// this is the only path where the fallback fires — and an empty body would make rule 2's
+    /// content tiebreak match any **empty server document**, silently full-overwriting a
+    /// co-author who deliberately emptied the doc.
+    func testKeepingMineOnALegacyDraftPersistsARealBaselineBodyNotAnEmptyOne() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // A server far beyond the tolerance window, so a baseline-less draft decides
+        // `.discardServerWins` → `reconcileDraft` records the conflict.
+        let futureServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: futureServer, error: nil)
+            }
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        // Legacy: no baseline. Its save fails offline → `.pendingSync`.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Mine")
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+        XCTAssertNil(
+            draftStore.draft(for: documentID)?.baseline,
+            "a legacy draft has no baseline — which is what leaves the editor's `serverBaseline` nil")
+
+        viewModel.resolveConflictKeepingMine()
+
+        let persisted = draftStore.draft(for: documentID)?.baseline?.markdown
+        XCTAssertNotNil(persisted)
+        XCTAssertFalse(
+            persisted?.isEmpty == true,
+            "an empty baseline body makes rule 2's tiebreak match any empty server document — so a "
+                + "co-author who deliberately empties the doc would be silently overwritten")
+    }
+
+    /// **The relaunch case, end to end in the editor.** The conflict now persists but the save
+    /// *state* does not — so a legacy (baseline-less) draft comes back as `.idle`, skips the
+    /// `.failed`/`.pendingSync` branch, and falls to rule 3, which for a server past the
+    /// tolerance window answers `.discardServerWins`. Without the guard, `reconcileDraft` hands
+    /// it to `discardStoredDraft` and **deletes the very work the pill is asking about**.
+    func testAfterARelaunchAStaleLegacyDraftUnderAConflictIsNotDeleted() async {
+        let log = RequestRecorder()
+        let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        // A legacy draft (no baseline) carrying an unanswered conflict, as left by a previous
+        // process. The fresh coordinator rehydrates the conflict; `states` starts empty.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# My only copy",
+                updatedAt: Date(timeIntervalSince1970: 1_000_000),
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 4_100_000_000)))
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        let viewModel = EditorViewModel(
+            client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
+            contentCache: contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "the hold was rehydrated")
+        if case .idle = coordinator.state(for: documentID) {
+        } else {
+            XCTFail("a fresh process has no save state — that asymmetry is the whole point")
+        }
+        // A server far beyond the tolerance window → rule 3 says `.discardServerWins`.
+        let futureServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: futureServer, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# My only copy",
+            "the work the pill is asking about must not be deleted from under the question")
+        XCTAssertNotNil(viewModel.syncConflict, "and the conflict still stands")
+        XCTAssertFalse(
+            viewModel.blocks.contains { $0.text.contains("Co-author") },
+            "the server body must not be installed over it")
+    }
+
+    /// A **legacy** (baseline-less) draft that goes dirty must still be protected. Both editor
+    /// detection sites used to require a non-nil `serverBaseline` — which is nil for exactly this
+    /// draft — so it was the one class that got no detection at all: the fetch proved the server
+    /// had moved on, nothing was recorded, and the next autosave full-overwrote the co-author.
+    func testALegacyDraftGoingDirtyStillDetectsAConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        // Legacy: no baseline at all.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine",
+                updatedAt: Date(timeIntervalSince1970: 1_000_000)))
+        let futureServer = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Co-author", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: futureServer, error: nil, delay: 0.3)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        async let load: Void = viewModel.load()
+        await waitUntil { viewModel.hasLoadedContent }
+        // Type while the revalidation is in flight → `apply` diverts to the dirty branch.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine plus one")
+        await load
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a baseline-less draft is still visible unsaved work — it cannot be the one case with no detection")
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the push is held")
+    }
+
+    /// "Keep my version" must never be a silent no-op: if there is no local work to push, the
+    /// record is moot and pushing the on-screen body would overwrite the co-author with the
+    /// server's own older copy. It releases the record instead.
+    func testKeepingMineWithNoLocalWorkReleasesTheRecordInsteadOfPushing() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+        XCTAssertFalse(viewModel.isDirty)
+
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        viewModel.resolveConflictKeepingMine()
+
+        XCTAssertNil(viewModel.syncConflict, "a moot record is released")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
+    /// **A clock-only push must not release a standing conflict.** `.push` has two very different
+    /// provenances: rules 0–2 prove something about the *body*, but rule 3 proves nothing — it
+    /// only says the draft's client clock is within tolerance of the server's `updated_at`. And
+    /// the user typing *after* a conflict was surfaced bumps that clock past the server's, so
+    /// rule 3 then starts answering `.push` for a baseline-less draft whose conflict is still
+    /// standing and still persisted. Releasing on that basis discarded the hold and
+    /// full-overwrote the co-author with no pill and no prompt — defeating the whole point of
+    /// persisting the hold across the relaunch.
+    func testAClockOnlyPushDoesNotReleaseAStandingConflict() async {
+        let log = RequestRecorder()
+        let suiteName = "EditorViewModelTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        // A legacy (baseline-less) draft carrying an unanswered, persisted conflict — and whose
+        // own clock is NEWER than the server's, because the user kept typing after the pill
+        // appeared. Rule 3 therefore answers `.push`.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# My only copy", updatedAt: Date(),
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 1_768_473_000)))
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // A fresh coordinator: the conflict rehydrates, but `states` is empty (`.idle`).
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+        let viewModel = EditorViewModel(
+            client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
+            contentCache: contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        XCTAssertNotNil(coordinator.conflict(for: documentID), "the hold was rehydrated")
+        // The server holds the co-author's body, with an `updated_at` OLDER than the draft's
+        // clock — so rule 3 (and only rule 3) says `.push`.
+        stubLoadAndSavePipeline(content: "# Co-author edit", log: log)
+
+        await viewModel.load()
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "a clock-tolerance push is not evidence the conflict is gone — releasing it here overwrites "
+                + "the co-author with no prompt")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# My only copy", "and the user's only copy survives")
+    }
+
+    /// **A server body observed while our own save is on the wire must not be thrown away.**
+    /// Detection cannot run then (a conflict may only be recorded with no save in flight), so
+    /// `apply` skipped it and merely cached the body. If that save then FAILS, nothing reached
+    /// the server: the draft survives with a stale baseline and no push stamp, and the next
+    /// flush full-overwrote the co-author's body the app had already fetched **and cached** —
+    /// no pill, no prompt. The observation is now handed to the coordinator and re-decided in
+    /// `finish`, where the no-save-in-flight invariant holds again.
+    func testAServerBodyObservedWhileSavingIsStillDetectedWhenThatSaveFails() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        let coauthor = divergedServerBody(content: "# Co-author edit")
+        let base = formattedBody(content: "# Base")
+        let gets = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                let priorGets = gets.count(ofMethod: "GET", urlContaining: "formatted-content")
+                gets.record(request)
+                // First GET = the initial load; the next = the co-author's newer body, held open
+                // so the user's save starts underneath it.
+                return .init(
+                    statusCode: 200, headers: [:], body: priorGets == 0 ? base : coauthor, error: nil,
+                    delay: priorGets == 0 ? 0 : 0.3)
+            }
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                // Held open, then fails: NOTHING reaches the server.
+                return .init(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet), delay: 0.4)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+
+        // The fetch is issued FIRST, with nothing pending — so `mayPredateSave` is false and the
+        // response is trusted. It is then held open while the user's save starts underneath it.
+        // (Issuing it *after* the save would make `mayPredateSave` true and `apply` would discard
+        // the response outright — a different, already-safe path.)
+        async let revalidation: Void = viewModel.refresh()
+        await waitUntil { gets.count(ofMethod: "GET", urlContaining: "formatted-content") >= 2 }
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Mine")
+        viewModel.flushPendingChanges()
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "a save is on the wire")
+        await revalidation  // …and the co-author's body lands while it is
+
+        // …and then the save fails. The observation must survive it.
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "the app fetched and cached the co-author's body while saving; that save then failed, so nothing "
+                + "reached the server — the next push must be held, not silently destroy it")
+        let before = savesInFlight(log)
+        viewModel.saveNow()
+        await waitAndConfirmNever { self.savesInFlight(log) > before }
+        XCTAssertNotNil(draftStore.draft(for: documentID), "and the user's edit is safe on disk")
+    }
+
+    /// The post-flush "nothing to push" branch of keep-mine. `isDirty` is not proof there is
+    /// anything to push: the flush enqueues nothing when the content serializes back to
+    /// `savedMarkdown` (the user typed, then undid it). Clearing the conflict and advancing the
+    /// baseline while pushing nothing hands the user exactly the outcome they declined.
+    func testKeepingMineAfterAnUndoneEditPushesNothingAndRestoresTheBaseline() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 1))
+        viewModel.startEditing()
+        let blockID = viewModel.blocks[0].id
+        let original = viewModel.blocks[0].text
+        viewModel.updateText(blockID: blockID, text: "Server body edited")
+        viewModel.updateText(blockID: blockID, text: original)  // …and undone
+        XCTAssertTrue(viewModel.isDirty, "dirty — but the content is back to what was saved")
+
+        viewModel.resolveConflictKeepingMine()
+
+        XCTAssertNil(viewModel.syncConflict, "the record was moot — released")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNil(draftStore.draft(for: documentID), "nothing was pushed and nothing was drafted")
+
+        // The load-bearing part: the baseline was put back, so a later real edit does not carry a
+        // baseline advanced past a server state we never actually overwrote.
+        viewModel.updateText(blockID: blockID, text: "A real edit now")
+        viewModel.flushPendingChanges()
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.serverUpdatedAt, fetchedUpdatedAt,
+            "the pre-conflict baseline must be restored when keep-mine pushed nothing")
+    }
+
+    // MARK: - The conflict record's lifecycle
+    //
+    // The rule the four detection sites share: **a conflict record is meaningful only while
+    // local work exists that would overwrite the observed server body.** Record it when such
+    // work appears; release it the moment it is gone. Both halves are load-bearing — one way
+    // the user loses a co-author's edit, the other way the document's save pipeline wedges.
+
+    /// Merely *entering* edit mode is not local work, so it must record nothing. Recording
+    /// there produced a **phantom conflict**: a pill and an enqueue-hold on a document with no
+    /// unsaved changes, which nothing on the clean path cleared and whose "Keep my version"
+    /// had nothing to push.
+    func testEnteringEditModeOverAnUpdateBannerRecordsNoConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        // Editing session; a co-author's body lands and is stashed behind the banner.
+        viewModel.startEditing()
+        stubDivergedServer(content: "# Co-author edit", log: log)
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable)
+
+        // Done without typing, then tap back into the text to read.
+        viewModel.finishEditing()
+        viewModel.startEditing()
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "entering edit mode is not local work — a conflict here is a phantom that wedges every future save")
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    /// …but the stash must survive that, or the first real keystroke has nothing left to
+    /// detect. (This is why `startEditing` hides the banner instead of destroying the stash.)
+    func testTheStashSurvivesEnteringEditModeSoTheFirstKeystrokeStillDetects() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        viewModel.startEditing()
+        stubDivergedServer(content: "# Co-author edit", log: log)
+        await viewModel.load()
+        viewModel.finishEditing()
+        viewModel.startEditing()  // stash kept, banner hidden, nothing recorded
+        XCTAssertNil(viewModel.syncConflict)
+
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+
+        XCTAssertNotNil(
+            viewModel.syncConflict,
+            "the first keystroke IS local work — and the server body we fetched must not be overwritten unasked")
+        viewModel.flushPendingChanges()
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "the push is held")
+    }
+
+    /// The release side, exercised with the conflict **still standing** when the decision comes
+    /// back `.push`. This is the property that matters: the record is the only thing holding the
+    /// enqueue, and `syncPendingDrafts` skips any document that has one — so if it is never
+    /// released, the document can **never sync again**, with a destructive "Keep the server
+    /// version" armed against whatever the user types next.
+    ///
+    /// (An earlier version of this test resolved the conflict via `resolveConflictKeepingServer()`
+    /// first — which clears the record inside the coordinator — so it passed with every
+    /// `clearResolvedConflict` call site deleted. It asserted the right thing about the wrong
+    /// state. The conflict must be live at the moment the `.push` decision lands.)
+    func testAPushDecisionReleasesAStandingConflictSoTheDocumentCanSyncAgain() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        stubDivergedServer(content: "# Co-author edit", log: log)
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict, "a conflict stands over the queued draft")
+
+        // The co-author reverts: the server body is the baseline again, so the decision is
+        // `.push` — and the conflict is STILL RECORDED when that decision lands.
+        stubDivergedServer(content: "# Base", log: log)
+        await viewModel.refresh()
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "the conflict is moot — releasing it is the only thing that lets this document sync again")
+        // The hold is genuinely gone: the draft actually reaches the network.
+        await waitUntil { self.savesInFlight(log) >= 1 }
+        XCTAssertNil(coordinator.conflict(for: documentID))
+    }
+
+    /// The same release, via `reconcileClean` — reached only with no pending save, no draft and
+    /// not dirty, i.e. no local work by construction, so a record there cannot be live. Here the
+    /// local work is destroyed by a *successful save* rather than by a resolver, so
+    /// `clearResolvedConflict` is the only thing that can null the record.
+    func testReconcileCleanReleasesAConflictLeftOverAfterTheLocalWorkIsGone() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, _) = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server body", log: log)
+        await viewModel.load()
+
+        // Local work, saved successfully → no draft, not dirty, nothing pending.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "My edit")
+        viewModel.flushPendingChanges()
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+        viewModel.finishEditing()
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertFalse(viewModel.isDirty)
+
+        // A conflict record survives from earlier (e.g. the sync pass recorded one before the
+        // save landed). It is now moot: there is no local work left to overwrite anything.
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+        XCTAssertNotNil(viewModel.syncConflict)
+
+        await viewModel.refresh()  // clean path
+
+        XCTAssertNil(
+            viewModel.syncConflict,
+            "no pending save, no draft, not dirty — the record has nothing left to protect and must be released")
+
+        // …and the pipeline is genuinely unwedged: new work reaches the network.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Fresh unrelated work")
+        viewModel.flushPendingChanges()
+        await waitUntil { self.savesInFlight(log) >= 2 }
     }
 
     /// reconcileClean's unchanged-body (else) branch advances the baseline's

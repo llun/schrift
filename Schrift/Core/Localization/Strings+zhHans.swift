@@ -162,6 +162,16 @@ enum Strings_zhHans {
         .editor_sync_just_now: "刚刚同步",
         .editor_sync_ago: "同步于 %@",
         .editor_sync_not_synced_yet: "尚未同步",
+        .editor_conflict_pill: "同步冲突 · 点按查看",
+        .editor_conflict_pill_a11y: "同步冲突。点按查看。",
+        .editor_conflict_title: "同步冲突",
+        .editor_conflict_body: "在你的更改等待同步时，此文档已在别处被修改。请选择要保留的版本。",
+        .editor_conflict_server_changed: "服务器副本于%@更改。",
+        .editor_conflict_keep_mine: "保留我的版本",
+        .editor_conflict_keep_mine_detail: "覆盖服务器副本",
+        .editor_conflict_keep_server: "保留服务器版本",
+        .editor_conflict_keep_server_detail: "放弃此设备上的更改",
+        .editor_conflict_restore_hint: "被覆盖的版本可从网页端的版本历史中恢复。",
 
         // Editor - errors
         .editor_error_load: "无法加载此文档。下拉刷新以重试。",

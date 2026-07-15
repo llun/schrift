@@ -166,6 +166,18 @@ enum Strings_nl {
         .editor_sync_just_now: "Zojuist gesynchroniseerd",
         .editor_sync_ago: "Gesynchroniseerd %@",
         .editor_sync_not_synced_yet: "Nog niet gesynchroniseerd",
+        .editor_conflict_pill: "Synchronisatieconflict · tik om te bekijken",
+        .editor_conflict_pill_a11y: "Synchronisatieconflict. Tik om te bekijken.",
+        .editor_conflict_title: "Synchronisatieconflict",
+        .editor_conflict_body:
+            "Dit document is elders gewijzigd terwijl je wijzigingen op synchronisatie wachtten. Kies welke versie je wilt behouden.",
+        .editor_conflict_server_changed: "De serverkopie is %@ gewijzigd.",
+        .editor_conflict_keep_mine: "Mijn versie behouden",
+        .editor_conflict_keep_mine_detail: "Overschrijft de serverkopie",
+        .editor_conflict_keep_server: "Serverversie behouden",
+        .editor_conflict_keep_server_detail: "Verwijdert de wijzigingen op dit apparaat",
+        .editor_conflict_restore_hint:
+            "Overschreven versies kunnen worden hersteld via de versiegeschiedenis op het web.",
 
         // Editor - errors
         .editor_error_load: "Kan dit document niet laden. Trek omlaag om het opnieuw te proberen.",

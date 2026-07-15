@@ -34,7 +34,7 @@ final class EditorViewTests: XCTestCase {
     /// exactly when saves fail. So it must beat the offline wording.
     func testFailedSaveOffersRetryEvenOffline() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: true, saveState: .failed("x"),
+            hasUnsavedLocalContent: true, hasConflict: false, isOffline: true, saveState: .failed("x"),
             lastSyncedAt: now, now: now, locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true))
@@ -42,7 +42,8 @@ final class EditorViewTests: XCTestCase {
 
     func testOfflineWithUnsavedContentReadsAsSavedOnDevice() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: true, saveState: .idle, lastSyncedAt: now, now: now,
+            hasUnsavedLocalContent: true, hasConflict: false, isOffline: true, saveState: .idle, lastSyncedAt: now,
+            now: now,
             locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
@@ -52,7 +53,8 @@ final class EditorViewTests: XCTestCase {
     /// pending-sync caption doubles as a manual retry.
     func testPendingSyncOnlineOffersRetry() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: false, saveState: .pendingSync, lastSyncedAt: now, now: now,
+            hasUnsavedLocalContent: true, hasConflict: false, isOffline: false, saveState: .pendingSync,
+            lastSyncedAt: now, now: now,
             locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: true))
@@ -62,7 +64,8 @@ final class EditorViewTests: XCTestCase {
     /// pending-sync caption still beats the generic "Saved on this device" wording.
     func testPendingSyncOfflineIsPassiveAndBeatsGenericOfflineWording() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: true, saveState: .pendingSync, lastSyncedAt: now, now: now,
+            hasUnsavedLocalContent: true, hasConflict: false, isOffline: true, saveState: .pendingSync,
+            lastSyncedAt: now, now: now,
             locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false))
@@ -70,7 +73,8 @@ final class EditorViewTests: XCTestCase {
 
     func testUnsavedContentWinsOverSyncedCaption() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: true, isOffline: false, saveState: .dirty, lastSyncedAt: now, now: now,
+            hasUnsavedLocalContent: true, hasConflict: false, isOffline: false, saveState: .dirty, lastSyncedAt: now,
+            now: now,
             locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false))
@@ -78,7 +82,8 @@ final class EditorViewTests: XCTestCase {
 
     func testCleanDocumentShowsSyncedCaptionAndNoRetry() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, isOffline: false, saveState: .saved, lastSyncedAt: now, now: now,
+            hasUnsavedLocalContent: false, hasConflict: false, isOffline: false, saveState: .saved, lastSyncedAt: now,
+            now: now,
             locale: locale)
 
         XCTAssertEqual(caption.text, .key(.editor_sync_just_now))
@@ -87,7 +92,8 @@ final class EditorViewTests: XCTestCase {
 
     func testNeverSyncedCleanDocument() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, isOffline: false, saveState: .idle, lastSyncedAt: nil, now: now,
+            hasUnsavedLocalContent: false, hasConflict: false, isOffline: false, saveState: .idle, lastSyncedAt: nil,
+            now: now,
             locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false))
@@ -98,10 +104,54 @@ final class EditorViewTests: XCTestCase {
     /// nothing to retry, so the caption must not offer one.
     func testFailedSaveWithNoUnsavedContentOffersNoRetry() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, isOffline: false, saveState: .failed("x"), lastSyncedAt: now, now: now,
+            hasUnsavedLocalContent: false, hasConflict: false, isOffline: false, saveState: .failed("x"),
+            lastSyncedAt: now, now: now,
             locale: locale)
 
         XCTAssertFalse(caption.offersRetry)
         XCTAssertEqual(caption.text, .key(.editor_sync_just_now))
+    }
+
+    /// A recorded conflict **holds** the push: nothing syncs and no retry can run until the
+    /// user answers the pill (`saveNow` re-enqueues straight back into the hold). So the
+    /// caption must neither promise a sync nor offer a dead retry — it states only the true
+    /// part, and the pill is the sole affordance. It outranks both `.pendingSync` (which the
+    /// hold itself sets) and `.failed` (over which a conflict can also be recorded).
+    func testAConflictSuppressesTheSyncPromiseAndTheDeadRetry() {
+        let held = syncCaption(
+            hasUnsavedLocalContent: true, hasConflict: true, isOffline: false, saveState: .pendingSync,
+            lastSyncedAt: now, now: now, locale: locale)
+
+        XCTAssertEqual(held, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
+
+        let overFailed = syncCaption(
+            hasUnsavedLocalContent: true, hasConflict: true, isOffline: false, saveState: .failed("x"),
+            lastSyncedAt: now, now: now, locale: locale)
+
+        XCTAssertFalse(overFailed.offersRetry, "a retry that re-enqueues straight back into the hold is not an offer")
+    }
+
+    /// A standing conflict outranks even "Synced X ago". Nested inside `hasUnsavedLocalContent`,
+    /// a conflict that is still recorded and still holding every push could render as "Synced
+    /// 5 min ago" — telling the user they are in sync while their next save is parked behind a
+    /// question they have not answered.
+    func testAConflictOutranksTheSyncedCaption() {
+        let caption = syncCaption(
+            hasUnsavedLocalContent: false, hasConflict: true, isOffline: false, saveState: .saved,
+            lastSyncedAt: now.addingTimeInterval(-300), now: now, locale: locale)
+
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
+    }
+
+    // MARK: - Conflict sheet
+
+    /// The conflict sheet tells the user *when* the other copy changed — the one fact they
+    /// need to choose a winner — so the relative time must read as the past, not the future.
+    func testConflictServerChangedDateReadsAsThePast() {
+        let changed = conflictServerChangedDate(now.addingTimeInterval(-600), now: now, locale: locale)
+
+        XCTAssertTrue(
+            changed.localizedCaseInsensitiveContains("ago"),
+            "a server copy changed 10 minutes back must read as elapsed time, got \(changed)")
     }
 }

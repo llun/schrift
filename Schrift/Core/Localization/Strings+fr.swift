@@ -166,6 +166,18 @@ enum Strings_fr {
         .editor_sync_just_now: "Synchronisé à l’instant",
         .editor_sync_ago: "Synchronisé %@",
         .editor_sync_not_synced_yet: "Pas encore synchronisé",
+        .editor_conflict_pill: "Conflit de synchronisation · appuyer pour vérifier",
+        .editor_conflict_pill_a11y: "Conflit de synchronisation. Appuyer pour vérifier.",
+        .editor_conflict_title: "Conflit de synchronisation",
+        .editor_conflict_body:
+            "Ce document a été modifié ailleurs pendant que vos modifications attendaient la synchronisation. Choisissez la version à conserver.",
+        .editor_conflict_server_changed: "La copie du serveur a été modifiée %@.",
+        .editor_conflict_keep_mine: "Conserver ma version",
+        .editor_conflict_keep_mine_detail: "Remplace la copie du serveur",
+        .editor_conflict_keep_server: "Conserver la version du serveur",
+        .editor_conflict_keep_server_detail: "Ignore les modifications sur cet appareil",
+        .editor_conflict_restore_hint:
+            "Les versions remplacées peuvent être restaurées depuis l’historique des versions sur le web.",
 
         // Editor - errors
         .editor_error_load: "Impossible de charger ce document. Tirez vers le bas pour réessayer.",

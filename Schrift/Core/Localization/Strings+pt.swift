@@ -160,11 +160,23 @@ enum Strings_pt {
         .editor_sync_save_failed: "Não foi possível guardar · toque para tentar novamente",
         .editor_sync_save_failed_a11y: "Não foi possível guardar. Toque para tentar novamente.",
         .editor_sync_saved_on_device: "Guardado neste dispositivo",
-        .editor_sync_pending_sync: "Salvo neste dispositivo · sincroniza quando on-line",
+        .editor_sync_pending_sync: "Guardado neste dispositivo · sincroniza quando estiver online",
         .editor_sync_edited_just_now: "Editado agora mesmo",
         .editor_sync_just_now: "Sincronizado agora mesmo",
         .editor_sync_ago: "Sincronizado %@",
         .editor_sync_not_synced_yet: "Ainda não sincronizado",
+        .editor_conflict_pill: "Conflito de sincronização · toque para revisar",
+        .editor_conflict_pill_a11y: "Conflito de sincronização. Toque para revisar.",
+        .editor_conflict_title: "Conflito de sincronização",
+        .editor_conflict_body:
+            "Este documento foi alterado em outro lugar enquanto suas edições aguardavam sincronização. Escolha qual versão manter.",
+        .editor_conflict_server_changed: "A cópia do servidor foi alterada %@.",
+        .editor_conflict_keep_mine: "Manter a minha versão",
+        .editor_conflict_keep_mine_detail: "Substitui a cópia do servidor",
+        .editor_conflict_keep_server: "Manter a versão do servidor",
+        .editor_conflict_keep_server_detail: "Descarta as alterações neste dispositivo",
+        .editor_conflict_restore_hint:
+            "As versões substituídas podem ser restauradas pelo histórico de versões na web.",
 
         // Editor - errors
         .editor_error_load: "Não foi possível carregar este documento. Puxe para atualizar e tente novamente.",

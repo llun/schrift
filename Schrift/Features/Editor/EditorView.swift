@@ -32,24 +32,34 @@ struct SyncCaption: Equatable {
     let offersRetry: Bool
 }
 
-/// Caption precedence: (1) a **failed save** wins over everything, including the
-/// offline wording — it is the only affordance that unpins the document, because
-/// `reconcileDraft` deliberately no-ops every revalidation while a failed save's
-/// draft is on screen, and the reading surface has no other retry (tap-to-edit is
-/// itself blocked offline, which is when saves fail most). (1b) a **queued offline
-/// save** (`.pendingSync`) is its own tier just below: its "syncs when online"
-/// caption beats the generic offline wording, and it doubles as a manual retry
-/// when the device is online (where the auto-sync triggers can't fire). (2) other
-/// unsaved local content → save wording (a previously-synced doc with a stranded
+/// Caption precedence: (0) a **recorded sync conflict** outranks everything, because it
+/// *holds* the push — no retry here can run and no sync is coming until the user answers
+/// the pill, so the caption states only the true part ("Saved on this device") and offers
+/// no affordance. (1) a **failed save** wins over the rest, including the offline wording —
+/// it is the only affordance that unpins the document, because `reconcileDraft`
+/// deliberately no-ops every revalidation while a failed save's draft is on screen, and the
+/// reading surface has no other retry (tap-to-edit is itself blocked offline, which is when
+/// saves fail most). (1b) a **queued offline save** (`.pendingSync`) is its own tier just
+/// below: its "syncs when online" caption beats the generic offline wording, and it doubles
+/// as a manual retry when the device is online (where the auto-sync triggers can't fire).
+/// (2) other unsaved local content → save wording (a previously-synced doc with a stranded
 /// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
     hasUnsavedLocalContent: Bool,
+    hasConflict: Bool,
     isOffline: Bool,
     saveState: EditorViewModel.SaveState,
     lastSyncedAt: Date?,
     now: Date,
     locale: Locale
 ) -> SyncCaption {
+    // A standing conflict outranks *everything*, including "Synced X ago". It was nested inside
+    // `hasUnsavedLocalContent`, so a conflict that is still recorded and still holding every push
+    // could render as "Synced 5 min ago" — telling the user they are in sync while their next
+    // save is parked behind a question they have not answered.
+    if hasConflict {
+        return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false)
+    }
     if hasUnsavedLocalContent {
         if case .failed = saveState {
             return SyncCaption(text: .key(.editor_sync_save_failed), offersRetry: true)
@@ -118,6 +128,7 @@ struct EditorView: View {
     @Environment(LocalizationStore.self) private var loc
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
+    @State private var conflictToResolve: IdentifiedSyncConflict?
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
@@ -176,6 +187,31 @@ struct EditorView: View {
 
             if isOffline, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
+            }
+
+            // Shown while EDITING too, unlike the "Updated" banner. The enqueue-hold parks
+            // an editing session's autosave, so without the pill the user has no affordance
+            // and no signal at all — they would keep typing into content that is silently
+            // not being pushed.
+            if viewModel.syncConflict != nil {
+                Button {
+                    conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
+                } label: {
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        MaterialSymbol(.warning, size: 13)
+                        Text(loc[.editor_conflict_pill])
+                            .font(DocsFont.footnote)
+                    }
+                    .foregroundStyle(DocsColor.danger)
+                    .padding(.horizontal, DocsSpacing.spaceSM)
+                    .padding(.vertical, DocsSpacing.space2xs)
+                    .background(Capsule().fill(DocsColor.gray050))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(loc[.editor_conflict_pill_a11y])
             }
 
             if viewModel.updateAvailable, !viewModel.isEditing {
@@ -267,6 +303,18 @@ struct EditorView: View {
                 }
             )
             .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        // `.sheet(item:)`, not `isPresented`: the sheet renders the conflict's server
+        // timestamp, so it must never be presented without one. Both choices dismiss
+        // the sheet themselves before handing off to the view model.
+        .sheet(item: $conflictToResolve) { conflict in
+            ConflictSheetView(
+                conflict: conflict.value,
+                onKeepMine: { viewModel.resolveConflictKeepingMine() },
+                onKeepServer: { Task { await viewModel.resolveConflictKeepingServer() } }
+            )
+            .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
     }
@@ -541,6 +589,7 @@ struct EditorView: View {
     private func currentSyncCaption(now: Date) -> SyncCaption {
         syncCaption(
             hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+            hasConflict: viewModel.syncConflict != nil,
             isOffline: isOffline,
             saveState: viewModel.saveState,
             lastSyncedAt: viewModel.lastSyncedAt,

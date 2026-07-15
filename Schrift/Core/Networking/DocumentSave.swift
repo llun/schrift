@@ -32,9 +32,45 @@ extension DocsAPIClient {
     /// markdown is converted to a Yjs update on-device (`MarkdownYjs`) and PATCHed
     /// to the content endpoint — the docs backend only accepts base64 Yjs there
     /// and offers no markdown-to-Yjs conversion a client session can call.
-    func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws {
+    ///
+    /// **A save is two requests, so it can half-land**, and the caller must be able to tell
+    /// which. If the connection drops between them — precisely the flaky-network case the
+    /// offline stack exists for — the server already holds the new body (with a bumped
+    /// `updated_at`) even though the save failed. A caller that only learns "it failed" does
+    /// not know it authored the server's current content, so its next replay compares its own
+    /// write against a stale baseline and raises a **sync conflict against the user's own
+    /// text**. Hence the split return:
+    ///
+    /// - **throws** ⇒ the *content* PATCH was not **confirmed**;
+    /// - **returns non-nil** ⇒ the content landed and only the *title* PATCH failed;
+    /// - **returns nil** ⇒ both landed.
+    ///
+    /// Note the throw case says *unconfirmed*, not "nothing reached the server": a dropped or
+    /// timed-out response can hide a content PATCH the server actually applied, and that is
+    /// precisely the flaky case this exists for. So the throw cannot be trusted to mean the
+    /// server is unchanged — which is why `draftSyncDecision`'s **rule 0** ("the server body
+    /// already equals our local body ⇒ `.push`") is the backstop: it catches exactly the state
+    /// an unconfirmed-but-applied PATCH leaves behind, and stops the app raising a sync
+    /// conflict against the user's own writing.
+    ///
+    /// Reporting the half-land as a return value rather than a second thrown type keeps
+    /// `DocsAPIError` the one error type crossing this layer (see CLAUDE.md, Networking). The
+    /// result is **not** discardable: a caller that ignores it silently loses the fact that
+    /// the server holds its content, which is the whole point.
+    func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> DocsAPIError? {
         let update = MarkdownYjs.encode(markdown: markdown)
         try await setContent(documentID: documentID, yjsUpdate: update)
-        try await updateTitle(documentID: documentID, title: title)
+        do {
+            try await updateTitle(documentID: documentID, title: title)
+            return nil
+        } catch let error as DocsAPIError {
+            return error
+        } catch {
+            // `performRequest` maps everything into `DocsAPIError`, so this is unreachable —
+            // but it must never *rethrow*: the content PATCH has landed, and a throw would tell
+            // the caller nothing reached the server, re-opening the conflict-against-your-own-
+            // writing bug this signal exists to prevent.
+            return .network(String(describing: error))
+        }
     }
 }
