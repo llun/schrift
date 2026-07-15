@@ -109,12 +109,20 @@ struct Lib0Decoder {
 
     /// `varUInt(utf8 byte length)` followed by that many UTF-8 bytes. Reuses
     /// `readUint8Array` so the length + clamped-read logic lives in one place.
+    ///
+    /// lib0 decodes with `ignoreBOM: true`, so a leading U+FEFF is a real scalar,
+    /// not a byte-order mark to swallow — a `writeVarString`/`readVarString` pair
+    /// must therefore round-trip it. `String(data:encoding:.utf8)` rejects
+    /// ill-formed UTF-8 (nil) but *strips* a leading BOM, while
+    /// `String(decoding:as:)` keeps the BOM but silently substitutes U+FFFD for
+    /// bad bytes. So validate with the former and decode with the latter: invalid
+    /// UTF-8 still throws, and the BOM survives.
     mutating func readVarString() throws -> String {
         let data = try readUint8Array()
-        guard let string = String(data: data, encoding: .utf8) else {
+        guard String(data: data, encoding: .utf8) != nil else {
             throw Lib0DecodingError.invalidUTF8
         }
-        return string
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// `varUInt(length)` followed by that many raw bytes — the inverse of

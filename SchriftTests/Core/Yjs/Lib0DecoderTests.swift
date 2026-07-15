@@ -63,14 +63,14 @@ final class Lib0DecoderTests: XCTestCase {
     func testReadVarStringRejectsInvalidUTF8() {
         // varUint length 1, then 0xFF — never a valid single UTF-8 byte.
         var decoder = Lib0Decoder(Data(hex: "01ff"))
-        do {
-            _ = try decoder.readVarString()
-            XCTFail("expected invalidUTF8")
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, .invalidUTF8)
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        assertThrows(Lib0DecodingError.invalidUTF8) { _ = try decoder.readVarString() }
+    }
+
+    func testReadVarStringPreservesLeadingBOM() throws {
+        // lib0 decodes with ignoreBOM: true, so a leading U+FEFF is a real scalar
+        // that must survive: `05 ef bb bf 68 69` is a varString of "\u{FEFF}hi".
+        var decoder = Lib0Decoder(Data(hex: "05efbbbf6869"))
+        XCTAssertEqual(try decoder.readVarString(), "\u{FEFF}hi")
     }
 
     // MARK: readUint8Array
@@ -99,14 +99,7 @@ final class Lib0DecoderTests: XCTestCase {
     func testReadAnyRejectsUnmodeledTag() {
         // 124 is lib0's float32 tag — not modeled until the CRDT core (PR B1).
         var decoder = Lib0Decoder(Data(hex: "7c00000000"))
-        do {
-            _ = try decoder.readAny()
-            XCTFail("expected unsupportedAnyTag")
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, .unsupportedAnyTag(124))
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        assertThrows(Lib0DecodingError.unsupportedAnyTag(124)) { _ = try decoder.readAny() }
     }
 
     // MARK: round-trips against Lib0Encoder
@@ -136,7 +129,11 @@ final class Lib0DecoderTests: XCTestCase {
     }
 
     func testVarStringRoundTrips() throws {
-        for value in ["", "hi", "café 😀", "document-store", "line\nbreak\ttab", "{\"href\":\"https://x/y\"}"] {
+        let values = [
+            "", "hi", "café 😀", "document-store", "line\nbreak\ttab", "{\"href\":\"https://x/y\"}",
+            "\u{FEFF}hi",  // a leading BOM must round-trip (lib0 ignoreBOM: true)
+        ]
+        for value in values {
             var encoder = Lib0Encoder()
             encoder.writeVarString(value)
             var decoder = Lib0Decoder(encoder.data)
@@ -185,19 +182,19 @@ final class Lib0DecoderTests: XCTestCase {
 
     func testReadUInt8OnEmptyThrowsTruncated() {
         var decoder = Lib0Decoder(Data())
-        assertTruncated { _ = try decoder.readUInt8() }
+        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readUInt8() }
     }
 
     func testUnterminatedVarUIntThrowsTruncated() {
         // 0x80 sets the continuation bit but no further byte follows.
         var decoder = Lib0Decoder(Data([0x80]))
-        assertTruncated { _ = try decoder.readVarUInt() }
+        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readVarUInt() }
     }
 
     func testVarStringLengthBeyondBufferThrowsTruncated() {
         // Claims 5 bytes, supplies 2.
         var decoder = Lib0Decoder(Data(hex: "056869"))
-        assertTruncated { _ = try decoder.readVarString() }
+        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readVarString() }
     }
 
     func testOverlongVarUIntThrowsMalformed() {
@@ -205,22 +202,22 @@ final class Lib0DecoderTests: XCTestCase {
         // shift > 63 guard. (10 continuation bytes throw `.truncated` instead,
         // because the 11th read finds no byte — asserted below.)
         var overlong = Lib0Decoder(Data(repeating: 0x80, count: 11))
-        assertMalformed { _ = try overlong.readVarUInt() }
+        assertThrows(Lib0DecodingError.malformedVarInt) { _ = try overlong.readVarUInt() }
         var justTruncated = Lib0Decoder(Data(repeating: 0x80, count: 10))
-        assertTruncated { _ = try justTruncated.readVarUInt() }
+        assertThrows(Lib0DecodingError.truncated) { _ = try justTruncated.readVarUInt() }
     }
 
     func testOutOfRangeVarIntThrowsMalformed() {
         // A negative varInt whose accumulated magnitude is 2^63 + 1 — larger than
         // any valid Int — must throw rather than trap on the signed reconstruction.
         var negative = Lib0Decoder(Data([0xC1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02]))
-        assertMalformed { _ = try negative.readVarInt() }
+        assertThrows(Lib0DecodingError.malformedVarInt) { _ = try negative.readVarInt() }
 
         // The positive mirror: magnitude 2^63 with the sign bit clear. Without the
         // positive guard this would decode via Int(bitPattern:) to Int.min — a
         // positive wire value silently returned as a large negative Int.
         var positive = Lib0Decoder(Data([0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02]))
-        assertMalformed { _ = try positive.readVarInt() }
+        assertThrows(Lib0DecodingError.malformedVarInt) { _ = try positive.readVarInt() }
     }
 
     func testOverlongVarIntTripsShiftGuard() {
@@ -229,13 +226,13 @@ final class Lib0DecoderTests: XCTestCase {
         // trips the shift guard (distinct from the magnitude guard above — every
         // group carries value 0, so without the shift guard this would decode to -1).
         var decoder = Lib0Decoder(Data([0xC1] + Array(repeating: 0x80, count: 9) + [0x00]))
-        assertMalformed { _ = try decoder.readVarInt() }
+        assertThrows(Lib0DecodingError.malformedVarInt) { _ = try decoder.readVarInt() }
     }
 
     func testUnterminatedVarIntThrowsTruncated() {
         // First byte sets the continuation bit but no further byte follows.
         var decoder = Lib0Decoder(Data([0xC1]))
-        assertTruncated { _ = try decoder.readVarInt() }
+        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readVarInt() }
     }
 
     func testUint8ArrayLengthBeyondIntMaxThrowsTruncated() {
@@ -243,28 +240,6 @@ final class Lib0DecoderTests: XCTestCase {
         // clamps it to Int.max and readBytes reports truncation instead of trapping
         // on the narrowing conversion. (Mutating the guard to `Int(length)` traps.)
         var decoder = Lib0Decoder(Data(hex: "80808080808080808001"))
-        assertTruncated { _ = try decoder.readUint8Array() }
-    }
-
-    private func assertTruncated(_ body: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {
-        do {
-            try body()
-            XCTFail("expected truncated", file: file, line: line)
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, .truncated, file: file, line: line)
-        } catch {
-            XCTFail("unexpected error \(error)", file: file, line: line)
-        }
-    }
-
-    private func assertMalformed(_ body: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {
-        do {
-            try body()
-            XCTFail("expected malformedVarInt", file: file, line: line)
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, .malformedVarInt, file: file, line: line)
-        } catch {
-            XCTFail("unexpected error \(error)", file: file, line: line)
-        }
+        assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readUint8Array() }
     }
 }
