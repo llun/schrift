@@ -117,6 +117,12 @@ final class EditorViewModel {
     private var savedMarkdown = ""
     private var savedTitle = ""
     private var autosaveTask: Task<Void, Never>?
+    /// Debounces revalidation triggered by a live-collaboration change signal, so
+    /// a burst of peer edits coalesces into one re-fetch.
+    private var remoteChangeTask: Task<Void, Never>?
+    /// The debounce window for a remote change signal — injectable so tests need
+    /// not wait the full production interval.
+    private let remoteChangeDebounce: Duration
     private var dirtySince: Date?
     /// `title` is the server's title as of the fetch that stashed this body — the same fetch
     /// `reconcileClean` already applied it from (titles are never stashed, only bodies) — so
@@ -168,6 +174,7 @@ final class EditorViewModel {
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         autosaveInterval: Duration = .seconds(10),
         mediaCheckRetryInterval: Duration = .seconds(1),
+        remoteChangeDebounce: Duration = .milliseconds(600),
         diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
@@ -178,6 +185,7 @@ final class EditorViewModel {
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
+        self.remoteChangeDebounce = remoteChangeDebounce
         self.diagnostics = diagnostics
         self.savedTitle = title
     }
@@ -324,7 +332,13 @@ final class EditorViewModel {
     /// Task. Classification of the outcome happens when the fetch completes.
     /// `generation` guards against a superseded fetch (an earlier load() or
     /// refresh()) applying its outcome after a newer one has already run.
-    private func revalidate(generation: Int) async {
+    ///
+    /// `terminalOnUnavailable` — whether a 404/403 tears the screen down. True for
+    /// the user-facing paths (open, pull-to-refresh); **false** for a background
+    /// remote-change prompt, which is no evidence the document is gone (a transient
+    /// 404/proxy hiccup, or a co-author's own permission flap) and must never eject
+    /// an active editing session over another user's activity.
+    private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -340,6 +354,11 @@ final class EditorViewModel {
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
+            // A background remote-change prompt never tears the screen down: a
+            // transient 404/403 here would eject an editing session over a peer's
+            // activity. A genuine deletion still surfaces on the next open, pull-to
+            // -refresh, or save.
+            guard terminalOnUnavailable else { return }
             becomeUnavailable()
             // "No longer available" is a guess: a 404 also means a route this server does
             // not have, or a proxy hiccup. Say what the server actually answered.
@@ -364,6 +383,35 @@ final class EditorViewModel {
                 showError(.editor_error_load, detail: detail)
             }
         }
+    }
+
+    /// A live-collaboration change signal: a peer touched the document, so
+    /// debounce a **silent** revalidation (no error surfaced — the user did not
+    /// ask). It applies the same content rules as the on-open revalidation: a
+    /// clean document adopts the new body; an editing session gets the "Updated"
+    /// banner rather than a clobber; and our own in-flight saves are protected by
+    /// `mayPredateSave`. A live signal is only a *prompt* to re-fetch — nothing is
+    /// applied from the socket (there is no CRDT yet). A no-op until the initial
+    /// load has content, since `load()` will fetch anyway.
+    func noteRemoteChange() {
+        guard hasLoadedContent else { return }
+        remoteChangeTask?.cancel()
+        remoteChangeTask = Task { [weak self] in
+            guard let debounce = self?.remoteChangeDebounce else { return }
+            try? await Task.sleep(for: debounce)
+            guard !Task.isCancelled else { return }
+            await self?.revalidateFromRemoteChange()
+        }
+    }
+
+    private func revalidateFromRemoteChange() async {
+        // Re-check under the current state: the debounce may have outlived the
+        // content (teardown, discard), and a fresh save/refresh may be in flight.
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        revalidationGeneration += 1
+        // Non-terminal: a peer's edit is only a prompt to re-fetch, so a transient
+        // 404/403 must not tear down the (possibly editing) screen.
+        await revalidate(generation: revalidationGeneration, terminalOnUnavailable: false)
     }
 
     /// Explicit pull-to-refresh. It applies the same content rules as the
@@ -956,6 +1004,8 @@ final class EditorViewModel {
         // (and PATCH) for a document that no longer exists.
         autosaveTask?.cancel()
         autosaveTask = nil
+        remoteChangeTask?.cancel()
+        remoteChangeTask = nil
         dirtySince = nil
         isDirty = false
         saveCoordinator.discardPendingWork(documentID: documentID)

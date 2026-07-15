@@ -189,6 +189,40 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertTrue(manager.peers(for: docID).isEmpty)
     }
 
+    // MARK: - remote change token (live refresh)
+
+    private func syncFrame() -> Data {
+        let payload = SyncMessage(step: .update, data: Data([0x00])).encodedPayload()
+        return HocuspocusMessage(documentName: docID.uuidString.lowercased(), type: .sync, payload: payload).encoded()
+    }
+
+    func testRemoteChangeTokenIncrementsOnEachSyncSignal() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        XCTAssertEqual(manager.remoteChangeToken(for: docID), 0)
+
+        spy.sockets[0].deliver(message: syncFrame())
+        await waitUntil { manager.remoteChangeToken(for: docID) == 1 }
+        spy.sockets[0].deliver(message: syncFrame())
+        await waitUntil { manager.remoteChangeToken(for: docID) == 2 }
+        session?.stop()
+    }
+
+    func testRemoteChangeTokenResetsWhenTheDocumentIsTornDown() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        spy.sockets[0].deliver(message: syncFrame())
+        await waitUntil { manager.remoteChangeToken(for: docID) == 1 }
+
+        manager.release(docID)
+        await waitUntil { manager.activeDocumentCount == 0 }
+        XCTAssertEqual(manager.remoteChangeToken(for: docID), 0)
+    }
+
     // MARK: - server-support learning
 
     func testRefreshServerSupportReadsCollaborationWsUrl() async {
