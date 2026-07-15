@@ -9,7 +9,7 @@ import Foundation
 /// `broadcastStateless` (6) are server-originated and appear here so an inbound
 /// frame can be recognised. Anything outside this set (e.g. an unconfirmed
 /// Ping/Pong 9/10) is tolerated as an unknown type — see `HocuspocusMessage.type`.
-enum HocuspocusMessageType: UInt, Equatable, CaseIterable {
+enum HocuspocusMessageType: UInt, Equatable {
     case sync = 0
     case awareness = 1
     case auth = 2
@@ -30,7 +30,7 @@ enum HocuspocusMessageType: UInt, Equatable, CaseIterable {
 /// unknown inbound type survives decoding intact (the protocol rule is to
 /// ignore unknown inbound types, never to fail on them, and never to send one).
 /// Interpret a known type through `knownType`.
-struct HocuspocusMessage: Equatable {
+struct HocuspocusMessage: Equatable, Sendable {
     var documentName: String
     var type: UInt
     var payload: Data
