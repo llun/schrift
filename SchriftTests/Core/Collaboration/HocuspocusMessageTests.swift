@@ -67,11 +67,19 @@ final class HocuspocusMessageTests: XCTestCase {
         XCTAssertEqual(decoded.payload, Data([0xAB]))
     }
 
-    func testServerOriginatedTypesAreRecognised() {
-        // The provider does not *send* 4/6, but the server can, so we recognise them.
-        XCTAssertEqual(HocuspocusMessageType(rawValue: 4), .syncReply)
-        XCTAssertEqual(HocuspocusMessageType(rawValue: 6), .broadcastStateless)
-        XCTAssertEqual(HocuspocusMessageType(rawValue: 8), .syncStatus)
+    func testKnownTypeRawValuesMatchTheWireContract() {
+        // The raw values ARE the wire contract, so pin every one — a transposition
+        // (e.g. auth⇄stateless) would otherwise pass the suite. 4/6 are
+        // server-originated (the provider never sends them); the rest we may send.
+        let expected: [UInt: HocuspocusMessageType] = [
+            0: .sync, 1: .awareness, 2: .auth, 3: .queryAwareness, 4: .syncReply,
+            5: .stateless, 6: .broadcastStateless, 7: .close, 8: .syncStatus,
+        ]
+        for (raw, type) in expected {
+            XCTAssertEqual(HocuspocusMessageType(rawValue: raw), type, "rawValue \(raw)")
+        }
+        // And nothing outside the modeled set decodes to a case (tolerated as unknown).
+        XCTAssertNil(HocuspocusMessageType(rawValue: 9))
     }
 
     func testTruncatedFrameThrows() {

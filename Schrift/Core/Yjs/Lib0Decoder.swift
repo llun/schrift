@@ -72,6 +72,10 @@ struct Lib0Decoder {
             // A well-formed varUInt for any 64-bit value is at most 10 bytes;
             // beyond that the shift would drop bits, so reject it.
             guard shift <= 63 else { throw Lib0DecodingError.malformedVarInt }
+            // The 10th group sits at shift 63, where only bit 0 fits in a UInt; a
+            // larger group would silently drop its high bits. lib0 rejects the
+            // same over-range value, so throw rather than return a wrong number.
+            guard shift < 63 || byte & 0x7F <= 1 else { throw Lib0DecodingError.malformedVarInt }
             result |= UInt(byte & 0x7F) << shift
             if byte & 0x80 == 0 { return result }
             shift += 7
