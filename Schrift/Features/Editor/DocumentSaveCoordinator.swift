@@ -113,6 +113,13 @@ final class DocumentSaveCoordinator {
     /// fire — including across a relaunch, via the persisted `lastPushedMarkdown`
     /// that `enqueue`/`finish` copy from and to this map.
     private var lastConfirmedPushMarkdown: [UUID: String] = [:]
+    /// The newest title anything in the app knows the server holds: written by a save that
+    /// landed (the server now holds *our* title) and by every editor fetch that postdates our
+    /// saves (`noteServerTitle`). Not persisted — it is a this-session-only backstop for one
+    /// thing: an **open editor that never refetches on foreground** (it only flushes) while a
+    /// background replay adopts a co-author's rename behind it. Its next flush would otherwise
+    /// PATCH the pre-rename title back. See `EditorViewModel.adoptQueuedTitleIfUnseen`.
+    private var knownServerTitles: [UUID: String] = [:]
 
     init(
         client: DocsAPIClient,
@@ -362,14 +369,22 @@ final class DocumentSaveCoordinator {
                     baseline: draft.baseline,
                     lastPushedMarkdown: draft.lastPushedMarkdown,
                     localMarkdown: draft.markdown,
+                    draftTitle: draft.title,
                     draftUpdatedAt: draft.updatedAt,
+                    serverTitle: formatted.title,
                     serverUpdatedAt: formatted.updatedAt,
                     serverMarkdown: formatted.content ?? "")
                 switch decision {
-                case .push:
+                case .push(let title, _):
+                    // `title` — never `draft.title`. A save PATCHes the title too, so a replay
+                    // that pushed the draft's own would silently revert a rename made on the web
+                    // while this draft was queued. The decision resolves which title wins
+                    // (adopting the server's when the user never renamed); the baseline advances
+                    // with it, or a *second* remote rename would read as "both renamed" (see
+                    // `adoptedBaseline`).
                     enqueue(
-                        documentID: draft.documentID, title: draft.title, markdown: draft.markdown,
-                        baseline: draft.baseline)
+                        documentID: draft.documentID, title: title, markdown: draft.markdown,
+                        baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title))
                 case .conflict:
                     // Record it and keep the draft: the pill/sheet asks the user. Through
                     // `recordConflict`, NOT a direct map write — this is the primary detection
@@ -419,6 +434,47 @@ final class DocumentSaveCoordinator {
     func recordConflict(documentID: UUID, serverUpdatedAt: Date) {
         conflicts[documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
         persistConflictOnDraft(documentID: documentID)
+    }
+
+    /// A reconcile resolved that this document's queued work must carry the **server's**
+    /// title — a co-author renamed it and the user didn't (`draftTitleOutcome`). Rewrite the
+    /// stored draft so whichever funnel later replays it PATCHes the adopted title instead of
+    /// reverting the rename. The **baseline's** title advances with it (`adoptedBaseline`), or
+    /// a second remote rename would read as "both renamed".
+    ///
+    /// Deliberately does **not** start a save. Callers reach it in two states: holding a draft
+    /// whose save failed or is queued for sync (pushing that is the user's decision, via the
+    /// retry affordance, or a later sync trigger's), and about to `enqueue` the replay
+    /// themselves. A title is not content, so this can never resurrect a body — `markdown` is
+    /// untouched, as is the persisted conflict hold. Guarded on no save being in flight or held,
+    /// because those carry their own title and nothing here has reconciled *them* against the
+    /// server.
+    func adoptServerTitle(documentID: UUID, title: String) {
+        guard inFlight[documentID] == nil, queued[documentID] == nil,
+            let draft = draftStore.draft(for: documentID), draft.title != title
+        else { return }
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: title, markdown: draft.markdown, updatedAt: draft.updatedAt,
+                baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title),
+                lastPushedMarkdown: draft.lastPushedMarkdown,
+                conflictServerUpdatedAt: draft.conflictServerUpdatedAt))
+    }
+
+    /// The editor observed the server's title on a response that `mayPredateSave` has cleared
+    /// — i.e. one that postdates our own saves, so it cannot regress below a title we pushed.
+    /// Recording it keeps `knownServerTitles` the newest of "what we last pushed" and "what we
+    /// last fetched", in real time on the MainActor.
+    func noteServerTitle(documentID: UUID, title: String) {
+        knownServerTitles[documentID] = title
+    }
+
+    /// The newest title known to be on the server, if any. Unsaved local work is *not*
+    /// consulted here — a caller weighing this against a draft must prefer the draft (see
+    /// `EditorViewModel.adoptQueuedTitleIfUnseen`), which holds a title the server does not
+    /// have yet.
+    func knownServerTitle(documentID: UUID) -> String? {
+        knownServerTitles[documentID]
     }
 
     /// A later decision proved the conflict is **gone** (the server came back to the
@@ -500,7 +556,14 @@ final class DocumentSaveCoordinator {
                     // genuinely new conflict, which is exactly the discrimination we want.
                     baseline: DraftBaseline(
                         serverUpdatedAt: resolved.serverUpdatedAt,
-                        markdown: draft.baseline?.markdown ?? draft.markdown),
+                        markdown: draft.baseline?.markdown ?? draft.markdown,
+                        // The title rides along unchanged, and the advanced timestamp is what
+                        // makes this answer stick for the title too: `draftTitleOutcome` keeps
+                        // the draft's title whenever the server is no newer than the baseline,
+                        // so a retry after a failed push cannot re-raise the same *title*
+                        // conflict the user just answered. (Only the timestamp is knowable —
+                        // `SyncConflict` carries no server content, titles included.)
+                        title: draft.baseline?.title),
                     lastPushedMarkdown: draft.lastPushedMarkdown,
                     // The user answered: the hold is released, on disk as well as in memory
                     // (`clearResolvedConflict` below rewrites this to nil).
@@ -557,6 +620,7 @@ final class DocumentSaveCoordinator {
         queued[documentID] = nil
         clearResolvedConflict(documentID: documentID)  // the document is gone — the conflict is moot
         lastConfirmedPushMarkdown[documentID] = nil
+        knownServerTitles[documentID] = nil
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {
             discardedDuringSave.insert(documentID)
@@ -669,6 +733,14 @@ final class DocumentSaveCoordinator {
         }
         if error == nil {
             states[documentID] = .saved(Date())
+            // **Both** PATCHes landed, so the server now holds this title. An editor still on
+            // screen may never have seen it (a background replay can adopt a co-author's rename
+            // into this save without the editor refetching), and recording it is what stops that
+            // editor's next flush pushing the pre-rename title back. A save that landed *after its
+            // document was discarded mid-flight* takes the `discardedDuringSave` early return
+            // above and never reaches here — deliberately: for a delete, the entry was cleared and
+            // a landed PATCH must not resurrect it.
+            knownServerTitles[documentID] = save.title
             if let draft = draftStore.draft(for: documentID), draft.title == save.title,
                 draft.markdown == save.markdown
             {
@@ -701,11 +773,18 @@ final class DocumentSaveCoordinator {
         // observation is superseded (comparing against it would manufacture a false conflict
         // against the user's own writing).
         if let observed, !contentLanded, let draft = draftStore.draft(for: documentID) {
+            // A **body-only** conflict check — it acts on `.conflict`/`.discardServerWins` and
+            // does nothing on `.push`. The observed copy carries no title, so `serverTitle` is
+            // nil (unknown): the title rule stays inert and cannot turn a body `.push` into a
+            // title `.conflict` here. Detection of a *title* divergence is the editor's job, on
+            // a fetch that actually carries the server's title.
             switch draftSyncDecision(
                 baseline: draft.baseline,
                 lastPushedMarkdown: draft.lastPushedMarkdown ?? lastConfirmedPushMarkdown[documentID],
                 localMarkdown: draft.markdown,
+                draftTitle: draft.title,
                 draftUpdatedAt: draft.updatedAt,
+                serverTitle: nil,
                 serverUpdatedAt: observed.serverUpdatedAt,
                 serverMarkdown: observed.markdown)
             {

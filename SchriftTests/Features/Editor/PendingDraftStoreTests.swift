@@ -82,7 +82,8 @@ final class PendingDraftStoreTests: XCTestCase {
             title: "Doc",
             markdown: "# Draft",
             updatedAt: Date(timeIntervalSince1970: 1_000),
-            baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 900), markdown: "# Server"),
+            baseline: DraftBaseline(
+                serverUpdatedAt: Date(timeIntervalSince1970: 900), markdown: "# Server", title: "Server Doc"),
             lastPushedMarkdown: "# Pushed",
             // Safety-critical: this is what makes an unanswered conflict hold survive a relaunch.
             conflictServerUpdatedAt: Date(timeIntervalSince1970: 1_500))
@@ -93,8 +94,34 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertEqual(loaded, draft)
         XCTAssertEqual(loaded?.baseline?.serverUpdatedAt, Date(timeIntervalSince1970: 900))
         XCTAssertEqual(loaded?.baseline?.markdown, "# Server")
+        XCTAssertEqual(loaded?.baseline?.title, "Server Doc")
         XCTAssertEqual(loaded?.lastPushedMarkdown, "# Pushed")
         XCTAssertEqual(loaded?.conflictServerUpdatedAt, Date(timeIntervalSince1970: 1_500))
+    }
+
+    /// A draft written before `DraftBaseline` carried a **title** must still load through the
+    /// real store — a baseline that failed to decode would take the whole draft with it, and a
+    /// draft is unsaved work. The title decodes as nil, which keeps the title rule inert and the
+    /// draft's behavior exactly as it was.
+    func testLegacyBaselineWithoutATitleDecodesWithTheDraftIntact() {
+        let (store, userDefaults) = makeStore()
+        let documentID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        // Verbatim shape of a draft persisted by a build with baseline but no title (dates are
+        // millisecondsSince1970, per the store).
+        let legacy = """
+            {"\(documentID.uuidString)":{"documentID":"\(documentID.uuidString)","title":"Doc",\
+            "markdown":"# Offline edit","updatedAt":1000000,\
+            "baseline":{"serverUpdatedAt":900000,"markdown":"# Server"}}}
+            """
+        userDefaults.set(Data(legacy.utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+
+        let loaded = store.draft(for: documentID)
+
+        XCTAssertEqual(loaded?.markdown, "# Offline edit", "the unsaved work still loads")
+        XCTAssertEqual(loaded?.title, "Doc")
+        XCTAssertEqual(loaded?.baseline?.markdown, "# Server")
+        XCTAssertEqual(loaded?.baseline?.serverUpdatedAt, Date(timeIntervalSince1970: 900))
+        XCTAssertNil(loaded?.baseline?.title, "unknown — never a rename to adopt or conflict over")
     }
 
     /// A draft persisted by a build predating the baseline fields must still decode
