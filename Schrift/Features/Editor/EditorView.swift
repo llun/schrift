@@ -134,6 +134,10 @@ struct EditorView: View {
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
     @State private var selectedPhotoItem: PhotosPickerItem?
+    /// Whether we currently hold a live-collaboration reference for this document,
+    /// so the request/release stays one-shot and balanced even as availability
+    /// flips (a session opened only once, released exactly once).
+    @State private var holdsCollaborationSession = false
 
     init(
         viewModel: EditorViewModel,
@@ -269,17 +273,25 @@ struct EditorView: View {
         .task {
             await viewModel.load()
         }
-        // Presence: request a live session while this document is on screen (a
-        // no-op unless live collaboration is available), so our avatar shows to
-        // peers and theirs to us. Reference-counted + balanced with `release` on
-        // disappear; the manager owns the socket lifecycle (linger, suspend,
-        // reconnect), so a background/foreground cycle is handled there.
-        .onAppear {
-            _ = collaboration.session(for: viewModel.documentID)
+        // Presence: request a live session while this document is on screen, so
+        // our avatar shows to peers and theirs to us. Reference-counted + balanced
+        // with `release` on disappear; the manager owns the socket lifecycle
+        // (linger, suspend, reconnect), so a background/foreground cycle is handled
+        // there.
+        .onAppear { requestCollaborationSessionIfNeeded() }
+        // Availability can resolve *after* the editor is already on screen — the
+        // `/config/` fetch that decides server support runs concurrently with
+        // navigation — so re-request when it flips to available; the one-shot hold
+        // keeps this from double-counting.
+        .onChange(of: collaboration.availability) { _, _ in
+            requestCollaborationSessionIfNeeded()
         }
         .onDisappear {
             viewModel.flushPendingChanges()
-            collaboration.release(viewModel.documentID)
+            if holdsCollaborationSession {
+                collaboration.release(viewModel.documentID)
+                holdsCollaborationSession = false
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background || phase == .inactive {
@@ -484,10 +496,6 @@ struct EditorView: View {
         .padding(.top, DocsSpacing.spaceLG)
     }
 
-    /// The reading canvas's document header: the title as a large content
-    /// header (moved out of the nav bar to match the handoff — the bar keeps
-    /// only the back button and trailing actions), then the reach pill and the
-    /// sync caption on the row beneath it.
     /// Peers present in this document, read through the manager so the value
     /// tracks both a peer joining/leaving and the manager swapping in a fresh
     /// session — the view never caches a stale session reference. `[]` (bar
@@ -496,6 +504,20 @@ struct EditorView: View {
         collaboration.peers(for: viewModel.documentID)
     }
 
+    /// Opens a live-collaboration session once, if we don't already hold one and
+    /// live editing is available. A no-op when unavailable (`session(for:)`
+    /// returns nil), so it can be retried when availability later flips.
+    private func requestCollaborationSessionIfNeeded() {
+        guard !holdsCollaborationSession else { return }
+        if collaboration.session(for: viewModel.documentID) != nil {
+            holdsCollaborationSession = true
+        }
+    }
+
+    /// The reading canvas's document header: the title as a large content
+    /// header (moved out of the nav bar to match the handoff — the bar keeps
+    /// only the back button and trailing actions), then the reach pill and the
+    /// sync caption on the row beneath it.
     private var headerBlock: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
             Text(viewModel.title)

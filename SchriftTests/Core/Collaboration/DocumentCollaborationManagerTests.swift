@@ -94,6 +94,52 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    func testRefreshWithNilProviderLeavesSessionsSilent() async {
+        let spy = SocketFactorySpy()
+        // refreshLocalAwareness() runs but the current-user fetch fails (nil).
+        let manager = makeAwarenessManager(provider: { nil }, spy: spy)
+        await manager.refreshLocalAwareness()
+
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        await waitAndConfirmNever { spy.sockets[0].sentFrames.count > 1 }
+        session?.stop()
+    }
+
+    func testResolvingAwarenessLateRebuildsSilentSessionsToBroadcast() async throws {
+        let spy = SocketFactorySpy()
+        // The provider can produce awareness, but a document opens *before* the
+        // launch refresh runs, so the first session is a silent observer.
+        let manager = makeAwarenessManager(
+            provider: { LocalAwarenessState(name: "Ada", color: "#30bced") }, spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        await waitAndConfirmNever { spy.sockets[0].sentFrames.count > 1 }  // silent
+
+        // Awareness resolving rebuilds the live session so it announces us.
+        await manager.refreshLocalAwareness()
+        await waitUntil { spy.sockets.count == 2 && spy.sockets[1].sentFrames.count == 2 }
+        let awareness = try HocuspocusMessage(decoding: spy.sockets[1].sentFrames[1])
+        XCTAssertEqual(awareness.knownType, .awareness)
+        let entries = try AwarenessCodec.decodePayload(awareness.payload)
+        XCTAssertEqual(CollaborationPeer(clientID: entries[0].clientID, stateJSON: entries[0].stateJSON)?.name, "Ada")
+        manager.release(docID)
+    }
+
+    func testRefreshWithUnchangedAwarenessDoesNotRebuild() async {
+        let spy = SocketFactorySpy()
+        let manager = makeAwarenessManager(
+            provider: { LocalAwarenessState(name: "Ada", color: "#30bced") }, spy: spy)
+        await manager.refreshLocalAwareness()  // localAwareness set
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        // A second identical refresh must not tear the session down and reopen it.
+        await manager.refreshLocalAwareness()
+        await waitAndConfirmNever { spy.sockets.count > 1 }
+        manager.release(docID)
+    }
+
     // MARK: - peers accessor
 
     func testPeersForReflectsTheSessionsPeers() async {

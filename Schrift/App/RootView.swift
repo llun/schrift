@@ -135,9 +135,10 @@ private struct AuthenticatedHomeContainer: View {
             // availability gate can open once the toggle is on, and our own
             // presence identity, so a session announces us. Both fetches live on
             // the manager (its injected providers), not here — the view never does
-            // networking directly.
-            await collaboration.refreshServerSupport()
-            await collaboration.refreshLocalAwareness()
+            // networking directly — and are independent, so run concurrently.
+            async let support: Void = collaboration.refreshServerSupport()
+            async let awareness: Void = collaboration.refreshLocalAwareness()
+            _ = await (support, awareness)
         }
     }
 }

@@ -83,11 +83,16 @@ final class DocumentCollaborationManager {
 
     /// Learns our own awareness (display name + colour) once, so new sessions
     /// announce our presence. Best-effort — a failed fetch leaves sessions as
-    /// silent observers (they still track peers). Does not disturb live sessions;
-    /// presence is broadcast when a session starts, which is early and cheap to
-    /// re-establish, so this is called at launch before any document opens.
+    /// silent observers (they still track peers). Runs at launch, but a document
+    /// can open *before* it resolves (the fetch races navigation), so a change
+    /// rebuilds any live session: one that joined as a silent observer then
+    /// re-announces us with the now-known awareness. Idempotent — no rebuild when
+    /// the value is unchanged.
     func refreshLocalAwareness() async {
-        localAwareness = await localStateProvider()
+        let resolved = await localStateProvider()
+        guard resolved != localAwareness else { return }
+        localAwareness = resolved
+        if !isSuspended { rebuildActiveSessions() }
     }
 
     /// The peers currently present in a document, or `[]` when no live session
