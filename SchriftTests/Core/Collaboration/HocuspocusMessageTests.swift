@@ -76,13 +76,6 @@ final class HocuspocusMessageTests: XCTestCase {
 
     func testTruncatedFrameThrows() {
         // A lone continuation byte where the documentName length varUint should be.
-        do {
-            _ = try HocuspocusMessage(decoding: Data([0x80]))
-            XCTFail("expected a decoding error")
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, .truncated)
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        assertThrows(Lib0DecodingError.truncated) { _ = try HocuspocusMessage(decoding: Data([0x80])) }
     }
 }

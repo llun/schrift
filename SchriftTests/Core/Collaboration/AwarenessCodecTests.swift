@@ -94,41 +94,30 @@ final class AwarenessCodecTests: XCTestCase {
 
     func testDecodeTruncatedInnerUpdateThrows() {
         // Claims 5 clients, supplies none.
-        assertLib0(.truncated) { _ = try AwarenessCodec.decode(Data([0x05])) }
+        assertThrows(Lib0DecodingError.truncated) { _ = try AwarenessCodec.decode(Data([0x05])) }
     }
 
     func testDecodeHugeCountDoesNotOverAllocateAndThrows() {
         // count = 4_294_967_295 with an empty body. The reserveCapacity clamp must
         // keep this from attempting a multi-GB allocation; the per-entry read then
         // throws .truncated. (Reverting the clamp would OOM/crash here instead.)
-        assertLib0(.truncated) { _ = try AwarenessCodec.decode(Data(hex: "ffffffff0f")) }
+        assertThrows(Lib0DecodingError.truncated) { _ = try AwarenessCodec.decode(Data(hex: "ffffffff0f")) }
     }
 
     func testDecodeMidEntryTruncationThrows() {
         // count 1, clientID 1, then the clock varUint is missing.
-        assertLib0(.truncated) { _ = try AwarenessCodec.decode(Data([0x01, 0x01])) }
+        assertThrows(Lib0DecodingError.truncated) { _ = try AwarenessCodec.decode(Data([0x01, 0x01])) }
     }
 
     func testDecodeInvalidUTF8StateThrows() {
         // count 1, clientID 1, clock 1, stateJSON length 1 + a lone 0xFF byte.
-        assertLib0(.invalidUTF8) { _ = try AwarenessCodec.decode(Data([0x01, 0x01, 0x01, 0x01, 0xFF])) }
+        assertThrows(Lib0DecodingError.invalidUTF8) {
+            _ = try AwarenessCodec.decode(Data([0x01, 0x01, 0x01, 0x01, 0xFF]))
+        }
     }
 
     func testDecodePayloadWrapperOverrunThrows() {
         // The outer varUint8Array claims 5 bytes but only 1 follows.
-        assertLib0(.truncated) { _ = try AwarenessCodec.decodePayload(Data([0x05, 0x00])) }
-    }
-
-    private func assertLib0(
-        _ expected: Lib0DecodingError, _ body: () throws -> Void, file: StaticString = #filePath, line: UInt = #line
-    ) {
-        do {
-            try body()
-            XCTFail("expected \(expected)", file: file, line: line)
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, expected, file: file, line: line)
-        } catch {
-            XCTFail("unexpected error \(error)", file: file, line: line)
-        }
+        assertThrows(Lib0DecodingError.truncated) { _ = try AwarenessCodec.decodePayload(Data([0x05, 0x00])) }
     }
 }

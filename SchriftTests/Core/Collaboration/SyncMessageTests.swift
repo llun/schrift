@@ -64,13 +64,6 @@ final class SyncMessageTests: XCTestCase {
 
     func testUnknownSyncStepThrows() {
         // subtype 3 + empty uint8Array — 3 is not a modeled sync sub-type.
-        do {
-            _ = try SyncMessage(decodingPayload: Data(hex: "0300"))
-            XCTFail("expected unknownStep")
-        } catch let error as SyncMessageError {
-            XCTAssertEqual(error, .unknownStep(3))
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        assertThrows(SyncMessageError.unknownStep(3)) { _ = try SyncMessage(decodingPayload: Data(hex: "0300")) }
     }
 }
