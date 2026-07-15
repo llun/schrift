@@ -241,6 +241,22 @@ final class Lib0DecoderTests: XCTestCase {
         assertThrows(Lib0DecodingError.malformedVarInt) { _ = try decoder.readVarUInt() }
     }
 
+    func testOverRangeVarIntWithDroppedHighBitsThrows() {
+        // The mirror of testOutOfRangeVarUIntThrowsMalformed: a top group (shift 62)
+        // carrying more than 2 bits would silently drop its high bits (mapping past
+        // bit 63) and decode to a bounded-but-wrong value. These must throw, not
+        // decode: [0x80]×9+[0x7D] would otherwise return 2^62, and the negative
+        // forms below would return Int.min / 0.
+        for bytes in [
+            Data([0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7D]),
+            Data([0xC0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x06]),
+            Data([0xC0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x04]),
+        ] {
+            var decoder = Lib0Decoder(bytes)
+            assertThrows(Lib0DecodingError.malformedVarInt) { _ = try decoder.readVarInt() }
+        }
+    }
+
     func testOverlongVarIntTripsShiftGuard() {
         // Mirrors testOverlongVarUIntThrowsMalformed for readVarInt: nine 0x80
         // continuation bytes push shift past 63, so the tenth continuation read

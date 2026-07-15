@@ -94,6 +94,11 @@ struct Lib0Decoder {
         while byte & 0x80 != 0 {
             byte = try readUInt8()
             guard shift <= 63 else { throw Lib0DecodingError.malformedVarInt }
+            // The top group lands at shift 62, where only its low 2 bits fit in a
+            // UInt (→ magnitude bits 62/63); a larger group would silently drop its
+            // high bits. Reject that, mirroring readVarUInt's shift-63 guard.
+            // (Values 2/3 keep bit 63 and are then caught by the magnitude guard.)
+            guard shift < 62 || byte & 0x7F <= 0x03 else { throw Lib0DecodingError.malformedVarInt }
             result |= UInt(byte & 0x7F) << shift
             shift += 7
         }
