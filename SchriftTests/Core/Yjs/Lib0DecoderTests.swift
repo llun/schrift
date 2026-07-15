@@ -38,6 +38,12 @@ final class Lib0DecoderTests: XCTestCase {
             (1_000_000, "80897a"), (2_147_483_647, "bfffffff0f"),
             (-1, "41"), (-64, "c001"), (-65, "c101"), (-127, "ff01"), (-8191, "ff7f"),
             (-1_000_000, "c0897a"), (-2_147_483_647, "ffffffff0f"),
+            // 5–8 byte encodings, both signs, exercise the high-shift accumulation
+            // against an independent oracle (round-trips alone are circular).
+            (2_147_483_648, "8080808010"), (-2_147_483_648, "c080808010"),  // ±2^31 (5 bytes)
+            (1_099_511_627_776, "808080808040"), (-1_099_511_627_776, "c08080808040"),  // ±2^40 (6 bytes)
+            (562_949_953_421_311, "bfffffffffffff01"),
+            (-562_949_953_421_311, "ffffffffffffff01"),  // ±(2^49-1) (8 bytes)
         ]
         for (value, hex) in cases {
             var decoder = Lib0Decoder(Data(hex: hex))
