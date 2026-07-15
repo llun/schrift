@@ -11,12 +11,6 @@ struct AwarenessEntry: Equatable {
     var clientID: UInt
     var clock: UInt
     var stateJSON: String
-
-    init(clientID: UInt, clock: UInt, stateJSON: String) {
-        self.clientID = clientID
-        self.clock = clock
-        self.stateJSON = stateJSON
-    }
 }
 
 /// Encodes and decodes awareness updates, matching y-protocols 1.0.7 exactly.

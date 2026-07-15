@@ -217,6 +217,14 @@ final class Lib0DecoderTests: XCTestCase {
         assertMalformed { _ = try decoder.readVarInt() }
     }
 
+    func testUint8ArrayLengthBeyondIntMaxThrowsTruncated() {
+        // A length varUint of 2^63 exceeds Int.max, so `Int(exactly:) ?? Int.max`
+        // clamps it to Int.max and readBytes reports truncation instead of trapping
+        // on the narrowing conversion. (Mutating the guard to `Int(length)` traps.)
+        var decoder = Lib0Decoder(Data(hex: "80808080808080808001"))
+        assertTruncated { _ = try decoder.readUint8Array() }
+    }
+
     private func assertTruncated(_ body: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {
         do {
             try body()
