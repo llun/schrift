@@ -77,9 +77,9 @@ xcodebuild test -project Schrift.xcodeproj -scheme Schrift -destination 'platfor
 committed. If `iPhone 17` isn't in `xcrun simctl list devices available`,
 substitute any listed iPhone — CI does the same fallback.)
 
-CI runs the same suite on every pull request to `main`
-([`pr-checks.yml`](.github/workflows/pr-checks.yml)); the **Build & Test**
-check must pass before merging. See [`docs/ci.md`](docs/ci.md).
+CI runs the same suite on every pull request to `main` and on every push to
+`main` ([`pr-checks.yml`](.github/workflows/pr-checks.yml)); the
+**Build & Test** check must pass before merging. See [`docs/ci.md`](docs/ci.md).
 
 ## Formatting
 

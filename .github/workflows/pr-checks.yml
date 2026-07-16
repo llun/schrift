@@ -1,6 +1,9 @@
 name: PR Checks
 
-# Build the app and run the full XCTest suite on every PR targeting `main`.
+# Build the app and run the full XCTest suite on every PR targeting `main`,
+# and on every push to `main` itself (post-merge verification: PRs are
+# squash-merged without a "branch up to date" requirement, so the commit that
+# lands on `main` was never itself tested — see docs/ci.md).
 #
 # This workflow uses NO secrets and must never gain any — it runs on the
 # fork-safe `pull_request` trigger (never `pull_request_target`). Anything
@@ -12,9 +15,12 @@ name: PR Checks
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
-# One run per PR; a new push cancels the in-flight run.
+# One run per PR (or per branch for push events); a new push cancels the
+# in-flight run.
 concurrency:
   group: pr-checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

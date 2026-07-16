@@ -4,7 +4,7 @@ Schrift has two CI concerns, deliberately kept in **separate workflows**:
 
 | Workflow | Trigger | Purpose | Secrets |
 |---|---|---|---|
-| [`.github/workflows/pr-checks.yml`](../.github/workflows/pr-checks.yml) | `pull_request` → `main`, `workflow_dispatch` | Build + run the full XCTest suite | **None — and it must stay that way** |
+| [`.github/workflows/pr-checks.yml`](../.github/workflows/pr-checks.yml) | `pull_request` → `main`, `push` → `main`, `workflow_dispatch` | Build + run the full XCTest suite | **None — and it must stay that way** |
 | [`.github/workflows/testflight.yml`](../.github/workflows/testflight.yml) | `push` → `main`, `workflow_dispatch` | Signed Release build → TestFlight → tag + GitHub Release | Signing/ASC secrets |
 
 Never merge the two: `testflight.yml` must never gain a `pull_request` /
@@ -15,7 +15,12 @@ Safety section in [`CLAUDE.md`](../CLAUDE.md).
 
 ## What runs on every PR
 
-`pr-checks.yml` runs one job on `macos-latest`:
+`pr-checks.yml` runs one job on `macos-latest`. It runs on every PR targeting
+`main` **and on every push to `main`**: PRs are squash-merged with no "branch
+up to date" requirement, so the squash commit that actually lands on `main`
+was never itself built — the push run is the post-merge verification of the
+real `main` history (`testflight.yml` builds Release but runs no tests). The
+job is:
 
 1. Formatting gate — runs Apple's `swift-format` (bundled with the Xcode
    toolchain; config in [`.swift-format`](../.swift-format)) over `Schrift/`
@@ -111,7 +116,7 @@ Notes:
   before any run.
 - The required check effectively blocks **direct pushes to `main` too**: a
   ruleset `required_status_checks` rule rejects any ref update unless the
-  check has passed on the pushed commit, and `Build & Test` only runs on
-  `pull_request` events — so a directly pushed commit essentially never
-  carries a passing check. All changes must land via a PR (worth knowing
-  before hotfixing `main`).
+  check has passed on the pushed commit *before* the push — and a freshly
+  authored commit never carries one (the workflow's `push` trigger only fires
+  *after* a push is accepted, so it can't satisfy the rule). All changes must
+  land via a PR (worth knowing before hotfixing `main`).
