@@ -137,8 +137,9 @@ names the section with the details.
   land a standalone tree-wide reformat commit (see `docs/ci.md` "Toolchain
   drift"). There is no other linter (no SwiftLint / nicklockwood-SwiftFormat)
   — don't add one.
-- **PR checks**: every pull request targeting `main` builds the app and runs the
-  full test suite on an iPhone simulator via
+- **PR checks**: every pull request targeting `main` — and every push to
+  `main` itself, as post-merge verification of the squash commit — builds the
+  app and runs the full test suite on an iPhone simulator via
   [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job
   surfaces as the status check **`Build & Test`**, which serves as the merge
   guard (a repo admin must configure the ruleset once — see
@@ -185,6 +186,42 @@ names the section with the details.
   keep that file executable (`chmod +x`) or Xcode Cloud silently skips it. Any new
   CI path must do the same, or the build fails with "Project Schrift.xcodeproj
   does not exist at the root of the repository."
+
+## Claude Code cloud sessions (Linux)
+
+Development may happen in Claude Code cloud sessions, which run on **Linux** —
+no Xcode, no `xcodebuild`, no iOS simulators, no Apple SDKs. In a cloud
+session:
+
+- **Never attempt to build, test, or run the app.** UIKit/SwiftUI/XCTest and
+  every Apple framework are unavailable; any `xcodebuild`/`xcrun` invocation
+  will fail. The macOS **`Build & Test`** check on the PR
+  ([`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml)) is
+  the **source of truth for build and test results** — push the branch and
+  read the check, don't try to reproduce it locally on Linux.
+- **There are currently no Linux-testable targets.** The repo has no
+  `Package.swift`; everything is built via XcodeGen + `xcodebuild` on macOS.
+  (`Core/Yjs` and the other pure-logic layers are Foundation-only and could be
+  extracted into a SwiftPM package to enable `swift test` on Linux, but that
+  is a deliberate, separate change — don't do it as a side effect.)
+- **Pre-push checks that DO work on Linux — run them before every push:**
+  - Formatting: if a Swift 6 toolchain is available, run
+    `swift format --recursive --in-place Schrift SchriftTests` and commit the
+    result — the PR checks fail on any unformatted file. If no toolchain is
+    available, match the surrounding style (`.swift-format`: 4-space indent,
+    120 columns) and expect the CI formatting gate to be the arbiter.
+  - `xcodegen generate` is unavailable too — treat `project.yml` edits as
+    unverified until CI builds them.
+- **Commit conventions in cloud sessions:**
+  - One logical change per commit; **Conventional Commit** messages (the PR
+    title becomes the squash-commit subject that drives the release version —
+    see [Build, run, test](#build-run-test)).
+  - When fixing a CI failure on your **own PR branch**, amend the previous
+    commit and `git push --force-with-lease` instead of stacking fixup
+    commits. This is compatible with the safety rule against force-pushing
+    **shared** branches — a PR branch you authored is not shared; never
+    force-push `main`. If the force-push is rejected, a normal follow-up
+    commit is acceptable because PRs are squash-merged anyway.
 
 ## Repository layout
 
