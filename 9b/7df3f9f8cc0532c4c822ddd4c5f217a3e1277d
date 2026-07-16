@@ -1,0 +1,25 @@
+docs/ci.md
+  s_2f7c5c68e519b9::t_4e4347b4c32217 18-23
+  s_2f7c5c68e519b9::t_3b07d3d3bdcc61 119-122
+  s_2f7c5c68e519b9::t_e4f0ad4aeb314e 7
+.github/workflows/pr-checks.yml
+  s_2f7c5c68e519b9::t_97e44ec3d55f5a 3-6,18-19,22-23
+README.md
+  s_2f7c5c68e519b9::t_4173abf0a8fb9f 80-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "9b7df3f9f8cc0532c4c822ddd4c5f217a3e1277d",
+  "prompts": {},
+  "sessions": {
+    "s_2f7c5c68e519b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6d0949c5-66af-4396-8f12-a46d46812277",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
