@@ -1,0 +1,36 @@
+docs/README.md
+  s_801a442d10bf15::t_c24704499f77ba 1-28
+docs/offline-and-sync.md
+  s_801a442d10bf15::t_ccb0f641d7212a 43
+  s_801a442d10bf15::t_a6524e41a4a080 53
+  s_801a442d10bf15::t_083d7a969075b4 1-13
+  s_801a442d10bf15::t_b958e635127d37 23
+  s_801a442d10bf15::t_af3c9b93eba939 760-764
+docs/design-system.md
+  s_801a442d10bf15::t_fe9d31153b1e03 3-8
+  s_801a442d10bf15::t_1736862c9862ed 576-577
+docs/architecture.md
+  s_801a442d10bf15::t_1c9a2c85bc3a39 172
+  s_801a442d10bf15::t_469f6c7cde8235 234
+  s_801a442d10bf15::t_39355a90bfb044 236-237
+  s_801a442d10bf15::t_b02d67cf0a4f6c 175
+  s_801a442d10bf15::t_5c0df5880baee3 57-60
+  s_801a442d10bf15::t_5bf855c5d85bd4 190
+  s_801a442d10bf15::t_45cf5745fdf77e 1-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "a20039421fc9057bc509a513595f32e8e7ac4d91",
+  "prompts": {},
+  "sessions": {
+    "s_801a442d10bf15": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db8ae15d-3d10-48e4-9733-1ac1ae3b50d1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

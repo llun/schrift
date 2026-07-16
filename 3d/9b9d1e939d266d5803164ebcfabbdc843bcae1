@@ -1,0 +1,23 @@
+docs/design-system.md
+  s_2d18aae9ecc998::t_cd57e1f9e0f7e9 29-45
+  s_2d18aae9ecc998::t_d035c7b4cb781a 460-465
+CLAUDE.md
+  s_2d18aae9ecc998::t_50abd47635b71a 665-672
+  s_2d18aae9ecc998::t_49dab948bf5e3c 693-700
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "3d9b9d1e939d266d5803164ebcfabbdc843bcae1",
+  "prompts": {},
+  "sessions": {
+    "s_2d18aae9ecc998": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3269fdc6-3a86-49ee-970b-9e7e53681505",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

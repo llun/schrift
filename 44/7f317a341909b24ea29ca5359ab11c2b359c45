@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/SheetHeader.swift
+  s_112e44db865b07::t_beb5d83024540c 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "447f317a341909b24ea29ca5359ab11c2b359c45",
+  "prompts": {},
+  "sessions": {
+    "s_112e44db865b07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ad38435-14c2-4426-b998-0ddd4748debd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

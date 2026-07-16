@@ -1,0 +1,21 @@
+.github/workflows/testflight.yml
+  s_e84b07b714ffc3::t_b1e3e50dfb8600 65
+  s_e84b07b714ffc3::t_b188c2dd093282 18
+  s_e84b07b714ffc3::t_c5801a709bb7a4 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "038f2c11c8dfd9fc6dfc266bc403435f890a775f",
+  "prompts": {},
+  "sessions": {
+    "s_e84b07b714ffc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8a38bc6e-31a3-426a-bf94-0d445a3be638",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

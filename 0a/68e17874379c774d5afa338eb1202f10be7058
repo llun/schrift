@@ -1,0 +1,25 @@
+DocsIOSTests/Core/Networking/ShareEndpointsClientTests.swift
+  s_44afd2562a4f35::t_be5f2c89f72712 1-108
+DocsIOSTests/Core/Networking/ShareModelsTests.swift
+  s_44afd2562a4f35::t_cf04835814f372 1-128
+DocsIOS/Core/Networking/ShareModels.swift
+  s_44afd2562a4f35::t_e22fec0d298a9a 1-80
+DocsIOS/Core/Networking/ShareEndpoints.swift
+  s_44afd2562a4f35::t_11df0f8158eee6 1-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "0a68e17874379c774d5afa338eb1202f10be7058",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

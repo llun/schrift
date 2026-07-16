@@ -1,0 +1,21 @@
+Schrift/Features/Profile/ProfileScreen.swift
+  s_a9c5d21d88404f::t_4edc7e0f7ae997 14-15
+  s_a9c5d21d88404f::t_d71d50ce4f926e 39-47
+  s_a9c5d21d88404f::t_b9b978faeb8528 139,148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "6df5e736a85dbdd2c09ef8fe2ee4fdd4f9a36bbc",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

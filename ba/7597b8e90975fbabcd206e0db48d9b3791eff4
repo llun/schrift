@@ -1,0 +1,31 @@
+SchriftTests/Core/Networking/ShareEndpointsClientTests.swift
+  s_bb90b8c591ca7b::t_b9a74a080f264d 70-103
+SchriftTests/Features/Share/ShareViewModelTests.swift
+  s_bb90b8c591ca7b::t_54412aae124b5f 24-25,27,29
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_bb90b8c591ca7b::t_34fdcbc326680b 70-71,74-78
+Schrift/Features/Shared/SharedViewModel.swift
+  s_bb90b8c591ca7b::t_12c81a9dc2924f 121
+Schrift/Features/Share/ShareViewModel.swift
+  s_bb90b8c591ca7b::t_d86c96dc60fe45 28,30
+CLAUDE.md
+  s_bb90b8c591ca7b::t_d9ca24c78b8398 553-567
+Schrift/Core/Networking/ShareEndpoints.swift
+  s_bb90b8c591ca7b::t_aa2e52d4b1206c 52-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "ba7597b8e90975fbabcd206e0db48d9b3791eff4",
+  "prompts": {},
+  "sessions": {
+    "s_bb90b8c591ca7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "617bb700-3958-41be-911e-2c47fcb49175",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

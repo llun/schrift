@@ -1,0 +1,49 @@
+CLAUDE.md
+  s_b91c3ec7576796::t_a95318d47b1ae4 884-888
+SchriftTests/Features/Editor/PendingDraftStoreTests.swift
+  s_b91c3ec7576796::t_1ddf4af94febf8 85-86,95,99-121
+  s_e60497739a7df0::t_23f13435cda41a 122-123
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_b91c3ec7576796::t_46290505e0b430 809-810,816-817,819-822,824-833,835,837-841
+  s_b91c3ec7576796::t_f87c56e360d393 709,711-808,811-815,818,823,834,836
+  s_b91c3ec7576796::t_2ed7a71552336f 707-708
+  s_e856b2f2be3677::t_efcd17b89bf773 710
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_b91c3ec7576796::t_58747ec2c09b56 2829-3021
+  s_b91c3ec7576796::t_3f94365ebb78e9 1597-1599,1623,1673,1699
+  s_b91c3ec7576796::t_cda6a7fb5bb471 3022
+docs/offline-and-sync.md
+  s_b91c3ec7576796::t_7a44b57e916e94 643-651,665-672
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "364760896d947ad399868dd216ba8612e0b729e9",
+  "prompts": {},
+  "sessions": {
+    "s_b91c3ec7576796": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "267d4e1f-46ce-40e4-892f-f84cbd786386",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_e856b2f2be3677": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4c1d73de-8c9d-4165-8ff3-472476b06ca0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

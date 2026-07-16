@@ -1,0 +1,25 @@
+Schrift/Features/Editor/EditorViewModel.swift
+  s_e60497739a7df0::t_5dd2ee01bd7fb6 513-523,527,698-708,712,1829-1836,1856-1859,1864-1865
+docs/offline-and-sync.md
+  s_e60497739a7df0::t_50430dbb753a85 561-562
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_e60497739a7df0::t_7c0f576517186b 744-809
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_e60497739a7df0::t_d2d13489690e9e 200,204-213,576-582,665
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "a5531f6f00f7a6a1c5a19799b81b9ad32e60813b",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

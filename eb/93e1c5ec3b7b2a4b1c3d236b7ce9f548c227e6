@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md
+  s_7320e20fa0d435::t_f273f04b0881fb 155-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "eb93e1c5ec3b7b2a4b1c3d236b7ce9f548c227e6",
+  "prompts": {},
+  "sessions": {
+    "s_7320e20fa0d435": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b213e15f-ea6c-44b8-b259-9aaee65d2f2c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

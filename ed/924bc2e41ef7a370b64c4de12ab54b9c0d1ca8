@@ -1,0 +1,37 @@
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_8c866bdb7fcfb2::t_72ec7924d2264d 380-389,393-394
+  s_8c866bdb7fcfb2::t_b67e3205b42297 390-392
+  s_8c866bdb7fcfb2::t_ccaad29184eedb 243-259
+docs/superpowers/plans/2026-07-07-photo-upload-insert.md
+  s_8c866bdb7fcfb2::t_e80b452ee37234 21-35
+SchriftTests/Core/Networking/AttachmentEndpointsClientTests.swift
+  s_8c866bdb7fcfb2::t_aaf4495e9e443a 130-133,139-143,155-160
+  s_8c866bdb7fcfb2::t_7c9bfe7ce0b752 238-242,252
+Schrift/Features/Editor/EditorViewModel.swift
+  s_8c866bdb7fcfb2::t_811d7778f380ce 760,844,939-945,953-957
+  s_8c866bdb7fcfb2::t_aee6f399c885da 823,829,834,838-843
+  s_8c866bdb7fcfb2::t_99df52b0c5170f 742,748-759
+  s_8c866bdb7fcfb2::t_b354fb4c9109bf 891-898,911-912
+  s_8c866bdb7fcfb2::t_a5f11b060b58af 761
+  s_8c866bdb7fcfb2::t_f2420b12531f97 845
+SchriftTests/Support/TestImages.swift
+  s_8c866bdb7fcfb2::t_0570f3883ce8b4 32-71
+SchriftTests/Features/Editor/ImagePreparationTests.swift
+  s_8c866bdb7fcfb2::t_24ad04c4678e26 41-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ed924bc2e41ef7a370b64c4de12ab54b9c0d1ca8",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

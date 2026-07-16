@@ -1,0 +1,30 @@
+SchriftTests/DesignSystem/Components/IconButtonStyleResolverTests.swift
+  s_dd62fdd4f50c18::t_a8366ccfedc214 8-11,16-19,24-29
+Schrift/DesignSystem/Components/Button.swift
+  s_dd62fdd4f50c18::t_472209d449d17b 143-151
+  s_dd62fdd4f50c18::t_08a9df1dd50213 177,183
+  s_dd62fdd4f50c18::t_e9584a28632dff 178,182
+  s_dd62fdd4f50c18::t_6cf45312b1d96c 17-22,29-36,40-45,47-48,50-57,59-66,71-74,76-79,81-84,88-90
+SchriftTests/DesignSystem/Components/ButtonStyleResolverTests.swift
+  s_dd62fdd4f50c18::t_e58169d7af7910 11-13,21-23,28-31,36-41,57-59
+Schrift/DesignSystem/Components/IconButton.swift
+  s_dd62fdd4f50c18::t_27192ede25ab40 16-21,30-33,37-40,43-46,48-51,56-59,61-64,68-70
+  s_dd62fdd4f50c18::t_57e2163cdca87f 99-107
+  s_dd62fdd4f50c18::t_62a165c466433a 132-133,137-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9df482be9777e8127ac7bbbba5fd1e5cd1a6a369",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

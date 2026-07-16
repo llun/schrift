@@ -1,0 +1,41 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_bd016ef1df7174::t_d57cd86c6cdf43 213-217
+  s_bd016ef1df7174::t_3f4cba765b2d54 180-191
+docs/superpowers/plans/2026-07-08-remote-doc-content-sync.md
+  s_bd016ef1df7174::t_8bc5d30007c2e6 205-224
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_bd016ef1df7174::t_10360918b99db2 859-864,868-876
+  s_bd016ef1df7174::t_272468abdc9416 572-574
+  s_bd016ef1df7174::t_81f4adec0c1b0d 556-560,576-578,581-586
+  s_bd016ef1df7174::t_4ccbf67d641a4d 877-878
+CLAUDE.md
+  s_bd016ef1df7174::t_63d7e996634030 515-529
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_bd016ef1df7174::t_5684bf661ed634 328-347
+SchriftTests/Features/Editor/EditorViewTests.swift
+  s_bd016ef1df7174::t_f9ae6eb4a9af61 65-75
+docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md
+  s_bd016ef1df7174::t_211e3488ca7860 417-425
+Schrift/Features/Editor/EditorViewModel.swift
+  s_bd016ef1df7174::t_f29cf7519a8eb2 87-91
+  s_bd016ef1df7174::t_999eb01ab6fc1d 538
+  s_bd016ef1df7174::t_2599322674f2b8 1168-1171
+  s_bd016ef1df7174::t_85e4d1c0ca2203 297-308,321-323,338-341
+  s_bd016ef1df7174::t_bad7e1202745eb 1190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "09c8cf1e94a5ac5d6bf7cc59c74e9a5571cf56a7",
+  "prompts": {},
+  "sessions": {
+    "s_bd016ef1df7174": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b275856-0d78-4dc0-ab5d-2e97309bd5de",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/TextField.swift
+  s_a9c5d21d88404f::t_3af74fee602eb7 54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "53e2b80a3632ee865b7951fc6eb8bfcc5b47c83e",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

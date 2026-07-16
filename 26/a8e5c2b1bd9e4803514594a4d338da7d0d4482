@@ -1,0 +1,86 @@
+SchriftTests/Support/HexData.swift
+  s_8c1f6116e89b3c::t_f281634ad1c192 1-30
+Schrift/Core/Yjs/YjsUpdateEncoder.swift
+  s_8c1f6116e89b3c::t_3fd6376231c3c6 46-55
+Schrift/Core/Yjs/Lib0Decoder.swift
+  s_8c1f6116e89b3c::t_8300b4ce73cfa7 1-74,79-96,102-104,117-118,129,132-133,135-159
+  s_8c1f6116e89b3c::t_7f9bc91be6be9a 105-116
+  s_8c1f6116e89b3c::t_2931fde1e33b9c 119-120,130
+  s_8c1f6116e89b3c::t_31da39a1646d69 121-128,131,134
+  s_8c1f6116e89b3c::t_769ed761af64bf 75-78
+  s_8c1f6116e89b3c::t_abed3755d3b7ba 97-101
+SchriftTests/Core/Yjs/Lib0DecoderTests.swift
+  s_8c1f6116e89b3c::t_bf27fff6e857ed 1-13,15-19,25-32,34-40,47-54,56-76,85-86,88-96,98-112,114-115,117-118,128-135,143-150,156-179,181-203,205-209,211-215,240-241,263-264,288
+  s_8c1f6116e89b3c::t_87995b420f1667 136-142
+  s_8c1f6116e89b3c::t_7a461c54227c1a 219-223,225,227-231
+  s_8c1f6116e89b3c::t_fc87d612226f10 249,263-264
+  s_8c1f6116e89b3c::t_9d939a5fcaa151 248-249
+  s_8c1f6116e89b3c::t_afb21fa28e8bf2 266-271,273-277,279-280
+  s_8c1f6116e89b3c::t_41a3e0eaa285ae 232,234-238
+  s_8c1f6116e89b3c::t_3ad0769a98a456 151-155
+  s_8c1f6116e89b3c::t_7cb1ac64b188d1 77-84
+  s_8c1f6116e89b3c::t_a8bb20a5c65b62 204,210,216,226,278,286
+  s_8c1f6116e89b3c::t_59169150b2e7d8 113
+  s_8c1f6116e89b3c::t_32b0406f6eb2f2 224,233,239,272
+  s_8c1f6116e89b3c::t_d2865afe3f66c9 20-24
+  s_8c1f6116e89b3c::t_2d995c69474d87 119-127
+  s_8c1f6116e89b3c::t_6f13868e72b31b 242-249
+  s_8c1f6116e89b3c::t_2b572ae15999a1 250-265
+  s_8c1f6116e89b3c::t_6ce06a7fbabee2 14,33,55,87,97,116,180
+  s_8c1f6116e89b3c::t_b381fb081ff8a7 41-46
+Schrift/Core/Collaboration/AwarenessCodec.swift
+  s_8c1f6116e89b3c::t_9357ed5849dfbf 1-13,14-41,46-67
+  s_8c1f6116e89b3c::t_87752556539c08 42-45
+SchriftTests/Core/Collaboration/SyncMessageTests.swift
+  s_8c1f6116e89b3c::t_11c7e4d6da129a 1-13,15-40,42-62,64-66,73-74
+  s_8c1f6116e89b3c::t_e6c914e4b91764 67
+  s_8c1f6116e89b3c::t_e1949d0b084cff 69-73
+  s_8c1f6116e89b3c::t_6ce06a7fbabee2 14,41,63
+Schrift/Core/Collaboration/SyncMessage.swift
+  s_8c1f6116e89b3c::t_5915fcf5529325 1-56
+Schrift/Core/Collaboration/HocuspocusMessage.swift
+  s_8c1f6116e89b3c::t_63f8a57593b99f 1-71
+SchriftTests/Core/Collaboration/AwarenessCodecTests.swift
+  s_8c1f6116e89b3c::t_be37aa8b1e6c61 9-10
+  s_8c1f6116e89b3c::t_0d5a55fa0905e7 1-8,11-15,17-38,40-61,69-91,123
+  s_8c1f6116e89b3c::t_ca8590dc0c19dc 62-67
+  s_8c1f6116e89b3c::t_280e65c55bbbca 92,94-96,98-103,105-108,110-113,117-120,122
+  s_8c1f6116e89b3c::t_e88d728a67dd12 97,104,109,121
+  s_8c1f6116e89b3c::t_839bf07d5c8f8e 114-116
+  s_8c1f6116e89b3c::t_6ce06a7fbabee2 16,39,68,93
+SchriftTests/Core/Collaboration/HocuspocusMessageTests.swift
+  s_8c1f6116e89b3c::t_1431b23e3ea457 1-17,19-38,40-58,60-69,83-86,88-89
+  s_8c1f6116e89b3c::t_20a3deae4c8712 87
+  s_8c1f6116e89b3c::t_1be1c6588b6a12 70-82
+  s_8c1f6116e89b3c::t_6ce06a7fbabee2 18,39,59
+CLAUDE.md
+  s_8c1f6116e89b3c::t_0cd036a935ad9a 201-204
+  s_8c1f6116e89b3c::t_2765ea4bb49495 214-216
+SchriftTests/Core/Yjs/YjsEncoderTests.swift
+  s_8c1f6116e89b3c::t_c5d91fcd2b3297 26-27
+SchriftTests/Support/AssertThrows.swift
+  s_8c1f6116e89b3c::t_5e5dcbd5cc1c2b 1-21
+Schrift/Core/Networking/SiteOrigin.swift
+  s_8c1f6116e89b3c::t_b509d7be538ba5 1-23
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_8c1f6116e89b3c::t_2135f447f0fea0 39-41,43-47
+SchriftTests/Core/Networking/SiteOriginTests.swift
+  s_8c1f6116e89b3c::t_48f7e6ba8580fc 32
+  s_8c1f6116e89b3c::t_10a26aa296d77a 1-31,33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "26a8e5c2b1bd9e4803514594a4d338da7d0d4482",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

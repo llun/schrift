@@ -1,0 +1,21 @@
+SchriftTests/DesignSystem/Components/TextFieldStyleResolverTests.swift
+  s_a9c5d21d88404f::t_8499534c13fa51 10,12,15,17
+Schrift/DesignSystem/Components/TextField.swift
+  s_a9c5d21d88404f::t_a8d1e77bc6abb6 17-19,25,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "2f9897ecfe4645118002b1d9d7c9efa780b1d5cc",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

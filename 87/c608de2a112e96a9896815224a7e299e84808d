@@ -1,0 +1,54 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_b91c3ec7576796::t_4dd8e657a2ce97 463-465,467-469
+  s_b91c3ec7576796::t_dc9c06d27d177c 307,309,313-318
+  s_b91c3ec7576796::t_934eda681efe88 621
+  s_b91c3ec7576796::t_8eab597e06213e 320
+  s_b91c3ec7576796::t_c0394cb1e6a6ad 108-115
+  s_b91c3ec7576796::t_ac8a2a0572ab59 518
+  s_b91c3ec7576796::t_16019eb18b31bd 410-414,418-421
+  s_b91c3ec7576796::t_15d5b01cb655ed 379,388,394-401,404-405
+  s_b91c3ec7576796::t_86b538f14a6e29 614-620
+  s_b91c3ec7576796::t_e8399453245293 380-387,389-393,402-403,406-409,415-417
+SchriftTests/Support/RequestBodyHelpers.swift
+  s_b91c3ec7576796::t_6d393c5584c173 26-58
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_b91c3ec7576796::t_4d177c777b8b0d 642-780
+Schrift/Features/Editor/EditorViewModel.swift
+  s_b91c3ec7576796::t_1574ffc49514e5 314-315
+  s_b91c3ec7576796::t_02d40ed467054f 824-828
+  s_b91c3ec7576796::t_1c5ac1277a3f06 776-778,782-783,795-796
+  s_b91c3ec7576796::t_8e25ca9dacf026 1610-1630,1640-1641,1646,1649
+  s_b91c3ec7576796::t_8d45c6558159c2 494-502
+  s_b91c3ec7576796::t_1bea8f0cbb4514 1592
+  s_b91c3ec7576796::t_f248b8d4b6c169 1693-1695,1698
+  s_b91c3ec7576796::t_3f338fe7185e74 1631-1639,1642-1645,1647-1648
+  s_b91c3ec7576796::t_aecce535e1f03b 121-124
+  s_b91c3ec7576796::t_7b473ea547e4b0 871-872
+  s_b91c3ec7576796::t_d3838fba659f7f 617-624,626-630,634,648,651,655,661,668-669,681-686,689
+  s_b91c3ec7576796::t_1c873d6085e94e 1568
+  s_b91c3ec7576796::t_1eac76ec05ec4a 1650
+  s_b91c3ec7576796::t_4c8fe1f7c8e5bd 654
+  s_b91c3ec7576796::t_37ef7e0702c5ea 656-660
+  s_b91c3ec7576796::t_7473383d8dc273 625,1691-1692,1697
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_b91c3ec7576796::t_c4fe28c6204bea 2962
+  s_b91c3ec7576796::t_fcacf3348a48ec 86
+  s_b91c3ec7576796::t_f2c9a02f11d4e7 72,76,80-84
+  s_b91c3ec7576796::t_af1466d371b30a 85,2797-2961,2963-2969
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "87c608de2a112e96a9896815224a7e299e84808d",
+  "prompts": {},
+  "sessions": {
+    "s_b91c3ec7576796": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "267d4e1f-46ce-40e4-892f-f84cbd786386",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

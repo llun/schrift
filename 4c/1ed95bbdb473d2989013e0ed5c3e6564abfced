@@ -1,0 +1,23 @@
+docs/superpowers/plans/2026-07-07-photo-upload-insert.md
+  s_8c866bdb7fcfb2::t_2e116cf2a4ca42 30-38
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_8c866bdb7fcfb2::t_3b18d1dcd20766 301-304
+  s_8c866bdb7fcfb2::t_d91281deaad3bb 258-263
+  s_8c866bdb7fcfb2::t_806229fa23a67c 466-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4c1ed95bbdb473d2989013e0ed5c3e6564abfced",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

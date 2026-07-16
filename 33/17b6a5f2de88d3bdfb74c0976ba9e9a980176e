@@ -1,0 +1,65 @@
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_284304e258e69f::t_c36397514e2464 123-149
+SchriftTests/Core/Auth/FakeCookieStorage.swift
+  s_284304e258e69f::t_f09a920e93ef74 1-28
+SchriftTests/Core/Networking/DocsAPIClientTests.swift
+  s_284304e258e69f::t_950220e3fca236 50-108
+SchriftTests/Features/Connect/ReauthenticationViewModelTests.swift
+  s_284304e258e69f::t_1bf185ffa1d93e 1-82
+SchriftTests/Core/Auth/WebLoginTests.swift
+  s_284304e258e69f::t_2117daf2b46de7 55,59-60,64,66
+Schrift/Features/Shared/SharedViewModel.swift
+  s_284304e258e69f::t_dccc64a2130ac4 101-104,115,125
+Schrift/Core/Auth/SessionStore.swift
+  s_284304e258e69f::t_934fea31c5cdca 3-8,13,17,21-25,27-31,34,37-41,47,50-51,56-103
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_284304e258e69f::t_f1798c9060c2e4 5-6,10-11,24-29,38-39,45,48,54,57,60-168
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_284304e258e69f::t_e5057c9841a447 109-113
+  s_284304e258e69f::t_d9d7367a8b4837 7-10,15-16,21
+docs/superpowers/plans/2026-07-04-persist-session-cookies-and-reauth.md
+  s_284304e258e69f::t_b8ee7b36d16502 1-80
+Schrift/Core/Auth/WebLogin.swift
+  s_284304e258e69f::t_c71ab6a98176d5 13-14
+Schrift/Features/Connect/ReauthenticationSheetView.swift
+  s_284304e258e69f::t_566fd5af3055eb 1-36,39,41-53
+  s_284304e258e69f::t_f58aa6e9341f1d 37-38,40
+  s_284304e258e69f::t_ccdb06fba48f5a 54-64
+SchriftTests/Core/Auth/SessionCookiesTests.swift
+  s_284304e258e69f::t_735ba8c5bf5dc6 75-76,87
+  s_284304e258e69f::t_ddd6178e993c17 1-27,31-39,42-74,77-86,88-111
+  s_284304e258e69f::t_39c8a4f7c1afc7 28-30,40-41
+Schrift/Features/Home/HomeViewModel.swift
+  s_284304e258e69f::t_cbcccef7856b2d 107-119
+CLAUDE.md
+  s_284304e258e69f::t_bdebbb80e5e5ec 325-331
+  s_284304e258e69f::t_6976ec2b17552b 105-108
+  s_284304e258e69f::t_7c70b8c71b653c 222-227
+Schrift/Features/Connect/ReauthenticationViewModel.swift
+  s_284304e258e69f::t_3a8fe6c2512ba3 1-47
+Schrift/App/RootView.swift
+  s_284304e258e69f::t_4660ca0153b1e8 63
+  s_284304e258e69f::t_cbe039af5c147a 5,7,12-21,23,28-50
+Schrift/Core/Auth/SessionCookies.swift
+  s_284304e258e69f::t_02091db28c0e20 1-72
+Schrift/Features/Editor/EditorViewModel.swift
+  s_284304e258e69f::t_ee7cdf33c4087a 202-204
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_284304e258e69f::t_a589aee3bbc734 349-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3317b6a5f2de88d3bdfb74c0976ba9e9a980176e",
+  "prompts": {},
+  "sessions": {
+    "s_284304e258e69f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df97f89b-c3b3-44ee-919b-86f015a0fa57",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+DocsIOS/DesignSystem/Components/ListRow.swift
+  s_44afd2562a4f35::t_1283f465afcb4c 1-63
+DocsIOSTests/DesignSystem/Components/ListRowTests.swift
+  s_44afd2562a4f35::t_51ee805236e0b3 1-12
+DocsIOS/DesignSystem/Components/ListSection.swift
+  s_44afd2562a4f35::t_96e4a9c454a08a 1-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "d2ed30ce0d98b47121750a858139a8620f50ea6a",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

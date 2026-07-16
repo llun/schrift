@@ -1,0 +1,22 @@
+Schrift/DesignSystem/Components/SearchField.swift
+  s_a9c5d21d88404f::t_8be25ff7c5097c 7-11,20
+  s_a9c5d21d88404f::t_34af1ff6cd95d8 34-36
+Schrift/Features/Search/SearchScreen.swift
+  s_a9c5d21d88404f::t_01ab255949a560 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "9569d4890e63ae6887f93e36c1b7e1361f81b019",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

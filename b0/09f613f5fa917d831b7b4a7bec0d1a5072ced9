@@ -1,0 +1,25 @@
+SchriftTests/Features/Search/SearchViewModelTests.swift
+  s_e0af0b8f101c24::t_d62954f8c64190 1-83
+Schrift/Features/Search/SearchScreen.swift
+  s_e0af0b8f101c24::t_a0345b9cf14ed5 1-230
+Schrift/Features/Search/SearchViewModel.swift
+  s_e0af0b8f101c24::t_4a03f8047bdc05 1-62
+Schrift/Features/Search/RecentSearchesStore.swift
+  s_e0af0b8f101c24::t_286260ab36809d 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "b009f613f5fa917d831b7b4a7bec0d1a5072ced9",
+  "prompts": {},
+  "sessions": {
+    "s_e0af0b8f101c24": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a26ce376-16f2-4a64-9faa-9ee671516b63",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

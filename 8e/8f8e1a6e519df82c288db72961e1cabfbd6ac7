@@ -1,0 +1,21 @@
+Schrift/DesignSystem/Components/Avatar.swift
+  s_a9c5d21d88404f::t_38331d60dd0f78 3-4,6-8,12-17,21-26
+SchriftTests/DesignSystem/Components/AvatarTests.swift
+  s_a9c5d21d88404f::t_d652b37fc9ca3e 14-17,19,26,28-29,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "8e8f8e1a6e519df82c288db72961e1cabfbd6ac7",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

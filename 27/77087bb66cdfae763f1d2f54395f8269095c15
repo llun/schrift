@@ -1,0 +1,92 @@
+.gitignore
+  s_b46701715e2532::t_fe9cb1f7985c45 36-39
+fastlane/Matchfile
+  s_b46701715e2532::t_f8799f8f891150 4-6
+docs/superpowers/specs/2026-06-30-docs-ios-design.md
+  s_b46701715e2532::t_fe995b54a69645 78
+  s_b46701715e2532::t_1de1c5c6e45e8f 111
+  s_b46701715e2532::t_d41b01ae7911db 69-72,79-83
+  s_b46701715e2532::t_9a69cf2e9b5990 162
+  s_b46701715e2532::t_46c84f570500de 191-193
+  s_b46701715e2532::t_af86b3cb36a8af 119
+  s_b46701715e2532::t_88857454b9263c 84-86
+  s_b46701715e2532::t_2370a60fa2d10c 75
+  s_b46701715e2532::t_1dc01af199061d 161
+  s_b46701715e2532::t_ea26077ef67274 185
+  s_b46701715e2532::t_2f4131c69ae863 106-107
+  s_b46701715e2532::t_919998f10c27c0 15-27
+README.md
+  s_b46701715e2532::t_4d9235c1e2869c 45
+  s_b46701715e2532::t_f90c09d7a12bce 63-66
+docs/superpowers/plans/2026-06-30-project-scaffold-design-tokens.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-14
+CLAUDE.md
+  s_b46701715e2532::t_d860dea9ce5cbe 283-286
+  s_b46701715e2532::t_c5a68710a38db6 39-44
+  s_b46701715e2532::t_09aa561960049b 114-115,127-133,136,143-145,149-152,156-168
+  s_b46701715e2532::t_028f9c7025736b 306-313
+  s_b46701715e2532::t_4f2e043e7c0a69 231-236
+  s_b46701715e2532::t_766866114e19e8 385-390
+  s_b46701715e2532::t_a5bfecbd0755d9 270-273
+  s_b46701715e2532::t_86548950299e32 137-138
+  s_b46701715e2532::t_cc6d26a6c5904d 26-29,31-32
+  s_b46701715e2532::t_b54a91c6c08a9e 352-357,362-366
+  s_b46701715e2532::t_e4a89a203d2064 401-403
+  s_b46701715e2532::t_2a08acdb2dfbd2 279-282
+  s_b46701715e2532::t_43983a82640366 371-374
+  s_b46701715e2532::t_4b50613551a25f 216-221
+  s_b46701715e2532::t_c2261cc35a6594 449-453,455-462,465-470
+  s_b46701715e2532::t_ecb6f0614acb4c 503-507
+  s_b46701715e2532::t_da142f55a3adc3 209-211
+  s_b46701715e2532::t_914afcac806b1b 563-580
+  s_b46701715e2532::t_aeb104a7b3e35b 508-512
+  s_b46701715e2532::t_c4a6a422616f89 85-87
+  s_b46701715e2532::t_fa6e604882d201 259-262
+  s_b46701715e2532::t_37d3703347928a 410-416
+  s_b46701715e2532::t_c13afd46d5d555 326-329
+  s_b46701715e2532::t_eac64933f2ae43 290-293
+  s_b46701715e2532::t_7e75811d13431f 596-599
+docs/superpowers/plans/2026-07-01-auth-layer.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-19
+docs/superpowers/plans/2026-07-01-ios-chrome-components.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-16
+docs/superpowers/plans/2026-07-01-polish.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-17
+docs/testflight-setup.md
+  s_b46701715e2532::t_36c50f4c7d569a 144-150,152-156
+  s_b46701715e2532::t_06a28bdbbbe60a 175-183
+  s_b46701715e2532::t_c2bb0696b5f500 19-24
+scripts/bootstrap-testflight.sh
+  s_b46701715e2532::t_f8799f8f891150 108
+docs/superpowers/plans/2026-07-01-editor-screen-readonly.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-20
+docs/superpowers/plans/2026-07-01-connect-screen.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-17
+docs/superpowers/plans/2026-07-01-home-screen.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-17
+docs/ci.md
+  s_b46701715e2532::t_7835c8a0407e93 38-42
+docs/superpowers/specs/2026-07-03-instant-local-doc-content-design.md
+  s_b46701715e2532::t_9e76e54169e475 8-18,21-23
+  s_b46701715e2532::t_0bf28205b15208 304-310
+docs/superpowers/plans/2026-07-01-offline-badge.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-17
+docs/superpowers/plans/2026-07-01-offline-document-cache.md
+  s_b46701715e2532::t_f8495181cfc3b1 5-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2777087bb66cdfae763f1d2f54395f8269095c15",
+  "prompts": {},
+  "sessions": {
+    "s_b46701715e2532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82eab32c-39d7-44f3-94de-04ee2d6f932b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

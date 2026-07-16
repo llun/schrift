@@ -1,0 +1,21 @@
+DocsIOSTests/DesignSystem/Components/BadgeStyleResolverTests.swift
+  s_44afd2562a4f35::t_60efeaef102ddf 1-28
+DocsIOS/DesignSystem/Components/Badge.swift
+  s_44afd2562a4f35::t_96857ffefd8efe 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "bdbe8fdc2a690e06f4ba871feeb997e72865d204",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

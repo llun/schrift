@@ -1,0 +1,23 @@
+SchriftTests/Core/Yjs/InlineMarkdownTests.swift
+  s_801a442d10bf15::t_1ad5f359217597 88-89
+README.md
+  s_801a442d10bf15::t_f9fe03f56c2ccb 15-22
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_801a442d10bf15::t_22035b2ee1fd55 14-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "a3a3584ba29eb281d4e6d5a557b894f14a3e1c59",
+  "prompts": {},
+  "sessions": {
+    "s_801a442d10bf15": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db8ae15d-3d10-48e4-9733-1ac1ae3b50d1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

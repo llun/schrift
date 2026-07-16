@@ -1,0 +1,23 @@
+SchriftTests/Core/Collaboration/CollaborationEndpointTests.swift
+  s_8c1f6116e89b3c::t_0988a21b7d72a7 49-56
+CLAUDE.md
+  s_8c1f6116e89b3c::t_2c31050d42bcae 201-207
+SchriftTests/Core/Networking/SiteOriginTests.swift
+  s_8c1f6116e89b3c::t_28709a87491a04 34-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "391f7875546b34697cacc14ecc07e07811df772c",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

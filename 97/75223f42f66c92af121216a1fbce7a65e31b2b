@@ -1,0 +1,19 @@
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_2d18aae9ecc998::t_79f6ba3eced64e 70-71,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "9775223f42f66c92af121216a1fbce7a65e31b2b",
+  "prompts": {},
+  "sessions": {
+    "s_2d18aae9ecc998": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3269fdc6-3a86-49ee-970b-9e7e53681505",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

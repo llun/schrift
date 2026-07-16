@@ -1,0 +1,27 @@
+DocsIOSTests/Core/Networking/DocsAPIClientTests.swift
+  s_44afd2562a4f35::t_cf93cf90f8ca40 1-120
+DocsIOS/Core/Networking/CSRF.swift
+  s_44afd2562a4f35::t_e39fe3aa0515e1 1-5
+DocsIOSTests/Core/Networking/CSRFTests.swift
+  s_44afd2562a4f35::t_35cc2352df9040 1-17
+DocsIOSTests/Core/Networking/MockURLProtocol.swift
+  s_44afd2562a4f35::t_33eeee97d8924d 1-48
+DocsIOS/Core/Networking/DocsAPIClient.swift
+  s_44afd2562a4f35::t_204014c624bad8 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "1969a72bb3edd5dd4429672ee7150e2ac60bbd61",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

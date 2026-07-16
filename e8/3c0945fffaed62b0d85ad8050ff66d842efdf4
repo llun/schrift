@@ -1,0 +1,33 @@
+DocsIOS/Assets.xcassets/Contents.json
+  s_44afd2562a4f35::t_0bec7abd844ca9 1-6
+project.yml
+  s_44afd2562a4f35::t_c75c14171ff6a8 1-41
+README.md
+  s_44afd2562a4f35::t_464dccdc9dfb3e 1-21
+DocsIOS/App/DocsIOSApp.swift
+  s_44afd2562a4f35::t_c8075e05944788 1-10
+DocsIOS/Assets.xcassets/AccentColor.colorset/Contents.json
+  s_44afd2562a4f35::t_bc177c85ef30d4 1-20
+DocsIOS/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_44afd2562a4f35::t_a6ad85e3eeeed7 1-13
+.gitignore
+  s_44afd2562a4f35::t_8e9bc66b09c45e 1-18
+DocsIOS/App/RootView.swift
+  s_44afd2562a4f35::t_d4dd98e923d7e1 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "e83c0945fffaed62b0d85ad8050ff66d842efdf4",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_e60497739a7df0::t_496c404c7d35fe 153-155
+  s_e60497739a7df0::t_21341424196720 119-123,125-127
+  s_e60497739a7df0::t_1697c57dba5402 247-249,255-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "710d2c07bc41398bd65fb85605ba932c1aad9537",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

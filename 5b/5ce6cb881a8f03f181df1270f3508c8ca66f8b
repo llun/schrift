@@ -1,0 +1,23 @@
+Schrift/Core/Localization/Strings+sl.swift
+  s_c7ab8ecfba031c::t_21ba471164bb99 75
+  s_c7ab8ecfba031c::t_7be5b21b65fbde 255
+  s_c7ab8ecfba031c::t_8378bf8541869e 43
+  s_c7ab8ecfba031c::t_bbb249ac045e0a 187-188
+  s_c7ab8ecfba031c::t_13ea2cb11d72e3 214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "5b5ce6cb881a8f03f181df1270f3508c8ca66f8b",
+  "prompts": {},
+  "sessions": {
+    "s_c7ab8ecfba031c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09410f27-cec4-4a12-89b6-2ce248d0480a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

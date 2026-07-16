@@ -1,0 +1,24 @@
+DocsIOSTests/Features/Home/HomeViewModelTests.swift
+  s_44afd2562a4f35::t_bcc12e9b7b087b 225-275
+DocsIOS/Features/Home/DocumentListView.swift
+  s_44afd2562a4f35::t_0587b36cb155e6 12-17
+DocsIOS/Features/Home/HomeViewModel.swift
+  s_44afd2562a4f35::t_59f89d40e647d9 32,50
+  s_44afd2562a4f35::t_ea421bde782ba7 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "7ba3a20371617d4fcea7d7bacded0be32951e9d0",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

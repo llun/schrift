@@ -1,0 +1,204 @@
+Schrift/DesignSystem/Components/Badge.swift
+  s_dd62fdd4f50c18::t_0a103052318002 70
+  s_dd62fdd4f50c18::t_38dbdad1de5888 56
+  s_dd62fdd4f50c18::t_9996b8a9002cd8 87,99
+Schrift/DesignSystem/Components/ShareMemberRow.swift
+  s_dd62fdd4f50c18::t_bf3b002eb8b2ae 52
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_dd62fdd4f50c18::t_5bb3e53df7fafb 101
+  s_dd62fdd4f50c18::t_c5954343ed6e5e 206
+CLAUDE.md
+  s_dd62fdd4f50c18::t_8263e9b14cc3e8 212-213,215-217
+  s_dd62fdd4f50c18::t_7aa9ecc672f94f 600-614
+Schrift/Resources/Fonts/MaterialSymbols-LICENSE.txt
+  s_dd62fdd4f50c18::t_76c6c833f603f4 1-202
+SchriftTests/DesignSystem/Components/DocRowTests.swift
+  s_dd62fdd4f50c18::t_e8f6856fda4185 7,11,15
+SchriftTests/Features/Profile/AppearancePickerTests.swift
+  s_dd62fdd4f50c18::t_51b7b36d20c0f9 8-10
+Schrift/DesignSystem/Components/MaterialSymbol.swift
+  s_dd62fdd4f50c18::t_e4f9cdd5da9d18 1-17,19-23,39-81
+  s_dd62fdd4f50c18::t_8098b608176cb9 18
+  s_dd62fdd4f50c18::t_b67cd36ea74ae4 24-38
+Schrift/Features/Editor/EditorSaveBar.swift
+  s_dd62fdd4f50c18::t_f80b0c9500a41d 58
+  s_dd62fdd4f50c18::t_c70b79762d151a 67
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_dd62fdd4f50c18::t_37c272aade9f66 75
+Schrift/DesignSystem/Components/Button.swift
+  s_dd62fdd4f50c18::t_6c75ecef02294a 148
+  s_dd62fdd4f50c18::t_de084ce5005b7d 159
+Schrift/Features/Editor/SubpageRow.swift
+  s_dd62fdd4f50c18::t_3ef24fa0470b52 30
+  s_dd62fdd4f50c18::t_c80e457f822a92 37
+Schrift/Features/Editor/BlockTextView.swift
+  s_dd62fdd4f50c18::t_584e80613dba3f 441-443
+  s_dd62fdd4f50c18::t_bbe986dcd28ca2 447
+Schrift/Features/Profile/ProfileRows.swift
+  s_dd62fdd4f50c18::t_8dc2be7ae5c15c 6,10-11,18-19
+Schrift/DesignSystemCatalog/ComponentCatalogPreview.swift
+  s_dd62fdd4f50c18::t_ef2b89996d8fc7 89
+  s_dd62fdd4f50c18::t_efeaabc372b096 38
+  s_dd62fdd4f50c18::t_689a4dee513375 94
+  s_dd62fdd4f50c18::t_4b1b2a07c38049 110-111
+  s_dd62fdd4f50c18::t_0565b3be76088b 27,29-30
+  s_dd62fdd4f50c18::t_ccda00b07171ef 80
+  s_dd62fdd4f50c18::t_7145414157f306 102-104
+Schrift/Features/Shared/SharedRow.swift
+  s_dd62fdd4f50c18::t_c61e6a6105a908 29
+Schrift/Features/Connect/ConnectView.swift
+  s_dd62fdd4f50c18::t_5aaf23a41a7c75 50
+  s_dd62fdd4f50c18::t_e88bd15dd7ba54 38
+  s_dd62fdd4f50c18::t_9ae1b8402588c8 96,102
+Schrift/Features/Editor/SlashMenu.swift
+  s_dd62fdd4f50c18::t_e65a5c2d13e675 56
+  s_dd62fdd4f50c18::t_10973db333270e 61
+  s_dd62fdd4f50c18::t_e8ee9b631dc50e 40
+  s_dd62fdd4f50c18::t_902f1bce2fbf46 52
+  s_dd62fdd4f50c18::t_2a548833f0c977 31
+  s_dd62fdd4f50c18::t_e4b902fac31fc4 68
+  s_dd62fdd4f50c18::t_7a104aa24274ab 64
+  s_dd62fdd4f50c18::t_1c8c83776438e4 44
+  s_dd62fdd4f50c18::t_be0ae9fb915e76 49
+  s_dd62fdd4f50c18::t_345be23af762f0 26
+  s_dd62fdd4f50c18::t_183c021ba6a8d0 35
+  s_dd62fdd4f50c18::t_51068eca79d07d 19
+Schrift/DesignSystem/Components/TabBar.swift
+  s_dd62fdd4f50c18::t_229dad5dba119d 6,20-24,62-65
+Schrift/Features/Editor/BlockEditorView.swift
+  s_dd62fdd4f50c18::t_ca3f4fd14b06a5 140
+Schrift/DesignSystem/Components/DocIcon.swift
+  s_dd62fdd4f50c18::t_62d1138df269c6 23
+  s_dd62fdd4f50c18::t_507245e14d91e2 32
+Schrift/Features/Profile/LanguagePickerSheet.swift
+  s_dd62fdd4f50c18::t_c5b3e25574d507 27
+Schrift/Features/Editor/SlashMenuView.swift
+  s_dd62fdd4f50c18::t_90e631b34565f9 21
+Schrift/DesignSystem/Components/NavBar.swift
+  s_dd62fdd4f50c18::t_93fafa0796e6ed 184-186
+  s_dd62fdd4f50c18::t_8d413f67819ae5 67-69
+  s_dd62fdd4f50c18::t_8ab6a3788b8859 50
+  s_dd62fdd4f50c18::t_2a6410ff0b522c 193
+  s_dd62fdd4f50c18::t_5e1bd30707bc5a 173
+  s_dd62fdd4f50c18::t_e613f3c5073bf9 18
+Schrift/DesignSystem/Components/SearchField.swift
+  s_dd62fdd4f50c18::t_07d0529015fb54 16
+  s_dd62fdd4f50c18::t_53aba940953642 6
+  s_dd62fdd4f50c18::t_a6519295984fe5 23
+docs/superpowers/plans/2026-07-11-material-icons.md
+  s_dd62fdd4f50c18::t_4fdf268a9c7238 1-64
+Schrift/DesignSystem/Components/DocRow.swift
+  s_dd62fdd4f50c18::t_7f1d3b7f35a51f 65-66
+  s_dd62fdd4f50c18::t_bb72bdcf717689 3,6-7
+  s_dd62fdd4f50c18::t_7fdb66b0dd8b38 74
+  s_dd62fdd4f50c18::t_a06977e4d3e1db 90
+Schrift/Features/Home/DocumentListView.swift
+  s_dd62fdd4f50c18::t_388e228eb0a715 161-169
+  s_dd62fdd4f50c18::t_c4a4275ba8b34e 174-175,179-180
+  s_dd62fdd4f50c18::t_bd81581fe4f478 200-202,207
+  s_dd62fdd4f50c18::t_0e90d1a6e1afe0 78
+  s_dd62fdd4f50c18::t_39003d1d0b6f81 26
+Schrift/Features/Share/ShareSheetView.swift
+  s_dd62fdd4f50c18::t_9ad5c1d56417ec 159
+  s_dd62fdd4f50c18::t_f2d31b3820a258 41
+  s_dd62fdd4f50c18::t_ee935dce349a9b 175
+Schrift/DesignSystem/Components/TextField.swift
+  s_dd62fdd4f50c18::t_5b49ea33bc5da3 73
+  s_dd62fdd4f50c18::t_38b51c39ef9641 48
+  s_dd62fdd4f50c18::t_9996b8a9002cd8 115
+Schrift/DesignSystem/Tokens/MaterialIcon.swift
+  s_dd62fdd4f50c18::t_7298d780259d61 3-7,97-103,106,179-184
+  s_dd62fdd4f50c18::t_3564488904bb14 1-2,11-96,107-178,187-192
+  s_dd62fdd4f50c18::t_322c4059d629f0 8-10,104-105,185-186
+SchriftTests/DesignSystem/MaterialIconTests.swift
+  s_dd62fdd4f50c18::t_215c93dc2e1d26 1-7,11-34
+  s_dd62fdd4f50c18::t_322c4059d629f0 8,10
+  s_dd62fdd4f50c18::t_fd5067d8accff4 9
+Schrift/Features/Editor/EditorView.swift
+  s_dd62fdd4f50c18::t_18134be06d6ff3 160
+  s_dd62fdd4f50c18::t_251d0e6b954b3a 384-388
+  s_dd62fdd4f50c18::t_a009f6d8e3fcfa 451
+  s_dd62fdd4f50c18::t_4139311182956a 493
+  s_dd62fdd4f50c18::t_f0726e8819ae6b 537,541,545,549
+Schrift/Features/Profile/AppearancePickerSheet.swift
+  s_dd62fdd4f50c18::t_f98006e7874058 44,46
+Schrift/DesignSystem/Components/ListRow.swift
+  s_dd62fdd4f50c18::t_dc3a30ea26d0e3 38-39
+  s_dd62fdd4f50c18::t_8aea59784c6f71 16
+  s_dd62fdd4f50c18::t_bb97f1534dd965 66
+  s_dd62fdd4f50c18::t_79c04ac44f3888 78-79
+Schrift/DesignSystem/Components/ListSection.swift
+  s_dd62fdd4f50c18::t_89908d213a4eb2 46-47
+Schrift/Features/Options/OptionsSheetView.swift
+  s_dd62fdd4f50c18::t_e597246a29aa35 85
+  s_dd62fdd4f50c18::t_ee9e4c36c07fda 96
+  s_dd62fdd4f50c18::t_97534fe56bff27 60,64,72
+  s_dd62fdd4f50c18::t_4486956b717800 78
+  s_dd62fdd4f50c18::t_4b22226a6907ca 52
+SchriftTests/DesignSystem/Components/LinkReachPillTests.swift
+  s_dd62fdd4f50c18::t_772bf3e818620c 23
+  s_dd62fdd4f50c18::t_4bfcadc9caabd1 35
+  s_dd62fdd4f50c18::t_a40b92a52ffc3f 13
+Schrift/DesignSystem/Components/IconButton.swift
+  s_dd62fdd4f50c18::t_37d0a5b30af13b 143-146
+  s_dd62fdd4f50c18::t_6f287d5e61624d 100
+  s_dd62fdd4f50c18::t_ec30c59c1078e8 119
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_dd62fdd4f50c18::t_e05a81b6e08e28 53
+  s_dd62fdd4f50c18::t_184aba20ead3c6 26
+  s_dd62fdd4f50c18::t_356439c540490d 32
+  s_dd62fdd4f50c18::t_f446b5e9cf6a19 14
+  s_dd62fdd4f50c18::t_5fbb0b4ce46ea6 39
+Schrift/Features/Search/SearchScreen.swift
+  s_dd62fdd4f50c18::t_bb4ecf394b82b9 171
+  s_dd62fdd4f50c18::t_9f90897696f30d 109
+  s_dd62fdd4f50c18::t_aa5a8a3b1383b2 63
+  s_dd62fdd4f50c18::t_1e9b239820ad5f 54
+  s_dd62fdd4f50c18::t_95136832c2ae02 141,144
+SchriftTests/App/AppearanceStoreTests.swift
+  s_dd62fdd4f50c18::t_37ed07bfb93538 28-31
+Schrift/Features/Editor/LinkEditorSheet.swift
+  s_dd62fdd4f50c18::t_926f0585b7d60e 67-73
+Schrift/App/AppAppearance.swift
+  s_dd62fdd4f50c18::t_461bc46e9dd9b2 18-19,21-23
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_dd62fdd4f50c18::t_4f86226f5517db 97
+  s_dd62fdd4f50c18::t_10abd1a21e69ab 71
+Schrift/Features/Home/HomeSplitView.swift
+  s_dd62fdd4f50c18::t_51618134b8be2b 35-42
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_dd62fdd4f50c18::t_84f09d80670f62 54
+  s_dd62fdd4f50c18::t_b61b2f6c24a270 19,22
+  s_dd62fdd4f50c18::t_96747a3a4566d0 30,34,39,42,45,48
+  s_dd62fdd4f50c18::t_94d2de7f366023 73,76
+Schrift/Features/Profile/ProfileScreen.swift
+  s_dd62fdd4f50c18::t_a4e9e276f11a05 129
+  s_dd62fdd4f50c18::t_85ab5d84456ef1 90
+  s_dd62fdd4f50c18::t_7b6a51f2925d5e 71
+  s_dd62fdd4f50c18::t_e6008c8df063a3 147
+  s_dd62fdd4f50c18::t_ffe892607f7adc 96,99
+  s_dd62fdd4f50c18::t_f972c9f0e5bd54 83
+  s_dd62fdd4f50c18::t_66a27906be32b5 115,122
+project.yml
+  s_dd62fdd4f50c18::t_2403bc944269a3 52-62
+Schrift/DesignSystem/Components/OfflineBanner.swift
+  s_dd62fdd4f50c18::t_900ab70cc5c741 17
+Schrift/Features/Home/HomeView.swift
+  s_dd62fdd4f50c18::t_0cd978fde6aae9 42-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "df5e02fc9a297ce3769f1bfbaf18f805e9ad7ca5",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

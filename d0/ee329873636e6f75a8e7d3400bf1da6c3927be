@@ -1,0 +1,25 @@
+SchriftTests/Support/HexData.swift
+  s_8c1f6116e89b3c::t_f281634ad1c192 1-30
+Schrift/Core/Yjs/YjsUpdateEncoder.swift
+  s_8c1f6116e89b3c::t_3fd6376231c3c6 46-55
+Schrift/Core/Yjs/Lib0Decoder.swift
+  s_8c1f6116e89b3c::t_8300b4ce73cfa7 1-132
+SchriftTests/Core/Yjs/Lib0DecoderTests.swift
+  s_8c1f6116e89b3c::t_bf27fff6e857ed 1-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "d0ee329873636e6f75a8e7d3400bf1da6c3927be",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

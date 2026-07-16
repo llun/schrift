@@ -1,0 +1,30 @@
+DocsIOS/DesignSystem/Components/LinkReachPill.swift
+  s_44afd2562a4f35::t_6967fc2afcf7c4 54-56
+DocsIOS/DesignSystem/Components/ShareMemberRow.swift
+  s_44afd2562a4f35::t_367256b87b3807 47-48
+DocsIOS/DesignSystem/Components/TabBar.swift
+  s_44afd2562a4f35::t_c36b66128e5403 31-32
+DocsIOS/DesignSystem/Components/DocRow.swift
+  s_44afd2562a4f35::t_0e6b2c9c3e2439 68-69
+  s_44afd2562a4f35::t_895e9b81f5ec39 11-29
+DocsIOS/DesignSystem/Components/SegmentedControl.swift
+  s_44afd2562a4f35::t_56e3c50fe46cbd 40
+DocsIOSTests/DesignSystem/Components/DocRowTests.swift
+  s_44afd2562a4f35::t_94beee9030cf02 16-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "b4b0f31eace3cbe8a9ec4562b08c1a2c4677923a",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

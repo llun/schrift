@@ -1,0 +1,22 @@
+SchriftTests/Features/Editor/MarkdownParserTests.swift
+  s_8c866bdb7fcfb2::t_6ae62b26d69955 229-270
+Schrift/Features/Editor/MarkdownParser.swift
+  s_8c866bdb7fcfb2::t_052773751a1578 163-169,178-182,189-199
+  s_8c866bdb7fcfb2::t_3d1ca67c3087a6 200-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "338b8e572830835865cfafafa34242857b11f7a4",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

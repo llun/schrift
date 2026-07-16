@@ -1,0 +1,19 @@
+DocsIOS/Features/Share/ShareSheetView.swift
+  s_44afd2562a4f35::t_0f257d30621849 1-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "91e1c2ce75c1ebe9ee0574b1bfeaccc7899c2594",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

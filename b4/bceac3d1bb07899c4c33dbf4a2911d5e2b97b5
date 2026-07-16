@@ -1,0 +1,19 @@
+Schrift/Core/Localization/PluralRule.swift
+  s_c7ab8ecfba031c::t_bb0c0e03deff21 23-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "b4bceac3d1bb07899c4c33dbf4a2911d5e2b97b5",
+  "prompts": {},
+  "sessions": {
+    "s_c7ab8ecfba031c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09410f27-cec4-4a12-89b6-2ce248d0480a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

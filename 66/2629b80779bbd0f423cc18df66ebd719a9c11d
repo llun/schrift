@@ -1,0 +1,32 @@
+docs/design-system.md
+  s_c7ab8ecfba031c::t_4b5e2c607aee7b 350
+  s_c7ab8ecfba031c::t_61ed935b7967e7 273-280
+  s_c7ab8ecfba031c::t_fd32140ff3cf54 268
+  s_c7ab8ecfba031c::t_06f010d0e65d93 220
+  s_c7ab8ecfba031c::t_e78287812a8def 207
+  s_c7ab8ecfba031c::t_28fa23999670fa 40
+README.md
+  s_c7ab8ecfba031c::t_327fd9aeb16ce9 10-13
+docs/architecture.md
+  s_c7ab8ecfba031c::t_ba6fec1bf4f173 30
+CLAUDE.md
+  s_c7ab8ecfba031c::t_35c5da05c9fb9e 201
+  s_c7ab8ecfba031c::t_52791b3b83db26 373
+  s_c7ab8ecfba031c::t_781c5de6419833 363-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "662629b80779bbd0f423cc18df66ebd719a9c11d",
+  "prompts": {},
+  "sessions": {
+    "s_c7ab8ecfba031c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "09410f27-cec4-4a12-89b6-2ce248d0480a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

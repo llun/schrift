@@ -1,0 +1,59 @@
+CLAUDE.md
+  s_c705f20456c874::t_bf3f7c703fa131 739-740
+  s_c705f20456c874::t_494645fa0d2d6d 759-794
+docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md
+  s_c705f20456c874::t_8ded16c8c2185c 140,143,150-158,161-165,170-192
+  s_c705f20456c874::t_8cd9efbd00a0c1 1-67,82-139,141-142,144-149,159-160,166-169,193-205
+  s_c705f20456c874::t_86271b2dee1889 68-81
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_c705f20456c874::t_2bdad36093803f 29-33
+SchriftTests/Core/Yjs/InlineLayoutTests.swift
+  s_c705f20456c874::t_b35a8d0a7a5e71 21-25
+  s_c705f20456c874::t_ca3166f52af4d3 118-133
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_c705f20456c874::t_b43a6816da85c2 5,7
+  s_c705f20456c874::t_d09fa61ea81c98 431-498
+  s_c705f20456c874::t_c4b051462e071a 341-352,358-367
+  s_c705f20456c874::t_1560c7585d809b 197,206,211,213-223,233-241
+  s_c705f20456c874::t_24c0781bcaa844 242,332-340,353-357,368-379
+  s_c705f20456c874::t_dea210cf4f4dad 167
+  s_ab97d21f52c341::t_1883e53b240bc9 243
+SchriftTests/Features/Editor/EditorLinkEditingTests.swift
+  s_c705f20456c874::t_0c221d7a9728a3 220-222,231-232
+docs/superpowers/plans/2026-07-10-editor-inline-link-rendering.md
+  s_c705f20456c874::t_0c34943ca7f57c 6-17
+Schrift/Features/Editor/MarkdownShortcuts.swift
+  s_c705f20456c874::t_9dd1eadc940553 65-66,81-111
+  s_ab97d21f52c341::t_5037c061130e40 112-113
+SchriftTests/Core/Yjs/InlineMarkdownTests.swift
+  s_c705f20456c874::t_be2c491db6fa84 85-203,206,208-209,211
+  s_c705f20456c874::t_d1e9e98901ccd2 204-205,207,210
+  s_c705f20456c874::t_deb0e28337d63e 212-262
+  s_c705f20456c874::t_ad01d0b16cfd6c 47-54
+SchriftTests/Features/Editor/MarkdownShortcutsTests.swift
+  s_c705f20456c874::t_0e3f7a534b4e8a 106,108-112,114-117,119,122-133,136-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "5fe357845acbb499c10396903a01b6a4f81e9bd2",
+  "prompts": {},
+  "sessions": {
+    "s_ab97d21f52c341": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62bf221b-714f-4225-95d2-e37f0d6fd6a3",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_c705f20456c874": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d0206a6-9549-40f1-a918-8f431e030413",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

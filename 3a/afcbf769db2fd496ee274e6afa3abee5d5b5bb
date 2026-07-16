@@ -1,0 +1,23 @@
+SchriftTests/Core/Collaboration/HocuspocusMessageTests.swift
+  s_8c1f6116e89b3c::t_1be1c6588b6a12 70-82
+SchriftTests/Core/Yjs/Lib0DecoderTests.swift
+  s_8c1f6116e89b3c::t_6f13868e72b31b 236-243
+Schrift/Core/Yjs/Lib0Decoder.swift
+  s_8c1f6116e89b3c::t_769ed761af64bf 75-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3aafcbf769db2fd496ee274e6afa3abee5d5b5bb",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+Schrift/Core/Networking/ServerConfigEndpoints.swift
+  s_8c1f6116e89b3c::t_e30db020613cfe 10-12,17-24,26
+SchriftTests/Core/Networking/ServerConfigClientTests.swift
+  s_8c1f6116e89b3c::t_3a0635463ebeaa 41-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "a3e581131bf4d4c9fed8111c7c6fcd8865f12aeb",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

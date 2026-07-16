@@ -1,0 +1,21 @@
+DocsIOS/Features/Home/DocumentCacheStore.swift
+  s_44afd2562a4f35::t_5c71b773e833a1 1-49
+DocsIOSTests/Features/Home/DocumentCacheStoreTests.swift
+  s_44afd2562a4f35::t_d75036ac9bf387 1-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "72edd98512d7d9e11abc21609bc028480c029e5a",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

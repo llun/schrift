@@ -1,0 +1,19 @@
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_e856b2f2be3677::t_0745df37588c65 2178-2306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "c3aa46f3e20c1bb65810515bbb327e9df75f7eb2",
+  "prompts": {},
+  "sessions": {
+    "s_e856b2f2be3677": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4c1d73de-8c9d-4165-8ff3-472476b06ca0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+SchriftTests/Features/Editor/DraftSyncDecisionTests.swift
+  s_b91c3ec7576796::t_c542157be06330 27-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "838012398e287abdaf1f87c2e6e521e6f9def49b",
+  "prompts": {},
+  "sessions": {
+    "s_b91c3ec7576796": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "267d4e1f-46ce-40e4-892f-f84cbd786386",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

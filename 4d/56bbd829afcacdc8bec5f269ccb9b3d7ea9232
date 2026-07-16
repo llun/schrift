@@ -1,0 +1,21 @@
+Schrift/DesignSystem/Components/NavBar.swift
+  s_17cae67b166a97::t_eb8b9bef70b063 102-107
+Schrift/Features/Editor/EditorView.swift
+  s_17cae67b166a97::t_95fe7c457cdecb 64-67,69-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4d56bbd829afcacdc8bec5f269ccb9b3d7ea9232",
+  "prompts": {},
+  "sessions": {
+    "s_17cae67b166a97": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f66e148-a165-4e42-a632-f81b7c01b5a7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

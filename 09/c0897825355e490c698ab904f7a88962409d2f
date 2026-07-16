@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/SearchField.swift
+  s_a9c5d21d88404f::t_dd4602ae84bf97 10,13,17,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "09c0897825355e490c698ab904f7a88962409d2f",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

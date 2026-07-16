@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-01-polish.md
+  s_44afd2562a4f35::t_a6786333dd8f70 1-335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "b65fb3c79db939b31b1d46f6b66b1ea71e68b065",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+SchriftTests/DesignSystem/Components/TextFieldStyleResolverTests.swift
+  s_dd62fdd4f50c18::t_9b15a79112204f 9-12,18-21,26-30,36-39
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_dd62fdd4f50c18::t_4a34313be9aa67 10-13,24-25,30-31,35-37
+  s_dd62fdd4f50c18::t_754a0b30d4353a 67-68
+Schrift/DesignSystem/Components/TextField.swift
+  s_dd62fdd4f50c18::t_e14cb6064a5e88 11-14,24-26,29-31,33-35,37-39
+  s_dd62fdd4f50c18::t_be7e925d733e83 89
+  s_dd62fdd4f50c18::t_b6301527ded85f 68
+SchriftTests/DesignSystem/Components/LinkReachPillTests.swift
+  s_dd62fdd4f50c18::t_c0593d1bcb413c 11-12,21-22,31-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d7c755fbb7a76bf53ed4f198e1a74ec8ab0219c5",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

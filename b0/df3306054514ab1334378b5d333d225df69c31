@@ -1,0 +1,19 @@
+Schrift/DesignSystem/Components/ShareMemberRow.swift
+  s_a9c5d21d88404f::t_1f42f3a3f31acd 21,25,39,42-43,49-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "b0df3306054514ab1334378b5d333d225df69c31",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+SchriftTests/Features/Home/DocumentCacheStoreTests.swift
+  s_b9be2e1bb73bb4::t_7c48fbe4abc15c 111,117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "a76c5b6d50b7f58d7406191ed5b4206e6d618314",
+  "prompts": {},
+  "sessions": {
+    "s_b9be2e1bb73bb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "51720da7-2a4b-47c3-82a2-99ef121301a9",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

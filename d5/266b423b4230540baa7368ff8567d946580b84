@@ -1,0 +1,23 @@
+DocsIOS/Features/Connect/ConnectView.swift
+  s_44afd2562a4f35::t_f248b822551ec0 1-67
+DocsIOS/Features/Connect/WebLoginView.swift
+  s_44afd2562a4f35::t_bbcf115f4d9ed2 1-46
+DocsIOS/App/RootView.swift
+  s_44afd2562a4f35::t_6063b737746631 4-6,8-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "d5266b423b4230540baa7368ff8567d946580b84",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

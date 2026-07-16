@@ -1,0 +1,21 @@
+DocsIOS/DesignSystem/Components/TabBar.swift
+  s_44afd2562a4f35::t_b0e6cbe88d0fb1 1-56
+DocsIOSTests/DesignSystem/Components/TabBarTests.swift
+  s_44afd2562a4f35::t_37154da8fddd08 1-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "9ff2c329c748f8b2a5c7285ceea12407a4c538bf",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

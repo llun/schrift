@@ -1,0 +1,21 @@
+DocsIOS/DesignSystem/Components/Button.swift
+  s_44afd2562a4f35::t_27a935cf7aa729 1-109
+DocsIOSTests/DesignSystem/Components/ButtonStyleResolverTests.swift
+  s_44afd2562a4f35::t_c724e601adc474 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "4c9101ea8caa23a93bf5064197fe1b7b811c91f4",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

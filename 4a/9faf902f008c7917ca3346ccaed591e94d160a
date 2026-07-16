@@ -1,0 +1,24 @@
+docs/superpowers/plans/2026-07-01-networking-foundation.md
+  s_44afd2562a4f35::t_7aa41b4f5ad611 313
+  s_44afd2562a4f35::t_1b1f94b451ae62 167
+  s_44afd2562a4f35::t_a26bb8fcea40d0 39,41
+  s_44afd2562a4f35::t_c99a25138725be 421-422
+  s_44afd2562a4f35::t_a3ea2e3c386952 340-367
+  s_44afd2562a4f35::t_2c4e922abe5769 443-444
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "4a9faf902f008c7917ca3346ccaed591e94d160a",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

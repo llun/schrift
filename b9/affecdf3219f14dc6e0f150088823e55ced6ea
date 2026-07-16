@@ -1,0 +1,22 @@
+Schrift/Features/Profile/PickerSheetHeader.swift
+  s_2b8ec53874d077::t_5a79e8f0904080 13-15
+  s_2b8ec53874d077::t_c5b3e42523da53 16,28,39-43
+  s_2b8ec53874d077::t_aaa35071885155 20
+  s_2b8ec53874d077::t_91589f02afee06 1-12,17-19,21-27,29-38,44-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "b9affecdf3219f14dc6e0f150088823e55ced6ea",
+  "prompts": {},
+  "sessions": {
+    "s_2b8ec53874d077": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de8722ec-8590-4970-bfbe-3ffd2978a291",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

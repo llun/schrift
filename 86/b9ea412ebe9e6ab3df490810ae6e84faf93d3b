@@ -1,0 +1,20 @@
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_a9c5d21d88404f::t_bc341ee27a1b70 15-23,25-36,38-43,45-50,52-57,61-62,71-83
+  s_a9c5d21d88404f::t_ed81bd31bf5961 84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "86b9ea412ebe9e6ab3df490810ae6e84faf93d3b",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

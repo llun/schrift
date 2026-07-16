@@ -1,0 +1,24 @@
+SchriftTests/DesignSystem/Tokens/HexColorTests.swift
+  s_dd62fdd4f50c18::t_eb1d7cad1d1641 1-16,22-27
+  s_dd62fdd4f50c18::t_39fa43fddd7559 17-21
+Schrift/DesignSystem/Tokens/HexColor.swift
+  s_dd62fdd4f50c18::t_39fa43fddd7559 34-39
+  s_dd62fdd4f50c18::t_b9517866fec336 2,23-33,41
+  s_dd62fdd4f50c18::t_95e2748c351d33 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c5fbeca620e226bcb3540461298277ac673a7d1e",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

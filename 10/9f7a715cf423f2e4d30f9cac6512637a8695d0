@@ -1,0 +1,40 @@
+Schrift/Features/Editor/BlockTextView.swift
+  s_058afb8a80247b::t_bb17dbc9d9d9de 219,221,225-233,235-245,247
+  s_058afb8a80247b::t_60500e81bdf9ab 481-492
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_058afb8a80247b::t_9b09905b53be89 349-358,360
+docs/superpowers/plans/2026-07-10-editor-inline-link-rendering.md
+  s_058afb8a80247b::t_e53b4382dd4619 114-127
+  s_058afb8a80247b::t_9f83d3f9bd9410 257,259-260
+  s_058afb8a80247b::t_38a39582ff6847 199-228,230-233
+SchriftTests/Features/Editor/EditorLinkEditingTests.swift
+  s_058afb8a80247b::t_89c9fabe7b0931 218-224,226,228,230-231
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_058afb8a80247b::t_e055e9b122df96 29-38,40
+CLAUDE.md
+  s_058afb8a80247b::t_2ccbc8d77bef3b 726-736
+  s_058afb8a80247b::t_27e1b8e544f4a7 747-753
+  s_058afb8a80247b::t_a72f2073c9c529 740-746
+SchriftTests/Core/Yjs/InlineLayoutTests.swift
+  s_058afb8a80247b::t_d910ccbdeb1800 202-256
+SchriftTests/Features/Editor/BlockTextRenderingTests.swift
+  s_058afb8a80247b::t_96ec34e598b409 175-177,179-240
+SchriftTests/Features/Editor/MarkdownShortcutsTests.swift
+  s_058afb8a80247b::t_d18fa54614c1cc 105-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "109f7a715cf423f2e4d30f9cac6512637a8695d0",
+  "prompts": {},
+  "sessions": {
+    "s_058afb8a80247b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8ac1ce0-ee65-4fb3-896e-b249d6548a50",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

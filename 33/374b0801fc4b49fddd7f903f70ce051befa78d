@@ -1,0 +1,38 @@
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a01797913bdf0b::t_5ecac1501a8a04 95-97
+  s_a01797913bdf0b::t_5bdaf45f44f45a 280,330,334
+Schrift/Features/Home/HomeViewModel.swift
+  s_a01797913bdf0b::t_5bdaf45f44f45a 132,170,200,213
+SchriftTests/Features/Editor/EditorUnavailableDetailTests.swift
+  s_a01797913bdf0b::t_efe08b8a099ab8 13-14,20-21,27-29,40,47
+SchriftTests/Core/Networking/APIDiagnosticsLogTests.swift
+  s_a01797913bdf0b::t_5ecac1501a8a04 1-45
+Schrift/Core/Networking/FormattedDocumentContent.swift
+  s_a01797913bdf0b::t_a1d1e6d4c2f52a 27-39,48-54,60-76,78
+  s_a01797913bdf0b::t_78ae5772c611a6 77
+SchriftTests/Core/Networking/DocsAPIErrorTests.swift
+  s_a01797913bdf0b::t_da51ca968962f7 18-37
+Schrift/Core/Networking/APIDiagnosticsLog.swift
+  s_a01797913bdf0b::t_5bdaf45f44f45a 57-65
+Schrift/Core/Networking/DocsAPIError.swift
+  s_a01797913bdf0b::t_1cda1f8c5ed014 7-11,26-31,39-44
+  s_a01797913bdf0b::t_831afbc7874bc9 45
+SchriftTests/Core/Networking/FormattedDocumentContentTests.swift
+  s_a01797913bdf0b::t_2a44087eb82250 70-90,92-95,99-100,103,110-141,144,149,151,153-154,156-158,161-187,190,197,200,209,218-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "33374b0801fc4b49fddd7f903f70ce051befa78d",
+  "prompts": {},
+  "sessions": {
+    "s_a01797913bdf0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dfe85d6-2b3e-4871-beb2-cfd4552628cb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

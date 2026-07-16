@@ -1,0 +1,92 @@
+Schrift/Core/Localization/Strings+en.swift
+  s_dd62fdd4f50c18::t_ab1ef0a1429654 67,72-86
+  s_dd62fdd4f50c18::t_16dac3199734f4 11-12,16-18
+  s_dd62fdd4f50c18::t_e51c2679d76957 38-42,52-53
+  s_dd62fdd4f50c18::t_9d3f053a8fdfa4 19
+  s_dd62fdd4f50c18::t_f5648b08ee5c32 87
+Schrift/Features/Search/SearchViewModel.swift
+  s_dd62fdd4f50c18::t_512776915cb163 27
+  s_dd62fdd4f50c18::t_ab365d3cd7cfca 11
+  s_dd62fdd4f50c18::t_d1e1b3be3d6edd 45,52
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_dd62fdd4f50c18::t_4e7bd5462f4a1c 87,117,135,179,191,243,269,291,420,432
+Schrift/DesignSystem/Components/SearchField.swift
+  s_dd62fdd4f50c18::t_94f5a493c97a29 52
+  s_dd62fdd4f50c18::t_3e6f86d971d517 31
+  s_dd62fdd4f50c18::t_12b1dd075e72ac 12
+Schrift/Core/Localization/L10nKey.swift
+  s_dd62fdd4f50c18::t_1f273282119c88 12-13,18-21,40-44,54-55,69-70,75-89
+  s_dd62fdd4f50c18::t_ec1f83cf73925b 90
+Schrift/Features/Shared/SharedScreen.swift
+  s_dd62fdd4f50c18::t_e798101529d38a 50
+  s_dd62fdd4f50c18::t_680e5ed953f889 62-63
+Schrift/Features/Home/HomeViewModel.swift
+  s_dd62fdd4f50c18::t_ad04d4c9c9f77b 13
+  s_dd62fdd4f50c18::t_5fe3678e3645d2 12
+  s_dd62fdd4f50c18::t_9c6e7d9cdf4cd3 169
+  s_dd62fdd4f50c18::t_3f24259607cc5a 212
+  s_dd62fdd4f50c18::t_99c41b14a2ab9e 227
+  s_dd62fdd4f50c18::t_85023bcb5b44e4 131
+  s_dd62fdd4f50c18::t_c5553b1123b705 199
+SchriftTests/DesignSystem/Components/LinkReachPillTests.swift
+  s_dd62fdd4f50c18::t_36763b5fafb3eb 13,23-24,35
+Schrift/DesignSystem/Components/ShareMemberRow.swift
+  s_dd62fdd4f50c18::t_aec32b7510fbae 55-56
+  s_dd62fdd4f50c18::t_1aed08f51c1c33 69
+  s_dd62fdd4f50c18::t_0996841605ee5c 14-15
+Schrift/Features/Home/HomeView.swift
+  s_dd62fdd4f50c18::t_3c3e851483bebf 47-50
+  s_dd62fdd4f50c18::t_c38b74b5b3b830 60
+  s_dd62fdd4f50c18::t_50e9147a378387 23-24
+Schrift/Features/Search/SearchScreen.swift
+  s_dd62fdd4f50c18::t_7c827ad859f527 19
+  s_dd62fdd4f50c18::t_241435c56fd048 85,87
+Schrift/Features/Connect/ReauthenticationSheetView.swift
+  s_dd62fdd4f50c18::t_26076dab278a64 11
+Schrift/Features/Shared/SharedViewModel.swift
+  s_dd62fdd4f50c18::t_4ba12bbbebb2e9 17
+  s_dd62fdd4f50c18::t_4bb4dd067c757e 134
+  s_dd62fdd4f50c18::t_e3e1f215e368a1 71
+Schrift/DesignSystem/Components/OfflineBanner.swift
+  s_dd62fdd4f50c18::t_e05602a6ead01b 6-9,11-13,20,42,48,52
+Schrift/Features/Home/DocumentListView.swift
+  s_dd62fdd4f50c18::t_59a9141b633c15 160
+  s_dd62fdd4f50c18::t_44d8e077e45ee4 61,64
+  s_dd62fdd4f50c18::t_4ab75529045c70 41
+  s_dd62fdd4f50c18::t_e12823478f89b3 147
+SchriftTests/DesignSystem/Components/DocRowTests.swift
+  s_dd62fdd4f50c18::t_2a025746713237 20-23,30-33,40-43,50-53,60-63
+Schrift/DesignSystemCatalog/ComponentCatalogPreview.swift
+  s_dd62fdd4f50c18::t_debf9126ea85f3 160
+Schrift/DesignSystem/Components/DocRow.swift
+  s_dd62fdd4f50c18::t_beb2c745326700 51-52
+  s_dd62fdd4f50c18::t_e842b346b7831b 11-22,25,31,33
+  s_dd62fdd4f50c18::t_e647ddcadbcc48 92
+  s_dd62fdd4f50c18::t_2e27972748afed 104-111,122
+  s_dd62fdd4f50c18::t_d0f60c75863ba6 78
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_dd62fdd4f50c18::t_72105229e452f2 15-16,26,32-33,39,48-49,56,59,74-75,86
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_dd62fdd4f50c18::t_4e7bd5462f4a1c 114,186,271,296,316,375,401,450,556,579,611,644,655,659,667,679
+  s_dd62fdd4f50c18::t_b1a5ab21bb4fc4 628
+Schrift/Features/Home/HomeSplitView.swift
+  s_dd62fdd4f50c18::t_9a70be32de7510 35
+  s_dd62fdd4f50c18::t_4e2b1588a10773 9-10
+  s_dd62fdd4f50c18::t_b211eaaf255dd5 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "931ce8a3d5607ef748f669d0ff18868e199d2bb6",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+DocsIOSTests/Features/Share/ShareViewModelTests.swift
+  s_44afd2562a4f35::t_35b0a0558e3723 1-135
+DocsIOS/Features/Share/ShareViewModel.swift
+  s_44afd2562a4f35::t_bee378308cf98d 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "5664b3c2bdaa4b4dd8eb0b554fd5384593e8a64c",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

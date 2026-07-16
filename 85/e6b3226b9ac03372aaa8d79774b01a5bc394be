@@ -1,0 +1,19 @@
+Schrift/Features/Home/DocumentListView.swift
+  s_7881eb05632d17::t_39a329670f56b2 20-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "85e6b3226b9ac03372aaa8d79774b01a5bc394be",
+  "prompts": {},
+  "sessions": {
+    "s_7881eb05632d17": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "43d87196-89dd-49e0-b4df-5141bdfc5947",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+DocsIOS/Features/Home/DocumentListView.swift
+  s_44afd2562a4f35::t_12b00911c303b2 43-57,65-66
+  s_44afd2562a4f35::t_cbd52cbd756f19 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "869b89e691d45002d53dae424e0c137efedba44c",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+DocsIOSTests/DesignSystem/Components/AvatarGroupTests.swift
+  s_44afd2562a4f35::t_3f280da9347f83 1-25
+DocsIOS/DesignSystem/Components/AvatarGroup.swift
+  s_44afd2562a4f35::t_1bccc7fc2f0054 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "474cb34e32cc3ec816db02058e22fb236cee80c1",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

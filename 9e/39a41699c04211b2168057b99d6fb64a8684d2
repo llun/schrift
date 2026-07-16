@@ -1,0 +1,19 @@
+Schrift/Features/Shared/SharedScreen.swift
+  s_a9c5d21d88404f::t_6a485605fba7f3 56-59,75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "9e39a41699c04211b2168057b99d6fb64a8684d2",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+CLAUDE.md
+  s_8c1f6116e89b3c::t_39a42b4a960482 207-214
+Schrift/App/RootView.swift
+  s_8c1f6116e89b3c::t_b8a0c6df567519 92,97-103,108-113
+  s_8c1f6116e89b3c::t_686dc676c619d2 18,41-52
+  s_8c1f6116e89b3c::t_920658fc4f1536 114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "27dd3edbd4fd97ab2d977599b7d35e700d258500",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+DocsIOSTests/DesignSystem/Components/DocRowTests.swift
+  s_44afd2562a4f35::t_adae8939a9fab7 1-16
+DocsIOS/DesignSystem/Components/DocRow.swift
+  s_44afd2562a4f35::t_76e5a725221b06 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "89d8befaa92f998ad8938158bd115a3fa972d308",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

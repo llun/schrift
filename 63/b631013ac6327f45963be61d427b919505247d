@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-01-docs-components.md
+  s_44afd2562a4f35::t_ee02b8ebd8e121 1-484
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "63b631013ac6327f45963be61d427b919505247d",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

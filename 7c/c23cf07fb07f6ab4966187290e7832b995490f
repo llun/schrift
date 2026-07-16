@@ -1,0 +1,20 @@
+docs/superpowers/plans/2026-07-11-material-icons.md
+  s_dd62fdd4f50c18::t_e38d3eb4579618 54,56
+  s_dd62fdd4f50c18::t_cfd77e885b0bcc 27,30-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "7cc23cf07fb07f6ab4966187290e7832b995490f",
+  "prompts": {},
+  "sessions": {
+    "s_dd62fdd4f50c18": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4fac3ed-83b4-4c90-b934-cffe9b36aaad",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

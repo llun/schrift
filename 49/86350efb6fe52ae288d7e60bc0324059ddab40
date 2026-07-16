@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-10-editor-inline-link-rendering.md
+  s_058afb8a80247b::t_a429cf001f9e73 1-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4986350efb6fe52ae288d7e60bc0324059ddab40",
+  "prompts": {},
+  "sessions": {
+    "s_058afb8a80247b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8ac1ce0-ee65-4fb3-896e-b249d6548a50",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

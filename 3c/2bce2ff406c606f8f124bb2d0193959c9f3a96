@@ -1,0 +1,31 @@
+docs/testflight-setup.md
+  s_1111f017938c48::t_6c1335fa61c03b 77-102
+fastlane/Fastfile
+  s_1111f017938c48::t_b032a63383befb 56-62,68
+.github/workflows/testflight.yml
+  s_1111f017938c48::t_ffd1ea67c6d934 3-22,25,28,30,33-36,57-67,95-115
+scripts/next-version.sh
+  s_1111f017938c48::t_d8ed577361605a 1-51
+CLAUDE.md
+  s_1111f017938c48::t_545abfd4fd4718 43-57
+README.md
+  s_1111f017938c48::t_5294fb3496f64d 63-67
+docs/superpowers/plans/2026-07-03-auto-testflight-release.md
+  s_1111f017938c48::t_c91ba826e7f6cd 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "3c2bce2ff406c606f8f124bb2d0193959c9f3a96",
+  "prompts": {},
+  "sessions": {
+    "s_1111f017938c48": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9e64132-5786-4976-bf8d-0c4dc754805a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

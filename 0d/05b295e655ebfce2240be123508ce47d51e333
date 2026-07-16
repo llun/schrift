@@ -1,0 +1,24 @@
+Schrift/Features/Editor/ConflictSheetView.swift
+  s_e60497739a7df0::t_581a96d1cc7957 1-96
+Schrift/Features/Editor/EditorView.swift
+  s_e60497739a7df0::t_2de88d288fd2d8 294-299
+  s_e60497739a7df0::t_34b8a696cbf1a0 182-202
+  s_e60497739a7df0::t_6aadf03bd2316d 121
+  s_e60497739a7df0::t_5b6086eeb123de 300-301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "0d05b295e655ebfce2240be123508ce47d51e333",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

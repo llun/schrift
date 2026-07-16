@@ -1,0 +1,21 @@
+docs/superpowers/plans/2026-07-07-image-round-trip-pr1.md
+  s_0ef047c7af4225::t_4840d19c928338 1-431
+docs/superpowers/specs/2026-07-07-photo-upload-image-blocks-design.md
+  s_0ef047c7af4225::t_146a7385baa3f1 135-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ddd662225b7334de0533de9caf3ecf543dfc0edc",
+  "prompts": {},
+  "sessions": {
+    "s_0ef047c7af4225": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "267b7137-2d14-4714-9ab4-3dc0fb35bfb1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

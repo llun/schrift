@@ -1,0 +1,37 @@
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_284304e258e69f::t_80d24d728ef344 368-382
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_48981e48a2f00a::t_e3c657c7bc6c88 83-116
+  s_48981e48a2f00a::t_4de0116ed4342e 30-35
+SchriftTests/Core/Auth/SessionCookiesTests.swift
+  s_48981e48a2f00a::t_fa6b0a9fddb217 103-132
+  s_284304e258e69f::t_58288c10f13b51 12-14,24-25
+Schrift/Features/Home/HomeViewModel.swift
+  s_284304e258e69f::t_9a1fc477eb4283 110-120
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_48981e48a2f00a::t_718cb4da3fc2be 140-184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b24d55e4e071513ffebb4f3a2cb594e6e3525c7a",
+  "prompts": {},
+  "sessions": {
+    "s_284304e258e69f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df97f89b-c3b3-44ee-919b-86f015a0fa57",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_48981e48a2f00a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae6c2fe8-c354-45db-9444-8e1a3f7e2970",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+DocsIOS/Features/Editor/MarkdownBlockView.swift
+  s_44afd2562a4f35::t_d7a1463e2d998e 1-60
+DocsIOS/Features/Home/HomeView.swift
+  s_44afd2562a4f35::t_952e51bd9a233b 15,18-20,22-23,25-33,35-37,39-44,46-56,60-97,114
+DocsIOS/Features/Editor/EditorView.swift
+  s_44afd2562a4f35::t_fc70130bc560ec 1-68
+DocsIOS/Features/Home/HomeViewModel.swift
+  s_44afd2562a4f35::t_9c909f9fd03502 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "50b5652b15ccfa1bd66736ac4b98f7df574522ac",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

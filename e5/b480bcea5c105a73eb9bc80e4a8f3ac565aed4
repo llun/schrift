@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-07-07-photo-upload-image-blocks-design.md
+  s_0ef047c7af4225::t_fba4ad8a9fccb0 1-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e5b480bcea5c105a73eb9bc80e4a8f3ac565aed4",
+  "prompts": {},
+  "sessions": {
+    "s_0ef047c7af4225": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "267b7137-2d14-4714-9ab4-3dc0fb35bfb1",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

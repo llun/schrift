@@ -1,0 +1,19 @@
+SchriftTests/Core/Collaboration/SyncMessageTests.swift
+  s_8c1f6116e89b3c::t_e1949d0b084cff 69-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "4ad2340ac59ffac5a88730a16b76d7bac9807ecb",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

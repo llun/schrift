@@ -1,0 +1,23 @@
+DocsIOS/Core/Networking/DocsAPIClient.swift
+  s_44afd2562a4f35::t_3c38d6c54ee648 22-27,35-36,39,48-50
+DocsIOS/Core/Networking/DocumentSave.swift
+  s_44afd2562a4f35::t_1a408a80d25e0e 1-55
+DocsIOSTests/Core/Networking/DocumentSaveTests.swift
+  s_44afd2562a4f35::t_fef92d177caa4f 1-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "1c6e49df7e467dd7d33ac332ea9a4e9550fa4d69",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

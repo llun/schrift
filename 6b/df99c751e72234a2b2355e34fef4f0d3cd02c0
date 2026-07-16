@@ -1,0 +1,19 @@
+Schrift/Core/Localization/L10nKey.swift
+  s_e60497739a7df0::t_e4030fca7937d5 180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "6bdf99c751e72234a2b2355e34fef4f0d3cd02c0",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

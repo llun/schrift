@@ -1,0 +1,32 @@
+SchriftTests/Core/Networking/DocumentSaveTests.swift
+  s_8c866bdb7fcfb2::t_4dabbc07fb36f3 9
+SchriftTests/Core/Networking/AttachmentEndpointsClientTests.swift
+  s_8c866bdb7fcfb2::t_18cf3353900197 139-140,144-147
+  s_8c866bdb7fcfb2::t_94615e2f3c291f 1-138,141-143,148-157
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_8c866bdb7fcfb2::t_a02b0307997130 37-43
+SchriftTests/Support/RequestBodyHelpers.swift
+  s_8c866bdb7fcfb2::t_c2c79997514d3e 1-25
+Schrift/Core/Networking/AttachmentEndpoints.swift
+  s_8c866bdb7fcfb2::t_b76ad2cf45b524 1-71
+SchriftTests/Core/Networking/ShareEndpointsClientTests.swift
+  s_8c866bdb7fcfb2::t_4989e0b00e9b34 5-6
+SchriftTests/Core/Networking/DocsAPIClientTests.swift
+  s_8c866bdb7fcfb2::t_82622af39c8bb0 238-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2ba3f21bae2bcf33e52381c1734b06f28ade5e5f",
+  "prompts": {},
+  "sessions": {
+    "s_8c866bdb7fcfb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7275375c-d7e8-42b8-8f72-87827b0a7d35",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

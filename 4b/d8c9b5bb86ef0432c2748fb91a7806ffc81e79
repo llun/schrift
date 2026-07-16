@@ -1,0 +1,23 @@
+Schrift/App/SchriftApp.swift
+  s_e60497739a7df0::t_f46b9356ef5f37 7,16
+Schrift/App/RootView.swift
+  s_e60497739a7df0::t_24845d31d1de35 59-73
+  s_e60497739a7df0::t_37fef647d28165 11-12
+  s_e60497739a7df0::t_39d9c5c8051912 105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "4bd8c9b5bb86ef0432c2748fb91a7806ffc81e79",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

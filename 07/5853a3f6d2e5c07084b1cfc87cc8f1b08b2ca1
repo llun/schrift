@@ -1,0 +1,21 @@
+Schrift/Features/Editor/DocumentContentCacheStore.swift
+  s_7320e20fa0d435::t_37d7edd7d5b38b 1-19
+SchriftTests/Features/Editor/DocumentContentCacheStoreTests.swift
+  s_7320e20fa0d435::t_421ab4a710443e 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "075853a3f6d2e5c07084b1cfc87cc8f1b08b2ca1",
+  "prompts": {},
+  "sessions": {
+    "s_7320e20fa0d435": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b213e15f-ea6c-44b8-b259-9aaee65d2f2c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

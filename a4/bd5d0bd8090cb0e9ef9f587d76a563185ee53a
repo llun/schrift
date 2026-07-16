@@ -1,0 +1,54 @@
+.ruby-version
+  s_235a2295788e87::t_2e577a9093817b 1
+fastlane/Appfile
+  s_235a2295788e87::t_619e7b7ccc4b6e 1-8
+fastlane/Fastfile
+  s_235a2295788e87::t_59d70543f93f83 1-74,134
+  s_235a2295788e87::t_148f63baaf29a4 75,77-84,93,100,119-120,133
+  s_235a2295788e87::t_8d2bdf827c27e7 101-118,121-132
+  s_235a2295788e87::t_66edcb720ff0d6 76,85-92,94-99
+.gitignore
+  s_235a2295788e87::t_7a8547e608e4f1 19-31
+scripts/bootstrap-testflight.sh
+  s_235a2295788e87::t_97238fcc54f431 7,9-12
+  s_235a2295788e87::t_bf56fcb7cc9860 90-96
+  s_235a2295788e87::t_4d48172a3f1377 47,51-56
+  s_235a2295788e87::t_d0f74b8b132125 103-105
+  s_235a2295788e87::t_625128bc280fb4 1-6,8,13-46,48-50,57-80,83,85-89,97-102,106-108
+  s_235a2295788e87::t_86695261c12289 81-82,84
+.github/workflows/testflight.yml
+  s_235a2295788e87::t_336b8a48fe8aa2 46,49-57,60-61
+  s_235a2295788e87::t_b5aa94b02b4386 1-45,47-48,58-59,62-73
+docs/testflight-setup.md
+  s_235a2295788e87::t_410b713eb468f3 3-5,8-18,26-34,36-42,44-48,51-53,55-56,75,77-84,87-89,91,93,96-98,104-107,109,111-119,121-128,132-136
+  s_235a2295788e87::t_a9073241d8250f 63
+  s_235a2295788e87::t_ab6d37f20e3366 1-2,6-7,19,21,25,35,43,49-50,57,74,76,85-86,90,92,94-95,99-103,108,110,120,129-131
+  s_235a2295788e87::t_162630fb0ab68a 20,22-24
+  s_235a2295788e87::t_c6b59693cc4e84 54,58-62,64-73
+project.yml
+  s_235a2295788e87::t_bdeede2d073cdf 27-30
+fastlane/Matchfile
+  s_235a2295788e87::t_af8b5265b710f3 1-12
+Gemfile
+  s_235a2295788e87::t_b080d49045c90c 1-3
+README.md
+  s_235a2295788e87::t_434a2a1ab3ba48 22-28
+Gemfile.lock
+  s_235a2295788e87::t_b3ae2d08690538 1-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "a4bd5d0bd8090cb0e9ef9f587d76a563185ee53a",
+  "prompts": {},
+  "sessions": {
+    "s_235a2295788e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b94da7b-025e-4a6e-aac5-16d4aaca7684",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

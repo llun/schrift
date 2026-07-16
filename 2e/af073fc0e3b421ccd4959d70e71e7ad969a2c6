@@ -1,0 +1,21 @@
+docs/superpowers/plans/2026-06-30-project-scaffold-design-tokens.md
+  s_44afd2562a4f35::t_ca7bee509835d4 341,343-345
+  s_44afd2562a4f35::t_5f6b9192db8c8c 1-340,342,346-830,832-845
+  s_44afd2562a4f35::t_2ed6da324b061e 831
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "2eaf073fc0e3b421ccd4959d70e71e7ad969a2c6",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_a9c5d21d88404f::t_fcf1b6fb337277 23-24
+SchriftTests/DesignSystem/Components/DocRowTests.swift
+  s_a9c5d21d88404f::t_7b5865aed18101 10
+Schrift/DesignSystem/Components/DocRow.swift
+  s_a9c5d21d88404f::t_99cf6f615a0b5d 6
+SchriftTests/DesignSystem/Components/LinkReachPillTests.swift
+  s_a9c5d21d88404f::t_44b592bd6c9d01 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "aaa6814436f0d179da680a825dbfccfa0d6260fc",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

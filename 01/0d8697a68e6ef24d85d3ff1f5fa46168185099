@@ -1,0 +1,27 @@
+DocsIOSTests/Core/Auth/FakeKeychainStore.swift
+  s_44afd2562a4f35::t_c8b53832d0ba52 1-18
+DocsIOSTests/Core/Auth/KeychainStoreTests.swift
+  s_44afd2562a4f35::t_7a3fcffb400cef 1-42
+DocsIOS/Core/Auth/KeychainStore.swift
+  s_44afd2562a4f35::t_b564ec60d145ff 1-58
+DocsIOS/Core/Auth/SessionStore.swift
+  s_44afd2562a4f35::t_06856043ec5fe5 1-32
+DocsIOSTests/Core/Auth/SessionStoreTests.swift
+  s_44afd2562a4f35::t_2930b25f9cc85b 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "010d8697a68e6ef24d85d3ff1f5fa46168185099",
+  "prompts": {},
+  "sessions": {
+    "s_44afd2562a4f35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b637f2c-837b-4a0c-9943-181d1540dd7d",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

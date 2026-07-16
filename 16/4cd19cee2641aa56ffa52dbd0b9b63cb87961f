@@ -1,0 +1,33 @@
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_c705f20456c874::t_6fb673b36b0d83 459
+  s_c705f20456c874::t_c78b22ca4e0f16 472
+  s_c705f20456c874::t_62f5c41104f460 353-363,381-387
+  s_c705f20456c874::t_07788b3cda401c 492-494
+  s_c705f20456c874::t_4faece9a6b8fd4 482
+SchriftTests/Features/Editor/MarkdownShortcutsTests.swift
+  s_c705f20456c874::t_fea89e9f14bf85 145-167
+docs/superpowers/plans/2026-07-10-underscore-emphasis-flanking.md
+  s_c705f20456c874::t_8fb0b1136e2860 82-99
+  s_c705f20456c874::t_e2c0600a11a045 193-194
+  s_c705f20456c874::t_9e12526be4e7b6 210-214
+SchriftTests/Core/Yjs/InlineMarkdownTests.swift
+  s_c705f20456c874::t_404e6b39fcb333 263-294
+CLAUDE.md
+  s_c705f20456c874::t_90d71da81df416 783-790
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "164cd19cee2641aa56ffa52dbd0b9b63cb87961f",
+  "prompts": {},
+  "sessions": {
+    "s_c705f20456c874": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d0206a6-9549-40f1-a918-8f431e030413",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

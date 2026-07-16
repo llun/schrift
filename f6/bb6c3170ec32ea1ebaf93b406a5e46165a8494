@@ -1,0 +1,19 @@
+Schrift/Features/Search/SearchScreen.swift
+  s_a9c5d21d88404f::t_98a44b4ff32580 80-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "f6bb6c3170ec32ea1ebaf93b406a5e46165a8494",
+  "prompts": {},
+  "sessions": {
+    "s_a9c5d21d88404f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0c72380-a609-4d63-9741-f6d3867c3539",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

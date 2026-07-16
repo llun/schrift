@@ -1,0 +1,43 @@
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_b28259a01aed33::t_a05f0bd53f2043 464-466,472,479-480
+  s_b28259a01aed33::t_4c4bce639deaa1 1344,1346,1353,1356-1359,1361,1364-1365
+Schrift/Features/Editor/EditorSaveBar.swift
+  s_b28259a01aed33::t_d07dc0549407e5 3-6
+  s_b28259a01aed33::t_a6ecee54a7e513 81-84
+Schrift/Features/Editor/EditorView.swift
+  s_b28259a01aed33::t_c8a283e28bae5a 232,237-246,248-249
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_b28259a01aed33::t_a9809f3c5e3c2d 271
+  s_b28259a01aed33::t_488fcadb0ffe93 310-315
+  s_b28259a01aed33::t_41c12e1b028410 279-283,286-287,289,294
+  s_b28259a01aed33::t_7d12d19047ad93 340-343
+Schrift/Features/Editor/EditorViewModel.swift
+  s_b28259a01aed33::t_815b8ec5d8545c 714-717
+  s_b28259a01aed33::t_f92ad31a4cffaf 827-831
+  s_b28259a01aed33::t_5f2c77cc317a91 803-804,807-808
+  s_b28259a01aed33::t_42b6a8fb4113c3 1246-1249
+  s_b28259a01aed33::t_0f953e313ceb1f 815-817
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_b28259a01aed33::t_c4cf8aef5711e8 5-6,10,18,33,38,41,44,47
+docs/superpowers/plans/2026-07-10-remove-markdown-editing-mode.md
+  s_b28259a01aed33::t_24c5789f3a9fce 1-91
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_b28259a01aed33::t_6bcd2cccd23464 53-58
+  s_b28259a01aed33::t_3d6bd5390fc79b 21,26,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "ea8e5d6db494654407082ffbe55d53a69a29f09c",
+  "prompts": {},
+  "sessions": {
+    "s_b28259a01aed33": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41850b35-9d48-4c9d-b94c-42f55dc3dead",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

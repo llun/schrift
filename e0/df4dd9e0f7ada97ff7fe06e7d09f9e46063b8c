@@ -1,0 +1,21 @@
+CLAUDE.md
+  s_2d18aae9ecc998::t_675f13ec0e9a37 690-691
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_2d18aae9ecc998::t_f2ae9fd4a48b5f 70-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "e0df4dd9e0f7ada97ff7fe06e7d09f9e46063b8c",
+  "prompts": {},
+  "sessions": {
+    "s_2d18aae9ecc998": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3269fdc6-3a86-49ee-970b-9e7e53681505",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+Schrift/Core/Collaboration/AwarenessCodec.swift
+  s_8c1f6116e89b3c::t_9357ed5849dfbf 1-70
+SchriftTests/Core/Collaboration/SyncMessageTests.swift
+  s_8c1f6116e89b3c::t_11c7e4d6da129a 1-76
+Schrift/Core/Collaboration/SyncMessage.swift
+  s_8c1f6116e89b3c::t_5915fcf5529325 1-56
+Schrift/Core/Collaboration/HocuspocusMessage.swift
+  s_8c1f6116e89b3c::t_63f8a57593b99f 1-71
+SchriftTests/Core/Collaboration/AwarenessCodecTests.swift
+  s_8c1f6116e89b3c::t_be37aa8b1e6c61 9-10
+  s_8c1f6116e89b3c::t_0d5a55fa0905e7 1-8,11-86
+SchriftTests/Core/Collaboration/HocuspocusMessageTests.swift
+  s_8c1f6116e89b3c::t_1431b23e3ea457 1-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "b05259bd03f173beb8170aa40383ba13f37cde0c",
+  "prompts": {},
+  "sessions": {
+    "s_8c1f6116e89b3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b52b298-20ef-4820-8bfe-2539a6a39c52",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

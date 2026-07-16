@@ -1,0 +1,28 @@
+Schrift/Core/Networking/DocumentSave.swift
+  s_e60497739a7df0::t_da96d5f1a0a703 45-51,55-59
+  s_e60497739a7df0::t_133cb08eaed3bc 3-11
+  s_e60497739a7df0::t_ef5a643755dc18 44
+SchriftTests/Features/Editor/DocumentSaveCoordinatorTests.swift
+  s_e60497739a7df0::t_b3702aaaa38a40 367-468
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_e60497739a7df0::t_ac35d0317e994d 446-450,452,458
+  s_e60497739a7df0::t_60a721bb0a100c 93-98,227,237-247,250-258,293-317
+  s_e60497739a7df0::t_a310fe7a545300 482-498
+  s_e60497739a7df0::t_4770de6d78820d 205-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3740a8967ba45c5a517fcb69be82c1c76d19dc69",
+  "prompts": {},
+  "sessions": {
+    "s_e60497739a7df0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46a3e15-f935-47b0-8267-91f4236a8391",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
