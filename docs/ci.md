@@ -9,18 +9,20 @@ Schrift has two CI concerns, deliberately kept in **separate workflows**:
 
 Never merge the two: `testflight.yml` must never gain a `pull_request` /
 `pull_request_target` trigger (it would expose signing secrets to fork PRs), and
-`pr-checks.yml` must never gain a secret or a `pull_request_target` trigger (it
-runs on fork-safe `pull_request`, so it is safe by construction). See the
-Safety section in [`CLAUDE.md`](../CLAUDE.md).
+`pr-checks.yml` must never gain a secret or a `pull_request_target` trigger (PRs
+run on the fork-safe `pull_request` trigger, and its `push` trigger fires only
+for `main` — code that has already been reviewed and merged — so it stays safe
+by construction). See the Safety section in [`CLAUDE.md`](../CLAUDE.md).
 
-## What runs on every PR
+## What runs on every PR and every push to `main`
 
 `pr-checks.yml` runs one job on `macos-latest`. It runs on every PR targeting
 `main` **and on every push to `main`**: PRs are squash-merged with no "branch
-up to date" requirement, so the squash commit that actually lands on `main`
-was never itself built — the push run is the post-merge verification of the
-real `main` history (`testflight.yml` builds Release but runs no tests). The
-job is:
+up to date" requirement, so when `main` has moved since the PR's last CI run,
+the squash commit's tree was never built (a `pull_request` run builds the
+branch merged into `main` *as of run time*, which can be stale by merge) —
+the push run is the post-merge verification of the real `main` history
+(`testflight.yml` builds Release but runs no tests). The job is:
 
 1. Formatting gate — runs Apple's `swift-format` (bundled with the Xcode
    toolchain; config in [`.swift-format`](../.swift-format)) over `Schrift/`
@@ -42,8 +44,14 @@ On failure the `TestResults.xcresult` bundle is uploaded as a run artifact
 
 Runs are per-PR concurrency-cancelled: a new push cancels the in-flight run
 for that PR, so a "cancelled" Build & Test run right after a push is normal —
-the new run supersedes it. The job also has a 30-minute timeout to convert
-hangs into failures; normal runs finish well under it.
+the new run supersedes it. Push runs on `main` share one concurrency group
+the same way: two quick merges cancel the first squash commit's run, so only
+the newest `main` state gets verified — the post-merge check is cumulative,
+not per-commit. It is also observe-only: a red push run does **not** gate
+`testflight.yml`, which ships the same commit independently (coupling the two
+would tie the secret-free workflow to the secret-bearing one). The job also
+has a 30-minute timeout to convert hangs into failures; normal runs finish
+well under it.
 
 ### Toolchain drift
 

@@ -63,6 +63,9 @@ names the section with the details.
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
    - `swift format --recursive --in-place Schrift SchriftTests` has been run;
    - the full test suite passes locally;
+     (in a Claude Code cloud session neither of these can run on Linux — see
+     [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux);
+     the `Build & Test` check stands in for both, and it must be green)
    - new/changed behavior is covered by tests;
    - affected docs are updated in the same change;
    - the PR title is a Conventional Commit (it becomes the squash-commit
@@ -151,7 +154,10 @@ names the section with the details.
   don't have to run everything locally every time, but a push that makes a PR
   ready for review/merge must arrive with the checks already satisfied: run the
   formatter (`swift format --recursive --in-place Schrift SchriftTests`) and the
-  full test suite locally first, then confirm the PR's **`Build & Test`** check
+  full test suite locally first (except in a Claude Code cloud session, where
+  neither can run — see
+  [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux)),
+  then confirm the PR's **`Build & Test`** check
   is green on the final pushed state. Never merge — and never declare a PR
   done — while that check is red, pending, or hasn't run; if CI fails, fixing
   it is part of the change, not follow-up work.
@@ -204,7 +210,7 @@ session:
   (`Core/Yjs` and the other pure-logic layers are Foundation-only and could be
   extracted into a SwiftPM package to enable `swift test` on Linux, but that
   is a deliberate, separate change — don't do it as a side effect.)
-- **Pre-push checks that DO work on Linux — run them before every push:**
+- **Before every push from a cloud session, do what Linux allows:**
   - Formatting: if a Swift 6 toolchain is available, run
     `swift format --recursive --in-place Schrift SchriftTests` and commit the
     result — the PR checks fail on any unformatted file. If no toolchain is
@@ -221,7 +227,11 @@ session:
     commits. This is compatible with the safety rule against force-pushing
     **shared** branches — a PR branch you authored is not shared; never
     force-push `main`. If the force-push is rejected, a normal follow-up
-    commit is acceptable because PRs are squash-merged anyway.
+    commit is acceptable because PRs are squash-merged anyway. Don't amend
+    commits that an active [review-loop](#pr-review-loop--required-for-all-agent-work)
+    round has already commented on — line-anchored review threads pin to a
+    `commit_id`, and rewriting it orphans them; review-loop fixes are pushed
+    as normal commits.
 
 ## Repository layout
 
@@ -299,6 +309,8 @@ Signing.xcconfig         committed signing config; optionally #include?s the git
                          Local.xcconfig (copy Local.xcconfig.example) holding your
                          DEVELOPMENT_TEAM — never put a team id in project.yml
 Gemfile / .ruby-version  fastlane Ruby deps (bundle install)
+.claude/settings.json    committed Claude Code project settings — disables commit/PR
+                         attribution text and the session-URL trailer
 .swift-format            swift-format config (4-space indent, 120 cols) enforced by PR checks
 ```
 
@@ -1558,7 +1570,8 @@ Do **not** do any of the following without explicit human sign-off:
   `pull_request`/`pull_request_target` trigger to `testflight.yml` (it would
   expose signing secrets to fork PRs), and conversely never add a secret or a
   `pull_request_target` trigger to `pr-checks.yml` — the PR-check workflow stays
-  secret-free on the fork-safe `pull_request` trigger.
+  secret-free on its fork-safe triggers (`pull_request`, plus a `push` trigger
+  restricted to `main`, which only ever runs already-merged code).
 - **Never introduce arbitrary code execution or destructive shell/git
   operations** — no `eval` of remote input, `curl | bash`, `rm -rf`,
   `git push --force` to shared branches, force-adding ignored files, or history
