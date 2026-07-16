@@ -63,6 +63,11 @@ names the section with the details.
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
    - `swift format --recursive --in-place Schrift SchriftTests` has been run;
    - the full test suite passes locally;
+     (in a Claude Code cloud session the test suite cannot run, and the
+     formatter only can when a Swift toolchain is available — see
+     [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux);
+     the `Build & Test` check stands in for whatever couldn't run, and it must
+     be green)
    - new/changed behavior is covered by tests;
    - affected docs are updated in the same change;
    - the PR title is a Conventional Commit (it becomes the squash-commit
@@ -137,8 +142,9 @@ names the section with the details.
   land a standalone tree-wide reformat commit (see `docs/ci.md` "Toolchain
   drift"). There is no other linter (no SwiftLint / nicklockwood-SwiftFormat)
   — don't add one.
-- **PR checks**: every pull request targeting `main` builds the app and runs the
-  full test suite on an iPhone simulator via
+- **PR checks**: every pull request targeting `main` — and every push to
+  `main` itself, as post-merge verification of the squash commit — builds the
+  app and runs the full test suite on an iPhone simulator via
   [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job
   surfaces as the status check **`Build & Test`**, which serves as the merge
   guard (a repo admin must configure the ruleset once — see
@@ -150,7 +156,10 @@ names the section with the details.
   don't have to run everything locally every time, but a push that makes a PR
   ready for review/merge must arrive with the checks already satisfied: run the
   formatter (`swift format --recursive --in-place Schrift SchriftTests`) and the
-  full test suite locally first, then confirm the PR's **`Build & Test`** check
+  full test suite locally first (except in a Claude Code cloud session, where
+  the test suite cannot run and the formatter may be unavailable — see
+  [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux)),
+  then confirm the PR's **`Build & Test`** check
   is green on the final pushed state. Never merge — and never declare a PR
   done — while that check is red, pending, or hasn't run; if CI fails, fixing
   it is part of the change, not follow-up work.
@@ -185,6 +194,46 @@ names the section with the details.
   keep that file executable (`chmod +x`) or Xcode Cloud silently skips it. Any new
   CI path must do the same, or the build fails with "Project Schrift.xcodeproj
   does not exist at the root of the repository."
+
+## Claude Code cloud sessions (Linux)
+
+Development may happen in Claude Code cloud sessions, which run on **Linux** —
+no Xcode, no `xcodebuild`, no iOS simulators, no Apple SDKs. In a cloud
+session:
+
+- **Never attempt to build, test, or run the app.** UIKit/SwiftUI/XCTest and
+  every Apple framework are unavailable; any `xcodebuild`/`xcrun` invocation
+  will fail. The macOS **`Build & Test`** check on the PR
+  ([`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml)) is
+  the **source of truth for build and test results** — push the branch and
+  read the check, don't try to reproduce it locally on Linux.
+- **There are currently no Linux-testable targets.** The repo has no
+  `Package.swift`; everything is built via XcodeGen + `xcodebuild` on macOS.
+  (`Core/Yjs` and the other pure-logic layers are Foundation-only and could be
+  extracted into a SwiftPM package to enable `swift test` on Linux, but that
+  is a deliberate, separate change — don't do it as a side effect.)
+- **Before every push from a cloud session, do what Linux allows:**
+  - Formatting: if a Swift 6 toolchain is available, run
+    `swift format --recursive --in-place Schrift SchriftTests` and commit the
+    result — the PR checks fail on any unformatted file. If no toolchain is
+    available, match the surrounding style (`.swift-format`: 4-space indent,
+    120 columns) and expect the CI formatting gate to be the arbiter.
+  - `xcodegen generate` is unavailable too — treat `project.yml` edits as
+    unverified until CI builds them.
+- **Commit conventions in cloud sessions:**
+  - One logical change per commit; **Conventional Commit** messages (the PR
+    title becomes the squash-commit subject that drives the release version —
+    see [Build, run, test](#build-run-test)).
+  - When fixing a CI failure on your **own PR branch**, amend the previous
+    commit and `git push --force-with-lease` instead of stacking fixup
+    commits. This is compatible with the safety rule against force-pushing
+    **shared** branches — a PR branch you authored is not shared; never
+    force-push `main`. If the force-push is rejected, a normal follow-up
+    commit is acceptable because PRs are squash-merged anyway. Don't amend
+    commits that an active [review-loop](#pr-review-loop--required-for-all-agent-work)
+    round has already commented on — line-anchored review threads pin to a
+    `commit_id`, and rewriting it orphans them; review-loop fixes are pushed
+    as normal commits.
 
 ## Repository layout
 
@@ -262,6 +311,8 @@ Signing.xcconfig         committed signing config; optionally #include?s the git
                          Local.xcconfig (copy Local.xcconfig.example) holding your
                          DEVELOPMENT_TEAM — never put a team id in project.yml
 Gemfile / .ruby-version  fastlane Ruby deps (bundle install)
+.claude/settings.json    committed Claude Code project settings — disables commit/PR
+                         attribution text and the session-URL trailer
 .swift-format            swift-format config (4-space indent, 120 cols) enforced by PR checks
 ```
 
@@ -1521,7 +1572,8 @@ Do **not** do any of the following without explicit human sign-off:
   `pull_request`/`pull_request_target` trigger to `testflight.yml` (it would
   expose signing secrets to fork PRs), and conversely never add a secret or a
   `pull_request_target` trigger to `pr-checks.yml` — the PR-check workflow stays
-  secret-free on the fork-safe `pull_request` trigger.
+  secret-free on its fork-safe triggers (`pull_request`, plus a `push` trigger
+  restricted to `main`, which only ever runs already-merged code).
 - **Never introduce arbitrary code execution or destructive shell/git
   operations** — no `eval` of remote input, `curl | bash`, `rm -rf`,
   `git push --force` to shared branches, force-adding ignored files, or history
