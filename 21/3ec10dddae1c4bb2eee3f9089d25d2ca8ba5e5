@@ -1,0 +1,19 @@
+.claude/settings.json
+  s_2f7c5c68e519b9::t_040e72cae780ad 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "213ec10dddae1c4bb2eee3f9089d25d2ca8ba5e5",
+  "prompts": {},
+  "sessions": {
+    "s_2f7c5c68e519b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6d0949c5-66af-4396-8f12-a46d46812277",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
