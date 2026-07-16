@@ -63,9 +63,11 @@ names the section with the details.
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
    - `swift format --recursive --in-place Schrift SchriftTests` has been run;
    - the full test suite passes locally;
-     (in a Claude Code cloud session neither of these can run on Linux — see
+     (in a Claude Code cloud session the test suite cannot run, and the
+     formatter only can when a Swift toolchain is available — see
      [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux);
-     the `Build & Test` check stands in for both, and it must be green)
+     the `Build & Test` check stands in for whatever couldn't run, and it must
+     be green)
    - new/changed behavior is covered by tests;
    - affected docs are updated in the same change;
    - the PR title is a Conventional Commit (it becomes the squash-commit
@@ -155,7 +157,7 @@ names the section with the details.
   ready for review/merge must arrive with the checks already satisfied: run the
   formatter (`swift format --recursive --in-place Schrift SchriftTests`) and the
   full test suite locally first (except in a Claude Code cloud session, where
-  neither can run — see
+  the test suite cannot run and the formatter may be unavailable — see
   [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux)),
   then confirm the PR's **`Build & Test`** check
   is green on the final pushed state. Never merge — and never declare a PR
