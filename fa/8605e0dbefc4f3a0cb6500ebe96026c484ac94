@@ -1,0 +1,21 @@
+SchriftTests/Core/Yjs/YStateEncoderTests.swift
+  s_5cb8e76b1f7ab2::t_0cc661ec6ac558 30-33
+  s_5cb8e76b1f7ab2::t_c081c9c29faa4d 153-197
+  s_5cb8e76b1f7ab2::t_264db919ce5554 198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "fa8605e0dbefc4f3a0cb6500ebe96026c484ac94",
+  "prompts": {},
+  "sessions": {
+    "s_5cb8e76b1f7ab2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2771900-09a8-4624-b08d-9de9a67bd110",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
