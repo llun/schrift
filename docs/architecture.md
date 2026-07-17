@@ -85,7 +85,7 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
 │   ├── Auth/             — SessionStore (Keychain-backed session-cookie + server URL persistence, re-auth flag), SessionCookies (Codable HTTPCookie snapshot), WebLogin free functions (login-URL/completion detection, cookie sync), KeychainStore
 │   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence), dormant behind the default-off `schrift.liveCollaboration` flag
-│   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration) — see "The Yjs CRDT core"
+│   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration, and the B3 store encoder `YStateEncoder`) — see "The Yjs CRDT core"
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
 │   ├── Home/             — document list: pinned/recent, segmented filter (All/Shared/Pinned), favorite toggle, offline list cache
@@ -109,12 +109,22 @@ The app *constructs* Yjs binary updates to save (see "Editing & save mechanism" 
 `Core/Yjs` is being built out into a Swift Yjs replica so the app can join the same
 Hocuspocus room as the web client and speak real Yjs, rather than PATCHing a
 full-overwrite blob that a live web session would silently overwrite. It lands in
-stages; today it can **decode** an update and **integrate** it into a live document.
+stages; today it can **decode** an update, **integrate** it into a live document,
+and **encode** the integrated document back out (B3) — a full snapshot, a diff
+against a peer's state vector, or a state vector — byte-identical to yjs. The
+replica runs with **gc off** (`YDoc(gc: false)`): proactive collection of its *own*
+deleted items lands with B4, and every golden fixture and oracle here is captured
+from `new Y.Doc({ gc: false })` to match. GC *structs* still occur — they arrive on
+the wire from peers that do collect, `YItem.integrate` mints one whenever an
+integrated item resolves to no parent (a neighbour was collected), and
+`YStateEncoder` re-encodes all of them — what gc-off turns off is the periodic
+`tryGcDeleteSet` sweep, not the existence of GC structs.
 
 | Piece | What it does |
 |---|---|
 | `Lib0Decoder` / `Lib0Encoder` | lib0 binary primitives (varint, varString, `any`), shared with the collaboration wire codecs |
 | `YUpdateDecoder` / `YUpdateReencoder` | the v1 wire model — decodes updates, delete sets, and state vectors, and re-encodes them **byte-identically** |
+| `YStateEncoder` | the **store** encode side (B3): `encodeStateAsUpdate(doc, since:)` (full snapshot / diff against a state vector) and `encodeStateVector(doc)`, byte-identical to yjs's `writeClientsStructs`/`writeStructs`/`Item.write`. Derives each item's wire info byte from the live item (never `YItem.info`); writes clients **descending** everywhere; reuses `YUpdateReencoder`'s delete-set/state-vector writers. **Throws** while `pendingStructs`/`pendingDs` are non-nil — yjs folds pending state in, but a pending replica must never be snapshotted (see "Pending structs and delete sets") |
 | `YContent` | the live, mutable content model (splice, merge) |
 | `YStruct` / `YItem` / `YGC` / `YSkip`, `YType`, `YDoc` | the document graph |
 | `YStructStore` | structs per client, binary search, splits |
@@ -136,7 +146,10 @@ mistake:
   record. It exists so a decoded update re-encodes byte-identically, and is
   deliberately never mutated.
 - **`YItem`/`YContent`** (`YStruct.swift`, `YContent.swift`) — the *live* item, the
-  full YATA operation. This is the real one.
+  full YATA operation. This is the real one, and the one **`YStateEncoder` encodes
+  from** (B3): it derives the wire info byte from the live item's origin/rightOrigin/
+  parentSub, never replaying a stored byte — `YItem.info` holds runtime flags
+  (keep/countable/deleted/marker), *not* the wire byte.
 
 ### Transliterated, not reinterpreted
 
@@ -185,28 +198,53 @@ Two consequences of that choice:
 - yjs's stash is padded with `Skip` structs, because a *serialized* update's
   per-client structs must tile the clock range with no gaps. Schrift's has no holes
   to pad. Skips are never integrated either way.
-- **Known deviation — accepted, 2026-07-17.** When the same client's clock range is
-  stashed twice with different *tilings* — a merged item from one peer, the finer
-  items it came from from another — `mergeUpdatesV2` re-tiles to the finest
-  decomposition. Schrift keeps both and lets the driver's offset handling split or
-  skip whatever is already applied. Left as-is deliberately: closing it means porting
-  `mergeUpdatesV2`'s re-tiling (a greedy coverage rule cannot reproduce it — both
-  sort orders drop the wrong side), for a divergence unreachable from honest traffic. Differing tilings are **common**, not exotic (any peer that has merged a
-  run emits a coarser view than the incrementals it came from), but the two agree on
-  content and the settled store is identical — the fuzz has never found a settled
-  divergence from it. The one case where they could disagree on *content* is
-  yjs#248: if a surrogate pair was split in the fine view and not the coarse one,
-  re-tiling destroys the pair where Schrift keeps it intact. That needs a peer that
-  splits a surrogate pair, which real editors (BlockNote/ProseMirror work in code
-  points) do not do.
+- **Known deviation — accepted, 2026-07-17 (characterization refined by the B3
+  fuzz, same day).** When the same client's clock range is stashed *pending* twice
+  with different *tilings* — a merged item from one peer, the finer items it came
+  from from another — yjs `mergeUpdatesV2` re-tiles to the finest decomposition by
+  *splitting* structs (`sliceStruct`). Schrift keeps decoded refs and reproduces
+  only `mergeUpdatesV2`'s greedy *coverage* resolution (`mergeClientRuns`: the run
+  that reaches a clock first keeps writing; a later struct whose range is already
+  covered is discarded), which cannot split. Left as-is deliberately: closing it
+  means porting the byte-level re-tiling. A greedy coverage rule provably cannot
+  reproduce it — the *same* collision shape has opposite correct outcomes (one
+  range settles to `ContentDeleted`, another identically shaped one to the live
+  `ContentString`), so no order- or content-preference heuristic satisfies both;
+  every bounded attempt fixed one case and regressed the other (measured against
+  the differential fuzz). Differing tilings are **common** (any peer that merged a
+  run emits a coarser view than the incrementals it came from), and usually the two
+  settle identically — but **not always**. This deviation *can* leave a settled
+  content divergence on a **deleted** item's tombstone form (`ContentDeleted` vs a
+  deleted `ContentString` — semantically identical, byte-different, so it moves an
+  `encodeStateAsUpdate` snapshot's bytes). That is broader than the earlier claim,
+  which named yjs#248 (a split surrogate pair destroyed by re-tiling) as the *only*
+  content disagreement: the tombstone case needs no surrogate. It is a
+  **synthetic-reordering artifact** — it requires a client's early clocks delivered
+  *after* multiple out-of-order tilings of its later clocks, an adversarial
+  full-shuffle signature. A realistic-relay fuzz (server persists via
+  `mergeUpdatesV2`, mostly-in-order FIFO broadcast, join/reconnect snapshots) found
+  **0 in 7000 seeds** while exercising the pending stash in 91% of them; the
+  synthetic full-shuffle corpus finds ~1/800, and that rate collapses to 0 the
+  moment the shuffle probability drops below 1. It is therefore unreachable from
+  honest hocuspocus traffic, and B3 byte-identity holds everywhere a client will
+  realistically reach.
 
-The stash also dedupes exact duplicates — without that it grows without bound under
-a relay's routine redelivery. **The struct's kind is part of that identity, and
-dropping it loses content.** `mergeUpdates`/`diffUpdate` pad a hole with a
-`Skip`, so a held `Skip(5,3)` and the real `Item(5,3)` share a `(clock, length)`:
-keyed on that alone, the Skip swallowed the item, its text was lost, and the stash
-then stalled forever. Found in review, not by the fuzz — whose corpus contained no
-Skip at all until it was taught to emit `mergeUpdates`-derived updates.
+The stash merge reproduces `mergeUpdatesV2`'s coverage resolution rather than a
+content-blind dedup, because **content-blindness loses content** — a lesson this
+store has now learned twice. First: `mergeUpdates`/`diffUpdate` pad a hole with a
+`Skip`, so a held `Skip(5,3)` and the real `Item(5,3)` share a `(clock, length)`;
+a `(clock, length)`-only key let the Skip swallow the item, its text was lost, and
+the stash stalled forever (found in review — the corpus then contained no Skip).
+Adding the struct's *kind* to the key fixed that, but not far enough: two
+content-differing `YItem`s at the same `(clock, length)` — a live
+`ContentType`/`ContentString` and a `ContentDeleted` tombstone from a gc'd peer —
+share clock, length *and* kind, so the kind-keyed dedup dropped whichever arrived
+second, a **settled** divergence whose winner depended on delivery order. The B3
+differential fuzz caught it (8 settled divergences across 800 seeds — the first
+settled divergences the fuzz had found); the coverage rule, which keeps the
+first-reaching run and discards only a *covered* struct exactly as
+`mergeUpdatesV2` does, resolves all eight and leaves only the different-tiling
+re-tiling deviation above.
 
 ### Malformed input must throw, never trap
 
@@ -244,13 +282,19 @@ a target that provably outlives its source.
 ### Verification
 
 Golden fixtures captured from real yjs pin each YATA branch
-(`YIntegrationTests`), and a **differential fuzz harness** compares this store
-against a node yjs oracle across randomized op scripts and delivery orders —
-seeded, minimizing, and comparing the full store structure (not just the wire
-projection, so left/right/origin wiring is checked too) after *every* update. The
-harness is session-local scratch tooling, never committed (the zero-dependency
-rule); what it finds is promoted to fixtures here. The same technique is proven in
-this repo on `InlineMarkdown`.
+(`YIntegrationTests`, and — for the B3 encode side — `YStateEncoderTests`), and a
+**differential fuzz harness** compares this store against a node yjs oracle across
+randomized op scripts and delivery orders — seeded, minimizing. It compares the
+full store structure (not just the wire projection, so left/right/origin wiring is
+checked too) after *every* update, **and, once B3 landed, the encoded bytes**: at
+every settled step it asserts `YStateEncoder.encodeStateAsUpdate` (full and
+diff-against-state-vector) and `encodeStateVector` are byte-identical to yjs's.
+Bytes are compared only where **both sides are settled** — an unsettled store may
+legitimately differ (an accepted re-tiling, a pending stash a `diffUpdate` never
+resolves), and a settledness *disagreement* is itself a finding. The harness is
+session-local scratch tooling, never committed (the zero-dependency rule); what it
+finds is promoted to fixtures here. The same technique is proven in this repo on
+`InlineMarkdown`.
 
 One property it establishes is worth stating, because it is counterintuitive:
 **yjs itself does not always converge.** Splitting a surrogate pair replaces it
@@ -259,12 +303,20 @@ The property to hold this store to is therefore *"it converges exactly when yjs
 converges"*, not *"it converges"*.
 
 A green fuzz run means nothing unless the corpus reaches the branch, so measure
-coverage rather than assuming it. Two corpus shapes are needed, and they are not
-interchangeable: **random-position inserts** produce the concurrent, interleaved
-origins that drive the conflict loop's case 2, while **contiguous appends plus
-cumulative snapshots** are the only way to reach `Item.integrate`'s offset>0 path
-— a struct overlapping a prefix the receiver already holds exists only once a
-sender has *merged* a run, which incremental updates alone never produce.
+coverage rather than assuming it (Swift source-based coverage reports region/line
+counts, not a branch counter — confirm the *region* executes). Two corpus shapes
+are needed, and they are not interchangeable: **random-position inserts** produce
+the concurrent, interleaved origins that drive the conflict loop's case 2, while
+**contiguous appends plus cumulative snapshots** are the only way to reach
+`Item.integrate`'s offset>0 path — a struct overlapping a prefix the receiver
+already holds exists only once a sender has *merged* a run, which incremental
+updates alone never produce. B3's byte gate splits the corpus in two: a
+**realistic-relay** lane (mostly-FIFO delivery, server persistence via
+`mergeUpdatesV2`) is held to 0 divergences and is the honest byte-identity gate,
+while a **synthetic full-shuffle** lane surfaces the one accepted re-tiling
+deviation above (and *only* that exact shape — a mechanical four-element check
+refuses to absorb anything else, so a real bug can never hide behind the
+carve-out).
 
 ### Known gap: remote-change format cleanup (B4)
 

@@ -280,18 +280,9 @@ enum YStructIntegrator {
     /// were ready to integrate, and `missing` would never fall low enough to
     /// trigger a retry — a permanent stall.
     ///
-    /// Both inputs are already ascending, so this is a merge, not a sort. Ties keep
-    /// the existing run first; overlapping ranges need no special handling, since
-    /// the driver's `offset` logic splits or skips whatever is already applied.
-    ///
-    /// Structs already in the stash are **dropped**, not appended again. A
-    /// `(client, clock)` pair identifies an operation, so a struct with the same
-    /// clock *and* length is literally the same op arriving twice — which a relay
-    /// does routinely, and which yjs dedupes inside `mergeUpdatesV2`. Re-appending
-    /// it is harmless for the resulting store (the driver's offset check drops a
-    /// wholly-applied struct) but makes the stash grow without bound under
-    /// redelivery. Found by the differential fuzz, which caught the stash diverging
-    /// from yjs's by exactly the duplicated entries.
+    /// Both inputs are already ascending, so this is a merge, not a sort. The
+    /// per-client run merge (`mergeClientRuns`) reproduces `mergeUpdatesV2`'s
+    /// coverage resolution, which the driver's `offset` logic then integrates.
     static func mergePending(_ pending: YPendingStructs, _ rest: YPendingStructs) -> YPendingStructs {
         var merged = pending
         for (client, clock) in rest.missing {
@@ -303,55 +294,94 @@ enum YStructIntegrator {
                 merged.refs[client] = newRefs
                 continue
             }
-            // Only exact duplicates are dropped. A struct that merely *overlaps* one we
-            // hold is a different view of the client's ops (a merged item vs the
-            // incremental ones it came from) and is kept — splitting or skipping it is
-            // precisely what the driver's offset handling is for.
-            let held = Set(existing.map(PendingKey.init))
-            let fresh = newRefs.filter { !held.contains(PendingKey($0)) }
-
-            var out: [YStruct] = []
-            out.reserveCapacity(existing.count + fresh.count)
-            var a = 0
-            var b = 0
-            while a < existing.count && b < fresh.count {
-                if fresh[b].id.clock < existing[a].id.clock {
-                    out.append(fresh[b])
-                    b += 1
-                } else {
-                    out.append(existing[a])
-                    a += 1
-                }
-            }
-            out.append(contentsOf: existing[a...])
-            out.append(contentsOf: fresh[b...])
-            merged.refs[client] = out
+            merged.refs[client] = mergeClientRuns(existing, newRefs)
         }
         return merged
     }
 
-    /// Identity of a stashed struct within one client's sequence.
+    /// Merge two ascending-by-clock runs of one client's stashed structs into a
+    /// single ascending run, reproducing yjs `mergeUpdatesV2`'s struct writer
+    /// (@4166-4260) on decoded refs instead of re-encoded V2 bytes.
     ///
-    /// **The kind is part of the identity, and dropping it loses content.** A
-    /// `(client, clock)` pair names an operation, but the same clock range can be
-    /// stashed as a real `YItem` *and* as a `YSkip`: `mergeUpdates`/`diffUpdate`
-    /// pad a hole in a client's block with a Skip, because a serialized update must
-    /// tile its clock range with no gaps — and y-websocket/hocuspocus persistence
-    /// emit exactly such merged updates. Keyed on `(clock, length)` alone, a held
-    /// `YSkip(5,3)` matched the real `YItem(5,3)` arriving later and filtered it out
-    /// as a redelivery: its text was lost, and the stash then stalled forever
-    /// (nothing would ever supply those clocks again). Found in review, against the
-    /// oracle; neither the fixtures nor the fuzz corpus contained a Skip.
-    private struct PendingKey: Hashable {
-        let clock: UInt
-        let length: UInt
-        let kind: ObjectIdentifier
+    /// **The rule is coverage, not content.** yjs writes the run that reaches a
+    /// clock first — the lowest-clock contiguous run — and **discards a later
+    /// struct whose clock range is already fully covered** by what has been
+    /// written (`curr.id.clock + curr.length <= currWrite end`, @4200). A struct
+    /// that merely *extends* past the covered end is kept: the driver's `offset`
+    /// logic slices it, exactly as yjs's `sliceStruct` (@4114) would, so
+    /// genuinely-overlapping different-range structs still reach the driver. When
+    /// two runs start at the very same clock (a true tie, which yjs's sort at
+    /// @4171-4180 breaks content-blindly), the first array element wins, and yjs's
+    /// array is always `[pending.update, restStructs.update]` — so `existing`
+    /// (the stash) wins the tie.
+    ///
+    /// This supersedes the earlier `(clock, length, kind)` de-dup, which dropped a
+    /// fresh struct sharing a held one's `(clock, length)` even when their
+    /// **content** differed. A garbage-collecting peer re-encodes a deleted item
+    /// as `ContentDeleted` (or the whole struct as `GC`) while a non-gc peer keeps
+    /// the live `ContentString`/`ContentType`; both describe the same op. yjs
+    /// keeps whichever rides in the lower-starting run; the old de-dup kept
+    /// whichever was stashed first, diverging by delivery order. Found by the
+    /// differential fuzz (seeds 7/12/140).
+    ///
+    /// `Skip`s are filtered out of the merge in yjs (`LazyStructReader(_,
+    /// filterSkips: true)`, @3919), so a Skip must never cover or drop a real
+    /// struct. Here they are carried through untouched on a **separate** coverage
+    /// cursor from real structs (Item/GC): a Skip can only be covered by a Skip
+    /// and a real struct only by a real struct. That keeps an exact-duplicate Skip
+    /// redelivery from growing the stash without bound, while never letting a
+    /// `YSkip(5,3)` swallow a real `YItem(5,3)` — the previous bug this path once
+    /// carried.
+    private static func mergeClientRuns(_ existing: [YStruct], _ fresh: [YStruct]) -> [YStruct] {
+        var out: [YStruct] = []
+        out.reserveCapacity(existing.count + fresh.count)
+        var a = 0
+        var b = 0
+        // Highest clock+length written so far, tracked separately for real structs
+        // (Item/GC) and Skips so neither kind can cover the other.
+        var realEnd: UInt?
+        var skipEnd: UInt?
+        var lastRealFromExisting = true
 
-        init(_ s: YStruct) {
-            self.clock = s.id.clock
-            self.length = s.length
-            self.kind = ObjectIdentifier(type(of: s))
+        while a < existing.count || b < fresh.count {
+            let pickExisting: Bool
+            if b >= fresh.count {
+                pickExisting = true
+            } else if a >= existing.count {
+                pickExisting = false
+            } else {
+                let existingClock = existing[a].id.clock
+                let freshClock = fresh[b].id.clock
+                if existingClock < freshClock {
+                    pickExisting = true
+                } else if freshClock < existingClock {
+                    pickExisting = false
+                } else if let realEnd, realEnd == existingClock {
+                    // Same clock: whichever real run is *continuing* (its last write
+                    // ends exactly here) keeps writing; yjs @4200 consumes the other.
+                    pickExisting = lastRealFromExisting
+                } else {
+                    // A genuine same-start tie: the first array element (the stash) wins.
+                    pickExisting = true
+                }
+            }
+
+            let struct_ = pickExisting ? existing[a] : fresh[b]
+            if pickExisting { a += 1 } else { b += 1 }
+
+            let end = struct_.id.clock + struct_.length
+            if struct_ is YSkip {
+                if let skipEnd, end <= skipEnd { continue }  // a covered duplicate Skip
+                out.append(struct_)
+                if skipEnd == nil || end > skipEnd! { skipEnd = end }
+            } else {
+                if let realEnd, end <= realEnd { continue }  // fully covered by an earlier writer
+                out.append(struct_)
+                if realEnd == nil || end > realEnd! { realEnd = end }
+                lastRealFromExisting = pickExisting
+            }
         }
+        return out
     }
 }
 
