@@ -276,10 +276,11 @@ Schrift/
 │                        shared with Core/Collaboration), YUpdateDecoder (v1 wire
 │                        model + byte-identical re-encode), the live replica:
 │                        YContent, YStruct/YItem/YGC/YSkip, YType/YDoc, YStructStore,
-│                        YDeleteSet, YTransaction, YStructIntegrator, and YStateEncoder
+│                        YDeleteSet, YTransaction, YStructIntegrator, YStateEncoder
 │                        (B3: encode the live store → v1 update / state vector,
-│                        byte-identical to yjs) — a literal transliteration of
-│                        yjs 13.6.31, gc off
+│                        byte-identical to yjs), and YTextCleanup (B4: remote-change
+│                        format cleanup) — a literal transliteration of
+│                        yjs 13.6.31, gc on by default
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
 │   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
@@ -851,7 +852,7 @@ that are easy to violate and expensive to discover:
   that splices takes the list.
 - **Merge cleanup is mandatory.** yjs merges adjacent items on every transaction
   cleanup, so skipping it diverges from yjs's store after the first update. It is
-  not a B4/GC concern — gc is off, merging is not.
+  independent of gc: merging always runs, whether or not `doc.gc` is set.
 - **`pendingStructs`/`pendingDs` hold decoded refs, where yjs holds V2 bytes.** A
   deliberate, documented internal deviation — V2 is, in yjs, only a container for
   these two fields, and Schrift's wire is v1 end to end. Nothing stashed is ever
@@ -862,14 +863,20 @@ that are easy to violate and expensive to discover:
 - **yjs does not always converge, so don't assert that it does.** A split surrogate
   pair makes content order-dependent (yjs#248). The property to hold this store to
   is *"it converges exactly when yjs converges"*.
-- **Formatting cleanup is a known gap, and it is B4's — not a bug to fix ad hoc.**
-  Sequencing decided 2026-07-17: **B3, then B4**; B4 must land before C2.
-  On a *remote* transaction touching a `YText` with formatting, yjs runs
-  `cleanupYTextAfterTransaction` and deletes formatting items that concurrent
-  edits made redundant; this store does not, so such an item stays undeleted.
-  It is reachable from real documents (BlockNote marks are `ContentFormat` inside
-  nested `XmlText`s, which arrive as real `YText`s), so **B4 gates the live write
-  path (C2)**. See `docs/architecture.md`.
+- **Remote-change format cleanup and gc are B4 (landed 2026-07-17); don't reopen
+  them ad hoc.** On a *remote* transaction touching a `YType` with `_hasFormatting`,
+  `cleanupTransactions`'s observer phase runs `YTextCleanup.cleanupYTextAfterTransaction`,
+  deleting `ContentFormat` items concurrent edits made redundant; gc (`Item.gc`/
+  `tryGcDeleteSet`, `doc.gc` default true) sweeps the replica's own deleted items into
+  `ContentDeleted` tombstones and `GC` structs. Two transliteration invariants are
+  load-bearing and proven only by the differential fuzz's nested-text formatting lane
+  (a bare root type is never a concrete `YText`, so **only nested text fires the
+  trigger** — this is BlockNote's actual shape): (1) format-value equality is JS
+  `===`, spelled out by `YFormatAttrValue` (primitive-by-JSON-text, object-by-owning-
+  item-identity, absent ⇔ `null`); (2) the cleanup's routing is **not confluent across
+  clients** — `iterateDeletedStructs` must walk the delete set in yjs `Map` insertion
+  order (`YDeleteSet.orderedClients`), never ascending, or a live mark is wrongly
+  deleted. B4 unblocked the live write path (C2). See `docs/architecture.md`.
 - **Malformed input must throw, never trap.** Every clock is attacker-controlled
   (it arrives from a peer), and Swift's UInt arithmetic traps where JS goes
   harmlessly negative — a trap is a remote crash. `YStructIntegrator.validate`
