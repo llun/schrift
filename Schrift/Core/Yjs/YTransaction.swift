@@ -112,8 +112,14 @@ extension YDoc {
         transaction.deleteSet.sortAndMerge()
         transaction.afterState = store.getStateVector()
 
-        // yjs runs observer callbacks here; there are none. `doc.gc` is off for this
-        // milestone, so `tryGcDeleteSet` is skipped — B4 turns it on.
+        // yjs runs observer callbacks here; there are none. B4 turns gc on: a
+        // deleted item's content is replaced by a `ContentDeleted` tombstone (and a
+        // deleted type's children by `GC` structs) *before* the merge below
+        // coalesces adjacent tombstones. gc off ⇒ skipped, matching the gc:false
+        // golden fixtures.
+        if transaction.doc.gc {
+            try Self.tryGcDeleteSet(transaction.deleteSet, store)
+        }
         try Self.tryMergeDeleteSet(transaction.deleteSet, store)
 
         // On all affected store.clients props, try to merge.
@@ -196,6 +202,34 @@ extension YDoc {
             list.structs.removeSubrange((pos + 1 - merged)...pos)
         }
         return merged
+    }
+
+    /// yjs `tryGcDeleteSet` (@3248 region) — gc every deleted, non-kept `Item`
+    /// inside each delete range, right to left.
+    ///
+    /// yjs's `gcFilter` defaults to `() => true` (gc everything); the replica has
+    /// no undo manager, so there is nothing to keep alive and the filter is that
+    /// default — the only gate is `deleted && !keep`. `gc(store, parentGCd: false)`
+    /// replaces content in place (no `replaceStruct`), so the iterated array's
+    /// indices do not shift for top-level items; a same-client child that is
+    /// replaced by a `GC` (same id + length) is simply skipped when the loop reaches
+    /// it (`as? YItem` fails), exactly as in yjs.
+    static func tryGcDeleteSet(_ ds: YDeleteSet, _ store: YStructStore) throws {
+        for (client, deleteItems) in ds.clients {
+            guard let list = store.clients[client] else { continue }
+            for deleteItem in deleteItems.reversed() {
+                let endDeleteItemClock = deleteItem.clock + deleteItem.len
+                var si = try YStructStore.findIndexSS(list.structs, deleteItem.clock)
+                while si < list.structs.count {
+                    let s = list.structs[si]
+                    if endDeleteItemClock <= s.id.clock { break }
+                    if let item = s as? YItem, item.deleted, !item.keep {
+                        try item.gc(store, parentGCd: false)
+                    }
+                    si += 1
+                }
+            }
+        }
     }
 
     /// yjs `tryMergeDeleteSet` (@3248) — try to merge deleted/gc'd items, right to

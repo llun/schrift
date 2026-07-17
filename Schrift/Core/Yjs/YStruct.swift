@@ -461,4 +461,24 @@ final class YItem: YStruct {
         if let parentType { transaction.addChangedType(parentType, parentSub: parentSub) }
         content.delete(transaction)
     }
+
+    // MARK: Garbage collection
+
+    /// yjs `Item.gc(store, parentGCd)` (@9908 region) — collect a *deleted* item.
+    ///
+    /// `content.gc` recurses into a `ContentType`'s children (each becomes a `GC`
+    /// via `parentGCd: true`). When `parentGCd`, this item is itself replaced by a
+    /// `GC` struct; otherwise (the top-level `tryGcDeleteSet` path) its content
+    /// becomes a `ContentDeleted` tombstone, which the following merge then
+    /// coalesces with adjacent tombstones. A non-deleted item here is malformed —
+    /// yjs throws `unexpectedCase`, and so do we (a trap would be a remote crash).
+    func gc(_ store: YStructStore, parentGCd: Bool) throws {
+        guard deleted else { throw YIntegrationError.unexpectedCase }
+        try content.gc(store)
+        if parentGCd {
+            try store.replaceStruct(self, with: YGC(id: id, length: length))
+        } else {
+            content = .deleted(len: length)
+        }
+    }
 }
