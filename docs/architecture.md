@@ -112,10 +112,13 @@ full-overwrite blob that a live web session would silently overwrite. It lands i
 stages; today it can **decode** an update, **integrate** it into a live document,
 and **encode** the integrated document back out (B3) — a full snapshot, a diff
 against a peer's state vector, or a state vector — byte-identical to yjs. The
-replica runs with **gc off** (`YDoc(gc: false)`): item collection lands with B4,
-and every golden fixture and oracle here is captured from `new Y.Doc({ gc: false })`
-to match. GC *structs* still occur — they arrive on the wire from peers that do
-collect, and `YStateEncoder` re-encodes them — but this replica never mints one.
+replica runs with **gc off** (`YDoc(gc: false)`): proactive collection of its *own*
+deleted items lands with B4, and every golden fixture and oracle here is captured
+from `new Y.Doc({ gc: false })` to match. GC *structs* still occur — they arrive on
+the wire from peers that do collect, `YItem.integrate` mints one whenever an
+integrated item resolves to no parent (a neighbour was collected), and
+`YStateEncoder` re-encodes all of them — what gc-off turns off is the periodic
+`tryGcDeleteSet` sweep, not the existence of GC structs.
 
 | Piece | What it does |
 |---|---|
