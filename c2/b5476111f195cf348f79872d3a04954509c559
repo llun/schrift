@@ -1,0 +1,19 @@
+Schrift/Core/Yjs/YStateEncoder.swift
+  s_5cb8e76b1f7ab2::t_ca901860ec0d24 156-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "c2b5476111f195cf348f79872d3a04954509c559",
+  "prompts": {},
+  "sessions": {
+    "s_5cb8e76b1f7ab2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2771900-09a8-4624-b08d-9de9a67bd110",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
