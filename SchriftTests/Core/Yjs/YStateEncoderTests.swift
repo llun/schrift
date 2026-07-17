@@ -27,6 +27,10 @@ final class YStateEncoderTests: XCTestCase {
     private let formattedTextUpdate =
         "0105010004010174026865840101056c6c6f2077840106046f726c64c60101010204626f6c640474727565c60106010704626f6c64046e756c6c00"
     private let formattedTextSV = "01010d"
+    private let contentBinaryUpdate = "010101002301016d016204010203ff00"
+    private let contentBinarySV = "010101"
+    private let contentEmbedUpdate = "0101010005010174167b2274797065223a2278222c22737263223a2279227d00"
+    private let contentEmbedSV = "010101"
 
     // MARK: - Helpers
 
@@ -144,6 +148,52 @@ final class YStateEncoderTests: XCTestCase {
         XCTAssertEqual(formatItems.count, 2, "expected one opening and one closing ContentFormat item")
         try assertEncodes(doc, expected: formattedTextUpdate, "formattedTextUpdate")
         XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, formattedTextSV, "formattedTextSV")
+    }
+
+    /// A `Y.Map` value that is a `Uint8Array` encodes as `ContentBinary` (ref 3)
+    /// — yjs has no public `insertBinary` API, but `m.set('b', new
+    /// Uint8Array([1,2,3,255]))` reaches the same wire content via `writeAny`'s
+    /// binary branch. Captured and decode-verified with real yjs
+    /// (`.superpowers/fuzz/capture-b3-extra.mjs`, session-local): the decoded
+    /// struct's `content.constructor.name` is `ContentBinary`. Pins
+    /// `writeContent`'s `.binary` case (`e.writeVarUint8Array(data)`), which no
+    /// other committed fixture exercises.
+    func testBinaryContentRoundTripsAsFullSnapshot() throws {
+        let doc = try applied([contentBinaryUpdate])
+        defer { doc.destroy() }
+        guard let list = doc.store.clients[1] else {
+            XCTFail("expected client 1 to exist")
+            return
+        }
+        let binaryItems = list.structs.compactMap { $0 as? YItem }.filter {
+            if case .binary(let data) = $0.content { return data == Data([1, 2, 3, 255]) }
+            return false
+        }
+        XCTAssertEqual(binaryItems.count, 1, "expected one ContentBinary item holding the raw bytes")
+        try assertEncodes(doc, expected: contentBinaryUpdate, "contentBinaryUpdate")
+        XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, contentBinarySV, "contentBinarySV")
+    }
+
+    /// A `Y.Text` embed (`ytext.insertEmbed(0, {...})`) encodes as `ContentEmbed`
+    /// (ref 5) — the BlockNote/ProseMirror embed shape. Captured and
+    /// decode-verified with real yjs (`.superpowers/fuzz/capture-b3-extra.mjs`,
+    /// session-local): the decoded struct's `content.constructor.name` is
+    /// `ContentEmbed`. Pins `writeContent`'s `.embed` case
+    /// (`e.writeVarString(json)`), which no other committed fixture exercises.
+    func testEmbedContentRoundTripsAsFullSnapshot() throws {
+        let doc = try applied([contentEmbedUpdate])
+        defer { doc.destroy() }
+        guard let list = doc.store.clients[1] else {
+            XCTFail("expected client 1 to exist")
+            return
+        }
+        let embedItems = list.structs.compactMap { $0 as? YItem }.filter {
+            if case .embed(let json) = $0.content { return json == #"{"type":"x","src":"y"}"# }
+            return false
+        }
+        XCTAssertEqual(embedItems.count, 1, "expected one ContentEmbed item holding the raw JSON")
+        try assertEncodes(doc, expected: contentEmbedUpdate, "contentEmbedUpdate")
+        XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, contentEmbedSV, "contentEmbedSV")
     }
 
     // MARK: - Diff path (encodeStateAsUpdate since a state vector)
