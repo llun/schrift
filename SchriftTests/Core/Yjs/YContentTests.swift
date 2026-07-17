@@ -145,10 +145,10 @@ final class YContentTests: XCTestCase {
         // A malformed update can claim any offset; JS would quietly produce empty
         // slices where Swift would trap, so this is `unexpectedCase`.
         var content = YContent.string(Array("hi".utf16))
-        XCTAssertThrowsErrorOfType(YIntegrationError.unexpectedCase) { _ = try content.splice(99) }
+        assertThrows(YIntegrationError.unexpectedCase) { _ = try content.splice(99) }
 
         var deleted = YContent.deleted(len: 2)
-        XCTAssertThrowsErrorOfType(YIntegrationError.unexpectedCase) { _ = try deleted.splice(99) }
+        assertThrows(YIntegrationError.unexpectedCase) { _ = try deleted.splice(99) }
     }
 
     // MARK: - mergeWith
@@ -209,24 +209,6 @@ extension YContent: @retroactive Equatable {
         case (.any(let a), .any(let b)): return a == b
         case (.doc(let ag, let ao), .doc(let bg, let bo)): return ag == bg && ao == bo
         default: return false
-        }
-    }
-}
-
-extension XCTestCase {
-    /// Typed `do`/`catch` assertion in the repo's style (never `XCTAssertThrowsError`),
-    /// wrapped because these cases repeat across the store's tests.
-    func XCTAssertThrowsErrorOfType(
-        _ expected: YIntegrationError, file: StaticString = #filePath, line: UInt = #line,
-        _ body: () throws -> Void
-    ) {
-        do {
-            try body()
-            XCTFail("expected \(expected) to be thrown", file: file, line: line)
-        } catch let error as YIntegrationError {
-            XCTAssertEqual(error, expected, file: file, line: line)
-        } catch {
-            XCTFail("expected \(expected), got \(error)", file: file, line: line)
         }
     }
 }

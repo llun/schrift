@@ -87,19 +87,8 @@ final class YIntegrationTests: XCTestCase {
 
     private func apply(_ hexUpdates: [String], to doc: YDoc) throws {
         for hex in hexUpdates {
-            try doc.applyUpdate(try YUpdateDecoder.decode(data(fromHex: hex)))
+            try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: hex)))
         }
-    }
-
-    private func data(fromHex hex: String) -> Data {
-        var bytes: [UInt8] = []
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let next = hex.index(index, offsetBy: 2)
-            bytes.append(UInt8(hex[index..<next], radix: 16)!)
-            index = next
-        }
-        return Data(bytes)
     }
 
     /// The visible text of a root type: its undeleted string content, in list order.

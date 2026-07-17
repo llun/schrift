@@ -43,10 +43,10 @@ final class YStructStoreTests: XCTestCase {
         // `unexpectedCase` on a gap or overlap, because every later binary search
         // assumes the invariant.
         let store = makeStore(lengths: [3])
-        XCTAssertThrowsErrorOfType(.unexpectedCase) {
+        assertThrows(YIntegrationError.unexpectedCase) {
             try store.addStruct(YGC(id: YID(client: 1, clock: 5), length: 1))  // gap: 3 → 5
         }
-        XCTAssertThrowsErrorOfType(.unexpectedCase) {
+        assertThrows(YIntegrationError.unexpectedCase) {
             try store.addStruct(YGC(id: YID(client: 1, clock: 2), length: 1))  // overlap
         }
     }
@@ -82,13 +82,13 @@ final class YStructStoreTests: XCTestCase {
         // yjs: "Always check state before looking for a struct in StructStore.
         // Therefore the case of not finding a struct is unexpected."
         let store = makeStore(lengths: [3])
-        XCTAssertThrowsErrorOfType(.unexpectedCase) {
+        assertThrows(YIntegrationError.unexpectedCase) {
             _ = try YStructStore.findIndexSS(store.clients[1]!.structs, 99)
         }
     }
 
     func testFindIndexSSThrowsOnAnEmptyList() {
-        XCTAssertThrowsErrorOfType(.unexpectedCase) { _ = try YStructStore.findIndexSS([], 0) }
+        assertThrows(YIntegrationError.unexpectedCase) { _ = try YStructStore.findIndexSS([], 0) }
     }
 
     func testFindIndexSSHandlesManyStructs() throws {
