@@ -19,10 +19,36 @@ struct YDeleteItem: Equatable, Sendable {
 struct YDeleteSet {
     var clients: [UInt: [YDeleteItem]] = [:]
 
+    /// The order clients were first added — yjs's `Map` insertion order. Swift's
+    /// `Dictionary` iterates unpredictably, but `cleanupYTextAfterTransaction`'s
+    /// contextless-vs-full-cleanup routing is order-*sensitive* across clients (yjs
+    /// is not confluent there: a format-owning client processed first suppresses the
+    /// other clients' contextless cleanups). Iterating in insertion order reproduces
+    /// yjs's result. Every other consumer (gc, merge, encode) is per-client and
+    /// order-independent, so it ignores this.
+    private(set) var clientInsertionOrder: [UInt] = []
+
     /// yjs `addToDeleteSet` (@238) — append a range, without sorting or merging.
     /// `sortAndMerge()` normalizes the whole set once, at transaction cleanup.
     mutating func add(client: UInt, clock: UInt, length: UInt) {
+        if clients[client] == nil { clientInsertionOrder.append(client) }
         clients[client, default: []].append(YDeleteItem(clock: clock, len: length))
+    }
+
+    /// Client keys in yjs `Map` insertion order: the recorded order first, then any
+    /// client present in `clients` but not recorded (a set built by direct
+    /// assignment, e.g. `from(store:)`) appended in ascending order so iteration is
+    /// still total and deterministic.
+    var orderedClients: [UInt] {
+        var seen = Set<UInt>()
+        var result: [UInt] = []
+        for client in clientInsertionOrder where clients[client] != nil && seen.insert(client).inserted {
+            result.append(client)
+        }
+        for client in clients.keys.sorted() where seen.insert(client).inserted {
+            result.append(client)
+        }
+        return result
     }
 
     var isEmpty: Bool { clients.isEmpty }

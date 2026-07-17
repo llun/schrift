@@ -16,13 +16,19 @@ final class YTransaction {
     let beforeState: [UInt: UInt]
     /// The state vector after it ended — filled in by `cleanup()`.
     var afterState: [UInt: UInt] = [:]
-    /// Types whose children changed, mapped to the parentSubs that changed.
+    /// Types whose children changed, mapped to the changed type and the parentSubs
+    /// that changed.
     ///
-    /// Write-only in this milestone: yjs uses it to fire observers, and there are
-    /// none here. It is carried because `Item.integrate`, `Item.delete`, and
-    /// `YType.deleteChildren` all maintain it, and because B4's
-    /// `cleanupYTextAfterTransaction` and B5's projection will read it.
-    var changed: [ObjectIdentifier: Set<String?>] = [:]
+    /// yjs's `changed` is `Map<AbstractType, Set>` keyed by the type object; we key
+    /// by identity but keep the `YType` reference, because B4's observer phase reads
+    /// each changed type's `_hasFormatting`. `Item.integrate`, `Item.delete`, and
+    /// `YType.deleteChildren` all maintain it (the last removes by `ObjectIdentifier`);
+    /// B5's projection will read the subs.
+    var changed: [ObjectIdentifier: (type: YType, subs: Set<String?>)] = [:]
+    /// yjs `_needFormattingCleanup` — armed by the observer phase when a *remote*
+    /// transaction touches a formatted text (`!local && _hasFormatting`), consumed by
+    /// `cleanupYTextAfterTransaction` at the end of the same observer phase.
+    var needFormattingCleanup = false
     /// Structs that may have become mergeable but are not in `deleteSet` — split
     /// right-halves, and already-deleted children found by `YType.deleteChildren`.
     var mergeStructs: [YStruct] = []
@@ -44,7 +50,10 @@ final class YTransaction {
     func addChangedType(_ type: YType, parentSub: String?) {
         let item = type.item
         if item == nil || (item!.id.clock < (beforeState[item!.id.client] ?? 0) && !item!.deleted) {
-            changed[ObjectIdentifier(type), default: []].insert(parentSub)
+            let oid = ObjectIdentifier(type)
+            var entry = changed[oid] ?? (type: type, subs: [])
+            entry.subs.insert(parentSub)
+            changed[oid] = entry
         }
     }
 }
@@ -92,77 +101,114 @@ extension YDoc {
         return try outcome.get()
     }
 
-    /// yjs `cleanupTransactions` (@3282) — the half that survives without
-    /// observers: normalize the delete set, snapshot the after-state, then merge.
+    /// yjs `cleanupTransactions` (@3282) — normalize the delete set, snapshot the
+    /// after-state, run the observer phase (`try`), then gc + merge + recurse
+    /// (`finally`).
     ///
     /// **Merging is not optional.** yjs merges on every transaction, so a store
     /// that skips it diverges structurally from yjs's after the very first update
     /// — three adjacent single-character inserts stay three items here and become
     /// one there. Everything downstream (the projection, the serializer, the
     /// oracle comparison) would then disagree.
+    ///
+    /// yjs's try/finally is preserved: the observer phase (which may throw on
+    /// malformed input) is captured in a `Result`, the finally-equivalent runs
+    /// unconditionally, and the observer error is surfaced last. When both halves
+    /// throw, the observer error wins — the same deliberate choice `transact` makes
+    /// (a JS `finally` throw replaces the body's, but both mean "reject this update"
+    /// to the only caller, and the body's is more informative).
     private func cleanupTransactions(_ i: Int) throws {
         guard i < transactionCleanups.count else { return }
         let transaction = transactionCleanups[i]
         let store = transaction.doc.store
 
-        // Sort *before* reading the set back: yjs's `const ds = transaction.deleteSet`
-        // is a reference, so `sortAndMergeDeleteSet(ds)` normalizes the very set the
-        // merges below then walk. `YDeleteSet` is a value type, so taking a copy
-        // first would hand `tryMergeDeleteSet` the unsorted ranges.
-        transaction.deleteSet.sortAndMerge()
-        transaction.afterState = store.getStateVector()
+        // yjs `try` block.
+        let observerOutcome = Result {
+            // Sort *before* reading the set back: yjs's `const ds = transaction.deleteSet`
+            // is a reference, so `sortAndMergeDeleteSet(ds)` normalizes the very set the
+            // merges below then walk. `YDeleteSet` is a value type, so taking a copy
+            // first would hand `tryMergeDeleteSet` the unsorted ranges.
+            transaction.deleteSet.sortAndMerge()
+            transaction.afterState = store.getStateVector()
 
-        // yjs runs observer callbacks here; there are none. B4 turns gc on: a
-        // deleted item's content is replaced by a `ContentDeleted` tombstone (and a
-        // deleted type's children by `GC` structs) *before* the merge below
-        // coalesces adjacent tombstones. gc off ⇒ skipped, matching the gc:false
-        // golden fixtures.
-        if transaction.doc.gc {
-            try Self.tryGcDeleteSet(transaction.deleteSet, store)
-        }
-        try Self.tryMergeDeleteSet(transaction.deleteSet, store)
-
-        // On all affected store.clients props, try to merge.
-        for (client, clock) in transaction.afterState {
-            let beforeClock = transaction.beforeState[client] ?? 0
-            guard beforeClock != clock, let list = store.clients[client] else { continue }
-            // We iterate from right to left so we can safely remove entries.
-            let firstChangePos = max(try YStructStore.findIndexSS(list.structs, beforeClock), 1)
-            var i = list.structs.count - 1
-            while i >= firstChangePos {
-                i -= 1 + Self.tryToMergeWithLefts(list, i)
-            }
-        }
-
-        // Try to merge mergeStructs.
-        for s in transaction.mergeStructs.reversed() {
-            let client = s.id.client
-            let clock = s.id.clock
-            guard let list = store.clients[client] else { continue }
-            let replacedStructPos = try YStructStore.findIndexSS(list.structs, clock)
-            if replacedStructPos + 1 < list.structs.count {
-                if Self.tryToMergeWithLefts(list, replacedStructPos + 1) > 1 {
-                    continue  // no need to perform next check, both are already merged
+            // yjs dispatches each changed type's `_callObserver`. Schrift has no user
+            // observers, so this reduces to `YText._callObserver`'s one store-visible
+            // effect: on a *remote* change to a formatted text, arm the cleanup. yjs
+            // skips a type whose owning item is deleted.
+            for (_, entry) in transaction.changed {
+                let type = entry.type
+                guard type.item == nil || !(type.item!.deleted) else { continue }
+                if !transaction.local, type._hasFormatting {
+                    transaction.needFormattingCleanup = true
                 }
             }
-            if replacedStructPos > 0 {
-                _ = Self.tryToMergeWithLefts(list, replacedStructPos)
+            // The last observer callback: run the formatting cleanup if armed. It opens
+            // a nested local transaction (queued into `transactionCleanups` and drained
+            // by the recursion below), deleting formatting items a concurrent edit
+            // rendered redundant.
+            if transaction.needFormattingCleanup {
+                try YTextCleanup.cleanupYTextAfterTransaction(transaction)
             }
         }
 
-        if !transaction.local, transaction.afterState[clientID] != transaction.beforeState[clientID] {
-            // yjs logs and re-rolls: another client is using our id, so every struct
-            // we mint from here would collide. The roadmap requires a fresh random
-            // clientID per session anyway; this is the safety net if one collides
-            // mid-session.
-            clientID = YDoc.generateClientID()
-        }
+        // yjs `finally` block — runs even when the observer phase threw.
+        do {
+            // B4 gc: a deleted item's content becomes a `ContentDeleted` tombstone (and
+            // a deleted type's children `GC` structs) *before* the merge coalesces
+            // adjacent tombstones. gc off ⇒ skipped, matching the gc:false fixtures.
+            if transaction.doc.gc {
+                try Self.tryGcDeleteSet(transaction.deleteSet, store)
+            }
+            try Self.tryMergeDeleteSet(transaction.deleteSet, store)
 
-        if transactionCleanups.count <= i + 1 {
-            transactionCleanups = []
-        } else {
-            try cleanupTransactions(i + 1)
+            // On all affected store.clients props, try to merge.
+            for (client, clock) in transaction.afterState {
+                let beforeClock = transaction.beforeState[client] ?? 0
+                guard beforeClock != clock, let list = store.clients[client] else { continue }
+                // We iterate from right to left so we can safely remove entries.
+                let firstChangePos = max(try YStructStore.findIndexSS(list.structs, beforeClock), 1)
+                var i = list.structs.count - 1
+                while i >= firstChangePos {
+                    i -= 1 + Self.tryToMergeWithLefts(list, i)
+                }
+            }
+
+            // Try to merge mergeStructs.
+            for s in transaction.mergeStructs.reversed() {
+                let client = s.id.client
+                let clock = s.id.clock
+                guard let list = store.clients[client] else { continue }
+                let replacedStructPos = try YStructStore.findIndexSS(list.structs, clock)
+                if replacedStructPos + 1 < list.structs.count {
+                    if Self.tryToMergeWithLefts(list, replacedStructPos + 1) > 1 {
+                        continue  // no need to perform next check, both are already merged
+                    }
+                }
+                if replacedStructPos > 0 {
+                    _ = Self.tryToMergeWithLefts(list, replacedStructPos)
+                }
+            }
+
+            if !transaction.local, transaction.afterState[clientID] != transaction.beforeState[clientID] {
+                // yjs logs and re-rolls: another client is using our id, so every struct
+                // we mint from here would collide. The roadmap requires a fresh random
+                // clientID per session anyway; this is the safety net if one collides
+                // mid-session.
+                clientID = YDoc.generateClientID()
+            }
+
+            if transactionCleanups.count <= i + 1 {
+                transactionCleanups = []
+            } else {
+                try cleanupTransactions(i + 1)
+            }
+        } catch {
+            // Surface the finally-block error only when the observer phase succeeded;
+            // otherwise the observer error (rethrown just below) wins. See the doc
+            // comment above and `transact`.
+            if case .success = observerOutcome { throw error }
         }
+        try observerOutcome.get()
     }
 
     // MARK: Merging
