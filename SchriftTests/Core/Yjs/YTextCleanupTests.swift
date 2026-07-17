@@ -93,4 +93,85 @@ final class YTextCleanupTests: XCTestCase {
         XCTAssertTrue(redundant.deleted)
         XCTAssertEqual(redundant.content.ref, 1, "the deleted format is gc'd to a tombstone")
     }
+
+    // MARK: - Multi-client delete set: insertion-order routing (the non-confluence)
+
+    /// A cumulative/diffed delivery whose triggering remote transaction carries a
+    /// **multi-client** delete set — client 1's text runs *and* client 2's/3's format
+    /// items in one transaction. `iterateDeletedStructs` must walk that delete set in
+    /// yjs `Map` insertion order (`YDeleteSet.orderedClients`): the format-owning
+    /// client is processed first, adds its parent to `needFullCleanup`, and thereby
+    /// **suppresses the contextless cleanup** of client 1's text run. Under ascending
+    /// client order (`clients.keys.sorted()`) the contextless pass runs first and
+    /// **wrongly deletes the live `bold:true` at `1:9`** — this fixture is the
+    /// regression net for that (differential-fuzz seed-174, captured from the oracle).
+    private let multiClientFormatDeleteSet = [
+        "010201002701016d016b02040001000661626364656600",
+        "01040107c601020103046c696e6b157b2268726566223a2268747470733a2f2f792f227d"
+            + "c601040105046c696e6b046e756c6cc60108010504626f6c640474727565"
+            + "c60105010604626f6c64046e756c6c01010202030702",
+        "01020200c601050106066974616c69630474727565860106066974616c6963046e756c6c020201000201010106",
+        "01050300c6010401050974657874436f6c6f72052272656422c6010501060974657874436f6c6f72046e756c6c"
+            + "c4010201030171c601040300046c696e6b157b2268726566223a2268747470733a2f2f782f227d"
+            + "c603010106046c696e6b046e756c6c00",
+    ]
+
+    func testMultiClientDeleteSetRoutesInInsertionOrder() throws {
+        // Oracle: `ITEM 1:9 del=0` survives; the client-1 delete set is clocks 1..8
+        // (`DS 1 1 8`). Under ascending order 1:9 would be deleted (`DS 1 1 9`).
+        let doc = makeDoc(gc: false)
+        try apply(multiClientFormatDeleteSet, to: doc)
+
+        let bold = try XCTUnwrap(doc.store.clients[1]?.structs.first { $0.id.clock == 9 } as? YItem)
+        XCTAssertFalse(bold.deleted, "the live bold mark survives; ascending order would delete it")
+        XCTAssertEqual(bold.content.ref, 6)
+
+        // The store's own delete set for client 1 is a single 1..8 run, not 1..9.
+        let client1DS = try XCTUnwrap(YDeleteSet.from(store: doc.store).clients[1])
+        XCTAssertEqual(client1DS, [YDeleteItem(clock: 1, len: 8)])
+    }
+
+    // MARK: - Contextless formatting cleanup path
+
+    /// A formatted nested text, then a *remote* update that deletes the plain text
+    /// (no format inserted or deleted in that transaction) — so `needFullCleanup`
+    /// stays empty and the deleted text routes to `cleanupContextlessFormattingGap`
+    /// rather than the full cleanup. Captured from the oracle.
+    private let plainTextDeleteInFormattedText = [
+        "010401002701016d016b02040001000361626346010104626f6c64047472756586010304626f6c64046e756c6c00",
+        "000101010105",  // delete clocks 1..5 (the text + its now-redundant bold formats)
+    ]
+
+    // MARK: - Trap safety
+
+    /// `iterateStructs` computes `clockStart + len`, and the cleanup's insert-scan
+    /// passes `len == afterClock` (the full after-state clock), so `clockStart + len`
+    /// can exceed `UInt.max`. yjs does this in JS floating point harmlessly; Swift's
+    /// `UInt + UInt` traps on overflow — a remote crash. The saturating add must keep
+    /// it from trapping (reverting the fix crashes this test process).
+    func testIterateStructsDoesNotTrapWhenClockPlusLengthOverflows() throws {
+        let doc = makeDoc(gc: false)
+        try apply(["01010100040101740568656c6c6f00"], to: doc)  // "hello", clocks 0..4
+        let list = try XCTUnwrap(doc.store.clients[1])
+        try doc.transact(local: false) { txn in
+            var visited = 0
+            // clockStart 3 (inside the struct → clean split), len UInt.max → the sum
+            // overflows and must saturate to UInt.max rather than trap.
+            try YStructStore.iterateStructs(txn, list, clockStart: 3, len: .max) { _ in visited += 1 }
+            XCTAssertGreaterThan(visited, 0)
+        }
+    }
+
+    func testContextlessCleanupOnPlainTextDeleteMatchesOracle() throws {
+        // Oracle: the text (`1:1`) and both bold formats (`1:4`, `1:5`) end deleted;
+        // `DS 1 1 5`. This drives the contextless routing (verified in the harness).
+        let doc = makeDoc(gc: false)
+        try apply(plainTextDeleteInFormattedText, to: doc)
+
+        for clock in [UInt(1), 4, 5] {
+            let item = try XCTUnwrap(doc.store.clients[1]?.structs.first { $0.id.clock == clock } as? YItem)
+            XCTAssertTrue(item.deleted, "clock \(clock) is deleted after the plain-text delete")
+        }
+        XCTAssertEqual(YDeleteSet.from(store: doc.store).clients[1], [YDeleteItem(clock: 1, len: 5)])
+    }
 }

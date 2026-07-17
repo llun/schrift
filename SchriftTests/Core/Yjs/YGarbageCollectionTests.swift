@@ -90,6 +90,26 @@ final class YGarbageCollectionTests: XCTestCase {
         XCTAssertEqual(child.length, 2)
     }
 
+    // MARK: - Byte identity of the gc'd store
+
+    /// The whole point of the store is that its re-encoded bytes match yjs. Pin the
+    /// gc sweep's output: after gc'ing, `encodeStateAsUpdate` must equal the bytes a
+    /// `gc:true` yjs replica produces (captured from the oracle), the way
+    /// `YjsEncoderTests` pins the save encoder.
+    func testGarbageCollectedStoreReEncodesToTheOraclesBytes() throws {
+        let tombstoned = makeDoc(gc: true)
+        try apply(insertThenDelete, to: tombstoned)
+        XCTAssertEqual(
+            try YStateEncoder.encodeStateAsUpdate(tombstoned),
+            Data(hex: "0101010001010174050101010005"))
+
+        let nested = makeDoc(gc: true)
+        try apply(deleteNestedType, to: nested)
+        XCTAssertEqual(
+            try YStateEncoder.encodeStateAsUpdate(nested),
+            Data(hex: "010201002101016d016b0100020101010003"))
+    }
+
     // MARK: - Malformed input throws, never traps
 
     func testGarbageCollectingANonDeletedItemThrows() throws {

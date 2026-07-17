@@ -250,7 +250,7 @@ extension YDoc {
         return merged
     }
 
-    /// yjs `tryGcDeleteSet` (@3248 region) — gc every deleted, non-kept `Item`
+    /// yjs `tryGcDeleteSet` (yjs.cjs @3221) — gc every deleted, non-kept `Item`
     /// inside each delete range, right to left.
     ///
     /// yjs's `gcFilter` defaults to `() => true` (gc everything); the replica has

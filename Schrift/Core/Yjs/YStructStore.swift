@@ -178,7 +178,7 @@ final class YStructStore {
         return index
     }
 
-    /// yjs `iterateStructs` (@247) — call `f` on every struct overlapping
+    /// yjs `iterateStructs` (yjs.cjs @3040) — call `f` on every struct overlapping
     /// `[clockStart, clockStart+len)`, splitting the boundary structs clean.
     ///
     /// Note yjs's `cleanupYTextAfterTransaction` passes a `len` that overshoots the
@@ -191,7 +191,17 @@ final class YStructStore {
         _ f: (YStruct) throws -> Void
     ) throws {
         if len == 0 { return }
-        let clockEnd = clockStart + len
+        // yjs computes `clockStart + len` in JS floating point, where the
+        // `cleanupYTextAfterTransaction` overshoot (`len == afterClock`, so
+        // `clockStart + len` can exceed `UInt.max`) is a large-but-finite value that
+        // every real clock still compares below. Swift's `UInt + UInt` traps on
+        // overflow — a remote crash on a crafted near-`UInt.max` state. Saturate to
+        // `UInt.max` instead: `clockEnd` is only compared (`clockEnd < s.id.clock +
+        // s.length`, `structs[i].id.clock < clockEnd`) and every real clock end is
+        // `<= UInt.max` (`YStructIntegrator.validate`), so clamping preserves yjs's
+        // harmless-overshoot semantics without trapping.
+        let sum = clockStart.addingReportingOverflow(len)
+        let clockEnd = sum.overflow ? UInt.max : sum.partialValue
         var index = try findIndexCleanStart(transaction, list, clockStart)
         repeat {
             let s = list.structs[index]

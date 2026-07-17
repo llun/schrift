@@ -36,7 +36,7 @@ enum YFormatAttrValue: Equatable {
 // MARK: - Struct iteration over the delete set
 
 extension YStructStore {
-    /// yjs `iterateDeletedStructs` (DeleteSet.js @58) — call `f` on every struct
+    /// yjs `iterateDeletedStructs` (yjs.cjs @121) — call `f` on every struct
     /// named by `ds`. Uses the **original** transaction for splits (so a boundary
     /// split lands on `transaction.mergeStructs`, merged in that transaction's own
     /// finally), exactly as yjs.
@@ -74,7 +74,7 @@ extension YStructStore {
 /// exists only inside text. The trigger fires on a *remote* transaction; see
 /// `YTransaction.cleanupTransactions`'s observer phase.
 enum YTextCleanup {
-    /// yjs `updateCurrentAttributes` (@184) — a null value deletes the key.
+    /// yjs `updateCurrentAttributes` (yjs.cjs @6421) — a null value deletes the key.
     static func updateCurrentAttributes(_ current: inout [String: YFormatAttrValue], _ item: YItem) {
         guard case .format(let key, _) = item.content else { return }
         if let value = YFormatAttrValue.of(item) {
@@ -84,7 +84,7 @@ enum YTextCleanup {
         }
     }
 
-    /// yjs `cleanupContextlessFormattingGap` (@422) — around a deleted, non-format
+    /// yjs `cleanupContextlessFormattingGap` (yjs.cjs @6657) — around a deleted, non-format
     /// item, delete duplicate-key formats in the surrounding uncountable/deleted gap.
     static func cleanupContextlessFormattingGap(_ transaction: YTransaction, _ item: YItem) {
         // Iterate until item.right is null or countable-undeleted content.
@@ -102,7 +102,7 @@ enum YTextCleanup {
         }
     }
 
-    /// yjs `cleanupFormattingGap` (@366) — within `[start, end)` (the gap up to the
+    /// yjs `cleanupFormattingGap` (yjs.cjs @6601) — within `[start, end)` (the gap up to the
     /// next countable content), delete each format that is either overwritten (a
     /// later format for its key exists in the gap) or already the current value.
     /// Returns the number deleted.
@@ -149,7 +149,7 @@ enum YTextCleanup {
         return cleanups
     }
 
-    /// yjs `cleanupYTextFormatting` (@454) — iterate the whole type once, cleaning
+    /// yjs `cleanupYTextFormatting` (yjs.cjs @6689) — iterate the whole type once, cleaning
     /// each gap between countable contents. Opens/joins the surrounding transaction.
     @discardableResult
     static func cleanupYTextFormatting(_ type: YType) throws -> Int {
@@ -178,7 +178,7 @@ enum YTextCleanup {
         return res
     }
 
-    /// yjs `cleanupYTextAfterTransaction` (@486) — the entry point, run in the
+    /// yjs `cleanupYTextAfterTransaction` (yjs.cjs @6721) — the entry point, run in the
     /// original transaction's observer phase when `needFormattingCleanup` is armed.
     ///
     /// First scans the newly-added structs for an inserted `ContentFormat` (its

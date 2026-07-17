@@ -464,7 +464,7 @@ final class YItem: YStruct {
 
     // MARK: Garbage collection
 
-    /// yjs `Item.gc(store, parentGCd)` (@9908 region) — collect a *deleted* item.
+    /// yjs `Item.gc(store, parentGCd)` (yjs.cjs @10159) — collect a *deleted* item.
     ///
     /// `content.gc` recurses into a `ContentType`'s children (each becomes a `GC`
     /// via `parentGCd: true`). When `parentGCd`, this item is itself replaced by a

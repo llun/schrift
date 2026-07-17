@@ -255,7 +255,7 @@ enum YContent {
     /// other kind is a no-op (yjs.cjs: ContentDeleted/JSON/Binary/String/Embed/
     /// Format/Any/Doc each `gc (store) {}`).
     ///
-    /// `ContentType.gc` (yjs `structs/ContentType.js`): recursively gc every child
+    /// `ContentType.gc` (yjs.cjs @8621): recursively gc every child
     /// — walking the child list rightwards and each map column leftwards — with
     /// `parentGCd: true`, so each child is replaced by a `GC` struct, then clears
     /// the type's `start`/`map`. Non-mutating on the `YContent` value: it only
