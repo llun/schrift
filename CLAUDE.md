@@ -274,10 +274,12 @@ Schrift/
 │                        YjsUpdateEncoder + its YEncoderItem/YEncoderContent model);
 │                        (b) the CRDT core — Lib0Decoder (read-side lib0 primitives,
 │                        shared with Core/Collaboration), YUpdateDecoder (v1 wire
-│                        model + byte-identical re-encode), and the live replica:
+│                        model + byte-identical re-encode), the live replica:
 │                        YContent, YStruct/YItem/YGC/YSkip, YType/YDoc, YStructStore,
-│                        YDeleteSet, YTransaction, YStructIntegrator — a literal
-│                        transliteration of yjs 13.6.31, gc off
+│                        YDeleteSet, YTransaction, YStructIntegrator, and YStateEncoder
+│                        (B3: encode the live store → v1 update / state vector,
+│                        byte-identical to yjs) — a literal transliteration of
+│                        yjs 13.6.31, gc off
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
 │   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
@@ -877,6 +879,22 @@ that are easy to violate and expensive to discover:
   would *trap*: a clock past `Number.MAX_SAFE_INTEGER` is harmless and yjs merely
   stashes it, so rejecting one would be **stricter than yjs** — the store must be
   neither more permissive nor more strict than the oracle.
+- **The encode side (`YStateEncoder`, B3) derives the wire info byte — it never
+  replays a stored one.** `encodeStateAsUpdate(doc, since:)` (full snapshot / diff
+  against a state vector) and `encodeStateVector(doc)` transliterate yjs's
+  `writeClientsStructs`/`writeStructs`/`Item.write`. The info byte is
+  `content.ref | origin/rightOrigin/parentSub presence bits`, computed from the
+  **live `YItem`** — **never** `YItem.info`, which is keep/countable/deleted/marker
+  runtime flags, not the wire byte (`YUpdateReencoder`'s *record* round-trip replays
+  the byte; the store encode cannot). Clients are written **descending** everywhere
+  — struct blocks, state vectors, delete sets; the ingest-side `YDeleteSet.asBlocks()`
+  is **ascending** and must never be reused for the wire. On a diff (`offset > 0`)
+  the first struct's origin is substituted (`clock + offset - 1`) and its content
+  sliced — that one line *is* the diff path. `encodeStateAsUpdate` **throws** while
+  `pendingStructs`/`pendingDs` are non-nil (a deliberate narrowing: yjs folds pending
+  in via `diffUpdateV2`, but a pending replica must never be snapshotted). Reuse
+  `YUpdateReencoder`'s delete-set/state-vector writers (offset-free, proven);
+  transliterate the rest.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **Verify against the oracle, not against reasoning.** Golden fixtures
