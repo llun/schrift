@@ -1,0 +1,22 @@
+Schrift/Core/Yjs/BlockNoteDocument.swift
+  s_2262337fad06b0::t_61e8c404544f97 54,58,63,109,114
+Schrift/Core/Yjs/YjsUpdateEncoder.swift
+  s_2262337fad06b0::t_c912cef7debdc4 143-148,179-185
+  s_2262337fad06b0::t_61e8c404544f97 149,186,197,205,216,242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "6ae8fe30d747d2326f539cbdc2e42813dcb7622b",
+  "prompts": {},
+  "sessions": {
+    "s_2262337fad06b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "80a24789-4b5b-45c5-b60f-5fc75a18b240",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
