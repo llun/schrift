@@ -210,15 +210,24 @@ Skip at all until it was taught to emit `mergeUpdates`-derived updates.
 
 Updates arrive from the network, so every clock is attacker-controlled and Swift's
 arithmetic traps where JS's silently goes negative. `YStructIntegrator.validate`
-enforces one ingest invariant — **every struct has a non-empty clock range that fits
-in a JS-safe integer** — and that is what makes `lastId`, `getItemCleanEnd`,
-`tryMergeDeleteSet` and `addStruct` provably free of overflow and underflow
-downstream. Neither half is reachable from a well-formed peer: yjs cannot author a
-zero-length struct (`YText.insert("")` no-ops), and lib0's own `readVarUint` throws
-above `Number.MAX_SAFE_INTEGER`, so no yjs peer can even encode a larger clock.
-(`Lib0Decoder` accepts the full 64-bit range because its encoder half must
-round-trip Swift's `UInt`; the bound belongs at the first point that reads these as
-clocks.) A 10-byte malformed update used to crash the process here.
+enforces one ingest invariant — **every struct has a non-empty clock range whose end
+fits in a `UInt`** — and that is what makes `lastId`, `getItemCleanEnd`,
+`tryMergeDeleteSet`, `addStruct` and `splitItem` provably free of overflow and
+underflow downstream, since each is bounded by some struct's own `clock + length`.
+A 10-byte malformed update used to crash the process here.
+
+The invariant rejects only what a real peer cannot send *and* what would otherwise
+trap. yjs cannot author a zero-length struct (`YText.insert("")` no-ops); its own
+handling is incoherent (it integrates the degenerate item, then throws during
+cleanup), and Swift would underflow instead of throwing.
+
+It deliberately does **not** bound clocks at `Number.MAX_SAFE_INTEGER`, though that
+is the largest a JS peer can hold exactly: lib0's guard sits inside `readVarUint`'s
+*continuation* branch, so a terminating varUInt slips past it and yjs simply stashes
+the struct as unreachably far ahead — verified against the oracle. Rejecting there
+would be **stricter than yjs** for input that cannot hurt us. (`Lib0Decoder` accepts
+the full 64-bit range because its encoder half must round-trip Swift's `UInt`;
+`decodeStructs` guards the one place that arithmetic can overflow.)
 
 ### Teardown is the owner's job
 

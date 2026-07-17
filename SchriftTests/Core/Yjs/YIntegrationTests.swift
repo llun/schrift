@@ -358,28 +358,130 @@ final class YIntegrationTests: XCTestCase {
 
     // MARK: - Map slot handover on merge
 
-    /// One client sets the same map key twice. The two items are adjacent and both
-    /// carry `parentSub: "k"`, so cleanup merges them — and the map slot, which
-    /// pointed at the right half, must be handed to the survivor.
+    /// One client sets the same map key twice. The loser is deleted and the winner is
+    /// not, so `left.deleted == right.deleted` fails and the two do **not** merge.
     private let sameClientMapOverwrite = [
         "010101002801016d016b017702763100",  // m.k = "v1"
         "01010101a8010001770276320101010001",  // m.k = "v2"
     ]
 
+    /// `m.set(k,"v1")`, `m.set(k,"v2")`, `m.delete(k)` — as three **separate** updates,
+    /// so the receiver integrates the two items and then merges them itself (both are
+    /// deleted, adjacent, same client, same key). The map slot pointed at the right
+    /// half, so the merge must hand it to the survivor.
+    ///
+    /// Delivering them separately is the whole point: a single cumulative update
+    /// carries the *already merged* `ContentAny(["v1","v2"])`, so no merge — and no
+    /// handover — happens on the receiving side at all.
+    /// Captured from yjs: 1 struct at `1:0` (len 2), slot → `1:0`.
+    private let mapItemsThatMerge = [
+        "010101002801016d016b017702763100",  // m.k = "v1"
+        "01010101a8010001770276320101010001",  // m.k = "v2"
+        "000101010002",  // m.delete(k) — now both are deleted
+    ]
+
     func testMergingMapItemsHandsTheSlotToTheSurvivor() throws {
-        // yjs's tryToMergeWithLefts re-points `parent._map` when it forgets the right
-        // half. Captured from yjs: the loser is deleted, so `deleted` differs and the
-        // two do NOT merge — the slot must therefore still name 1:1.
+        // The re-pointing in tryToMergeWithLefts (`parent._map[sub] = left`) only runs
+        // when the two items actually merge. Two earlier versions of this test failed to
+        // reach it — one whose items differ in `deleted` (so they never merge), one that
+        // delivered a pre-merged update — and both passed with the handover deleted.
+        // This fixture kills that mutant: without the handover the slot names 1:1, a
+        // struct the store no longer holds.
+        let doc = makeDoc()
+        try apply(mapItemsThatMerge, to: doc)
+
+        let clientStructs = structs(doc, client: 1)
+        XCTAssertEqual(clientStructs.count, 1, "both items are deleted and adjacent — they must merge")
+        XCTAssertEqual(clientStructs.first?.length, 2)
+
+        let map = try XCTUnwrap(doc.share["m"])
+        let slot = try XCTUnwrap(map.map["k"])
+        XCTAssertEqual(slot.id, YID(client: 1, clock: 0), "the slot must follow the survivor")
+        // The slot must always name a struct the store still holds — the invariant the
+        // re-pointing exists to preserve. Without it the slot dangles at the forgotten
+        // right half.
+        XCTAssertTrue(clientStructs.contains { $0 === slot })
+    }
+
+    func testOverwritingAMapKeyLeavesTheLoserUnmergedBecauseOnlyItIsDeleted() throws {
+        // The counterpart: `deleted` differs, so cleanup must *not* merge these.
         let doc = makeDoc()
         try apply(sameClientMapOverwrite, to: doc)
 
+        XCTAssertEqual(structs(doc, client: 1).count, 2)
         let map = try XCTUnwrap(doc.share["m"])
         let slot = try XCTUnwrap(map.map["k"])
         XCTAssertEqual(slot.id, YID(client: 1, clock: 1))
         XCTAssertFalse(slot.deleted)
-        // The map slot must always name a struct the store still holds — the
-        // invariant the re-pointing exists to preserve.
-        XCTAssertTrue(structs(doc, client: 1).contains { $0 === slot })
+    }
+
+    // MARK: - GC neighbours
+
+    /// A `gc: true` peer collects a nested type: `Item(100:0:1) GC(100:1:3)`, state 4.
+    /// The author then merges "abc"+"def" into one `Item(100:1:6)` and full-syncs, so
+    /// integrating it runs with **offset 3 and a GC as the left neighbour**. Captured
+    /// from yjs: the result is `Item(0:1) GC(1:6)` — the new struct becomes a GC and
+    /// merges with the existing one.
+    private let gcLeftNeighbour = [
+        "0102640021010164016b0100030164010004",  // gc:true peer's snapshot
+        "0102640027010164016b02040064000661626364656600",  // author's merged full state
+    ]
+
+    func testAGCLeftNeighbourMintsAGCRatherThanBeingRejected() throws {
+        // GCs arrive from gc-enabled peers regardless of our own `gc: false`. The first
+        // version of this code threw `unexpectedCase` here on the reasoning that yjs
+        // would throw too — it does not: `getItemCleanEnd` declines to split a GC and
+        // returns it, and yjs mints a GC. We were discarding an update yjs applies.
+        let doc = makeDoc()
+        try apply(gcLeftNeighbour, to: doc)
+
+        let clientStructs = structs(doc, client: 100)
+        XCTAssertEqual(clientStructs.count, 2)
+        XCTAssertTrue(clientStructs[1] is YGC, "the partially-applied struct becomes a GC")
+        XCTAssertEqual(clientStructs[1].id, YID(client: 100, clock: 1))
+        XCTAssertEqual(clientStructs[1].length, 6, "and merges with the GC already there")
+    }
+
+    /// Forged: a GC'd range under a **live root**, so `getMissing` leaves the parent
+    /// set and integrate's `offset > 0` lands on a GC with a live parent. No peer can
+    /// produce this — a GC proves its ops were children of a *collected* type.
+    private let forgedGCUnderLiveRoot = [
+        "01026400040101640161000400",  // Item(100:0:1)"a" + GC(100:1:4) under live root "d"
+        "010164000401016408616263646566676800",  // Item(100:0:8) origin=nil, parent="d"
+    ]
+
+    func testAGCUnderALiveParentIsRefusedAsYjsRefusesIt() throws {
+        // The other half of the GC rule, and the one the first fix got wrong by
+        // over-correcting: here yjs does **not** mint a GC — `if (this.parent)` is still
+        // truthy, so it enters the conflict loop with `o = left.right === undefined` and
+        // throws. Accepting it would have Schrift apply an update every yjs replica
+        // refuses.
+        let doc = makeDoc()
+        assertThrows(YIntegrationError.unexpectedCase) {
+            for hex in forgedGCUnderLiveRoot {
+                try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: hex)))
+            }
+        }
+    }
+
+    // MARK: - Duplicate client blocks
+
+    /// Two blocks in one update both naming client 1 at clock 0 — malformed. yjs's
+    /// `clientRefs.set(client, …)` means the **last block wins**; captured from yjs,
+    /// whose text is "Y".
+    private let duplicateClientBlock = "0201010004010174015801010004010174015900"
+
+    func testADuplicateClientBlockKeepsTheLastOne() throws {
+        // Appending the second run instead — the first version of `build` — is worse
+        // than dropping it: the concatenation can descend, and the driver stashes a
+        // client's entire remaining run once one struct runs ahead, stranding the rest
+        // in a stash that never drains.
+        let doc = makeDoc()
+        try apply([duplicateClientBlock], to: doc)
+
+        XCTAssertEqual(visibleText(doc), "Y")
+        XCTAssertEqual(structs(doc, client: 1).count, 1)
+        XCTAssertNil(doc.store.pendingStructs, "nothing may be stranded")
     }
 
     // MARK: - Malformed input
@@ -440,22 +542,44 @@ final class YIntegrationTests: XCTestCase {
 
     // MARK: - Teardown
 
+    /// `XmlFragment("document-store") > XmlElement("blockContainer") > XmlText("hello")`
+    /// plus a second root holding a nested `Map` — i.e. the shape every real BlockNote
+    /// document has, so the teardown's nested-type recursion is actually exercised.
+    private let nestedDocument =
+        "0104010007010e646f63756d656e742d73746f7265030e626c6f636b436f6e7461696e657207000100"
+        + "06040001010568656c6c6f2701016d066e65737465640100"
+
     func testDestroyBreaksTheGraphSoTheReplicaCanBeReclaimed() throws {
         // The item graph is a mesh of strong cycles (left ⇄ right, type ⇄ parent), so
         // ARC frees none of it when the YDoc goes away — a live session opens one
         // replica per document. `destroy()` is the owner's teardown hook.
-        weak var weakType: YType?
+        //
+        // The fixture is deliberately *nested*: the first version used a flat two-item
+        // text, which contains no `ContentType` at all — so the branch that tears down
+        // nested types, the one every real document depends on, could be deleted with
+        // the test still green. Found in review.
+        weak var weakRoot: YType?
+        weak var weakNested: YType?
         weak var weakItem: YItem?
         do {
             let doc = makeDoc()
-            try apply(concurrentInsert, to: doc)
-            weakType = doc.share["t"]
-            weakItem = doc.share["t"]?.start
-            XCTAssertNotNil(weakType)
+            try apply([nestedDocument], to: doc)
+
+            weakRoot = doc.share["document-store"]
+            weakItem = doc.share["document-store"]?.start
+            // The XmlElement's own type — reachable only through an item's ContentType.
+            if case .type(let element)? = doc.share["document-store"]?.start?.content {
+                weakNested = element
+            }
+            XCTAssertNotNil(weakRoot)
             XCTAssertNotNil(weakItem)
+            XCTAssertNotNil(weakNested, "fixture must actually contain a nested type")
+
             doc.destroy()
+            doc.destroy()  // idempotent
         }
-        XCTAssertNil(weakType, "the root type must be reclaimed after destroy()")
+        XCTAssertNil(weakRoot, "the root type must be reclaimed after destroy()")
         XCTAssertNil(weakItem, "the item graph must be reclaimed after destroy()")
+        XCTAssertNil(weakNested, "nested types must be reclaimed too")
     }
 }

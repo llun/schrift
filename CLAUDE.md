@@ -871,10 +871,11 @@ that are easy to violate and expensive to discover:
   (it arrives from a peer), and Swift's UInt arithmetic traps where JS goes
   harmlessly negative — a trap is a remote crash. `YStructIntegrator.validate`
   enforces the one ingest invariant that makes the rest provably safe: **every
-  struct has a non-empty clock range that fits in a JS-safe integer**. Neither half
-  is reachable from a real peer (yjs cannot author a zero-length struct; lib0
-  refuses to decode a clock above 2^53-1). Prefer root-causing to that invariant
-  over sprinkling guards.
+  struct has a non-empty clock range whose end fits in a `UInt`**. Prefer
+  root-causing to that invariant over sprinkling guards. Note it bounds only what
+  would *trap*: a clock past `Number.MAX_SAFE_INTEGER` is harmless and yjs merely
+  stashes it, so rejecting one would be **stricter than yjs** — the store must be
+  neither more permissive nor more strict than the oracle.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **Verify against the oracle, not against reasoning.** Golden fixtures

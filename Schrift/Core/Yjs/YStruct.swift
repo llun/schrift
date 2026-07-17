@@ -264,16 +264,30 @@ final class YItem: YStruct {
             id.clock += o
             let leftStruct = try YStructStore.getItemCleanEnd(
                 transaction, transaction.doc.store, YID(client: id.client, clock: id.clock - 1))
-            // yjs types this `Item` but does not require one. `getItemCleanEnd` (@3001)
-            // explicitly declines to split a GC and returns it, and `.lastId` on a GC is
-            // simply `undefined` — no throw. yjs then falls into the `parent == null`
-            // branch below and mints a GC, which is the *correct* outcome: `getMissing`
-            // nils the parent precisely when a neighbour was collected. Rejecting a
-            // non-Item here made Schrift throw away an update real yjs applies.
+            // yjs types this `Item` but does not require one: `getItemCleanEnd` (@3001)
+            // declines to split a GC and returns it, and `.lastId` on a GC is `undefined`
+            // rather than a throw. So a GC here is **not** an error — it is how a
+            // partially-applied item whose predecessor was collected reaches the GC
+            // branch below, and rejecting it threw away updates real yjs applies.
             self.left = leftStruct as? YItem
-            // Leave `origin` alone for a GC — yjs poisons it with `undefined`, but the
-            // GC branch below never reads it. (Setting it would be the divergence.)
+            // Leave `origin` alone for a GC. yjs poisons it with `undefined`; the only
+            // reachable continuation is the GC branch, which never reads it.
             if let leftItem = leftStruct as? YItem { self.origin = leftItem.lastId }
+            // ...but only when the parent is *also* gone. A GC proves its ops were
+            // children of a collected type, so `getMissing` has already nil'd the parent
+            // for any well-formed update — the two agree, and `guard let parent` below
+            // mints the GC. They disagree only for forged bytes (a GC'd range under a
+            // live root), and there yjs does **not** mint a GC: `if (this.parent)` is
+            // still truthy, so it enters the conflict loop with `o = left.right ===
+            // undefined` and throws on `o.origin`. Refusing here is that outcome.
+            //
+            // Worth being precise, because the first version of this comment was wrong:
+            // `getMissing` resolves left/right from *origin*/*rightOrigin*, while this
+            // block looks up `(client, clock + offset - 1)` — a different struct. Their
+            // agreement is a property of well-formed input, not something yjs checks.
+            if leftStruct is YItem == false, parent != nil {
+                throw YIntegrationError.unexpectedCase
+            }
             // `this.content = this.content.splice(offset)`: splice truncates the
             // receiver to the already-applied left half and returns the rest, which
             // the item then adopts — discarding the left half it just made.
