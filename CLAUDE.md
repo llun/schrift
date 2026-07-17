@@ -861,6 +861,7 @@ that are easy to violate and expensive to discover:
   pair makes content order-dependent (yjs#248). The property to hold this store to
   is *"it converges exactly when yjs converges"*.
 - **Formatting cleanup is a known gap, and it is B4's — not a bug to fix ad hoc.**
+  Sequencing decided 2026-07-17: **B3, then B4**; B4 must land before C2.
   On a *remote* transaction touching a `YText` with formatting, yjs runs
   `cleanupYTextAfterTransaction` and deletes formatting items that concurrent
   edits made redundant; this store does not, so such an item stays undeleted.

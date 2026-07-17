@@ -185,11 +185,13 @@ Two consequences of that choice:
 - yjs's stash is padded with `Skip` structs, because a *serialized* update's
   per-client structs must tile the clock range with no gaps. Schrift's has no holes
   to pad. Skips are never integrated either way.
-- **Known deviation.** When the same client's clock range is stashed twice with
-  different *tilings* — a merged item from one peer, the finer items it came from
-  from another — `mergeUpdatesV2` re-tiles to the finest decomposition. Schrift
-  keeps both and lets the driver's offset handling split or skip whatever is already
-  applied. Differing tilings are **common**, not exotic (any peer that has merged a
+- **Known deviation — accepted, 2026-07-17.** When the same client's clock range is
+  stashed twice with different *tilings* — a merged item from one peer, the finer
+  items it came from from another — `mergeUpdatesV2` re-tiles to the finest
+  decomposition. Schrift keeps both and lets the driver's offset handling split or
+  skip whatever is already applied. Left as-is deliberately: closing it means porting
+  `mergeUpdatesV2`'s re-tiling (a greedy coverage rule cannot reproduce it — both
+  sort orders drop the wrong side), for a divergence unreachable from honest traffic. Differing tilings are **common**, not exotic (any peer that has merged a
   run emits a coarser view than the incrementals it came from), but the two agree on
   content and the settled store is identical — the fuzz has never found a settled
   divergence from it. The one case where they could disagree on *content* is
@@ -272,8 +274,9 @@ transaction touching a `YText` that has formatting, yjs arms
 — e.g. a link mark wrapping text that a concurrent edit deleted. This store does
 not, so such an item stays undeleted where yjs marks it deleted.
 
-This is the roadmap's **B4**, which lands it together with gc. It is recorded here
-because it is reachable from real documents, not a theoretical case: BlockNote's
+This is the roadmap's **B4**, which lands it together with gc, **after B3**
+(decided 2026-07-17). It is recorded here because it is reachable from real
+documents, not a theoretical case: BlockNote's
 schema is `XmlFragment > blockContainer > XmlText`, bold/italic/link are
 `ContentFormat` items inside those texts, and nested `XmlText` types arrive as
 real `YText` subclasses — so the trigger (`YText._callObserver`, gated on
