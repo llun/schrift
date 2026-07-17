@@ -1,0 +1,29 @@
+Schrift/Core/Yjs/YType.swift
+  s_b737db1163f91f::t_b2067d8a9d6993 104-111
+  s_b737db1163f91f::t_8d991ccbe358f8 124
+Schrift/Core/Yjs/YTransaction.swift
+  s_b737db1163f91f::t_6a68ff821adeb6 115-122
+  s_b737db1163f91f::t_0e5c3da47c4e25 207-234
+SchriftTests/Core/Yjs/YGarbageCollectionTests.swift
+  s_b737db1163f91f::t_8dc1be65dd058d 1-108
+Schrift/Core/Yjs/YContent.swift
+  s_b737db1163f91f::t_505cd700ef667d 253-279
+Schrift/Core/Yjs/YStruct.swift
+  s_b737db1163f91f::t_e7985f53bd89a5 464-483
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "28579c4534a792f711b5691e6d5e77d29a6539b6",
+  "prompts": {},
+  "sessions": {
+    "s_b737db1163f91f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50e673d1-2498-4004-a392-328ecfe123d0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
