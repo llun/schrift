@@ -84,7 +84,8 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 ├── Core/
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
 │   ├── Auth/             — SessionStore (Keychain-backed session-cookie + server URL persistence, re-auth flag), SessionCookies (Codable HTTPCookie snapshot), WebLogin free functions (login-URL/completion detection, cookie sync), KeychainStore
-│   └── Yjs/              — on-device Markdown→BlockNote→Yjs encoder (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves
+│   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence), dormant behind the default-off `schrift.liveCollaboration` flag
+│   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration) — see "The Yjs CRDT core"
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
 │   ├── Home/             — document list: pinned/recent, segmented filter (All/Shared/Pinned), favorite toggle, offline list cache
@@ -99,7 +100,193 @@ SchriftTests/             — XCTest suite mirroring the source tree by director
 
 ### Why no third-party CRDT/networking dependencies
 
-The app *constructs* Yjs binary updates to save (see "Editing & save mechanism" below), but does so with a small hand-written lib0/Yjs-v1 encoder (`Core/Yjs`) rather than pulling in a CRDT library. It never needs to *parse* incoming Yjs — reads go through `formatted-content`. This keeps third-party dependencies at zero for v1.
+The app *constructs* Yjs binary updates to save (see "Editing & save mechanism" below), but does so with a small hand-written lib0/Yjs-v1 encoder (`Core/Yjs`) rather than pulling in a CRDT library. This keeps third-party dependencies at zero.
+
+> **Revised 2026-07-17.** This section used to add "It never needs to *parse* incoming Yjs — reads go through `formatted-content`." That is no longer true: `Core/Yjs` now also *reads* Yjs, and is growing into a full CRDT replica for live editing (see "The Yjs CRDT core"). The zero-dependency rule is unchanged — the replica is hand-written too.
+
+## The Yjs CRDT core
+
+`Core/Yjs` is being built out into a Swift Yjs replica so the app can join the same
+Hocuspocus room as the web client and speak real Yjs, rather than PATCHing a
+full-overwrite blob that a live web session would silently overwrite. It lands in
+stages; today it can **decode** an update and **integrate** it into a live document.
+
+| Piece | What it does |
+|---|---|
+| `Lib0Decoder` / `Lib0Encoder` | lib0 binary primitives (varint, varString, `any`), shared with the collaboration wire codecs |
+| `YUpdateDecoder` / `YUpdateReencoder` | the v1 wire model — decodes updates, delete sets, and state vectors, and re-encodes them **byte-identically** |
+| `YContent` | the live, mutable content model (splice, merge) |
+| `YStruct` / `YItem` / `YGC` / `YSkip`, `YType`, `YDoc` | the document graph |
+| `YStructStore` | structs per client, binary search, splits |
+| `YDeleteSet` | delete ranges, and applying an update's delete set |
+| `YTransaction` | transaction lifecycle + the merge cleanup that runs after every update |
+| `YStructIntegrator` | the driver: dependency ordering, pending structs, retry |
+
+### Two Yjs models, deliberately
+
+There are three representations of an "item", and conflating them is the easy
+mistake:
+
+- **`YEncoderItem`/`YEncoderContent`** (`YjsUpdateEncoder.swift`) — the *from-scratch
+  encoder's* model. Every item in a newly built document is authored by one client,
+  so it needs no origins, no parent pointer, and no left/right links. This is what
+  the shipping full-overwrite save path uses, and its output is pinned by golden
+  hex tests.
+- **`YItemRecord`/`YContentRecord`** (`YUpdateDecoder.swift`) — the immutable *wire*
+  record. It exists so a decoded update re-encodes byte-identically, and is
+  deliberately never mutated.
+- **`YItem`/`YContent`** (`YStruct.swift`, `YContent.swift`) — the *live* item, the
+  full YATA operation. This is the real one.
+
+### Transliterated, not reinterpreted
+
+The store is a deliberately literal transliteration of **yjs 13.6.31** (the version
+the docs v5.4.1 lockfile resolves). Every non-obvious branch carries the yjs
+function and line it mirrors. This is not stylistic: the output of this code
+eventually becomes document state that real web clients render, so a "cleaner"
+rewrite that disagrees with yjs about one ordering is silent corruption. **Do not
+tidy `YItem.integrate`.** If a change seems warranted, it needs the differential
+fuzz (below) to prove it, and human sign-off.
+
+Three consequences worth knowing before touching this code:
+
+- **A JS string is a UTF-16 code-unit array; a Swift `String` cannot be.**
+  `ContentString.splice` transiently produces a *lone surrogate* before repairing it
+  to U+FFFD (yjs#248), which no Swift `String` can represent. So `YContent.string`
+  holds `[UInt16]`. This is forced, not a preference.
+- **JS arrays are references; Swift arrays are values.** yjs hands a client's struct
+  array around and splices into it, mutating the one array the store holds. A Swift
+  `[YStruct]` would splice into a copy. `YStructList` boxes it to restore the
+  reference semantics the algorithm assumes.
+- **Merging is not optional.** yjs merges adjacent items on *every* transaction
+  cleanup, so a store that skips it diverges from yjs's after the first update —
+  three adjacent single-character inserts stay three items here and become one
+  there.
+
+### Pending structs and delete sets
+
+Updates arrive out of order over a relay, so a struct whose causal dependency has
+not arrived is stashed (`YStructStore.pendingStructs`) and replayed once it does;
+likewise a delete range naming absent structs (`pendingDs`).
+
+yjs stashes both as **V2-encoded updates**. Schrift stashes the decoded refs
+instead. The V2 codec exists in yjs purely as an internal container for these two
+fields — Schrift's wire is v1 end to end (y-protocols and the docs server both
+speak v1) — so porting `UpdateEncoderV2` + `mergeUpdatesV2` + `diffUpdateV2` would
+add a large codec with no wire consumer. **This is an internal representation
+choice, not a protocol deviation:** nothing stashed is ever transmitted. The one
+yjs behavior that does observe pending structs on the wire —
+`encodeStateAsUpdate` folding them in — is exactly what the live design forbids
+anyway: a replica with pending structs must never be snapshotted back to the
+server.
+
+Two consequences of that choice:
+
+- yjs's stash is padded with `Skip` structs, because a *serialized* update's
+  per-client structs must tile the clock range with no gaps. Schrift's has no holes
+  to pad. Skips are never integrated either way.
+- **Known deviation — accepted, 2026-07-17.** When the same client's clock range is
+  stashed twice with different *tilings* — a merged item from one peer, the finer
+  items it came from from another — `mergeUpdatesV2` re-tiles to the finest
+  decomposition. Schrift keeps both and lets the driver's offset handling split or
+  skip whatever is already applied. Left as-is deliberately: closing it means porting
+  `mergeUpdatesV2`'s re-tiling (a greedy coverage rule cannot reproduce it — both
+  sort orders drop the wrong side), for a divergence unreachable from honest traffic. Differing tilings are **common**, not exotic (any peer that has merged a
+  run emits a coarser view than the incrementals it came from), but the two agree on
+  content and the settled store is identical — the fuzz has never found a settled
+  divergence from it. The one case where they could disagree on *content* is
+  yjs#248: if a surrogate pair was split in the fine view and not the coarse one,
+  re-tiling destroys the pair where Schrift keeps it intact. That needs a peer that
+  splits a surrogate pair, which real editors (BlockNote/ProseMirror work in code
+  points) do not do.
+
+The stash also dedupes exact duplicates — without that it grows without bound under
+a relay's routine redelivery. **The struct's kind is part of that identity, and
+dropping it loses content.** `mergeUpdates`/`diffUpdate` pad a hole with a
+`Skip`, so a held `Skip(5,3)` and the real `Item(5,3)` share a `(clock, length)`:
+keyed on that alone, the Skip swallowed the item, its text was lost, and the stash
+then stalled forever. Found in review, not by the fuzz — whose corpus contained no
+Skip at all until it was taught to emit `mergeUpdates`-derived updates.
+
+### Malformed input must throw, never trap
+
+Updates arrive from the network, so every clock is attacker-controlled and Swift's
+arithmetic traps where JS's silently goes negative. `YStructIntegrator.validate`
+enforces one ingest invariant — **every struct has a non-empty clock range whose end
+fits in a `UInt`** — and that is what makes `lastId`, `getItemCleanEnd`,
+`tryMergeDeleteSet`, `addStruct` and `splitItem` provably free of overflow and
+underflow downstream, since each is bounded by some struct's own `clock + length`.
+A 10-byte malformed update used to crash the process here.
+
+The invariant rejects only what a real peer cannot send *and* what would otherwise
+trap. yjs cannot author a zero-length struct (`YText.insert("")` no-ops); its own
+handling is incoherent (it integrates the degenerate item, then throws during
+cleanup), and Swift would underflow instead of throwing.
+
+It deliberately does **not** bound clocks at `Number.MAX_SAFE_INTEGER`, though that
+is the largest a JS peer can hold exactly: lib0's guard sits inside `readVarUint`'s
+*continuation* branch, so a terminating varUInt slips past it and yjs simply stashes
+the struct as unreachably far ahead — verified against the oracle. Rejecting there
+would be **stricter than yjs** for input that cannot hurt us. (`Lib0Decoder` accepts
+the full 64-bit range because its encoder half must round-trip Swift's `UInt`;
+`decodeStructs` guards the one place that arithmetic can overflow.)
+
+### Teardown is the owner's job
+
+The item graph is a mesh of strong cycles — `item.left ⇄ item.right`, and
+`type.start`/`type.map` ⇄ `item.parent` — because yjs assumes a tracing collector.
+ARC collects none of it, so **releasing a `YDoc` frees nothing**; a live session
+opens one replica per document. `YDoc.destroy()` breaks the cycles and must be
+called by whatever owns the replica (the collaboration session, C1). No edge can be
+`unowned` instead: the algorithm reads all of them in both directions, and none has
+a target that provably outlives its source.
+
+### Verification
+
+Golden fixtures captured from real yjs pin each YATA branch
+(`YIntegrationTests`), and a **differential fuzz harness** compares this store
+against a node yjs oracle across randomized op scripts and delivery orders —
+seeded, minimizing, and comparing the full store structure (not just the wire
+projection, so left/right/origin wiring is checked too) after *every* update. The
+harness is session-local scratch tooling, never committed (the zero-dependency
+rule); what it finds is promoted to fixtures here. The same technique is proven in
+this repo on `InlineMarkdown`.
+
+One property it establishes is worth stating, because it is counterintuitive:
+**yjs itself does not always converge.** Splitting a surrogate pair replaces it
+with two U+FFFD, so whether a pair survives depends on delivery order (yjs#248).
+The property to hold this store to is therefore *"it converges exactly when yjs
+converges"*, not *"it converges"*.
+
+A green fuzz run means nothing unless the corpus reaches the branch, so measure
+coverage rather than assuming it. Two corpus shapes are needed, and they are not
+interchangeable: **random-position inserts** produce the concurrent, interleaved
+origins that drive the conflict loop's case 2, while **contiguous appends plus
+cumulative snapshots** are the only way to reach `Item.integrate`'s offset>0 path
+— a struct overlapping a prefix the receiver already holds exists only once a
+sender has *merged* a run, which incremental updates alone never produce.
+
+### Known gap: remote-change format cleanup (B4)
+
+The store is **not** yet yjs-identical when formatting is involved. On a *remote*
+transaction touching a `YText` that has formatting, yjs arms
+`cleanupYTextAfterTransaction`, which deletes formatting items rendered redundant
+— e.g. a link mark wrapping text that a concurrent edit deleted. This store does
+not, so such an item stays undeleted where yjs marks it deleted.
+
+This is the roadmap's **B4**, which lands it together with gc, **after B3**
+(decided 2026-07-17). It is recorded here because it is reachable from real
+documents, not a theoretical case: BlockNote's
+schema is `XmlFragment > blockContainer > XmlText`, bold/italic/link are
+`ContentFormat` items inside those texts, and nested `XmlText` types arrive as
+real `YText` subclasses — so the trigger (`YText._callObserver`, gated on
+`!transaction.local && _hasFormatting`) fires. **B4 is therefore a prerequisite
+for the live write path (C2), not an optimization.**
+
+The fuzz quantifies it: across 1500 seeds (11,986 store comparisons), the only
+seeds whose *settled* store diverged from yjs were two, and both were this. With
+formatting ops removed from the corpus, 800/800 seeds matched yjs's settled store
+exactly — which is what isolates this as the single remaining behavioral gap.
 
 ## Authentication
 

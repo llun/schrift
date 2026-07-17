@@ -268,11 +268,16 @@ Schrift/
 │   │                    VersionEndpoints: read-only version list), Codable models,
 │   │                    DocsAPIError, CSRF, ConnectivityMonitor (NWPathMonitor →
 │   │                    the reconnect trigger for draft sync)
-│   └── Yjs/             on-device Markdown→BlockNote→Yjs encoder that builds the
-│                        base64 content payload for saves (MarkdownYjs,
-│                        BlockNoteDocument, InlineMarkdown, YjsUpdateEncoder) +
-│                        Lib0Decoder, the read-side lib0 primitives shared with
-│                        Core/Collaboration
+│   └── Yjs/             two halves. (a) the on-device Markdown→BlockNote→Yjs
+│                        encoder that builds the base64 content payload for saves
+│                        (MarkdownYjs, BlockNoteDocument, InlineMarkdown,
+│                        YjsUpdateEncoder + its YEncoderItem/YEncoderContent model);
+│                        (b) the CRDT core — Lib0Decoder (read-side lib0 primitives,
+│                        shared with Core/Collaboration), YUpdateDecoder (v1 wire
+│                        model + byte-identical re-encode), and the live replica:
+│                        YContent, YStruct/YItem/YGC/YSkip, YType/YDoc, YStructStore,
+│                        YDeleteSet, YTransaction, YStructIntegrator — a literal
+│                        transliteration of yjs 13.6.31, gc off
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
 │   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
@@ -350,6 +355,16 @@ new code reads like the surrounding code.
   are synchronous, side-effect-free value code (caseless `enum` namespaces +
   `static`/free functions over `Sendable` value types) callable from any
   isolation domain. Keep the async/`throws` boundary at the networking layer.
+  - **The one exception is the Yjs CRDT core's live replica** (`YDoc`, `YType`,
+    `YStruct`/`YItem`, `YStructStore`): a mutable object graph of `final class`es,
+    because the YATA algorithm wires structs to one another **by identity**
+    (`this.left.right = this`, `Set<Item>` membership, `o !== this.right`) and
+    value types cannot express that. It keeps the no-concurrency-annotations rule
+    and stays synchronous, but it is **not `Sendable`** and must not be made so:
+    a replica is mutable shared state, so exactly one owner may touch it (the
+    collaboration session actor, C1). Pass updates and projections across
+    isolation domains — never the `YDoc`. Its inputs/outputs stay value types
+    (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
 - Value types that cross task/actor boundaries adopt `Sendable`; injected
   closures that do are `@Sendable`. Generic containers propagate it via
   constraints (`PaginatedResponse<T: Decodable & Sendable>`).
@@ -803,6 +818,86 @@ new code reads like the surrounding code.
   `Cancel`/`Save` toolbar; they host a form, not a list, per the flat-list rule
   above.) The `common.done` L10n key was removed when its last two call sites
   (these sheets) moved to `common.close`.
+
+### The Yjs CRDT core (`Core/Yjs`) — the live replica
+
+Separate from the from-scratch save encoder below, `Core/Yjs` holds a hand-written
+Yjs **replica** (struct store + YATA integration) for live collaboration. Rules
+that are easy to violate and expensive to discover:
+
+- **Transliterate yjs; do not reinterpret it.** The store mirrors **yjs 13.6.31**
+  (the version docs v5.4.1 pins) line for line, with the mirrored function/line in
+  a comment. Its output becomes document state real web clients render, so a
+  tidier rewrite that disagrees on one ordering is silent corruption. **Never
+  "clean up" `YItem.integrate`** — the YATA conflict loop is the algorithm. A
+  change there needs differential-fuzz evidence *and* human sign-off.
+- **Three item models exist; don't conflate them.** `YEncoderItem`/`YEncoderContent`
+  (`YjsUpdateEncoder.swift`) is the from-scratch encoder's single-client model — no
+  origins, no parent, no links — and is what the shipping save path uses.
+  `YItemRecord`/`YContentRecord` (`YUpdateDecoder.swift`) is the immutable wire
+  record that exists so a decode→encode round trip is byte-identical; never mutate
+  it. `YItem`/`YContent` is the live YATA operation. Adding a field means asking
+  which of the three needs it.
+- **`YContent.string` is `[UInt16]`, not `String`, and must stay so.** yjs's
+  `ContentString.splice` transiently produces a lone surrogate before repairing it
+  to U+FFFD (yjs#248); no Swift `String` can hold that. Both halves keep their
+  length (one orphan out, one U+FFFD in) — the store depends on an item's clock
+  range not moving when it splits.
+- **A client's struct array is a reference (`YStructList`), not `[YStruct]`.** yjs
+  splices into the one array the store holds; a Swift value array would splice into
+  a copy and silently lose the split. Read-only helpers take `[YStruct]`; anything
+  that splices takes the list.
+- **Merge cleanup is mandatory.** yjs merges adjacent items on every transaction
+  cleanup, so skipping it diverges from yjs's store after the first update. It is
+  not a B4/GC concern — gc is off, merging is not.
+- **`pendingStructs`/`pendingDs` hold decoded refs, where yjs holds V2 bytes.** A
+  deliberate, documented internal deviation — V2 is, in yjs, only a container for
+  these two fields, and Schrift's wire is v1 end to end. Nothing stashed is ever
+  transmitted, and a replica with pending structs must never be snapshotted to the
+  server. Exact duplicates must stay deduped, or a relay's redelivery grows the
+  stash without bound. See `docs/architecture.md` for the one known residual
+  deviation (re-tiling + yjs#248).
+- **yjs does not always converge, so don't assert that it does.** A split surrogate
+  pair makes content order-dependent (yjs#248). The property to hold this store to
+  is *"it converges exactly when yjs converges"*.
+- **Formatting cleanup is a known gap, and it is B4's — not a bug to fix ad hoc.**
+  Sequencing decided 2026-07-17: **B3, then B4**; B4 must land before C2.
+  On a *remote* transaction touching a `YText` with formatting, yjs runs
+  `cleanupYTextAfterTransaction` and deletes formatting items that concurrent
+  edits made redundant; this store does not, so such an item stays undeleted.
+  It is reachable from real documents (BlockNote marks are `ContentFormat` inside
+  nested `XmlText`s, which arrive as real `YText`s), so **B4 gates the live write
+  path (C2)**. See `docs/architecture.md`.
+- **Malformed input must throw, never trap.** Every clock is attacker-controlled
+  (it arrives from a peer), and Swift's UInt arithmetic traps where JS goes
+  harmlessly negative — a trap is a remote crash. `YStructIntegrator.validate`
+  enforces the one ingest invariant that makes the rest provably safe: **every
+  struct has a non-empty clock range whose end fits in a `UInt`**. Prefer
+  root-causing to that invariant over sprinkling guards. Note it bounds only what
+  would *trap*: a clock past `Number.MAX_SAFE_INTEGER` is harmless and yjs merely
+  stashes it, so rejecting one would be **stricter than yjs** — the store must be
+  neither more permissive nor more strict than the oracle.
+- **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
+  so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
+- **Verify against the oracle, not against reasoning.** Golden fixtures
+  (`YIntegrationTests`) pin each YATA branch from real yjs; the differential fuzz
+  harness (session-local scratch, never committed — zero-dep rule) compares the
+  whole store against a node yjs oracle across randomized op scripts and delivery
+  orders. **A green run only proves there is no bug in the shapes the generator can
+  build** — 11,986 clean comparisons missed a critical bug because the corpus
+  contained no `Skip`. So: measure branch coverage, and enumerate the input space
+  from *yjs's own producers* — incremental updates, cumulative snapshots,
+  `mergeUpdates`/`diffUpdate` output (the only source of Skips, and what a relay's
+  persistence layer stores), gc'd peers, and hand-built malformed frames. The
+  corpus needs at least *three* shapes: random-position inserts for the conflict
+  loop's case 2; contiguous appends plus cumulative snapshots for
+  `Item.integrate`'s offset>0 path (an overlapping struct only exists once a sender
+  has merged a run); and merged/diffed updates for Skip handling.
+- **A deviation "for safety" needs the same evidence as any other change.** Both of
+  this store's worst bugs were in code written to be *safer* than yjs — a stash
+  dedupe (which then let a `Skip` swallow a real item, losing content) and a
+  "defensive" merge of duplicate client blocks where yjs simply overwrites. If you
+  cannot demonstrate the deviation against the oracle, transliterate instead.
 
 ### Editor & the on-device save (`Core/Yjs`)
 
