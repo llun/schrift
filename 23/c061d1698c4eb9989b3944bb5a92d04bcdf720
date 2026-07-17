@@ -1,0 +1,47 @@
+Schrift/Core/Yjs/YStruct.swift
+  s_2262337fad06b0::t_e7ebe5176ce62c 267-276
+Schrift/Core/Yjs/YType.swift
+  s_2262337fad06b0::t_67de2671822ce7 145-187
+Schrift/Core/Yjs/YStructIntegration.swift
+  s_2262337fad06b0::t_41698717938ad6 85-86,91,94,104,111-119,123
+  s_2262337fad06b0::t_38d20f4c7d4fcc 48,54
+  s_2262337fad06b0::t_6a724f2eeba310 74-81
+  s_2262337fad06b0::t_63940afe26df18 87-90,92-93,95-103,105-110,120-122
+  s_2262337fad06b0::t_d545a279c99935 334-344,348-354
+  s_2262337fad06b0::t_69b6f227cd4168 370
+  s_2262337fad06b0::t_b8b0d3fda0f969 310-311
+SchriftTests/Core/Yjs/YIntegrationTests.swift
+  s_2262337fad06b0::t_924388d17282ba 270-386,395,405-407,424,427,439-460
+  s_2262337fad06b0::t_fe57223a0d3228 408-423,425-426,428-438
+  s_2262337fad06b0::t_a761970cac052b 387-394,396-404
+Schrift/Core/Yjs/YStructStore.swift
+  s_2262337fad06b0::t_74317f97f60f3c 200-204
+CLAUDE.md
+  s_2262337fad06b0::t_17dd7077eadd81 358-367
+  s_2262337fad06b0::t_dfb7e34c6aaf80 870-879,884-891,893-898
+Schrift/Core/Yjs/YDeleteSet.swift
+  s_2262337fad06b0::t_50c0b180324e08 149-156
+docs/architecture.md
+  s_2262337fad06b0::t_e7aec002a6d247 183,191-231
+Schrift/Core/Yjs/YTransaction.swift
+  s_2262337fad06b0::t_9533bb0362f356 208-214
+Schrift/Core/Yjs/YUpdateDecoder.swift
+  s_2262337fad06b0::t_a11d71f7d404aa 9-12
+  s_2262337fad06b0::t_dd239edf187e73 174-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "23c061d1698c4eb9989b3944bb5a92d04bcdf720",
+  "prompts": {},
+  "sessions": {
+    "s_2262337fad06b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "80a24789-4b5b-45c5-b60f-5fc75a18b240",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
