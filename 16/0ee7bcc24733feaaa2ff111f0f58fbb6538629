@@ -1,0 +1,23 @@
+SchriftTests/Core/Yjs/YContentTests.swift
+  s_2262337fad06b0::t_bb7c4a2691f69f 148,151
+SchriftTests/Core/Yjs/YIntegrationTests.swift
+  s_2262337fad06b0::t_09d2def7215eef 90
+SchriftTests/Core/Yjs/YStructStoreTests.swift
+  s_2262337fad06b0::t_c1a75c28d61f1b 46,49,85,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "160ee7bcc24733feaaa2ff111f0f58fbb6538629",
+  "prompts": {},
+  "sessions": {
+    "s_2262337fad06b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "80a24789-4b5b-45c5-b60f-5fc75a18b240",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
