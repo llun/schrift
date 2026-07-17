@@ -1,0 +1,45 @@
+Schrift/Core/Yjs/YStructStore.swift
+  s_b737db1163f91f::t_7c08514618549c 181-205
+Schrift/Core/Yjs/YDeleteSet.swift
+  s_b737db1163f91f::t_9fa16609340e90 22-30,34,38-51
+  s_3da1f273d8917f::t_936465f83bb273 52-53
+Schrift/Core/Yjs/YTextCleanup.swift
+  s_b737db1163f91f::t_761a5474e9d6d6 191-197,200-203,213,221,223,230
+  s_b737db1163f91f::t_11aed9db57cf05 46-51
+  s_b737db1163f91f::t_cd76a81e8801c3 1-45,53-91,93-96,98,100-118,120-190,199,206-212,214-220,222,224-229,231-235
+  s_b737db1163f91f::t_bc73834fcde03f 92,97,119
+  s_b737db1163f91f::t_7cd02e762eab67 52
+  s_b737db1163f91f::t_6bfb47d562ed3a 204-205
+  s_b737db1163f91f::t_eefb7bfba77f2b 198
+  s_b737db1163f91f::t_35c9d54aed51ce 99
+SchriftTests/Core/Yjs/YTextCleanupTests.swift
+  s_b737db1163f91f::t_694601355d7a81 1-96
+Schrift/Core/Yjs/YTransaction.swift
+  s_b737db1163f91f::t_4d7c2691d69346 104-106,113-119,125-150,154-172,175-189,192-198,200-209,211
+  s_b737db1163f91f::t_434596be95fef2 53-56
+  s_b737db1163f91f::t_2f70f46707aa4b 19-20,22-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "16d623f75fb3eddee0a6f129c37618ba4160b1cf",
+  "prompts": {},
+  "sessions": {
+    "s_3da1f273d8917f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f49630eb-9e7a-4457-a813-665e76f1781c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_b737db1163f91f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50e673d1-2498-4004-a392-328ecfe123d0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
