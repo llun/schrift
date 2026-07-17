@@ -153,8 +153,8 @@ enum YStateEncoder {
     /// `str.slice(offset)`: a lone leading surrogate becomes U+FFFD through the
     /// UTF-8 encoder, which `String(decoding:as: UTF16.self)` matches), ContentEmbed
     /// @8910, ContentFormat @8995, ContentType @9440, ContentAny @9259,
-    /// ContentDoc @8590. Internal (not private): the fuzz dumper prints content
-    /// payloads through it.
+    /// ContentDoc @8590. Internal (not private) so a per-content payload can be
+    /// encoded in isolation for testing, not only as part of a whole struct.
     static func writeContent(_ content: YContent, _ e: inout Lib0Encoder, offset: UInt = 0) throws {
         switch content {
         case .deleted(let len):
