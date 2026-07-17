@@ -51,16 +51,16 @@ enum BlockNoteYjs {
     /// byte-identical to what `blocksToYDoc(blocks, "document-store")` +
     /// `Y.encodeStateAsUpdate` produce for the same blocks and client id.
     static func encode(_ blocks: [BlockNoteBlock], clientID: UInt32) -> Data {
-        var items: [YItem] = []
+        var items: [YEncoderItem] = []
         var clock = 0
 
         func emit(
-            _ content: YContent, origin: Int? = nil, parentRootKey: String? = nil,
+            _ content: YEncoderContent, origin: Int? = nil, parentRootKey: String? = nil,
             parentClock: Int? = nil, parentSub: String? = nil
         ) -> Int {
             let start = clock
             items.append(
-                YItem(
+                YEncoderItem(
                     clock: start, origin: origin, parentRootKey: parentRootKey,
                     parentClock: parentClock, parentSub: parentSub, content: content))
             clock += content.length
@@ -106,12 +106,12 @@ enum BlockNoteYjs {
     private static func emitInline(
         _ runs: [InlineRun],
         parentText: Int,
-        emit: (YContent, Int?, String?, Int?, String?) -> Int
+        emit: (YEncoderContent, Int?, String?, Int?, String?) -> Int
     ) {
         var lastClock: Int? = nil  // clock of the previously emitted item's last position
         var openMarks: [(key: String, valueJSON: String)] = []
 
-        func emitItem(_ content: YContent) {
+        func emitItem(_ content: YEncoderContent) {
             let origin = lastClock
             let parentClock = lastClock == nil ? parentText : nil
             let start = emit(content, origin, nil, parentClock, nil)

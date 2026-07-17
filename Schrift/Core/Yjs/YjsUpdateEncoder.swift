@@ -140,9 +140,13 @@ enum YAnyValue: Equatable, Sendable {
     case uint8Array(Data)  // tag 116
 }
 
-/// The content payload of a Yjs `Item`. Only the variants a from-scratch
-/// BlockNote document needs are modelled.
-enum YContent: Equatable {
+/// The content payload of a Yjs `Item`, as the **from-scratch encoder** models it.
+/// Only the variants a newly built BlockNote document needs are present.
+///
+/// Distinct from `YContent` (`YContent.swift`), the live CRDT store's mutable
+/// content: this one is a write-only description of a document being built from
+/// nothing by a single client, so it needs no splice, merge, or integrate.
+enum YEncoderContent: Equatable {
     case xmlElement(nodeName: String)
     case xmlText
     case string(String)
@@ -172,9 +176,14 @@ enum YContent: Equatable {
     }
 }
 
-/// One Yjs `Item`. Every item in a from-scratch document is authored by the
-/// same client, so IDs are `(clientID, clock)` and `origin` is just a clock.
-struct YItem: Equatable {
+/// One Yjs `Item`, as the **from-scratch encoder** models it. Every item in a
+/// from-scratch document is authored by the same client, so IDs are
+/// `(clientID, clock)` and `origin` is just a clock.
+///
+/// Distinct from `YItem` (`YStruct.swift`), the live CRDT store's item: that one
+/// is the full YATA operation, with real origins, a parent pointer, and the
+/// left/right links this single-client encoder never needs.
+struct YEncoderItem: Equatable {
     var clock: Int
     /// Clock of the left origin item (same client), or nil when this item is the
     /// first child of its parent.
@@ -185,7 +194,7 @@ struct YItem: Equatable {
     var parentClock: Int?
     /// Map key when this item is an attribute/map entry.
     var parentSub: String?
-    var content: YContent
+    var content: YEncoderContent
 }
 
 // MARK: - Update serialization
@@ -193,7 +202,7 @@ struct YItem: Equatable {
 enum YjsUpdateEncoder {
     /// Serializes a from-scratch document (single client, empty delete set) into
     /// a Yjs v1 update — the exact bytes `Y.encodeStateAsUpdate` produces.
-    static func encode(clientID: UInt32, items: [YItem]) -> Data {
+    static func encode(clientID: UInt32, items: [YEncoderItem]) -> Data {
         var e = Lib0Encoder()
         e.writeVarUInt(1)  // number of clients
         e.writeVarUInt(UInt(items.count))  // structs for this client
@@ -204,7 +213,7 @@ enum YjsUpdateEncoder {
         return e.data
     }
 
-    private static func writeItem(_ e: inout Lib0Encoder, clientID: UInt32, _ item: YItem) {
+    private static func writeItem(_ e: inout Lib0Encoder, clientID: UInt32, _ item: YEncoderItem) {
         let hasOrigin = item.origin != nil
         var info = item.content.ref
         if hasOrigin { info |= 0x80 }  // BIT8: has left origin
@@ -230,7 +239,7 @@ enum YjsUpdateEncoder {
         writeContent(&e, item.content)
     }
 
-    private static func writeContent(_ e: inout Lib0Encoder, _ content: YContent) {
+    private static func writeContent(_ e: inout Lib0Encoder, _ content: YEncoderContent) {
         switch content {
         case .xmlElement(let nodeName):
             e.writeVarUInt(3)  // YXmlElementRefID
