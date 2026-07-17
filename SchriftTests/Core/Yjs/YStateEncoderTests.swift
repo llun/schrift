@@ -24,6 +24,9 @@ final class YStateEncoderTests: XCTestCase {
     private let gcNestedSV = "010106"
     private let deletedMidRangeFull = "010301000401017401618101000484010401660101010104"
     private let deletedMidRangeDiff = "010201038101020284010401660101010104"
+    private let formattedTextUpdate =
+        "0105010004010174026865840101056c6c6f2077840106046f726c64c60101010204626f6c640474727565c60106010704626f6c64046e756c6c00"
+    private let formattedTextSV = "01010d"
 
     // MARK: - Helpers
 
@@ -109,6 +112,38 @@ final class YStateEncoderTests: XCTestCase {
         XCTAssertTrue(list.structs.contains { $0 is YGC }, "fixture must contain a real GC struct")
         try assertEncodes(doc, expected: gcNestedUpdate, "gcNestedUpdate")
         XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, gcNestedSV, "gcNestedSV")
+    }
+
+    /// A single local `YText.format` call — two `ContentFormat` (ref 6) items
+    /// bracket the formatted range (an opening `{bold:true}`, a closing
+    /// `{bold:null}`), each parented directly under the root key, not nested
+    /// inside the surrounding `ContentString` items. No other fixture in this
+    /// file exercises ref 6 at all before this test.
+    ///
+    /// Found by Task 4's B3 fuzz campaign's lane 2 (`--lane2 --seeds 500`,
+    /// formatting ops included): 0 divergences and 0 B4-shaped ones in 500
+    /// random-formatting seeds. That is expected, not a gap in the campaign —
+    /// the known B4 gap (`CLAUDE.md`, "Formatting cleanup is a known gap")
+    /// needs a *remote* transaction whose formatting a *concurrent* edit made
+    /// redundant, so `cleanupYTextAfterTransaction` has something to delete;
+    /// a single local `.format()` with no concurrent writer is exactly the
+    /// "cleanup no-op" case, which is what makes it promotable as a golden —
+    /// it pins the ContentFormat wire encoding on a shape both stores are
+    /// known to agree on, independent of the still-open B4 work.
+    func testFormattingProducesContentFormatItemsThatBracketTheRange() throws {
+        let doc = try applied([formattedTextUpdate])
+        defer { doc.destroy() }
+        guard let list = doc.store.clients[1] else {
+            XCTFail("expected client 1 to exist")
+            return
+        }
+        let formatItems = list.structs.compactMap { $0 as? YItem }.filter {
+            if case .format = $0.content { return true }
+            return false
+        }
+        XCTAssertEqual(formatItems.count, 2, "expected one opening and one closing ContentFormat item")
+        try assertEncodes(doc, expected: formattedTextUpdate, "formattedTextUpdate")
+        XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, formattedTextSV, "formattedTextSV")
     }
 
     // MARK: - Diff path (encodeStateAsUpdate since a state vector)
