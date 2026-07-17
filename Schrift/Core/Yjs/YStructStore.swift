@@ -197,7 +197,11 @@ final class YStructStore {
         guard let list = store.clients[id.client] else { throw YIntegrationError.unexpectedCase }
         let index = try findIndexSS(list.structs, id.clock)
         let s = list.structs[index]
-        if id.clock != s.id.clock + s.length - 1, let item = s as? YItem {
+        // yjs writes `id.clock !== struct.id.clock + struct.length - 1`. Reassociated
+        // to keep the `- 1` off a UInt: algebraically identical here, and it cannot
+        // underflow even if the ingest invariant (`YStructIntegrator.validate`:
+        // length >= 1) is ever weakened.
+        if id.clock + 1 != s.id.clock + s.length, let item = s as? YItem {
             let right = try splitItem(transaction, leftItem: item, diff: id.clock - s.id.clock + 1)
             list.structs.insert(right, at: index + 1)
         }

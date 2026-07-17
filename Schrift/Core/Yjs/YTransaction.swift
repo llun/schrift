@@ -205,6 +205,13 @@ extension YDoc {
             guard let list = store.clients[client] else { continue }
             for deleteItem in deleteItems.reversed() {
                 // Start with merging the item next to the last deleted item.
+                //
+                // `clock + len - 1` cannot underflow: every range in a transaction's
+                // delete set is a struct's own range (`Item.delete`,
+                // `ContentDeleted.integrate`) or a coalescing of them, and
+                // `YStructIntegrator.validate` refuses a struct with length 0 at
+                // ingest. Without that invariant a zero-length struct at clock 0 traps
+                // here — where yjs computes -1 and throws catchably from findIndexSS.
                 let lastIndex = try YStructStore.findIndexSS(
                     list.structs, deleteItem.clock + deleteItem.len - 1)
                 var si = min(list.structs.count - 1, 1 + lastIndex)

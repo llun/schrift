@@ -355,6 +355,16 @@ new code reads like the surrounding code.
   are synchronous, side-effect-free value code (caseless `enum` namespaces +
   `static`/free functions over `Sendable` value types) callable from any
   isolation domain. Keep the async/`throws` boundary at the networking layer.
+  - **The one exception is the Yjs CRDT core's live replica** (`YDoc`, `YType`,
+    `YStruct`/`YItem`, `YStructStore`): a mutable object graph of `final class`es,
+    because the YATA algorithm wires structs to one another **by identity**
+    (`this.left.right = this`, `Set<Item>` membership, `o !== this.right`) and
+    value types cannot express that. It keeps the no-concurrency-annotations rule
+    and stays synchronous, but it is **not `Sendable`** and must not be made so:
+    a replica is mutable shared state, so exactly one owner may touch it (the
+    collaboration session actor, C1). Pass updates and projections across
+    isolation domains — never the `YDoc`. Its inputs/outputs stay value types
+    (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
 - Value types that cross task/actor boundaries adopt `Sendable`; injected
   closures that do are `@Sendable`. Generic containers propagate it via
   constraints (`PaginatedResponse<T: Decodable & Sendable>`).
@@ -857,15 +867,35 @@ that are easy to violate and expensive to discover:
   It is reachable from real documents (BlockNote marks are `ContentFormat` inside
   nested `XmlText`s, which arrive as real `YText`s), so **B4 gates the live write
   path (C2)**. See `docs/architecture.md`.
+- **Malformed input must throw, never trap.** Every clock is attacker-controlled
+  (it arrives from a peer), and Swift's UInt arithmetic traps where JS goes
+  harmlessly negative — a trap is a remote crash. `YStructIntegrator.validate`
+  enforces the one ingest invariant that makes the rest provably safe: **every
+  struct has a non-empty clock range that fits in a JS-safe integer**. Neither half
+  is reachable from a real peer (yjs cannot author a zero-length struct; lib0
+  refuses to decode a clock above 2^53-1). Prefer root-causing to that invariant
+  over sprinkling guards.
+- **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
+  so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **Verify against the oracle, not against reasoning.** Golden fixtures
   (`YIntegrationTests`) pin each YATA branch from real yjs; the differential fuzz
   harness (session-local scratch, never committed — zero-dep rule) compares the
   whole store against a node yjs oracle across randomized op scripts and delivery
-  orders. A green run means nothing unless the corpus reaches the branch: measure
-  it. The corpus needs *two* shapes — random-position inserts for the conflict
-  loop's case 2, and contiguous appends plus cumulative snapshots for
+  orders. **A green run only proves there is no bug in the shapes the generator can
+  build** — 11,986 clean comparisons missed a critical bug because the corpus
+  contained no `Skip`. So: measure branch coverage, and enumerate the input space
+  from *yjs's own producers* — incremental updates, cumulative snapshots,
+  `mergeUpdates`/`diffUpdate` output (the only source of Skips, and what a relay's
+  persistence layer stores), gc'd peers, and hand-built malformed frames. The
+  corpus needs at least *three* shapes: random-position inserts for the conflict
+  loop's case 2; contiguous appends plus cumulative snapshots for
   `Item.integrate`'s offset>0 path (an overlapping struct only exists once a sender
-  has merged a run).
+  has merged a run); and merged/diffed updates for Skip handling.
+- **A deviation "for safety" needs the same evidence as any other change.** Both of
+  this store's worst bugs were in code written to be *safer* than yjs — a stash
+  dedupe (which then let a `Skip` swallow a real item, losing content) and a
+  "defensive" merge of duplicate client blocks where yjs simply overwrites. If you
+  cannot demonstrate the deviation against the oracle, transliterate instead.
 
 ### Editor & the on-device save (`Core/Yjs`)
 

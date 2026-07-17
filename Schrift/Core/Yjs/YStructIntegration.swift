@@ -45,12 +45,13 @@ extension YStructRefs {
     /// Note this **creates root types**: yjs resolves a named parent with
     /// `doc.get(decoder.readString())` while reading, so a root named by any item
     /// exists in `doc.share` from here on, whether or not the item integrates.
-    static func build(from update: YUpdate, doc: YDoc) -> [UInt: YStructRefs] {
+    static func build(from update: YUpdate, doc: YDoc) throws -> [UInt: YStructRefs] {
         var clientsStructRefs: [UInt: YStructRefs] = [:]
         for block in update.blocks {
             var refs: [YStruct] = []
             refs.reserveCapacity(block.structs.count)
             for record in block.structs {
+                try validate(record)
                 switch record {
                 case .gc(let id, let length):
                     refs.append(YGC(id: id, length: length))
@@ -70,15 +71,55 @@ extension YStructRefs {
                             parentSub: item.parentSub, content: YContent(record: item.content)))
                 }
             }
-            // yjs keys by client and would overwrite a duplicate block; merge instead,
-            // so a malformed update naming a client twice cannot drop the first run.
-            if let existing = clientsStructRefs[block.client] {
-                existing.refs.append(contentsOf: refs)
-            } else {
-                clientsStructRefs[block.client] = YStructRefs(refs: refs)
-            }
+            // Last block wins, exactly as yjs's `clientRefs.set(client, {i: 0, refs})`
+            // (@1427) does. An update naming a client twice is malformed — a
+            // well-formed one has one contiguous run per client — and appending the
+            // second run instead would be worse than dropping it: the concatenation
+            // can descend, and the driver stashes a client's *entire remaining run*
+            // the moment one struct runs ahead of local state, so a descending run
+            // strands the structs behind it in a stash that never drains.
+            clientsStructRefs[block.client] = YStructRefs(refs: refs)
         }
         return clientsStructRefs
+    }
+
+    /// The store's one ingest invariant: **every struct has a non-empty clock range
+    /// whose end fits in a `UInt`.** It is what makes all the clock arithmetic
+    /// downstream — `lastId`, `getItemCleanEnd`, `tryMergeDeleteSet`, `addStruct`,
+    /// `splitItem` — provably free of overflow and underflow, since every one of
+    /// them is bounded by some struct's own `clock + length`.
+    ///
+    /// Both halves reject only what a real peer cannot send, and only where Swift
+    /// would otherwise *trap* — a remote crash — rather than throw:
+    ///
+    /// - **Zero length.** yjs cannot author one: `YText.insert("")`,
+    ///   `YArray.insert(0, [])` and friends no-op rather than emit an item. Its own
+    ///   handling is incoherent — it integrates the degenerate item, then computes
+    ///   `clock + len - 1 == -1` during cleanup and throws from `findIndexSS`. Swift
+    ///   would underflow a `UInt` and trap on a 10-byte malformed frame. Rejecting up
+    ///   front reaches yjs's outcome (the update is refused) through a catchable error.
+    /// - **A clock range that overflows `UInt`.** Only reachable from bytes lib0
+    ///   would never emit; `Lib0Decoder` accepts the full 64-bit range because its
+    ///   encoder half must round-trip Swift's `UInt` (see `Lib0DecoderTests`).
+    ///
+    /// Deliberately **not** bounded at `Number.MAX_SAFE_INTEGER`, even though that is
+    /// the largest clock JS can hold exactly: yjs's own guard sits inside
+    /// `readVarUint`'s continuation branch, so a terminating varUInt slips past it and
+    /// yjs simply stashes the struct as unreachably-far-ahead. Rejecting the whole
+    /// update there would be *stricter than yjs* for input that cannot trap us.
+    ///
+    /// Reached only via malformed input; the caller turns it into `failSafe`.
+    private static func validate(_ record: YStructRecord) throws {
+        let (id, length): (YID, UInt) = {
+            switch record {
+            case .item(let item): return (item.id, item.content.length)
+            case .gc(let id, let length), .skip(let id, let length): return (id, length)
+            }
+        }()
+        guard length > 0 else { throw YIntegrationError.unexpectedCase }
+        guard !id.clock.addingReportingOverflow(length).overflow else {
+            throw YIntegrationError.unexpectedCase
+        }
     }
 }
 
@@ -266,8 +307,8 @@ enum YStructIntegrator {
             // hold is a different view of the client's ops (a merged item vs the
             // incremental ones it came from) and is kept — splitting or skipping it is
             // precisely what the driver's offset handling is for.
-            let held = Set(existing.map { PendingKey(clock: $0.id.clock, length: $0.length) })
-            let fresh = newRefs.filter { !held.contains(PendingKey(clock: $0.id.clock, length: $0.length)) }
+            let held = Set(existing.map(PendingKey.init))
+            let fresh = newRefs.filter { !held.contains(PendingKey($0)) }
 
             var out: [YStruct] = []
             out.reserveCapacity(existing.count + fresh.count)
@@ -290,9 +331,27 @@ enum YStructIntegrator {
     }
 
     /// Identity of a stashed struct within one client's sequence.
+    ///
+    /// **The kind is part of the identity, and dropping it loses content.** A
+    /// `(client, clock)` pair names an operation, but the same clock range can be
+    /// stashed as a real `YItem` *and* as a `YSkip`: `mergeUpdates`/`diffUpdate`
+    /// pad a hole in a client's block with a Skip, because a serialized update must
+    /// tile its clock range with no gaps — and y-websocket/hocuspocus persistence
+    /// emit exactly such merged updates. Keyed on `(clock, length)` alone, a held
+    /// `YSkip(5,3)` matched the real `YItem(5,3)` arriving later and filtered it out
+    /// as a redelivery: its text was lost, and the stash then stalled forever
+    /// (nothing would ever supply those clocks again). Found in review, against the
+    /// oracle; neither the fixtures nor the fuzz corpus contained a Skip.
     private struct PendingKey: Hashable {
         let clock: UInt
         let length: UInt
+        let kind: ObjectIdentifier
+
+        init(_ s: YStruct) {
+            self.clock = s.id.clock
+            self.length = s.length
+            self.kind = ObjectIdentifier(type(of: s))
+        }
     }
 }
 
@@ -308,7 +367,7 @@ extension YDoc {
     /// the normal case over a relay like hocuspocus, converge.
     func applyUpdate(_ update: YUpdate) throws {
         try transact(local: false) { transaction in
-            var clientsStructRefs = YStructRefs.build(from: update, doc: self)
+            var clientsStructRefs = try YStructRefs.build(from: update, doc: self)
             try apply(transaction, refs: &clientsStructRefs, deleteSet: update.deleteSet)
         }
     }

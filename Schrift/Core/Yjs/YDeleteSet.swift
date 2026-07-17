@@ -146,7 +146,14 @@ extension YDeleteSet {
             let state = store.getState(client)
             for range in block.ranges {
                 let clock = range.clock
-                let clockEnd = clock + range.length
+                // Both operands come straight off the wire as unbounded varUInts, so
+                // this is the one addition here that a malformed update can overflow —
+                // a trap, where yjs (whose lib0 refuses to decode anything above
+                // 2^53-1) simply never sees such a range. A zero *length* needs no
+                // guard: yjs handles it harmlessly, as `clockEnd == clock` makes the
+                // scan below exit on its first test.
+                let (clockEnd, overflowed) = clock.addingReportingOverflow(range.length)
+                guard !overflowed else { throw YIntegrationError.unexpectedCase }
                 guard clock < state else {
                     // The whole range names structs that have not arrived.
                     unapplied.add(client: client, clock: clock, length: clockEnd - clock)

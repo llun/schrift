@@ -6,6 +6,10 @@ import Foundation
 enum YWireError: Error, Equatable {
     case unsupportedContentRef(UInt8)
     case unsupportedTypeRef(UInt)
+    /// A client block's clocks ran past `UInt.max`. Only reachable from malformed
+    /// input — lib0 refuses to read a clock that large in the first place — but the
+    /// arithmetic would trap rather than throw, so it is checked explicitly.
+    case clockOutOfRange
 }
 
 /// A Yjs struct identity: `(clientID, clock)`. The clock is the position of the
@@ -167,7 +171,14 @@ enum YUpdateDecoder {
             structs.reserveCapacity(min(Int(exactly: numStructs) ?? 0, d.remainingCount))
             for _ in 0..<numStructs {
                 let s = try decodeStruct(&d, client: client, clock: clock)
-                clock += s.length
+                // A block's clocks come off the wire unbounded, so a malformed update
+                // can run this past `UInt.max` — a *trap*, i.e. a remote crash, on
+                // bytes any peer can send. lib0 rejects the same input while reading
+                // (`readVarUint` throws `errorIntegerOutOfRange` past 2^53-1), so
+                // throwing here reaches the same outcome: the update is refused.
+                let (next, overflowed) = clock.addingReportingOverflow(s.length)
+                guard !overflowed else { throw YWireError.clockOutOfRange }
+                clock = next
                 structs.append(s)
             }
             blocks.append(YClientBlock(client: client, structs: structs))

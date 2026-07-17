@@ -142,4 +142,47 @@ final class YDoc {
         for (key, value) in share where value === type { return key }
         throw YIntegrationError.unexpectedCase
     }
+
+    /// Breaks the document graph's reference cycles so ARC can reclaim it.
+    ///
+    /// **Releasing a `YDoc` frees nothing without this.** yjs relies on a tracing
+    /// collector and wires cycles freely: `item.left ⇄ item.right`, and
+    /// `type.start`/`type.map` ⇄ `item.parent`. ARC cannot collect any of it, so
+    /// every replica would leak its entire item graph for the process's lifetime —
+    /// and a live session opens one replica per document.
+    ///
+    /// Making an edge `unowned` instead is not an option: the algorithm reads
+    /// `left`/`right`/`parent` in both directions throughout, and there is no edge
+    /// whose target provably outlives its source.
+    ///
+    /// Idempotent, and safe to call on a partially built store. The owner (the
+    /// collaboration session, C1) must call it when it drops a replica; `deinit` is
+    /// no use here, since the cycles are exactly what keeps `deinit` from running.
+    func destroy() {
+        for (_, list) in store.clients {
+            for s in list.structs {
+                guard let item = s as? YItem else { continue }
+                item.left = nil
+                item.right = nil
+                item.parent = nil
+                if case .type(let type) = item.content {
+                    type.start = nil
+                    type.map = [:]
+                    type.item = nil
+                }
+            }
+            list.structs = []
+        }
+        store.clients = [:]
+        store.pendingStructs = nil
+        store.pendingDs = nil
+        for (_, type) in share {
+            type.start = nil
+            type.map = [:]
+            type.item = nil
+        }
+        share = [:]
+        transaction = nil
+        transactionCleanups = []
+    }
 }

@@ -267,4 +267,195 @@ final class YIntegrationTests: XCTestCase {
         try apply([outOfOrder[0]], to: doc)
         XCTAssertNotEqual(doc.clientID, 1, "a colliding client id must not survive")
     }
+
+    // MARK: - Skip padding
+
+    /// `Y.mergeUpdates([insert@4, insert@8])` — two runs with a hole between them. A
+    /// serialized update must tile a client's clock range with no gaps, so yjs pads
+    /// the hole: `Item(4:1) Skip(5:3) Item(8:1)`. Then the real `Item(5:3)` arrives.
+    private let skipPadding = [
+        "0103010484010301650a03840107016900",  // merged: Item(4:1) Skip(5:3) Item(8:1)
+        "010101058401040366676800",  // the real "fgh" at 5..7
+        "0101010004010174046162636400",  // "abcd" at 0..3 — unblocks everything
+    ]
+
+    func testAHeldSkipDoesNotSwallowTheRealStructCoveringItsRange() throws {
+        // Regression, found in review. The pending stash deduped on (clock, length)
+        // alone, so the held `Skip(5,3)` matched the real `Item(5,3)` arriving next
+        // and dropped it as a redelivery: "fgh" was lost forever, and the stash then
+        // stalled permanently — nothing would ever supply clocks 5..7 again.
+        //
+        // Not exotic: every update that has been through mergeUpdates/diffUpdate can
+        // carry a Skip, which is what y-websocket/hocuspocus persistence store.
+        let doc = makeDoc()
+        try apply(skipPadding, to: doc)
+
+        XCTAssertEqual(visibleText(doc), "abcdefghi", "no content may be dropped")
+        XCTAssertNil(doc.store.pendingStructs, "the stash must drain, not stall")
+        XCTAssertEqual(doc.store.getState(1), 9)
+    }
+
+    // MARK: - YATA case 2
+
+    /// Three peers insert at the same position of a shared base. Their items share an
+    /// origin, so resolving the order walks items whose own origin is already in
+    /// `itemsBeforeOrigin` — the conflict loop's **case 2**, which case 1 alone
+    /// cannot decide. yjs settles on "XaaabbbcccY".
+    private let case2ThreePeers = [
+        "010107000401017402585900",  // base: client 7 inserts "XY"
+        "01010100c4070007010361616100",  // client 1 inserts "aaa" at 1
+        "01010200c4070007010362626200",  // client 2 inserts "bbb" at 1
+        "01010300c4070007010363636300",  // client 3 inserts "ccc" at 1
+    ]
+
+    func testThreeWayConcurrentInsertResolvesThroughCase2() throws {
+        // Without case 2 the loop stops at the first non-matching origin and the
+        // peers' runs interleave into a different order — silently wrong text that
+        // every other fixture here still passes.
+        let doc = makeDoc()
+        try apply(case2ThreePeers, to: doc)
+        XCTAssertEqual(visibleText(doc), "XaaabbbcccY")
+    }
+
+    func testThreeWayConcurrentInsertConvergesRegardlessOfOrder() throws {
+        let doc = makeDoc()
+        try apply([case2ThreePeers[0]] + case2ThreePeers.dropFirst().reversed(), to: doc)
+        XCTAssertEqual(visibleText(doc), "XaaabbbcccY")
+    }
+
+    // MARK: - Merge cleanup
+
+    /// Two adjacent inserts by one client. yjs merges them during transaction
+    /// cleanup, so its store holds **one** item spanning 0..5, not two.
+    private let adjacentInsertsMerge = [
+        "01010100040101740361626300",  // "abc" at 0..2
+        "010101038401020364656600",  // "def" at 3..5
+    ]
+
+    func testAdjacentInsertsFromOneClientMergeIntoASingleStruct() throws {
+        // Store *shape*, not just projected text: merge cleanup is invisible to a
+        // text assertion, so without this the whole suite passes with the merge
+        // deleted — even though CLAUDE.md calls it mandatory and skipping it makes
+        // every later comparison with yjs disagree.
+        let doc = makeDoc()
+        try apply(adjacentInsertsMerge, to: doc)
+
+        XCTAssertEqual(visibleText(doc), "abcdef")
+        let clientStructs = structs(doc, client: 1)
+        XCTAssertEqual(clientStructs.count, 1, "cleanup must merge the two adjacent items into one")
+        XCTAssertEqual(clientStructs.first?.id, YID(client: 1, clock: 0))
+        XCTAssertEqual(clientStructs.first?.length, 6)
+    }
+
+    func testAPartiallyAppliedStructLeavesOneMergedStruct() throws {
+        // The offset>0 fixture's store shape: "abc" + the overlapping "abcdef"
+        // snapshot must settle as one 6-long item, not "abc" plus a separate "def".
+        let doc = makeDoc()
+        try apply(partialOverlap, to: doc)
+        XCTAssertEqual(structs(doc, client: 1).count, 1)
+        XCTAssertEqual(structs(doc, client: 1).first?.length, 6)
+    }
+
+    // MARK: - Map slot handover on merge
+
+    /// One client sets the same map key twice. The two items are adjacent and both
+    /// carry `parentSub: "k"`, so cleanup merges them — and the map slot, which
+    /// pointed at the right half, must be handed to the survivor.
+    private let sameClientMapOverwrite = [
+        "010101002801016d016b017702763100",  // m.k = "v1"
+        "01010101a8010001770276320101010001",  // m.k = "v2"
+    ]
+
+    func testMergingMapItemsHandsTheSlotToTheSurvivor() throws {
+        // yjs's tryToMergeWithLefts re-points `parent._map` when it forgets the right
+        // half. Captured from yjs: the loser is deleted, so `deleted` differs and the
+        // two do NOT merge — the slot must therefore still name 1:1.
+        let doc = makeDoc()
+        try apply(sameClientMapOverwrite, to: doc)
+
+        let map = try XCTUnwrap(doc.share["m"])
+        let slot = try XCTUnwrap(map.map["k"])
+        XCTAssertEqual(slot.id, YID(client: 1, clock: 1))
+        XCTAssertFalse(slot.deleted)
+        // The map slot must always name a struct the store still holds — the
+        // invariant the re-pointing exists to preserve.
+        XCTAssertTrue(structs(doc, client: 1).contains { $0 === slot })
+    }
+
+    // MARK: - Malformed input
+
+    /// A 10-byte update carrying `ContentDeleted(0)` — `Item(0:0)`, decoded and
+    /// confirmed against yjs. Found in review; it used to SIGTRAP the process.
+    private let zeroLengthStruct = "01010100010101720000"
+
+    /// `Item(0:0)` followed by a real 1-long item, so the zero-length struct is not
+    /// merely the last thing in the block.
+    private let zeroLengthThenReal = "010201000201017200840100016100"
+
+    func testAZeroLengthStructIsRejectedRatherThanCrashing() throws {
+        // yjs integrates the degenerate item and then throws during cleanup
+        // (`clock + len - 1 == -1` → findIndexSS); Swift would *trap* on the UInt
+        // underflow — a remote crash from a 10-byte malformed frame. The store must
+        // reach the same outcome (update refused) through a catchable error.
+        for hex in [zeroLengthStruct, zeroLengthThenReal] {
+            let doc = makeDoc()
+            assertThrows(YIntegrationError.unexpectedCase) {
+                try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: hex)))
+            }
+        }
+    }
+
+    /// One struct at clock `UInt.max` with 1 unit of content, so the block's clock
+    /// runs past `UInt.max`. Hand-built with lib0's encoder — lib0's *reader* rejects
+    /// it (`errorIntegerOutOfRange`), so no yjs peer can send it, but `Lib0Decoder`
+    /// accepts the full 64-bit range for its encoder's sake and would trap.
+    private let overflowingClock = "010101ffffffffffffffffff0104010174016100"
+
+    /// One struct at clock 2^53 — past `Number.MAX_SAFE_INTEGER`, yet **harmless**:
+    /// yjs's own guard sits inside `readVarUint`'s continuation branch, so a
+    /// terminating varUInt slips past it and yjs just stashes the struct as
+    /// unreachably far ahead.
+    private let farAheadClock = "010101808080808080801004010174016100"
+
+    func testAClockRangeThatOverflowsIsRejectedRatherThanTrapping() throws {
+        // `decodeStructs` advances a block's clock by each struct's length; unbounded
+        // wire clocks can run that past UInt.max, which traps — a remote crash on
+        // bytes any peer can send.
+        let doc = makeDoc()
+        assertThrows(YWireError.clockOutOfRange) {
+            try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: overflowingClock)))
+        }
+    }
+
+    func testAFarAheadClockIsStashedRatherThanRejected() throws {
+        // The counterpart, and the reason the ingest guard bounds only what would
+        // *trap*: rejecting every clock above MAX_SAFE_INTEGER would be stricter than
+        // yjs, which stashes this exact update. Captured from the oracle.
+        let doc = makeDoc()
+        try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: farAheadClock)))
+
+        XCTAssertEqual(doc.store.pendingStructs?.missing[1], 9_007_199_254_740_991)
+        XCTAssertTrue(structs(doc, client: 1).isEmpty)
+    }
+
+    // MARK: - Teardown
+
+    func testDestroyBreaksTheGraphSoTheReplicaCanBeReclaimed() throws {
+        // The item graph is a mesh of strong cycles (left ⇄ right, type ⇄ parent), so
+        // ARC frees none of it when the YDoc goes away — a live session opens one
+        // replica per document. `destroy()` is the owner's teardown hook.
+        weak var weakType: YType?
+        weak var weakItem: YItem?
+        do {
+            let doc = makeDoc()
+            try apply(concurrentInsert, to: doc)
+            weakType = doc.share["t"]
+            weakItem = doc.share["t"]?.start
+            XCTAssertNotNil(weakType)
+            XCTAssertNotNil(weakItem)
+            doc.destroy()
+        }
+        XCTAssertNil(weakType, "the root type must be reclaimed after destroy()")
+        XCTAssertNil(weakItem, "the item graph must be reclaimed after destroy()")
+    }
 }

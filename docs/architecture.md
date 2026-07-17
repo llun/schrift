@@ -180,7 +180,7 @@ yjs behavior that does observe pending structs on the wire —
 anyway: a replica with pending structs must never be snapshotted back to the
 server.
 
-Two consequences of that choice, both found by the differential fuzz:
+Two consequences of that choice:
 
 - yjs's stash is padded with `Skip` structs, because a *serialized* update's
   per-client structs must tile the clock range with no gaps. Schrift's has no holes
@@ -188,14 +188,47 @@ Two consequences of that choice, both found by the differential fuzz:
 - **Known deviation.** When the same client's clock range is stashed twice with
   different *tilings* — a merged item from one peer, the finer items it came from
   from another — `mergeUpdatesV2` re-tiles to the finest decomposition. Schrift
-  keeps both and lets the driver's offset handling skip whatever is already
-  applied. The two agree on content, and the settled store is identical, **except**
-  when the coarse and fine views disagree because a surrogate pair was split in one
-  and not the other (yjs#248): then re-tiling would destroy the pair and Schrift
-  keeps it intact. Reaching this needs a peer that splits a surrogate pair, which
-  real editors (BlockNote/ProseMirror work in code points) do not do. Exact
-  duplicates *are* deduped — without that the stash grows without bound under a
-  relay's routine redelivery.
+  keeps both and lets the driver's offset handling split or skip whatever is already
+  applied. Differing tilings are **common**, not exotic (any peer that has merged a
+  run emits a coarser view than the incrementals it came from), but the two agree on
+  content and the settled store is identical — the fuzz has never found a settled
+  divergence from it. The one case where they could disagree on *content* is
+  yjs#248: if a surrogate pair was split in the fine view and not the coarse one,
+  re-tiling destroys the pair where Schrift keeps it intact. That needs a peer that
+  splits a surrogate pair, which real editors (BlockNote/ProseMirror work in code
+  points) do not do.
+
+The stash also dedupes exact duplicates — without that it grows without bound under
+a relay's routine redelivery. **The struct's kind is part of that identity, and
+dropping it loses content.** `mergeUpdates`/`diffUpdate` pad a hole with a
+`Skip`, so a held `Skip(5,3)` and the real `Item(5,3)` share a `(clock, length)`:
+keyed on that alone, the Skip swallowed the item, its text was lost, and the stash
+then stalled forever. Found in review, not by the fuzz — whose corpus contained no
+Skip at all until it was taught to emit `mergeUpdates`-derived updates.
+
+### Malformed input must throw, never trap
+
+Updates arrive from the network, so every clock is attacker-controlled and Swift's
+arithmetic traps where JS's silently goes negative. `YStructIntegrator.validate`
+enforces one ingest invariant — **every struct has a non-empty clock range that fits
+in a JS-safe integer** — and that is what makes `lastId`, `getItemCleanEnd`,
+`tryMergeDeleteSet` and `addStruct` provably free of overflow and underflow
+downstream. Neither half is reachable from a well-formed peer: yjs cannot author a
+zero-length struct (`YText.insert("")` no-ops), and lib0's own `readVarUint` throws
+above `Number.MAX_SAFE_INTEGER`, so no yjs peer can even encode a larger clock.
+(`Lib0Decoder` accepts the full 64-bit range because its encoder half must
+round-trip Swift's `UInt`; the bound belongs at the first point that reads these as
+clocks.) A 10-byte malformed update used to crash the process here.
+
+### Teardown is the owner's job
+
+The item graph is a mesh of strong cycles — `item.left ⇄ item.right`, and
+`type.start`/`type.map` ⇄ `item.parent` — because yjs assumes a tracing collector.
+ARC collects none of it, so **releasing a `YDoc` frees nothing**; a live session
+opens one replica per document. `YDoc.destroy()` breaks the cycles and must be
+called by whatever owns the replica (the collaboration session, C1). No edge can be
+`unowned` instead: the algorithm reads all of them in both directions, and none has
+a target that provably outlives its source.
 
 ### Verification
 

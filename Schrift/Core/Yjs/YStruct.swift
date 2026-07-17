@@ -264,13 +264,16 @@ final class YItem: YStruct {
             id.clock += o
             let leftStruct = try YStructStore.getItemCleanEnd(
                 transaction, transaction.doc.store, YID(client: id.client, clock: id.clock - 1))
-            // yjs types this `Item`. A GC here would leave `origin = undefined` and
-            // then throw on `undefined.client` inside the conflict loop, so a GC is
-            // `unexpectedCase` either way — thrown up front rather than several
-            // frames later. (Unreachable while gc is off; B4 must revisit.)
-            guard let leftItem = leftStruct as? YItem else { throw YIntegrationError.unexpectedCase }
-            self.left = leftItem
-            self.origin = leftItem.lastId
+            // yjs types this `Item` but does not require one. `getItemCleanEnd` (@3001)
+            // explicitly declines to split a GC and returns it, and `.lastId` on a GC is
+            // simply `undefined` — no throw. yjs then falls into the `parent == null`
+            // branch below and mints a GC, which is the *correct* outcome: `getMissing`
+            // nils the parent precisely when a neighbour was collected. Rejecting a
+            // non-Item here made Schrift throw away an update real yjs applies.
+            self.left = leftStruct as? YItem
+            // Leave `origin` alone for a GC — yjs poisons it with `undefined`, but the
+            // GC branch below never reads it. (Setting it would be the divergence.)
+            if let leftItem = leftStruct as? YItem { self.origin = leftItem.lastId }
             // `this.content = this.content.splice(offset)`: splice truncates the
             // receiver to the already-applied left half and returns the rest, which
             // the item then adopts — discarding the left half it just made.
