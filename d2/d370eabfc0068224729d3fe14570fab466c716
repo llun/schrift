@@ -1,0 +1,19 @@
+Schrift/Core/Yjs/YContent.swift
+  s_b737db1163f91f::t_1aaaa825f9c95b 258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "d2d370eabfc0068224729d3fe14570fab466c716",
+  "prompts": {},
+  "sessions": {
+    "s_b737db1163f91f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50e673d1-2498-4004-a392-328ecfe123d0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
