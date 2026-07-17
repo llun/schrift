@@ -1,0 +1,21 @@
+Schrift/Core/Yjs/YStructIntegration.swift
+  s_5cb8e76b1f7ab2::t_8688d1d4f6b9cd 283-285,297,302-316,318-344,346-382,384
+SchriftTests/Core/Yjs/YPendingMergeTests.swift
+  s_5cb8e76b1f7ab2::t_dbcf77baf26a07 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "2c1c2963f03dc3076abacd34a56e5447765ad132",
+  "prompts": {},
+  "sessions": {
+    "s_5cb8e76b1f7ab2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2771900-09a8-4624-b08d-9de9a67bd110",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
