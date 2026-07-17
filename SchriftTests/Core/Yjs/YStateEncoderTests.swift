@@ -20,6 +20,10 @@ final class YStateEncoderTests: XCTestCase {
         "010401002801016d016b0177056669727374a801000177067365636f6e642701016d066e65737465640204000102016e0101010001"
     private let gcPeerIngested = "01030100040101740161810100038401030265660101010103"
     private let gcPeerSV = "010106"
+    private let gcNestedUpdate = "010201002101016d066e65737465640100050101010006"
+    private let gcNestedSV = "010106"
+    private let deletedMidRangeFull = "010301000401017401618101000484010401660101010104"
+    private let deletedMidRangeDiff = "010201038101020284010401660101010104"
 
     // MARK: - Helpers
 
@@ -70,11 +74,41 @@ final class YStateEncoderTests: XCTestCase {
         try assertEncodes(doc, expected: mapNestedUpdate, "mapNestedUpdate")
     }
 
-    func testGCStructsFromACollectingPeerReencode() throws {
+    /// Despite the fixture name, `gcPeerIngested` contains **no** literal `GC`
+    /// struct (info byte `00`) — a `gc:true` peer's top-level deleted range
+    /// (`tryGcDeleteSet` always calls `struct.gc(store, false)`) becomes
+    /// `ContentDeleted` (info byte `81`, ref 1), never a real `GC`. This pins
+    /// that re-encode, not the `writeUInt8(0)` GC branch — see
+    /// `testEncodesAGCStruct` below for the real thing.
+    func testContentDeletedFromACollectingPeerReencode() throws {
         let doc = try applied([gcPeerIngested])
         defer { doc.destroy() }
+        guard let list = doc.store.clients[1] else {
+            XCTFail("expected client 1 to exist")
+            return
+        }
+        XCTAssertFalse(list.structs.contains { $0 is YGC }, "fixture is ContentDeleted, not a literal GC struct")
         try assertEncodes(doc, expected: gcPeerIngested, "gcPeerIngested")
         XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, gcPeerSV, "gcPeerSV")
+    }
+
+    /// A nested type's own items become literal `GC` structs (info byte `00`)
+    /// when the type itself is deleted and collected under `gc:true`
+    /// (`Item.gc`'s `parentGCd` branch) — distinct from `gcPeerIngested` above.
+    /// Captured from real yjs (`.superpowers/fuzz/capture.mjs`'s `gcNested`
+    /// block): `m.set('nested', new Y.Text('hello'))` then `m.delete('nested')`
+    /// on a `gc:true` doc. Pins `YStateEncoder.write`'s `writeUInt8(0)` branch,
+    /// which no other committed test reaches.
+    func testEncodesAGCStruct() throws {
+        let doc = try applied([gcNestedUpdate])
+        defer { doc.destroy() }
+        guard let list = doc.store.clients[1] else {
+            XCTFail("expected client 1 to exist")
+            return
+        }
+        XCTAssertTrue(list.structs.contains { $0 is YGC }, "fixture must contain a real GC struct")
+        try assertEncodes(doc, expected: gcNestedUpdate, "gcNestedUpdate")
+        XCTAssertEqual(YStateEncoder.encodeStateVector(doc).hexString, gcNestedSV, "gcNestedSV")
     }
 
     // MARK: - Diff path (encodeStateAsUpdate since a state vector)
@@ -102,6 +136,15 @@ final class YStateEncoderTests: XCTestCase {
         let doc = try applied([helloUpdate])
         defer { doc.destroy() }
         try assertEncodes(doc, since: [777: 5], expected: helloUpdate, "diffUnknownClient")
+    }
+
+    /// A diff whose partial first struct is a `ContentDeleted` range cut
+    /// mid-range — exercises `writeContent`'s `.deleted` offset path
+    /// (`len - offset`), not just the offset-0 case every other fixture takes.
+    func testDiffAgainstMidDeletedRangeWritesPartialContentDeleted() throws {
+        let doc = try applied([deletedMidRangeFull])
+        defer { doc.destroy() }
+        try assertEncodes(doc, since: [1: 3], expected: deletedMidRangeDiff, "deletedMidRangeDiff")
     }
 
     // MARK: - The pending gate

@@ -158,6 +158,7 @@ enum YStateEncoder {
     static func writeContent(_ content: YContent, _ e: inout Lib0Encoder, offset: UInt = 0) throws {
         switch content {
         case .deleted(let len):
+            guard offset <= len else { throw YIntegrationError.unexpectedCase }
             e.writeVarUInt(len - offset)
         case .json(let items):
             guard let o = Int(exactly: offset), o <= items.count else {
