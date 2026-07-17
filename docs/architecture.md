@@ -185,28 +185,53 @@ Two consequences of that choice:
 - yjs's stash is padded with `Skip` structs, because a *serialized* update's
   per-client structs must tile the clock range with no gaps. Schrift's has no holes
   to pad. Skips are never integrated either way.
-- **Known deviation — accepted, 2026-07-17.** When the same client's clock range is
-  stashed twice with different *tilings* — a merged item from one peer, the finer
-  items it came from from another — `mergeUpdatesV2` re-tiles to the finest
-  decomposition. Schrift keeps both and lets the driver's offset handling split or
-  skip whatever is already applied. Left as-is deliberately: closing it means porting
-  `mergeUpdatesV2`'s re-tiling (a greedy coverage rule cannot reproduce it — both
-  sort orders drop the wrong side), for a divergence unreachable from honest traffic. Differing tilings are **common**, not exotic (any peer that has merged a
-  run emits a coarser view than the incrementals it came from), but the two agree on
-  content and the settled store is identical — the fuzz has never found a settled
-  divergence from it. The one case where they could disagree on *content* is
-  yjs#248: if a surrogate pair was split in the fine view and not the coarse one,
-  re-tiling destroys the pair where Schrift keeps it intact. That needs a peer that
-  splits a surrogate pair, which real editors (BlockNote/ProseMirror work in code
-  points) do not do.
+- **Known deviation — accepted, 2026-07-17 (characterization refined by the B3
+  fuzz, same day).** When the same client's clock range is stashed *pending* twice
+  with different *tilings* — a merged item from one peer, the finer items it came
+  from from another — yjs `mergeUpdatesV2` re-tiles to the finest decomposition by
+  *splitting* structs (`sliceStruct`). Schrift keeps decoded refs and reproduces
+  only `mergeUpdatesV2`'s greedy *coverage* resolution (`mergeClientRuns`: the run
+  that reaches a clock first keeps writing; a later struct whose range is already
+  covered is discarded), which cannot split. Left as-is deliberately: closing it
+  means porting the byte-level re-tiling. A greedy coverage rule provably cannot
+  reproduce it — the *same* collision shape has opposite correct outcomes (one
+  range settles to `ContentDeleted`, another identically shaped one to the live
+  `ContentString`), so no order- or content-preference heuristic satisfies both;
+  every bounded attempt fixed one case and regressed the other (measured against
+  the differential fuzz). Differing tilings are **common** (any peer that merged a
+  run emits a coarser view than the incrementals it came from), and usually the two
+  settle identically — but **not always**. This deviation *can* leave a settled
+  content divergence on a **deleted** item's tombstone form (`ContentDeleted` vs a
+  deleted `ContentString` — semantically identical, byte-different, so it moves an
+  `encodeStateAsUpdate` snapshot's bytes). That is broader than the earlier claim,
+  which named yjs#248 (a split surrogate pair destroyed by re-tiling) as the *only*
+  content disagreement: the tombstone case needs no surrogate. It is a
+  **synthetic-reordering artifact** — it requires a client's early clocks delivered
+  *after* multiple out-of-order tilings of its later clocks, an adversarial
+  full-shuffle signature. A realistic-relay fuzz (server persists via
+  `mergeUpdatesV2`, mostly-in-order FIFO broadcast, join/reconnect snapshots) found
+  **0 in 7000 seeds** while exercising the pending stash in 91% of them; the
+  synthetic full-shuffle corpus finds ~1/800, and that rate collapses to 0 the
+  moment the shuffle probability drops below 1. It is therefore unreachable from
+  honest hocuspocus traffic, and B3 byte-identity holds everywhere a client will
+  realistically reach.
 
-The stash also dedupes exact duplicates — without that it grows without bound under
-a relay's routine redelivery. **The struct's kind is part of that identity, and
-dropping it loses content.** `mergeUpdates`/`diffUpdate` pad a hole with a
-`Skip`, so a held `Skip(5,3)` and the real `Item(5,3)` share a `(clock, length)`:
-keyed on that alone, the Skip swallowed the item, its text was lost, and the stash
-then stalled forever. Found in review, not by the fuzz — whose corpus contained no
-Skip at all until it was taught to emit `mergeUpdates`-derived updates.
+The stash merge reproduces `mergeUpdatesV2`'s coverage resolution rather than a
+content-blind dedup, because **content-blindness loses content** — a lesson this
+store has now learned twice. First: `mergeUpdates`/`diffUpdate` pad a hole with a
+`Skip`, so a held `Skip(5,3)` and the real `Item(5,3)` share a `(clock, length)`;
+a `(clock, length)`-only key let the Skip swallow the item, its text was lost, and
+the stash stalled forever (found in review — the corpus then contained no Skip).
+Adding the struct's *kind* to the key fixed that, but not far enough: two
+content-differing `YItem`s at the same `(clock, length)` — a live
+`ContentType`/`ContentString` and a `ContentDeleted` tombstone from a gc'd peer —
+share clock, length *and* kind, so the kind-keyed dedup dropped whichever arrived
+second, a **settled** divergence whose winner depended on delivery order. The B3
+differential fuzz caught it (8 settled divergences across 800 seeds — the first
+settled divergences the fuzz had found); the coverage rule, which keeps the
+first-reaching run and discards only a *covered* struct exactly as
+`mergeUpdatesV2` does, resolves all eight and leaves only the different-tiling
+re-tiling deviation above.
 
 ### Malformed input must throw, never trap
 
