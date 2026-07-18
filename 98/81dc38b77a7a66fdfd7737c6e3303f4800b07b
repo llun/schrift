@@ -1,0 +1,22 @@
+SchriftTests/Features/Editor/LiveEditingTests.swift
+  s_fc480aa7b4d805::t_b045b07227bcaa 1-270
+Schrift/Features/Editor/LiveEditing.swift
+  s_fc480aa7b4d805::t_16808f90bbfe25 83
+  s_fc480aa7b4d805::t_f28634b532cdba 1-82,84-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "9881dc38b77a7a66fdfd7737c6e3303f4800b07b",
+  "prompts": {},
+  "sessions": {
+    "s_fc480aa7b4d805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46b3fbb-cf2c-478d-afbd-9503d8d1666f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
