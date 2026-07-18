@@ -1,0 +1,22 @@
+SchriftTests/Core/Yjs/YBlockProjectionTests.swift
+  s_fc480aa7b4d805::t_cddc5331c8f7b9 228-315
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_fc480aa7b4d805::t_e5c92760c60fac 437-449
+  s_fc480aa7b4d805::t_92f6d20e210838 558,560-568
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "880a332ca35ba71c24c357a3f2b58af2bebb0db4",
+  "prompts": {},
+  "sessions": {
+    "s_fc480aa7b4d805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46b3fbb-cf2c-478d-afbd-9503d8d1666f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
