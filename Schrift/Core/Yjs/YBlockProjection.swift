@@ -2,6 +2,16 @@ import Foundation
 
 // MARK: - Yjs replica projection (B5 of the live-editing roadmap)
 
+/// The read side of the live document bridge (C1): a total, never-trapping
+/// projection of a `YDoc` replica into BlockNote-vocabulary blocks. A walk of
+/// `document → blockGroup → blockContainer*` folds each text child's string
+/// and format items back into `InlineRun`s for rendering. Every block carries
+/// a `ProjectionFidelity` recording whether it can round-trip losslessly
+/// (`.modeled`), renders with export parity but would lose data on write-back
+/// (`.lossy`), or cannot be represented as markdown at all (`.opaque`).
+/// Anything unexpected in the replica projects `.opaque`; nothing here throws
+/// or traps.
+
 /// A single projected block property: a key and a typed value decoded from the
 /// Yjs replica. Properties are sorted by key for determinism in the projected
 /// document and write-back path.
@@ -54,6 +64,13 @@ enum ProjectionFidelity: Equatable, Sendable {
     /// document containing this block cannot be edited, and the block appears as
     /// a placeholder or read-only element.
     case opaque(reason: String)
+
+    /// True only for `.opaque` — the block cannot be rendered as markdown at all.
+    /// The projector uses this to decide document-level `isFullyRenderable`.
+    var isOpaque: Bool {
+        if case .opaque = self { return true }
+        return false
+    }
 }
 
 /// The projection of a Yjs replica into BlockNote blocks: a sequence of
