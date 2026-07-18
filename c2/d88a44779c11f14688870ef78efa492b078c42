@@ -1,0 +1,23 @@
+SchriftTests/Core/Yjs/YWriteTests.swift
+  s_0d1bafffaaad6d::t_48d9703bcadf03 133-152
+SchriftTests/Core/Yjs/BlockNoteWriteOracleTests.swift
+  s_0d1bafffaaad6d::t_79f3c3a4b3b35f 165-169
+  s_0d1bafffaaad6d::t_ec4433866390f0 403-443
+  s_0d1bafffaaad6d::t_079e7e1de44f0b 37-84,444
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "c2d88a44779c11f14688870ef78efa492b078c42",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
