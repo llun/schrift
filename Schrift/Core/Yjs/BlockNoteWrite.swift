@@ -70,7 +70,7 @@ enum BlockNoteWrite {
             }
         }
         let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
-        try YWrite.insertAfter(tx, into: root, after: nil, parentSub: nil, [.type(group)])
+        try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
         return group
     }
 
@@ -84,31 +84,48 @@ enum BlockNoteWrite {
     ///    pieces (`InlineContent.pieces`, the shared open/carry/close sequence);
     /// 4. the block's props as `.any([value])` map entries **on the element**;
     /// 5. the `id` as `.any([.string(id)])` map entry **on the container**.
-    @discardableResult
-    static func insertBlock(
+    ///
+    /// Steps 2–4 are shared verbatim with `reconcileBlock`'s kind-change branch via
+    /// `insertContentElement`.
+    private static func insertBlock(
         _ tx: YTransaction, group: YType, after left: YItem?, _ block: BlockNoteBlock
     ) throws -> YItem? {
         let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
-        let last = try YWrite.insertAfter(tx, into: group, after: left, parentSub: nil, [.type(container)])
+        let last = try YWrite.insertAfter(tx, into: group, after: left, [.type(container)])
+        try insertContentElement(tx, into: container, block)
+        // The `id` lives on the container, minted after its content element for byte
+        // parity with `BlockNoteYjs.encode`.
+        try YWrite.mapSet(tx, on: container, key: "id", .any([.string(block.id)]))
+        return last
+    }
 
+    /// Build a block's content element as the **head** child of `container`
+    /// (`after: nil`): the content `element` (nodeName = `block.node`), then — for a
+    /// text block — its `xmlText` child and run pieces, then the block's props as
+    /// `.any([value])` map entries **on the element** (a leaf `image` still carries
+    /// its props). Shared verbatim by `insertBlock` (into a fresh container) and
+    /// `reconcileBlock`'s kind-change branch (into the surviving container, after
+    /// the old element was deleted).
+    ///
+    /// The mint order — element, text, run pieces, props — is load-bearing: it is
+    /// what the from-empty byte-identity anchor (`BlockNoteWriteTests`) pins against
+    /// `BlockNoteYjs.encode`. Do not reorder.
+    private static func insertContentElement(
+        _ tx: YTransaction, into container: YType, _ block: BlockNoteBlock
+    ) throws {
         let element = YType(typeRef: .xmlElement(nodeName: block.node))
-        try YWrite.insertAfter(tx, into: container, after: nil, parentSub: nil, [.type(element)])
+        try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)])
 
         if block.hasTextChild {
             let text = YType(typeRef: .xmlText)
-            try YWrite.insertAfter(tx, into: element, after: nil, parentSub: nil, [.type(text)])
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
             let pieces = InlineContent.pieces(for: block.runs)
-            try YWrite.insertAfter(tx, into: text, after: nil, parentSub: nil, pieces.map(content(of:)))
+            try YWrite.insertAfter(tx, into: text, after: nil, pieces.map(content(of:)))
         }
 
-        // Props live on the content element (a leaf `image` still carries them);
-        // the `id` lives on the container. Emitted in this order for byte parity.
         for prop in block.props {
             try YWrite.mapSet(tx, on: element, key: prop.key, .any([prop.value]))
         }
-        try YWrite.mapSet(tx, on: container, key: "id", .any([.string(block.id)]))
-
-        return last
     }
 
     /// Map one `InlinePiece` (the shared inline shape) to the live `YContent` an
@@ -275,17 +292,7 @@ enum BlockNoteWrite {
 
         if old.node != new.node {
             elementItem.delete(tx)
-            let fresh = YType(typeRef: .xmlElement(nodeName: new.node))
-            try YWrite.insertAfter(tx, into: containerType, after: nil, parentSub: nil, [.type(fresh)])
-            if new.hasTextChild {
-                let text = YType(typeRef: .xmlText)
-                try YWrite.insertAfter(tx, into: fresh, after: nil, parentSub: nil, [.type(text)])
-                let pieces = InlineContent.pieces(for: new.runs)
-                try YWrite.insertAfter(tx, into: text, after: nil, parentSub: nil, pieces.map(content(of:)))
-            }
-            for prop in new.props {
-                try YWrite.mapSet(tx, on: fresh, key: prop.key, .any([prop.value]))
-            }
+            try insertContentElement(tx, into: containerType, new)
             return
         }
 

@@ -36,7 +36,7 @@ enum YWrite {
     @discardableResult
     static func insertAfter(
         _ transaction: YTransaction, into parentType: YType, after left: YItem?,
-        parentSub: String?, _ contents: [YContent]
+        _ contents: [YContent]
     ) throws -> YItem? {
         // yjs @5405-5409: `left` walks forward as items are minted; `right` and the
         // client id/store are captured once. `right` is `referenceItem.right` (or the
@@ -59,7 +59,7 @@ enum YWrite {
                 right: right,
                 rightOrigin: right?.id,  // yjs `right && right.id`
                 parent: .type(parentType),
-                parentSub: parentSub,
+                parentSub: nil,  // list children carry no parentSub (only `mapSet` does)
                 content: content)
             try item.integrate(transaction, offset: 0)
             left = item
@@ -83,7 +83,7 @@ enum YWrite {
         // yjs @5474-5479: `index === 0` inserts at the head. (`updateMarkerChanges` is
         // a no-op with no markers.)
         if index == 0 {
-            _ = try insertAfter(transaction, into: parentType, after: nil, parentSub: nil, contents)
+            _ = try insertAfter(transaction, into: parentType, after: nil, contents)
             return
         }
 
@@ -113,7 +113,7 @@ enum YWrite {
 
         // yjs @5508. The length guard above guarantees the walk broke at a real item,
         // so `n` is non-nil here for every in-range index.
-        _ = try insertAfter(transaction, into: parentType, after: n, parentSub: nil, contents)
+        _ = try insertAfter(transaction, into: parentType, after: n, contents)
     }
 
     /// Delete `length` countable units starting at visible index `index` from

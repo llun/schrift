@@ -59,7 +59,7 @@ final class YWriteTests: XCTestCase {
         let root = doc.get("t")
         try doc.transact { tx in
             let last = try YWrite.insertAfter(
-                tx, into: root, after: nil, parentSub: nil,
+                tx, into: root, after: nil,
                 [.string(Array("ab".utf16)), .string(Array("cd".utf16))])
             XCTAssertNotNil(last)
             // The last minted item carries the second string and sits at clock 2.
