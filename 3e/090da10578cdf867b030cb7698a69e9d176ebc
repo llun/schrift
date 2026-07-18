@@ -1,0 +1,19 @@
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_fc480aa7b4d805::t_e9c5ef7cc9bba1 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3e090da10578cdf867b030cb7698a69e9d176ebc",
+  "prompts": {},
+  "sessions": {
+    "s_fc480aa7b4d805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46b3fbb-cf2c-478d-afbd-9503d8d1666f",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
