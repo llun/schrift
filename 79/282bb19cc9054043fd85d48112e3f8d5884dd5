@@ -1,0 +1,38 @@
+SchriftTests/Core/Yjs/InlineMarkdownWriterTests.swift
+  s_fc480aa7b4d805::t_e4c81f23da70df 106,108-115
+  s_fc480aa7b4d805::t_f7a2d78b1ccb16 128,169-170
+  s_fc480aa7b4d805::t_25d2876408166f 1-105,107,116-127,129-168,171-187,241
+  s_fc480aa7b4d805::t_9826ea569784e5 225-227
+  s_fc480aa7b4d805::t_2873a201931674 188-224,228-240
+Schrift/Core/Yjs/InlineMarkdownWriter.swift
+  s_fc480aa7b4d805::t_d7911e7834af2a 106-127
+  s_fc480aa7b4d805::t_eb23a0659f4fed 301-306,316-339,341-343,345-349,351-355
+  s_fc480aa7b4d805::t_5a8d855dad7b0a 307-315,340,344,350
+  s_fc480aa7b4d805::t_b71374488ba6a8 358-373,375-389,391,395-401
+  s_fc480aa7b4d805::t_9ce07d6458013c 22-28,37-39
+  s_fc480aa7b4d805::t_024d9483f54c69 161
+  s_fc480aa7b4d805::t_d2ada6304bb05a 8-13,29-33,40-59
+  s_fc480aa7b4d805::t_88e23bbbdd9978 79,82,85,97-99,165-170,176-177,200
+  s_fc480aa7b4d805::t_3ae0e6b6c5bccb 1-7,14-21,34-36,60-72,74-76,78,89-90,100-105,128-129,131-141,154-160,162-164,171-174,193,199,209-300,356-357,374,390,392-394,402-528
+  s_fc480aa7b4d805::t_fab2b5d0cc2b6c 73,77
+  s_fc480aa7b4d805::t_dd2ec8c695ce92 130
+  s_fc480aa7b4d805::t_883f2a9737acf6 142-153
+  s_fc480aa7b4d805::t_585a7dea84c826 175,178-192,194-198,201-208
+  s_fc480aa7b4d805::t_b70392a5c33f4f 80-81,83-84,86-88,91-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "79282bb19cc9054043fd85d48112e3f8d5884dd5",
+  "prompts": {},
+  "sessions": {
+    "s_fc480aa7b4d805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b46b3fbb-cf2c-478d-afbd-9503d8d1666f",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
