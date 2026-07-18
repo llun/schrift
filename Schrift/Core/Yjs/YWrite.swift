@@ -206,4 +206,42 @@ enum YWrite {
         // malformed-state signal, matching `insert`'s out-of-range guard.
         if remaining > 0 { throw YIntegrationError.unexpectedCase }
     }
+
+    // MARK: Local map set
+
+    /// Set map key `key` on `parentType` to `content` (typically a `.any([value])`
+    /// wrapping one BlockNote prop or the `id` field). yjs `typeMapSet` (@5605).
+    ///
+    /// Reduced exactly as `insertAfter`'s doc-comment describes for list inserts:
+    /// yjs's `typeMapSet` takes a raw JS value and classifies it (`ContentAny` for
+    /// primitives, `ContentBinary`/`ContentDoc`/`ContentType` otherwise); the
+    /// caller here already holds a built `YContent`, so that switch disappears.
+    /// What's preserved verbatim is the rest of the line yjs runs:
+    ///
+    ///     new Item(createID(ownClientId, getState(doc.store, ownClientId)),
+    ///       left, left && left.lastId, null, null, parent, key, content)
+    ///       .integrate(transaction, 0)
+    ///
+    /// — the new item's `left` is the map's current value (`parent._map.get(key)`),
+    /// its `origin` is that value's `lastId`, and `right`/`rightOrigin` are always
+    /// nil (a map entry has no right neighbour). `YItem.integrate`'s
+    /// `parentSub != nil && right == nil` branch then sets `parentType.map[key] =
+    /// self` and deletes the prior value — not re-implemented here.
+    static func mapSet(
+        _ transaction: YTransaction, on parentType: YType, key: String, _ content: YContent
+    ) throws {
+        let doc = transaction.doc
+        let left = parentType.map[key]
+        let id = YID(client: doc.clientID, clock: doc.store.getState(doc.clientID))
+        let item = YItem(
+            id: id,
+            left: left,
+            origin: left?.lastId,  // yjs `left && left.lastId`
+            right: nil,
+            rightOrigin: nil,
+            parent: .type(parentType),
+            parentSub: key,
+            content: content)
+        try item.integrate(transaction, offset: 0)
+    }
 }

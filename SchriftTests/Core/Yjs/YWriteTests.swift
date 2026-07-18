@@ -140,6 +140,21 @@ final class YWriteTests: XCTestCase {
         XCTAssertEqual(root.length, 6)
     }
 
+    // MARK: - Structural (map set)
+
+    func testMapSetCreatesAndOverwrites() throws {
+        let doc = YDoc(clientID: 7)
+        defer { doc.destroy() }
+        let root = doc.get("t")
+        try doc.transact { tx in try YWrite.mapSet(tx, on: root, key: "k", .any([.string("v1")])) }
+        let old = root.map["k"]
+        XCTAssertEqual(old?.content, .any([.string("v1")]))
+        try doc.transact { tx in try YWrite.mapSet(tx, on: root, key: "k", .any([.string("v2")])) }
+        XCTAssertEqual(root.map["k"]?.content, .any([.string("v2")]))
+        XCTAssertEqual(root.map["k"]?.deleted, false)
+        XCTAssertEqual(old?.deleted, true)
+    }
+
     // MARK: - Oracle byte round trip
 
     /// Byte-exact against yjs 13.6.31. Regenerate with:
