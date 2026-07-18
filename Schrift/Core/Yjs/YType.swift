@@ -101,9 +101,14 @@ final class YArraySearchMarker {
 /// nested docs), and undo/redo. The roadmap adds the `YDocument` facade
 /// (`applyUpdate`/`encodeStateVector`/`encodeStateAsUpdate`) in B3 on top of this.
 final class YDoc {
-    /// Garbage collection. **Off for this milestone** — `Item.gc`/`tryGcDeleteSet`
-    /// land in B4, and the oracle fixtures here are captured from
-    /// `new Y.Doc({ gc: false })` to match.
+    /// Garbage collection. **On by default** (B4) — matching a real yjs client
+    /// (`new Y.Doc()` defaults `gc: true`) and the live write path (C2). When on,
+    /// `tryGcDeleteSet` sweeps the replica's *own* deleted items each transaction:
+    /// their content becomes a `ContentDeleted` tombstone and a deleted type's
+    /// children become `GC` structs (`Item.gc`). Still overridable to `false` — the
+    /// gc-off golden fixtures pin that mode. Note GC *structs* occur regardless of
+    /// this flag: they arrive on the wire from peers that collect, and `Item.integrate`
+    /// mints one for a parentless item.
     let gc: Bool
     /// This replica's client id. The roadmap requires a fresh random id per
     /// session, never persisted — a reused id means duplicate `(client, clock)`
@@ -116,7 +121,7 @@ final class YDoc {
     var transaction: YTransaction?
     var transactionCleanups: [YTransaction] = []
 
-    init(clientID: UInt, gc: Bool = false) {
+    init(clientID: UInt, gc: Bool = true) {
         self.clientID = clientID
         self.gc = gc
     }

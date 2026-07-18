@@ -178,6 +178,41 @@ final class YStructStore {
         return index
     }
 
+    /// yjs `iterateStructs` (yjs.cjs @3040) — call `f` on every struct overlapping
+    /// `[clockStart, clockStart+len)`, splitting the boundary structs clean.
+    ///
+    /// Note yjs's `cleanupYTextAfterTransaction` passes a `len` that overshoots the
+    /// client's last clock (it passes the after-state, not after minus before); the
+    /// `index < structs.count` bound stops the walk at the array end and the overshoot
+    /// merely skips the (never-reached) end split — transliterated as written, not
+    /// "fixed".
+    static func iterateStructs(
+        _ transaction: YTransaction, _ list: YStructList, clockStart: UInt, len: UInt,
+        _ f: (YStruct) throws -> Void
+    ) throws {
+        if len == 0 { return }
+        // yjs computes `clockStart + len` in JS floating point, where the
+        // `cleanupYTextAfterTransaction` overshoot (`len == afterClock`, so
+        // `clockStart + len` can exceed `UInt.max`) is a large-but-finite value that
+        // every real clock still compares below. Swift's `UInt + UInt` traps on
+        // overflow — a remote crash on a crafted near-`UInt.max` state. Saturate to
+        // `UInt.max` instead: `clockEnd` is only compared (`clockEnd < s.id.clock +
+        // s.length`, `structs[i].id.clock < clockEnd`) and every real clock end is
+        // `<= UInt.max` (`YStructIntegrator.validate`), so clamping preserves yjs's
+        // harmless-overshoot semantics without trapping.
+        let sum = clockStart.addingReportingOverflow(len)
+        let clockEnd = sum.overflow ? UInt.max : sum.partialValue
+        var index = try findIndexCleanStart(transaction, list, clockStart)
+        repeat {
+            let s = list.structs[index]
+            index += 1
+            if clockEnd < s.id.clock + s.length {
+                _ = try findIndexCleanStart(transaction, list, clockEnd)
+            }
+            try f(s)
+        } while index < list.structs.count && list.structs[index].id.clock < clockEnd
+    }
+
     /// yjs `getItemCleanStart` (@2985).
     static func getItemCleanStart(_ transaction: YTransaction, _ id: YID) throws -> YStruct {
         guard let list = transaction.doc.store.clients[id.client] else {

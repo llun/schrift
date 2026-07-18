@@ -110,15 +110,18 @@ The app *constructs* Yjs binary updates to save (see "Editing & save mechanism" 
 Hocuspocus room as the web client and speak real Yjs, rather than PATCHing a
 full-overwrite blob that a live web session would silently overwrite. It lands in
 stages; today it can **decode** an update, **integrate** it into a live document,
-and **encode** the integrated document back out (B3) — a full snapshot, a diff
-against a peer's state vector, or a state vector — byte-identical to yjs. The
-replica runs with **gc off** (`YDoc(gc: false)`): proactive collection of its *own*
-deleted items lands with B4, and every golden fixture and oracle here is captured
-from `new Y.Doc({ gc: false })` to match. GC *structs* still occur — they arrive on
-the wire from peers that do collect, `YItem.integrate` mints one whenever an
-integrated item resolves to no parent (a neighbour was collected), and
-`YStateEncoder` re-encodes all of them — what gc-off turns off is the periodic
-`tryGcDeleteSet` sweep, not the existence of GC structs.
+**encode** the integrated document back out (B3) — a full snapshot, a diff against a
+peer's state vector, or a state vector — byte-identical to yjs, and **garbage-collect
+and clean up formatting** on remote transactions (B4). The replica runs with **gc on
+by default** (`YDoc(gc: true)`, matching a real yjs client and the live write path):
+each transaction, `tryGcDeleteSet` sweeps the replica's *own* deleted items —
+replacing a deleted item's content with a `ContentDeleted` tombstone and a deleted
+type's children with `GC` structs (`Item.gc`). gc is still overridable to `false` for
+the golden fixtures that pin the gc-off mode. GC *structs* occur regardless of the
+flag — they arrive on the wire from peers that collect, `YItem.integrate` mints one
+whenever an integrated item resolves to no parent (a neighbour was collected), and
+`YStateEncoder` re-encodes all of them; what the flag toggles is only the periodic
+`tryGcDeleteSet` sweep of the replica's own deletions.
 
 | Piece | What it does |
 |---|---|
@@ -318,27 +321,39 @@ deviation above (and *only* that exact shape — a mechanical four-element check
 refuses to absorb anything else, so a real bug can never hide behind the
 carve-out).
 
-### Known gap: remote-change format cleanup (B4)
+### Remote-change format cleanup (B4, landed 2026-07-17)
 
-The store is **not** yet yjs-identical when formatting is involved. On a *remote*
-transaction touching a `YText` that has formatting, yjs arms
-`cleanupYTextAfterTransaction`, which deletes formatting items rendered redundant
-— e.g. a link mark wrapping text that a concurrent edit deleted. This store does
-not, so such an item stays undeleted where yjs marks it deleted.
+On a *remote* transaction touching a `YText` that has formatting, yjs runs
+`cleanupYTextAfterTransaction`, deleting formatting items rendered redundant — e.g. a
+mark wrapping text a concurrent edit deleted, or a duplicate concurrent mark. This is
+reachable from real documents, not theoretical: BlockNote's schema is `XmlFragment >
+blockContainer > XmlText`, bold/italic/link are `ContentFormat` items inside those
+texts, and nested `XmlText` types arrive as real `YText` subclasses — so the trigger
+(`YText._callObserver`, gated on `!transaction.local && _hasFormatting`) fires. **B4
+was a prerequisite for the live write path (C2), not an optimization**, and it lands
+together with gc (`YTextCleanup.swift`, `cleanupTransactions`'s observer phase).
 
-This is the roadmap's **B4**, which lands it together with gc, **after B3**
-(decided 2026-07-17). It is recorded here because it is reachable from real
-documents, not a theoretical case: BlockNote's
-schema is `XmlFragment > blockContainer > XmlText`, bold/italic/link are
-`ContentFormat` items inside those texts, and nested `XmlText` types arrive as
-real `YText` subclasses — so the trigger (`YText._callObserver`, gated on
-`!transaction.local && _hasFormatting`) fires. **B4 is therefore a prerequisite
-for the live write path (C2), not an optimization.**
+Two subtleties the transliteration had to get right, both proven against the yjs
+oracle by the differential fuzz's dedicated formatting lane (nested text, concurrent
+redundant marks — the only shape that fires the trigger, since a bare root type is
+never a concrete `YText`):
 
-The fuzz quantifies it: across 1500 seeds (11,986 store comparisons), the only
-seeds whose *settled* store diverged from yjs were two, and both were this. With
-formatting ops removed from the corpus, 800/800 seeds matched yjs's settled store
-exactly — which is what isolates this as the single remaining behavioral gap.
+- **Format-value equality is JS `===`.** yjs compares parsed `ContentFormat.value`s
+  with `===`; the store keeps raw `valueJSON`, so `YFormatAttrValue` reproduces that:
+  primitives by JSON text, objects/arrays by owning-item identity (never structurally
+  equal), and absent-key ⇔ JSON `null`.
+- **The cleanup's routing is not confluent across clients.** `iterateDeletedStructs`
+  must walk the transaction's delete set in yjs `Map` **insertion order** (now
+  `YDeleteSet.orderedClients`), not ascending: a client owning a *deleted*
+  `ContentFormat`, processed first, adds its parent to `needFullCleanup` and thereby
+  suppresses every later client's contextless cleanup on that type. Ascending order is
+  deterministic but wrong. The fuzz found this (a live bold mark wrongly deleted);
+  every other delete-set consumer (gc, merge, encode) is per-client and unaffected.
+
+The fuzz that once quantified the *gap* (2 of 1500 seeds diverged, both formatting)
+now confirms the *fix*: the formatting lane runs thousands of nested-text concurrent-
+formatting scripts against the oracle with zero divergence, gc on and off, and
+region coverage proves the cleanup code executes rather than being an honest negative.
 
 ## Authentication
 

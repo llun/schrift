@@ -250,4 +250,31 @@ enum YContent {
         guard case .type(let type) = self else { return }
         type.deleteChildren(transaction)
     }
+
+    /// yjs `AbstractContent.gc(store)` — only `ContentType` does anything; every
+    /// other kind is a no-op (yjs.cjs: ContentDeleted/JSON/Binary/String/Embed/
+    /// Format/Any/Doc each `gc (store) {}`).
+    ///
+    /// `ContentType.gc` (yjs.cjs @9517): recursively gc every child
+    /// — walking the child list rightwards and each map column leftwards — with
+    /// `parentGCd: true`, so each child is replaced by a `GC` struct, then clears
+    /// the type's `start`/`map`. Non-mutating on the `YContent` value: it only
+    /// mutates the referenced `YType` (a class).
+    func gc(_ store: YStructStore) throws {
+        guard case .type(let type) = self else { return }
+        var item = type.start
+        while let current = item {
+            try current.gc(store, parentGCd: true)
+            item = current.right
+        }
+        type.start = nil
+        for (_, mapHead) in type.map {
+            var item: YItem? = mapHead
+            while let current = item {
+                try current.gc(store, parentGCd: true)
+                item = current.left
+            }
+        }
+        type.map = [:]
+    }
 }
