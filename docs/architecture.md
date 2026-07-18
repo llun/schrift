@@ -112,9 +112,11 @@ full-overwrite blob that a live web session would silently overwrite. It lands i
 stages; today it can **decode** an update, **integrate** it into a live document,
 **encode** the integrated document back out (B3) — a full snapshot, a diff against a
 peer's state vector, or a state vector — byte-identical to yjs, **garbage-collect
-and clean up formatting** on remote transactions (B4), and **project** the integrated
-replica back into the editor's block/markdown vocabulary (B5). The replica runs with **gc on
-by default** (`YDoc(gc: true)`, matching a real yjs client and the live write path):
+and clean up formatting** on remote transactions (B4), **project** the integrated
+replica back into the editor's block/markdown vocabulary (B5), and turn a **local**
+editor edit into local Yjs operations plus the incremental update they mint (B6). The
+replica runs with **gc on by default** (`YDoc(gc: true)`, matching a real yjs client
+and the live write path):
 each transaction, `tryGcDeleteSet` sweeps the replica's *own* deleted items —
 replacing a deleted item's content with a `ContentDeleted` tombstone and a deleted
 type's children with `GC` structs (`Item.gc`). gc is still overridable to `false` for
@@ -136,6 +138,7 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `YTransaction` | transaction lifecycle + the merge cleanup that runs after every update |
 | `YStructIntegrator` | the driver: dependency ordering, pending structs, retry |
 | `YBlockProjection` / `InlineMarkdownWriter` | the **read-out** side (B5): projects an integrated replica into BlockNote-vocabulary `ProjectedBlock`s and then into the editor's markdown. See "Projecting the replica" below |
+| `YWrite` / `TextSpanDiff` / `BlockNoteWrite` | the **write-in** side (B6): local list/map mutation primitives, a char-level self-describing text-span diff, and the block-level edit driver that turns old/new BlockNote blocks into local ops + an incremental update. See "Local-edit transactions" below |
 
 ### Projecting the replica (B5)
 
@@ -226,6 +229,86 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
 - **Read-only in C1.** Nothing is encoded, broadcast, or PATCHed; inbound `.step1` (a peer
   requesting our state) is ignored. The two-way write path — outbound sync, local-edit
   transactions, `enqueueLiveSnapshot`, the live-entry gates on the save path — is **C2**.
+
+### Local-edit transactions (B6)
+
+C1 wires the *read* side into the editor; **B6 is the write side** — a pure `Core/Yjs`
+layer that turns an editor edit (old blocks → new blocks) into local Yjs operations
+against a replica and encodes only the incremental update those operations minted. It
+has **zero runtime effect on its own**: nothing calls it until C2 threads it through
+the collaboration session, transport, and save coordinator.
+
+- **`YWrite`** is the local-mutation primitive layer: `insertAfter`/`insert` (list
+  insert, yjs `typeListInsertGenericsAfter`/`typeListInsertGenerics`), `delete` (list
+  delete, yjs `typeListDelete`), and `mapSet` (yjs `typeMapSet`) — each a faithful
+  transliteration reduced to Schrift's needs (the caller already holds a built
+  `YContent`, so the JS-value classification switch and the search-marker no-ops both
+  disappear). Every primitive mints local `YItem`s at `store.getState(clientID)` and
+  integrates them through the existing YATA loop (`YItem.integrate`) inside
+  `doc.transact(local: true)` — pure value code that **mutates** the live replica
+  graph, so it must run under the replica's single owner exactly like every other
+  mutation.
+- **`BlockNoteWrite.applyEdit(old:new:to:)`** is the entry point: it diffs `old` →
+  `new` BlockNote blocks by id (insert / remove / kind-change / prop-change /
+  in-place-survivor / moved-survivor), applies the difference as local `YWrite` ops
+  inside one transaction, and returns `YStateEncoder.encodeStateAsUpdate(doc, since:
+  <the state vector snapshotted before the transaction>)` — an update containing only
+  the structs this edit minted. **Move is v1-coarse**: a survivor whose relative order
+  changed is rebuilt whole (delete + re-insert after its new `left`) rather than
+  relocated in place; reorders are rare in practice and remain covered by
+  full-snapshot fixtures, so this trades minimality for simplicity.
+- **The from-empty byte-identity anchor.** `applyEdit(old: [], new: blocks)` must be
+  byte-identical to `BlockNoteYjs.encode(blocks, clientID:)` — the shipping golden
+  encoder, itself already pinned to real yjs. This is B6's strongest correctness gate:
+  it proves the builder reproduces the exact document shape yjs authors (item order,
+  origins, parents, clocks) for every block type, because both encode the same store
+  shape. It holds because `insertBlock` mints items in the same order the golden
+  encoder does — blockGroup, then per block the container, the content element, the
+  `xmlText` and its run pieces, the element's props, then the container's `id` — and
+  each `YWrite` primitive mints sequentially, so clocks/origins/parents (and therefore
+  the encoded bytes) coincide.
+- **B6 deviates from yjs only in local-item *construction*, never in the store
+  algorithm — so it is verified at the document/projection level, not the
+  store-structure level.** A changed text span is rebuilt wholesale from the new runs
+  rather than yjs's incremental per-character format delta, and the generic
+  list-delete used for a text edit deletes interior `ContentFormat` items that yjs's
+  own text-specific `deleteText` steps past — both differences are harmless because
+  the inserted replacement span is **self-describing** (see `TextSpanDiff` below) and
+  re-establishes every boundary mark the deletion removed. `YItem.integrate`, merge
+  cleanup, gc, and the encoders are exactly the code B1–B5 already proved against the
+  oracle; B6 touches none of it. A store-dump comparison against a yjs oracle would
+  therefore **false-fail** on a correct B6 edit (different items, same rendered
+  content) — B6's own correctness property is instead *apply the same edit on both
+  sides, then compare the projected document (and convergence across peers)*, never
+  raw store shape.
+- **`TextSpanDiff`** computes the minimal change between an old and new run list as a
+  **character-level (char, active-marks) diff**, not a UTF-16-unit diff: it flattens
+  both run lists to one `(UTF-16 unit, marks-dictionary)` pair per unit, finds the
+  common prefix/suffix in that space, then **snaps both boundaries to code-point
+  boundaries** so a surrogate pair can never be split across the kept/changed regions
+  (splitting one would render two U+FFFD — yjs#248 — corrupting content the edit never
+  touched). The changed span's replacement is built as **self-describing pieces**
+  (`buildSpanPieces`): it opens the marks active at the new start and, at the end,
+  transitions to whatever marks the kept suffix expects — so the replacement is
+  correct even though the store-level delete may have removed the very
+  `ContentFormat` items the suffix's formatting relied on.
+- **`InlineContent.pieces(for:)`** (`InlineContent.swift`) is the shared open/
+  carry/close-format sequence builder behind both the from-scratch encoder
+  (`BlockNoteYjs.emitInline`) and `BlockNoteWrite`'s whole-subtree paths (a fresh
+  block insert, a kind-changed element's fresh text) — extracted so the two cannot
+  drift on what a run list means. `TextSpanDiff`'s own `buildSpanPieces` is a
+  distinct, diff-specific builder (self-describing boundary opens/closes rather than
+  a full sequence over whole runs), not a second definition of inline shape: both
+  builders emit the same `InlinePiece` vocabulary, and `BlockNoteWrite` maps either
+  output into `YContent` through one shared `content(of:)`. Don't add a third way to
+  turn runs into pieces.
+- **Verification.** A session-local differential-fuzz harness (never committed — the
+  zero-dependency rule) drove roughly 26,000 seeds / 400,000 oracle-verified renders
+  against node yjs 13.6.31 across three lanes — BMP text edits, concurrent multi-peer
+  convergence, and interop with `mergeUpdates`/gc/`diffUpdate` — and found zero
+  divergences after fixing one bug: an early version diffed at raw UTF-16-unit
+  boundaries and could split a surrogate pair, which the fuzz caught; the code-point
+  snap described above is the fix.
 
 ### Two Yjs models, deliberately
 

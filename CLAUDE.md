@@ -936,6 +936,48 @@ that are easy to violate and expensive to discover:
   `InlineLayoutTests` green together; "the golden bytes didn't move" does not prove
   the scanner is unchanged (see the inline-scanner rules under "Editor & the
   on-device save").
+- **The local-edit write path (`YWrite`, `TextSpanDiff`, `BlockNoteWrite`, B6) is
+  pure `Core/Yjs` with zero runtime effect until C2 wires it in.** `YWrite` is the
+  local-mutation primitive layer — list insert/delete (`typeListInsertGenericsAfter`/
+  `typeListInsertGenerics`/`typeListDelete`) and map set (`typeMapSet`), each a
+  faithful transliteration that mints local `YItem`s and integrates them through the
+  existing YATA loop inside `doc.transact(local: true)`. `BlockNoteWrite.applyEdit(
+  old:new:to:)` diffs two BlockNote block lists by id (insert/remove/kind-change/
+  prop-change/move) and returns `YStateEncoder.encodeStateAsUpdate(doc, since:
+  <pre-transaction state vector>)` — only the structs the edit minted. **Its
+  strongest correctness gate is from-empty byte identity**:
+  `applyEdit(old: [], new: blocks)` must be byte-identical to the shipping
+  `BlockNoteYjs.encode(blocks)` golden encoder, which holds because `insertBlock`
+  mints items in the encoder's exact order (blockGroup, container, element,
+  `xmlText`+runs, props, id). **Move is v1-coarse** — a reordered survivor is
+  rebuilt whole (delete + re-insert), never relocated in place; reorders are rare
+  and stay covered by full-snapshot fixtures.
+- **B6 deviates from yjs only in local-item *construction*, never in the store
+  algorithm — verify at the document/projection level, not the store-structure
+  level.** It rebuilds a changed text span wholesale from the new runs (not yjs's
+  incremental per-character format delta) and its generic list-delete steps through
+  interior `ContentFormat` items that yjs's own `deleteText` walks past — both
+  harmless because the inserted span is **self-describing**: `TextSpanDiff` diffs
+  runs as a **character-level (char, active-marks)** sequence (not UTF-16-unit),
+  snaps both changed-range boundaries to **code-point boundaries** so a surrogate
+  pair is never split across kept/changed regions (a split renders U+FFFD — yjs#248
+  — on content the edit never touched), and its replacement pieces open the marks
+  active at the new start and re-close to the kept suffix's marks at the end. So a
+  store-dump comparison against yjs would **false-fail** on a correct B6 edit
+  (different items, same rendered content) — B6 is instead verified by applying the
+  same edit on both sides and comparing the **projected document** and cross-peer
+  convergence; `YItem.integrate`/merge/gc/the encoders are untouched by B6. A
+  session-local differential fuzz (never committed, zero-dep rule) ran ~26k seeds /
+  ~400k oracle-verified renders against node yjs across BMP, concurrent-convergence,
+  and `mergeUpdates`/gc/`diffUpdate` interop lanes — 0 divergences after fixing one
+  bug the fuzz found (a raw UTF-16-unit diff splitting a surrogate pair; the
+  code-point snap above is the fix). `InlineContent.pieces(for:)`
+  (`InlineContent.swift`) is the **one shared inline-shape builder** behind both the
+  from-scratch encoder (`BlockNoteYjs.emitInline`) and `BlockNoteWrite`'s
+  whole-subtree paths — don't add a second way to turn a run list into the
+  open/carry/close-format sequence; `TextSpanDiff`'s own diff-specific piece builder
+  emits the same `InlinePiece` vocabulary through the same `content(of:)` mapper,
+  not a competing definition of inline shape.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **Verify against the oracle, not against reasoning.** Golden fixtures
