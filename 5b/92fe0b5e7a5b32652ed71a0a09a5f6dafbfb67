@@ -1,0 +1,28 @@
+SchriftTests/Core/Networking/MockURLProtocolIsolationTests.swift
+  s_f48e4c059e314f::t_9f0b3ebf5f3a9c 7-13,15-22,40,43,66-67,80
+  s_f48e4c059e314f::t_17915bdf3962f5 1-6,14,23-39,41-42,44-65,68-79,81-82
+SchriftTests/Core/Networking/MockURLProtocol.swift
+  s_f48e4c059e314f::t_0c847c0e97716e 56-57,72
+  s_f48e4c059e314f::t_d061e830ad9263 94-109
+  s_f48e4c059e314f::t_edbf1d7ec34886 145-149,156
+  s_f48e4c059e314f::t_7ce6e02cfefb7d 69
+  s_f48e4c059e314f::t_32c27e259b458f 183-186,188-190,192
+  s_f48e4c059e314f::t_41995aab707758 187,191
+  s_f48e4c059e314f::t_1a2da6a42cfb6e 52-55,58-68,70-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "5b92fe0b5e7a5b32652ed71a0a09a5f6dafbfb67",
+  "prompts": {},
+  "sessions": {
+    "s_f48e4c059e314f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "064d1c70-be7e-48ed-98b7-778874cc5fd7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
