@@ -24,6 +24,22 @@ final class DocumentCollaborationManager {
         var session: DocumentCollaborationSession?
         var refCount: Int
         var lingerTask: Task<Void, Never>?
+        /// The document's live Yjs replica (C1), built lazily on the first
+        /// inbound sync update. Exactly one owner touches it — this manager, on
+        /// the main actor (see `Core/Yjs`'s "one owner" rule) — and it must be
+        /// `destroy()`ed wherever the entry is removed, or its item graph leaks
+        /// (yjs relies on a tracing GC; `YDoc.destroy()` breaks the cycles ARC
+        /// cannot).
+        var replica: YDoc?
+        /// True once at least one inbound update has integrated cleanly. Gates
+        /// `projectedReplica` — a replica that has never seen a real update (or
+        /// whose only updates all failed) has nothing meaningful to project.
+        var initialSyncApplied = false
+        /// True once an inbound update has failed to decode/apply. A corrupt or
+        /// half-synced replica must never drive the editor, so once set this
+        /// entry stops building/updating a replica for the rest of its lifetime
+        /// (the change-signal fallback via `remoteChangeTokens` still fires).
+        var replicaFailSafe = false
     }
 
     private var entries: [UUID: Entry] = [:]
@@ -48,6 +64,9 @@ final class DocumentCollaborationManager {
     /// Per-document change-signal counters (see `remoteChangeToken(for:)`).
     private var remoteChangeTokens: [UUID: Int] = [:]
 
+    /// Per-document replica-version counters (see `replicaVersion(for:)`).
+    private var replicaVersions: [UUID: Int] = [:]
+
     private let serverBaseURL: URL
     private let cookieProvider: @Sendable () -> [HTTPCookie]
     private let featureEnabled: @MainActor () -> Bool
@@ -56,6 +75,10 @@ final class DocumentCollaborationManager {
     private let localStateProvider: @Sendable () async -> LocalAwarenessState?
     private let socketFactory: WebSocketFactory
     private let lingerSeconds: Double
+    /// Mints the client id for a document's replica (`YDoc.clientID`). Random by
+    /// default, matching the roadmap's "fresh random id per session, never
+    /// persisted" rule; tests inject a fixed value for determinism.
+    private let replicaClientIDProvider: () -> UInt32
 
     init(
         serverBaseURL: URL,
@@ -65,7 +88,8 @@ final class DocumentCollaborationManager {
         serverConfigProvider: @escaping @Sendable () async -> ServerConfig?,
         localStateProvider: @escaping @Sendable () async -> LocalAwarenessState? = { nil },
         socketFactory: @escaping WebSocketFactory,
-        lingerSeconds: Double = 5
+        lingerSeconds: Double = 5,
+        replicaClientIDProvider: @escaping () -> UInt32 = { UInt32.random(in: 1..<UInt32.max) }
     ) {
         self.serverBaseURL = serverBaseURL
         self.cookieProvider = cookieProvider
@@ -75,6 +99,7 @@ final class DocumentCollaborationManager {
         self.localStateProvider = localStateProvider
         self.socketFactory = socketFactory
         self.lingerSeconds = lingerSeconds
+        self.replicaClientIDProvider = replicaClientIDProvider
     }
 
     /// Learns whether this deployment runs the collaboration server (from
@@ -124,6 +149,38 @@ final class DocumentCollaborationManager {
     /// session rebuilds; reset when the document's entry is torn down.
     func remoteChangeToken(for documentID: UUID) -> Int {
         remoteChangeTokens[documentID] ?? 0
+    }
+
+    /// A monotonic token that increments each time an inbound Yjs sync update
+    /// integrates cleanly into the document's replica (C1). Unlike
+    /// `remoteChangeToken`, this only advances on a *successful* apply — a
+    /// malformed update bumps `remoteChangeToken` (the fallback-refresh signal
+    /// still fires) but not this. `0` when no replica exists yet. Survives
+    /// session rebuilds; reset when the document's entry is torn down.
+    func replicaVersion(for documentID: UUID) -> Int {
+        replicaVersions[documentID] ?? 0
+    }
+
+    /// True once an inbound update has failed to decode/apply for this
+    /// document. While set, the replica is never rebuilt or projected — a
+    /// corrupt/half-synced replica must not silently drive the editor.
+    func replicaIsFailSafe(for documentID: UUID) -> Bool {
+        entries[documentID]?.replicaFailSafe ?? false
+    }
+
+    /// The document's live replica projected into BlockNote-vocabulary blocks
+    /// (B5's `YBlockProjection.project`), or `nil` when there is nothing safe to
+    /// project: no replica yet, the entry is fail-safed, no update has
+    /// integrated yet, or the replica still has unintegrated pending
+    /// structs/deletes (`YStructStore.pendingStructs`/`pendingDs`) — projecting
+    /// a partially-synced store would show content that is about to change
+    /// shape the moment the missing dependency arrives.
+    func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
+        guard let entry = entries[documentID], !entry.replicaFailSafe, entry.initialSyncApplied,
+            let replica = entry.replica,
+            replica.store.pendingStructs == nil, replica.store.pendingDs == nil
+        else { return nil }
+        return YBlockProjection.project(replica, interlinkingOrigin: interlinkingOrigin)
     }
 
     /// The current gate result, in the roadmap's fixed order.
@@ -180,8 +237,10 @@ final class DocumentCollaborationManager {
             entry.lingerTask?.cancel()
             entry.session?.stop()
             if entry.refCount == 0 {
+                entry.replica?.destroy()
                 entries.removeValue(forKey: id)
                 remoteChangeTokens.removeValue(forKey: id)
+                replicaVersions.removeValue(forKey: id)
             } else {
                 entries[id]?.session = nil
                 entries[id]?.lingerTask = nil
@@ -219,9 +278,38 @@ final class DocumentCollaborationManager {
         let transport = CollaborationTransport(socket: socketFactory(request))
         let session = DocumentCollaborationSession(
             documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness,
-            onRemoteChange: { [weak self] in self?.remoteChangeTokens[documentID, default: 0] += 1 })
+            onRemoteChange: { [weak self] in self?.remoteChangeTokens[documentID, default: 0] += 1 },
+            onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) })
         session.start()
         return session
+    }
+
+    /// Applies one inbound Yjs update to the document's replica (C1), building
+    /// the replica lazily on first call. A no-op once the entry has fail-safed.
+    ///
+    /// A decode/integrate failure destroys the replica and latches
+    /// `replicaFailSafe` rather than retrying or leaving a partially-applied
+    /// store around: an update is attacker-controlled wire data (it arrives from
+    /// a peer), and this store must never trap or drive the editor off corrupt
+    /// state. `onRemoteChange` has already bumped `remoteChangeTokens` for this
+    /// same message (wired separately in `makeSession`), so the change-signal
+    /// fallback (silent revalidation) still fires even after fail-safe.
+    private func applyReplicaUpdate(_ data: Data, for documentID: UUID) {
+        guard var entry = entries[documentID], !entry.replicaFailSafe else { return }
+        let replica = entry.replica ?? YDoc(clientID: UInt(replicaClientIDProvider()), gc: true)
+        entry.replica = replica
+        do {
+            try replica.applyUpdate(try YUpdateDecoder.decode(data))
+            entry.initialSyncApplied = true
+            entries[documentID] = entry
+            replicaVersions[documentID, default: 0] += 1
+        } catch {
+            replica.destroy()
+            entry.replica = nil
+            entry.replicaFailSafe = true
+            entry.initialSyncApplied = false
+            entries[documentID] = entry
+        }
     }
 
     private func rebuildActiveSessions() {
@@ -239,8 +327,10 @@ final class DocumentCollaborationManager {
     private func teardownIfIdle(_ documentID: UUID) {
         guard let entry = entries[documentID], entry.refCount == 0 else { return }
         entry.session?.stop()
+        entry.replica?.destroy()
         entries.removeValue(forKey: documentID)
         remoteChangeTokens.removeValue(forKey: documentID)
+        replicaVersions.removeValue(forKey: documentID)
     }
 }
 
