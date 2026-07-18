@@ -2045,6 +2045,153 @@ final class EditorViewModel {
         }
     }
 
+    // MARK: - Live collaboration bridge
+
+    /// Whether a live-collaboration remote change may be applied to this screen
+    /// right now (C2+; this is the gate the bridge consults before calling
+    /// `applyLiveRemoteChange`). Every clause guards a fact the #76 offline-sync
+    /// machinery already owns about local work — a live apply must never race or
+    /// clobber it:
+    ///  - `hasLoadedContent`: the funnel never creates content out of nothing —
+    ///    same reason `startEditing`/`flushPendingChanges` guard on it.
+    ///  - `!isDirty`: the user is mid-edit; their keystrokes, not a remote
+    ///    change, own the screen until they flush.
+    ///  - `!isDocumentDiscarded` / `!isUnavailable`: there is no live document to
+    ///    apply onto (deleted, or a recoverable 404/403 has it torn down).
+    ///  - no recorded conflict, stored draft, or pending save: any of these means
+    ///    local work exists (queued, in flight, or awaiting the user's decision)
+    ///    that a live apply could silently overwrite — it belongs to the
+    ///    conflict-resolution/draft-replay machinery (`DraftSyncDecision`), not
+    ///    to this funnel.
+    ///  - `saveCoordinator.state(for:)` is `.idle` or `.saved` — not `.saving`
+    ///    (a save is on the wire right now), `.pendingSync`, or `.failed`. This
+    ///    restates the pending-save/stored-draft checks above from the
+    ///    coordinator's own state machine, as belt-and-braces.
+    var canEngageLiveEditing: Bool {
+        guard hasLoadedContent, !isDirty, !isDocumentDiscarded, !isUnavailable else { return false }
+        guard saveCoordinator.conflict(for: documentID) == nil else { return false }
+        guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return false }
+        guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return false }
+        switch saveCoordinator.state(for: documentID) {
+        case .idle, .saved:
+            return true
+        case .saving, .pendingSync, .failed:
+            return false
+        }
+    }
+
+    /// The one non-`install(...)` content-swap funnel: applies a live remote
+    /// change set (already diffed by `liveChangeSet`, B5) to the on-screen
+    /// blocks in place. Unlike `install`, it reuses every untouched block's
+    /// `id` and preserves the caret — `install` deliberately re-mints every
+    /// block's identity and nulls the caret (see its doc comment), which is
+    /// exactly wrong for a peer's edit landing under the user's own cursor.
+    ///
+    /// Read-only from the save machinery's point of view: it advances the dirty
+    /// baseline (`savedMarkdown`/`savedTitle`/`serverBaseline`) to the projected
+    /// content so a later Done/tap-to-edit does not false-dirty against it, but
+    /// it never sets `isDirty`, never calls `saveCoordinator.enqueue`, and never
+    /// starts a `Task` — a live apply is a projection of state a peer already
+    /// holds, not new local work for this device to push. `canEngageLiveEditing`
+    /// is the caller's gate; this method re-checks only `hasLoadedContent`,
+    /// because the funnel must never create content out of nothing. C2 adds the
+    /// write path (local edits -> outgoing Yjs updates); this is the read side.
+    func applyLiveRemoteChange(_ change: LiveChangeSet, projectedMarkdown: String, projectedTitle: String? = nil) {
+        guard hasLoadedContent else { return }
+
+        // Captured before any mutation: the pre-change order is what "the
+        // neighbour that takes a removed block's position" is measured against,
+        // and the focused block's own text is the "old" half of `transformedCaret`.
+        let originalOrder = blocks.map(\.id)
+        let focusedID = focusedBlockID
+        let oldFocusedText = focusedID.flatMap { id in blocks.first { $0.id == id }?.text }
+
+        for step in change.changes {
+            switch step {
+            case .update(let id, let kind, let text):
+                guard let index = blockIndex(id) else { continue }
+                blocks[index].kind = kind
+                blocks[index].text = text
+            case .insert(let id, let kind, let text, let afterID):
+                let newBlock = EditorBlock(id: id, kind: kind, text: text)
+                if let afterID, let afterIndex = blockIndex(afterID) {
+                    blocks.insert(newBlock, at: afterIndex + 1)
+                } else {
+                    blocks.insert(newBlock, at: 0)
+                }
+            case .remove(let id):
+                guard let index = blockIndex(id) else { continue }
+                blocks.remove(at: index)
+            case .move(let id, let afterID):
+                guard let index = blockIndex(id) else { continue }
+                let block = blocks.remove(at: index)
+                if let afterID, let afterIndex = blockIndex(afterID) {
+                    blocks.insert(block, at: afterIndex + 1)
+                } else {
+                    blocks.insert(block, at: 0)
+                }
+            }
+        }
+
+        if let focusedID {
+            if let index = blockIndex(focusedID) {
+                // Still on screen. Only recompute the caret if its own text moved —
+                // leaving it alone otherwise avoids churning a caret an unrelated
+                // block's change had no business touching.
+                let newText = blocks[index].text
+                if let oldFocusedText, newText != oldFocusedText {
+                    let currentCaret = selection?.location ?? cursorRequest?.offset ?? 0
+                    let newCaret = transformedCaret(old: oldFocusedText, new: newText, caret: currentCaret)
+                    cursorRequest = CursorRequest(blockID: focusedID, offset: newCaret)
+                    selection = NSRange(location: newCaret, length: 0)
+                }
+            } else if let neighbourID = nearestSurvivingNeighbour(
+                afterRemoving: focusedID, originalOrder: originalOrder)
+            {
+                // The focused block was removed remotely: follow the caret to
+                // whatever now occupies (or last preceded) its position, rather
+                // than stranding it on a block that no longer exists.
+                focusBlock(neighbourID, cursorAt: 0)
+            } else {
+                focusedBlockID = nil
+                cursorRequest = nil
+                selection = nil
+            }
+        }
+
+        rawMarkdown = projectedMarkdown
+        displayedSourceMarkdown = projectedMarkdown
+        // Trusted to already be the canonical serialization of the blocks just
+        // applied (the bridge's projection is produced through the same
+        // markdown path `serializeMarkdown` is) — using it directly here, rather
+        // than re-serializing `blocks`, is what keeps this baseline meaning the
+        // same thing `install`'s `savedMarkdown = serializeMarkdown(blocks)`
+        // does: an unchanged document never trips a later autosave.
+        savedMarkdown = projectedMarkdown
+        if let projectedTitle {
+            title = projectedTitle
+            savedTitle = projectedTitle
+        }
+        serverBaseline = DraftBaseline(
+            serverUpdatedAt: nil, markdown: projectedMarkdown, title: projectedTitle ?? title)
+    }
+
+    /// The surviving block that should take focus when the block the caret was
+    /// in is removed by a live change: the next block in the pre-change order
+    /// that still exists (the one that visually "takes its position"), else the
+    /// nearest surviving block before it, else nil when nothing survived.
+    private func nearestSurvivingNeighbour(afterRemoving removedID: UUID, originalOrder: [UUID]) -> UUID? {
+        guard let removedIndex = originalOrder.firstIndex(of: removedID) else { return nil }
+        let survivors = Set(blocks.map(\.id))
+        for id in originalOrder[(removedIndex + 1)...] where survivors.contains(id) {
+            return id
+        }
+        for id in originalOrder[..<removedIndex].reversed() where survivors.contains(id) {
+            return id
+        }
+        return nil
+    }
+
     // MARK: - Helpers
 
     private func blockIndex(_ blockID: UUID) -> Int? {
