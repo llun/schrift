@@ -1,0 +1,23 @@
+Schrift/Core/Yjs/TextSpanDiff.swift
+  s_0d1bafffaaad6d::t_20097b77c3e6e9 38-43,55-59,66-69
+SchriftTests/Core/Yjs/TextSpanDiffTests.swift
+  s_0d1bafffaaad6d::t_9a04b0a32e47da 55-81
+SchriftTests/Core/Yjs/BlockNoteWriteOracleTests.swift
+  s_0d1bafffaaad6d::t_4c71c846f92b0b 296-298,302-304,306-308,311-312,314,320,322,324-326,332-333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "feb3cb2e98cde898fa70f6f01a7d85b273dd3942",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
