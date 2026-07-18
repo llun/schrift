@@ -207,4 +207,50 @@ final class YBlockProjectionRenderTests: XCTestCase {
         XCTAssertNil(YBlockProjection.editorBlock(block, escapeAll: false))
         XCTAssertNil(YBlockProjection.editorBlock(block, escapeAll: true))
     }
+
+    // MARK: - renderedEditorDocument (B5/C1 bridge point)
+
+    /// `renderedEditorDocument`'s paired `blockNoteID`s must equal
+    /// `document.blocks.map(\.id)` in order, for a plain multi-block document —
+    /// the identity map the live bridge builds keys directly off this.
+    func testRenderedEditorDocumentBlockNoteIDsMatchProjectedBlockIDsInOrder() throws {
+        let document = try projectedDoc(fromMarkdown: allKindsDoc)
+
+        guard let result = YBlockProjection.renderedEditorDocument(document) else {
+            XCTFail("expected the all-kinds doc to render")
+            return
+        }
+
+        XCTAssertEqual(result.blocks.map(\.blockNoteID), document.blocks.map(\.id))
+        XCTAssertEqual(result.blocks.count, document.blocks.count)
+    }
+
+    /// `serializeMarkdown` of `EditorBlock`s built from `renderedEditorDocument`'s
+    /// paired blocks must equal its own `.markdown` exactly — by construction,
+    /// since both are produced from the exact same verified rendering pass, but
+    /// pinned here as a regression test against ever letting the two drift
+    /// (e.g. a future edit that reconstructs `.markdown` independently of
+    /// `.blocks`). Covers a plain multi-block document and a document that needs
+    /// escape escalation (a paragraph that reads like a bullet list item).
+    func testRenderedEditorDocumentBlocksSerializeToExactlyItsMarkdown() throws {
+        let plainDocument = try projectedDoc(fromMarkdown: allKindsDoc)
+        guard let plainResult = YBlockProjection.renderedEditorDocument(plainDocument) else {
+            XCTFail("expected the all-kinds doc to render")
+            return
+        }
+        let plainRebuilt = plainResult.blocks.map { EditorBlock(kind: $0.kind, text: $0.text) }
+        XCTAssertEqual(serializeMarkdown(plainRebuilt), plainResult.markdown)
+
+        let escalatingBlock = ProjectedBlock(
+            id: "x", node: "paragraph", props: [], runs: [InlineRun("- item")], fidelity: .modeled)
+        let escalatingDocument = ProjectedDocument(
+            blocks: [escalatingBlock], isFullyRenderable: true, isFullyModeled: true)
+        guard let escalatingResult = YBlockProjection.renderedEditorDocument(escalatingDocument) else {
+            XCTFail("expected escalation to produce a rendered document, got nil")
+            return
+        }
+        let escalatingRebuilt = escalatingResult.blocks.map { EditorBlock(kind: $0.kind, text: $0.text) }
+        XCTAssertEqual(serializeMarkdown(escalatingRebuilt), escalatingResult.markdown)
+        XCTAssertEqual(escalatingResult.blocks.map(\.blockNoteID), ["x"])
+    }
 }

@@ -768,25 +768,31 @@ extension YBlockProjection {
         }
     }
 
-    /// Whole-document markdown: `nil` unless every block renders (via
-    /// `editorBlock`) AND the assembled markdown re-parses
-    /// (`parseEditorBlocks`) back to an equivalent document. Self-verifying,
-    /// with per-block escape escalation: each pass renders every block
-    /// minimally first (`escapeAll: false` for any not-yet-escalated index),
-    /// checks the result, and on a mismatch escalates the *first* offending
-    /// block and retries.
+    /// The per-block rendering `projectedMarkdown` settles on, paired with each
+    /// block's BlockNote id (`document.blocks[i].id`), plus the whole-document
+    /// markdown those same rendered blocks serialize to. This is C1's read-side
+    /// bridge point: the identity map is keyed by BlockNote id, and the bridge
+    /// must diff against exactly the per-block `(kind, text)` this function
+    /// settled on — never re-derive it independently — or
+    /// `serializeMarkdown(<EditorBlocks built from the paired list>)` could
+    /// diverge from `.markdown` and a later save would re-parse differently
+    /// than what was shown on screen.
     ///
-    /// Bounded by construction: the pass budget is `blocks.count + 1`, and
-    /// every non-terminating iteration adds exactly one *new* index to
-    /// `escalated` (`firstMismatch`'s fallback specifically picks an
-    /// un-escalated index — see its doc comment) — so a pass that would need
-    /// a `blocks.count + 1`'th new index has none left to add and instead
-    /// re-reports an already-escalated one, which `escalated.contains(failing)`
-    /// catches and turns into `return nil` on that very iteration. The loop
-    /// never drops content: every attempt renders the *complete* block list
-    /// (nothing is skipped or truncated to make room for escalation), so the
-    /// only two outcomes are a full, verified markdown string or nil.
-    static func projectedMarkdown(_ document: ProjectedDocument) -> String? {
+    /// Same escalation loop as `projectedMarkdown` (see that doc comment for
+    /// the bounding argument): each pass renders every block minimally first
+    /// (`escapeAll: false` for any not-yet-escalated index), checks the
+    /// result, and on a mismatch escalates the *first* offending block and
+    /// retries. On the pass that verifies, every entry of `document.blocks` is
+    /// paired with its rendered `(kind, text)` — same count and order,
+    /// including blocks `serializeMarkdown` itself drops from the string
+    /// (e.g. a trailing empty paragraph), which keeps the pairing aligned with
+    /// `document.blocks` regardless of what the string omits.
+    ///
+    /// `nil` under exactly the same conditions `projectedMarkdown` returns
+    /// `nil`.
+    static func renderedEditorDocument(_ document: ProjectedDocument) -> (
+        blocks: [ProjectedEditorBlock], markdown: String
+    )? {
         guard document.isFullyRenderable else { return nil }
         var escalated = Set<Int>()  // block indices rendered with escapeAll
         for _ in 0...document.blocks.count {  // bounded: each pass escalates ≥1 new block or returns
@@ -803,9 +809,21 @@ extension YBlockProjection {
                 escalated.insert(failing)
                 continue
             }
-            return markdown
+            let paired = zip(document.blocks, rendered).map { projected, editor in
+                ProjectedEditorBlock(blockNoteID: projected.id, kind: editor.kind, text: editor.text)
+            }
+            return (paired, markdown)
         }
         return nil
+    }
+
+    /// Whole-document markdown: `nil` unless every block renders (via
+    /// `editorBlock`) AND the assembled markdown re-parses
+    /// (`parseEditorBlocks`) back to an equivalent document. A thin projection
+    /// of `renderedEditorDocument` — see that function for the escalation
+    /// loop and boundedness argument, which live there now.
+    static func projectedMarkdown(_ document: ProjectedDocument) -> String? {
+        renderedEditorDocument(document)?.markdown
     }
 
     /// Re-parses `markdown` and compares it, block by block, against the
