@@ -34,6 +34,54 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         BlockNoteBlock(node: "paragraph", props: baseProps, runs: text.isEmpty ? [] : [InlineRun(text)], id: id)
     }
 
+    /// A paragraph with the base props carrying an arbitrary run list (for the
+    /// store-level span-replace property test).
+    private func paragraph(_ runs: [InlineRun], id: String) -> BlockNoteBlock {
+        BlockNoteBlock(node: "paragraph", props: baseProps, runs: runs, id: id)
+    }
+
+    /// A deterministic PRNG (xorshift64*) so the property test is fully
+    /// reproducible — never `Date`/`SystemRandomNumberGenerator`. Mirrors the one
+    /// in `TextSpanDiffTests` so the two exercise the *same* input corpus (there at
+    /// the pure-diff level, here through the real store). A failure is reproducible
+    /// from the printed seed alone.
+    private struct SeededGenerator: RandomNumberGenerator {
+        private var state: UInt64
+        init(seed: UInt64) { state = seed == 0 ? 0x9E37_79B9_7F4A_7C15 : seed }
+        mutating func next() -> UInt64 {
+            state ^= state >> 12
+            state ^= state << 25
+            state ^= state >> 27
+            return state &* 2_685_821_657_736_338_717
+        }
+    }
+
+    /// A small alphabet (plain ASCII plus a 2-UTF-16-unit emoji) and mark sets
+    /// (booleans plus two distinct link hrefs, so format-crossing deletes and the
+    /// "same key, different valueJSON" transition are exercised). Mirrors
+    /// `TextSpanDiffTests`.
+    private static let alphabet = ["a", "b", "c", " ", "😀", "x"]
+    private static let markSets: [[(key: String, valueJSON: String)]] = [
+        [],
+        [("bold", "{}")],
+        [("italic", "{}")],
+        [("bold", "{}"), ("italic", "{}")],
+        [("link", "{\"href\":\"a\"}")],
+        [("link", "{\"href\":\"b\"}")],
+    ]
+
+    private func randomRuns(_ rng: inout SeededGenerator) -> [InlineRun] {
+        let runCount = Int.random(in: 1...3, using: &rng)
+        var runs: [InlineRun] = []
+        for _ in 0..<runCount {
+            let length = Int.random(in: 0...5, using: &rng)
+            var text = ""
+            for _ in 0..<length { text += Self.alphabet.randomElement(using: &rng)! }
+            runs.append(InlineRun(text, marks: Self.markSets.randomElement(using: &rng)!))
+        }
+        return runs
+    }
+
     /// Project `doc` and compare to expected blocks (node/id/runs). Props are
     /// intentionally not compared here — the projection sorts them, and the
     /// prop-specific tests assert the exact value they care about.
@@ -114,6 +162,11 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         _ = try BlockNoteWrite.applyEdit(old: [a], new: [h], to: doc)
         assertProjects(doc, to: [h])
         // The kind change is projected fully modeled — heading level 1, not toggleable.
+        // `assertProjects` skips props, so pin the rebuilt element's prop *values*
+        // explicitly (mirrors `testTogglingAChecklistProp`).
+        let headingProps = YBlockProjection.project(doc).blocks.first?.props
+        XCTAssertEqual(headingProps?.first { $0.key == "level" }?.value, .int(1))
+        XCTAssertEqual(headingProps?.first { $0.key == "isToggleable" }?.value, .bool(false))
         XCTAssertEqual(YBlockProjection.project(doc).blocks.first?.fidelity, .modeled)
         doc.destroy()
     }
@@ -346,5 +399,47 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         _ = try BlockNoteWrite.applyEdit(old: [old], new: [new], to: doc)
         assertProjects(doc, to: [new])
         doc.destroy()
+    }
+
+    // MARK: - Store-level span-replace property test
+
+    /// The committed, CI-visible randomized coverage for B6's within-block text
+    /// edit **through the real store**. `TextSpanDiffTests` exercises the same
+    /// (old, new) run corpus against the *pure* `TextSpanDiff.diff` via an
+    /// in-memory applier; this drives it through the genuine `YDoc` +
+    /// `BlockNoteWrite.applyEdit` path (`YWrite.delete` + a self-describing
+    /// `YWrite.insert`, incl. deleting interior `ContentFormat` items on a
+    /// format-crossing delete) and asserts the *projected* document matches.
+    ///
+    /// For each seed: build a paragraph for `oldRuns` and one for `newRuns` under
+    /// the **same** block id, seed a replica from the old block, apply the edit,
+    /// and assert the projected paragraph's runs equal `newRuns` **as
+    /// `MarkedText`** — normalization-invariant, since the projection may coalesce
+    /// runs differently than the input while flattening to the same per-unit
+    /// (char, marks) view. The mark alphabet includes bold/italic/link-href, and
+    /// random edit positions land inside and across formatted spans, so
+    /// format-crossing interior-`ContentFormat` deletes are exercised.
+    func testSpanReplaceThroughRealStoreReproducesNewRunsAcrossRandomizedRuns() throws {
+        let id = "55555555-5555-4555-8555-555555555555"
+        for seed: UInt64 in 1...500 {
+            var rng = SeededGenerator(seed: seed)
+            let oldRuns = randomRuns(&rng)
+            let newRuns = randomRuns(&rng)
+            let paraOld = paragraph(oldRuns, id: id)
+            let paraNew = paragraph(newRuns, id: id)
+
+            let doc = YDoc(clientID: 99)
+            defer { doc.destroy() }
+            _ = try BlockNoteWrite.applyEdit(old: [], new: [paraOld], to: doc)
+            _ = try BlockNoteWrite.applyEdit(old: [paraOld], new: [paraNew], to: doc)
+
+            let projected = YBlockProjection.project(doc).blocks
+            XCTAssertEqual(projected.count, 1, "seed \(seed): expected exactly one projected block")
+            let projectedRuns = projected.first?.runs ?? []
+            XCTAssertEqual(
+                TextSpanDiff.marked(projectedRuns), TextSpanDiff.marked(newRuns),
+                "seed \(seed): store span-replace did not reproduce new runs "
+                    + "(projected \(projectedRuns) vs new \(newRuns))")
+        }
     }
 }

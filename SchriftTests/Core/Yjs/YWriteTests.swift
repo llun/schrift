@@ -130,6 +130,26 @@ final class YWriteTests: XCTestCase {
         XCTAssertEqual(root.length, 0)
     }
 
+    func testDeleteBeyondLengthThrows() throws {
+        let doc = YDoc(clientID: 7)
+        defer { doc.destroy() }
+        let root = doc.get("t")
+        try doc.transact { tx in try YWrite.insert(tx, into: root, at: 0, [.string(Array("abcdef".utf16))]) }
+        do {
+            // Delete starting at the very end for more units than remain — the range
+            // runs past the child list, which yjs (`typeListDelete` @5573) rejects.
+            try doc.transact { tx in try YWrite.delete(tx, from: root, at: 6, length: 5) }
+            XCTFail("expected a delete past the end to throw")
+        } catch let error as YIntegrationError {
+            XCTAssertEqual(error, .unexpectedCase)
+        }
+        // The guard fires before anything is deleted on this input, so the type is
+        // untouched (the find-start walk consumes the index exactly, the delete pass
+        // finds no item to remove, and the leftover length trips the throw).
+        XCTAssertEqual(text(of: root), "abcdef")
+        XCTAssertEqual(root.length, 6)
+    }
+
     func testDeleteZeroLengthIsNoOp() throws {
         let doc = YDoc(clientID: 7)
         defer { doc.destroy() }
