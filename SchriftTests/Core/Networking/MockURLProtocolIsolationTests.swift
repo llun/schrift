@@ -79,4 +79,54 @@ final class MockURLProtocolIsolationTests: XCTestCase {
             log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1,
             "retiring session tokens at reset() must not break a live session's normal request path")
     }
+
+    /// The epoch isolation the whole fix rests on: a session made *after* `reset()`
+    /// is live, while the earlier retired session stays rejected. A token retired at
+    /// `reset()` is never reissued (tokens are UUIDs), so the earlier session's
+    /// leaked request can't be revived by a later session sharing its identity.
+    func testASessionMadeAfterResetIsLiveWhileTheEarlierRetiredSessionStaysRejected() async {
+        let earlierSession = MockURLProtocol.makeSession()
+        MockURLProtocol.reset()  // retires the earlier session's token.
+        let laterSession = MockURLProtocol.makeSession()
+
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        // The earlier (retired) session's leaked request stays rejected...
+        _ = try? await earlierSession.data(for: patchContentRequest())
+        XCTAssertEqual(
+            log.count(ofMethod: "PATCH", urlContaining: "/content/"), 0,
+            "a session retired at reset() must stay rejected even after a new session is made")
+
+        // ...while the later session's own request records normally.
+        _ = try? await laterSession.data(for: patchContentRequest())
+        XCTAssertEqual(
+            log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1,
+            "a session made after reset() is live and records")
+    }
+
+    /// A session built directly — not via `makeSession()` — carries no token, so
+    /// `startLoading` must leave it alone rather than reject it. Nothing in the suite
+    /// builds such a session today; this locks the "no token ⇒ untouched" contract so
+    /// a future hardening of the rejection can't silently start dropping it.
+    func testAnUntaggedSessionsRequestRecordsNormally() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let untaggedSession = URLSession(configuration: configuration)
+
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+
+        _ = try? await untaggedSession.data(for: patchContentRequest())
+
+        XCTAssertEqual(
+            log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1,
+            "a session with no token (not from makeSession) must be left alone, not rejected")
+    }
 }

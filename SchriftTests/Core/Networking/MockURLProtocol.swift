@@ -67,7 +67,6 @@ final class MockURLProtocol: URLProtocol {
     /// `reset()` retires, and `startLoading` fails a retired-token request *before*
     /// it reads `stubHandler` — the session stays valid, so nothing ever traps.
     private static let sessionTokenHeader = "X-MockURLProtocol-Session"
-    nonisolated(unsafe) private static var sessionTokenCounter = 0
     nonisolated(unsafe) private static var liveSessionTokens: Set<String> = []
 
     /// Written from `stopLoading()` on URLSession's loading thread, read from the
@@ -182,11 +181,12 @@ final class MockURLProtocol: URLProtocol {
         configuration.protocolClasses = [MockURLProtocol.self]
         // Tag every request from this session with a token `reset()` can retire, so a
         // leaked task's request is rejected at `startLoading` rather than recording
-        // into a later test's log. A monotonic counter keeps tokens unique for the
-        // life of the process, so a retired token is never reissued as live.
+        // into a later test's log. A UUID keeps the token unique for the life of the
+        // process, so a token retired at `reset()` is never reissued to a later
+        // session — the "never reissued" property is structural, with no shared
+        // counter that a future `reset()` could accidentally roll back.
+        let token = UUID().uuidString
         lock.lock()
-        sessionTokenCounter += 1
-        let token = String(sessionTokenCounter)
         liveSessionTokens.insert(token)
         lock.unlock()
         configuration.httpAdditionalHeaders = [sessionTokenHeader: token]
