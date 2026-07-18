@@ -33,17 +33,20 @@ final class LiveEditingBridge {
     private let collaboration: LiveReplicaProviding
     private let serverOrigin: String?
 
-    /// BlockNote id -> `EditorBlock.id`. Rebuilt from scratch whenever the
-    /// bridge (re)engages after a pause (see `reseedMap` below) — a paused
-    /// interval may have let the editor's own blocks diverge from what this
-    /// map remembers (a local edit, a save, a discard), so trusting a stale
-    /// map across a pause risks misattributing a projected block to the wrong
-    /// on-screen block.
+    /// BlockNote id -> `EditorBlock.id`. Rebuilt (via `reseedMap`) whenever it
+    /// no longer covers the editor's current blocks — checked fresh on every
+    /// `replicaDidChange()` by comparing `map`'s value set against
+    /// `viewModel.blocks`' id set, rather than tracked with a separate "is this
+    /// stale" flag. In steady state after an engaged apply the two sets are
+    /// equal (`applyLiveRemoteChange` leaves `blocks` holding exactly the ids
+    /// `liveChangeSet` resolved into `map`), so the check is a no-op; it fires
+    /// on first engage (`map` is empty), on resume after a pause during which a
+    /// structural edit landed, and — the case a boolean `isSeeded` flag
+    /// couldn't catch — when a pause-free `install(...)` (a pull-to-refresh or
+    /// server-wins reconcile) re-mints every `EditorBlock.id` while the doc
+    /// stays clean, since that never flips `canEngageLiveEditing` false and so
+    /// never reset a "seeded" flag either.
     private var map: [String: UUID] = [:]
-    /// True once `map` has been seeded for the current engagement. Reset to
-    /// `false` whenever `canEngageLiveEditing` goes false, which forces a
-    /// fresh seed the next time it becomes true again.
-    private var isSeeded = false
 
     /// Whether the last `replicaDidChange()` call found a usable projection
     /// and (if engagement allowed it) is actively driving the editor. Exposed
@@ -85,16 +88,15 @@ final class LiveEditingBridge {
     func replicaDidChange() {
         // The user's own local work always wins — a live apply must never
         // race or clobber it (see `canEngageLiveEditing`'s doc comment for the
-        // exhaustive list of what "local work" covers). On pause, forget the
-        // map entirely: whatever happens while paused (a local edit, a save,
-        // a conflict) may leave the editor's blocks no longer matching what
-        // the map remembers, so the next engage must reseed from scratch
-        // rather than risk misattributing a projected block to the wrong
-        // on-screen block. The editor itself is left untouched — dropping
-        // engagement is not the same as clearing content.
+        // exhaustive list of what "local work" covers). On pause the map is
+        // left as-is: whatever happens while paused (a local edit, a save, a
+        // conflict) may leave the editor's blocks no longer matching what the
+        // map remembers, but the staleness check below re-evaluates that fresh
+        // on the next engage rather than needing a flag reset here. The editor
+        // itself is left untouched — dropping engagement is not the same as
+        // clearing content.
         guard viewModel.canEngageLiveEditing else {
             isEngaged = false
-            isSeeded = false
             return
         }
 
@@ -108,9 +110,17 @@ final class LiveEditingBridge {
 
         isEngaged = true
 
-        if !isSeeded {
+        // Re-seed when the identity map no longer matches the editor's current
+        // blocks — e.g. `install(...)` (a pull-to-refresh / server-wins
+        // reconcile) re-minted every `EditorBlock.id` underneath us while the
+        // doc stayed clean, so the carried-forward map is keyed to dead ids. In
+        // steady state after an engaged apply the two sets are equal, so this
+        // is a no-op; it fires exactly when the editor's block identities were
+        // replaced out from under the map. This subsumes first-engage (empty
+        // map) and pause -> resume-after-edit, which is why there is no
+        // separate "seeded" flag to track.
+        if Set(viewModel.blocks.map(\.id)) != Set(map.values) {
             reseedMap(against: rendered)
-            isSeeded = true
         }
 
         let (change, newMap) = liveChangeSet(current: viewModel.blocks, projected: rendered, map: map)
