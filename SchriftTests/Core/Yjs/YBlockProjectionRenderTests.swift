@@ -194,4 +194,17 @@ final class YBlockProjectionRenderTests: XCTestCase {
 
         XCTAssertNil(YBlockProjection.projectedMarkdown(document))
     }
+
+    // MARK: - Test 6: `editorBlock` itself short-circuits on opaque fidelity
+
+    // A deferred Minor from Task 4: `editorBlock`'s opaque check was previously
+    // covered only transitively (every opaque case above goes through
+    // `projectedMarkdown`, which checks `document.isFullyRenderable` before
+    // ever calling `editorBlock`). This exercises the function directly.
+    func testEditorBlockReturnsNilForOpaqueFidelity() {
+        let block = ProjectedBlock(
+            id: "x", node: "paragraph", props: [], runs: [InlineRun("hi")], fidelity: .opaque(reason: "nope"))
+        XCTAssertNil(YBlockProjection.editorBlock(block, escapeAll: false))
+        XCTAssertNil(YBlockProjection.editorBlock(block, escapeAll: true))
+    }
 }

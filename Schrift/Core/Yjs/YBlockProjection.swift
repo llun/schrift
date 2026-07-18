@@ -11,6 +11,20 @@ import Foundation
 /// (`.lossy`), or cannot be represented as markdown at all (`.opaque`).
 /// Anything unexpected in the replica projects `.opaque`; nothing here throws
 /// or traps.
+///
+/// **The web editor's `interlinkingLinkInline` custom node** (a document link
+/// authored in the web client — `y-provider`'s `InterlinkingLinkInline.ts`) is
+/// a `content: 'none'` inline leaf: y-prosemirror represents it as its own
+/// `Y.XmlElement` sibling in the *same* children list as the surrounding
+/// `Y.XmlText` runs inside a content element — never nested inside one
+/// `xmlText`'s item list — confirmed against a captured oracle fixture. Its
+/// href is never stored on the wire (the web client computes it at export
+/// time as `${instanceOrigin}/docs/${docId}/`), so projecting it into a real
+/// link run needs the server origin the app itself is talking to. `project`
+/// therefore takes an optional `interlinkingOrigin`: when it's `nil` — the
+/// default, so every existing caller is unaffected — or the node is
+/// disabled/carries no usable `docId`, the containing block is `.opaque`
+/// rather than guessing at or dropping the link.
 
 /// A single projected block property: a key and a typed value decoded from the
 /// Yjs replica. Properties are sorted by key for determinism in the projected
@@ -122,7 +136,13 @@ extension YBlockProjection {
     /// applied it), never a trusted invariant, so any shape that isn't the
     /// canonical one downgrades to `.opaque`/non-renderable output instead of
     /// throwing.
-    static func project(_ doc: YDoc) -> ProjectedDocument {
+    ///
+    /// `interlinkingOrigin` is the server origin (e.g.
+    /// `"https://docs.example.test"`) needed to build a faithful href for an
+    /// `interlinkingLinkInline` node — see the file overview. `nil` (the
+    /// default) makes every such node opaque rather than affecting any other
+    /// block, so existing callers are unchanged.
+    static func project(_ doc: YDoc, interlinkingOrigin: String? = nil) -> ProjectedDocument {
         guard let root = doc.share[BlockNoteYjs.fragmentField] else {
             return ProjectedDocument(blocks: [], isFullyRenderable: true, isFullyModeled: true)  // empty replica
         }
@@ -138,7 +158,7 @@ extension YBlockProjection {
         }
         var blocks: [ProjectedBlock] = []
         for containerItem in children(of: group, includeFormats: false) {
-            blocks.append(projectContainer(containerItem))
+            blocks.append(projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin))
         }
         let renderable = blocks.allSatisfy { !$0.fidelity.isOpaque }
         let modeled = renderable && blocks.allSatisfy { $0.fidelity == .modeled }
@@ -150,7 +170,7 @@ extension YBlockProjection {
     /// Builds one projected block from a `blockGroup` child item. Every branch
     /// either returns a fully classified block or an `.opaque` one recording
     /// why — never a trap or a thrown error.
-    private static func projectContainer(_ containerItem: YItem) -> ProjectedBlock {
+    private static func projectContainer(_ containerItem: YItem, interlinkingOrigin: String?) -> ProjectedBlock {
         guard case .type(let containerType) = containerItem.content,
             containerType.typeRef == .xmlElement(nodeName: "blockContainer")
         else {
@@ -183,7 +203,7 @@ extension YBlockProjection {
         if let propsFailure {
             return ProjectedBlock(id: id, node: node, props: [], runs: [], fidelity: .opaque(reason: propsFailure))
         }
-        let (rawRuns, runsFailure) = foldInline(element)
+        let (rawRuns, runsFailure) = foldInline(element, interlinkingOrigin: interlinkingOrigin)
         if let runsFailure {
             return ProjectedBlock(id: id, node: node, props: props, runs: [], fidelity: .opaque(reason: runsFailure))
         }
@@ -238,39 +258,122 @@ extension YBlockProjection {
         return (props.sorted { $0.key < $1.key }, nil)
     }
 
+    /// The `interlinkingLinkInline` node name — see the file overview.
+    private static let interlinkingLinkNodeName = "interlinkingLinkInline"
+
     /// Folds a content element's inline children into `InlineRun`s. Each child
-    /// must be an `xmlText`; walking each one's items replays
-    /// `BlockNoteYjs.emitInline`'s delta encoding in reverse — a `"null"`
+    /// is either an `xmlText` — walking its items replays
+    /// `BlockNoteYjs.emitInline`'s delta encoding in reverse: a `"null"`
     /// format closes a mark, any other format value replaces the open entry
     /// for that key (appended at the end, the deterministic order), and a
-    /// string is appended to the run under the currently open marks. Marks
-    /// never carry across sibling `xmlText` children, matching the encoder,
-    /// which always starts a fresh block's text with no open marks.
+    /// string is appended to the run under the currently open marks — or an
+    /// `interlinkingLinkInline` element, folded into a single link run by
+    /// `projectInterlinkingLink`. Marks never carry across sibling `xmlText`
+    /// children (matching the encoder, which always starts a fresh block's
+    /// text with no open marks) or across an interlinking node in between.
     ///
-    /// A non-text element child is opaque `"non-text inline content"` for now
-    /// — a later task adds the `interlinkingLinkInline` inline node.
-    private static func foldInline(_ element: YType) -> (runs: [InlineRun], failureReason: String?) {
+    /// Any other child shape is opaque `"non-text inline content"`.
+    private static func foldInline(
+        _ element: YType, interlinkingOrigin: String?
+    ) -> (runs: [InlineRun], failureReason: String?) {
         var runs: [InlineRun] = []
         for child in children(of: element, includeFormats: false) {
-            guard case .type(let textType) = child.content, textType.typeRef == .xmlText else {
+            guard case .type(let childType) = child.content else {
                 return ([], "non-text inline content")
             }
-            var openMarks: [(key: String, valueJSON: String)] = []
-            for item in children(of: textType, includeFormats: true) {
-                switch item.content {
-                case .string(let units):
-                    appendRun(text: String(decoding: units, as: UTF16.self), marks: openMarks, to: &runs)
-                case .format(let key, let valueJSON):
-                    openMarks.removeAll { $0.key == key }
-                    if valueJSON != "null" {
-                        openMarks.append((key: key, valueJSON: valueJSON))
+            if childType.typeRef == .xmlText {
+                var openMarks: [(key: String, valueJSON: String)] = []
+                for item in children(of: childType, includeFormats: true) {
+                    switch item.content {
+                    case .string(let units):
+                        appendRun(text: String(decoding: units, as: UTF16.self), marks: openMarks, to: &runs)
+                    case .format(let key, let valueJSON):
+                        openMarks.removeAll { $0.key == key }
+                        if valueJSON != "null" {
+                            openMarks.append((key: key, valueJSON: valueJSON))
+                        }
+                    default:
+                        return ([], "unexpected text content")
                     }
-                default:
-                    return ([], "unexpected text content")
                 }
+            } else if childType.typeRef == .xmlElement(nodeName: interlinkingLinkNodeName) {
+                guard let (text, href) = projectInterlinkingLink(childType, interlinkingOrigin: interlinkingOrigin)
+                else {
+                    return ([], "interlinkingLink")
+                }
+                appendRun(text: text, marks: [(key: "link", valueJSON: linkValueJSON(href))], to: &runs)
+            } else {
+                return ([], "non-text inline content")
             }
         }
         return (runs, nil)
+    }
+
+    /// Projects an `interlinkingLinkInline` node (the web editor's custom
+    /// document-link node) into `(label, href)`, or `nil` when it can't be
+    /// faithfully rendered as a markdown link — never a lossy guess. The href
+    /// is never stored on the wire; the web client computes it at export time
+    /// as `${instanceOrigin}/docs/${docId}/`, so this needs the caller-supplied
+    /// server origin to reproduce it.
+    ///
+    /// `nil` when: `interlinkingOrigin` is nil (no origin to build a parity
+    /// URL from); the node is `disabled`; `docId` is missing, empty, or not a
+    /// string; or `docId` contains a character `encodeURIComponent` would
+    /// escape — this app's `DocumentLink` compares the raw `/docs/<id>/` path
+    /// byte-for-byte and never unescapes it, so a docId needing escaping has
+    /// no faithful raw-path spelling here.
+    ///
+    /// Reads `docId`/`title`/`disabled` from the type's map the same way
+    /// `readProps` does: every attribute `Y.XmlElement.setAttribute` writes is
+    /// a single-value `.any` map entry.
+    private static func projectInterlinkingLink(
+        _ type: YType, interlinkingOrigin: String?
+    ) -> (text: String, href: String)? {
+        guard let interlinkingOrigin else { return nil }
+        func attr(_ key: String) -> YAnyValue? {
+            guard let item = type.map[key], !item.deleted,
+                case .any(let values) = item.content, values.count == 1
+            else { return nil }
+            return values[0]
+        }
+        if case .bool(true)? = attr("disabled") { return nil }
+        guard case .string(let docID)? = attr("docId"), isSimpleDocID(docID) else { return nil }
+        let origin = trimmingTrailingSlashes(interlinkingOrigin)
+        let href = "\(origin)/docs/\(docID)/"
+        if case .string(let title)? = attr("title"), !title.isEmpty {
+            return (title, href)
+        }
+        return (docID, href)
+    }
+
+    /// Trims trailing `/`s from a caller-supplied origin so the built href
+    /// never double-slashes (`"https://x/"` + `"/docs/…"` → `"https://x//docs/…"`).
+    private static func trimmingTrailingSlashes(_ origin: String) -> String {
+        var result = Substring(origin)
+        while result.hasSuffix("/") { result.removeLast() }
+        return String(result)
+    }
+
+    /// True for a non-empty id built only from characters `encodeURIComponent`
+    /// never escapes (a real docId is a lowercase UUID, well inside this set).
+    /// Anything else can't be embedded in a href this app's `DocumentLink`
+    /// compares as a raw, unescaped path segment.
+    private static func isSimpleDocID(_ docID: String) -> Bool {
+        !docID.isEmpty
+            && docID.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == ".") }
+    }
+
+    /// BlockNote stores a link mark's destination as `{"href": …}`. Mirrors
+    /// `InlineMarkdown`'s private `linkValueJSON(_:)` exactly — built with
+    /// `JSONSerialization` and `.withoutEscapingSlashes`, never string
+    /// interpolation (the href is derived from peer-controlled replica data) —
+    /// so a projected interlinking link carries the identical wire-shaped
+    /// value a `[text](url)` link mark would, and downstream code (mark
+    /// scrubbing, `linkHref(from:)`, the markdown writer) sees no difference
+    /// between the two origins of a link run.
+    private static func linkValueJSON(_ href: String) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: ["href": href], options: [.withoutEscapingSlashes])
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{\"href\":\"\"}"
     }
 
     /// Appends visible text to `runs`, coalescing with the last run when marks
