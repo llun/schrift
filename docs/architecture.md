@@ -49,7 +49,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative editing (live cursors, multi-user simultaneous edit) — no Hocuspocus WebSocket / live-sync client. (The app *does* build Yjs CRDT updates on-device — a hand-written encoder in `Core/Yjs` — but only to save content via a single HTTP PATCH; there is no persistent collaborative connection. See "Editing & save mechanism".)
+- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is not built yet (Milestone C2). The app now **reads** live: behind the default-off `schrift.liveCollaboration` flag it joins the Hocuspocus room, integrates inbound Yjs updates into a hand-written replica, and reflects them in the open editor caret-preservingly (Milestones A + B + C1). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)". Outbound edits still save via a single full-overwrite HTTP PATCH; nothing the app types is broadcast yet.
 - Offline editing/sync queue. (Offline *reading* of previously-opened documents
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
@@ -84,7 +84,7 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 ├── Core/
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
 │   ├── Auth/             — SessionStore (Keychain-backed session-cookie + server URL persistence, re-auth flag), SessionCookies (Codable HTTPCookie snapshot), WebLogin free functions (login-URL/completion detection, cookie sync), KeychainStore
-│   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence), dormant behind the default-off `schrift.liveCollaboration` flag
+│   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence, and — C1 — a manager-owned per-document Yjs replica fed by inbound updates + the `LiveEditingBridge` that reflects it into the editor), dormant behind the default-off `schrift.liveCollaboration` flag
 │   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration, the B3 store encoder `YStateEncoder`, and the B5 replica→editor projection `YBlockProjection`/`InlineMarkdownWriter`) — see "The Yjs CRDT core"
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
@@ -182,6 +182,50 @@ exact round-trip over the app's whole golden markdown corpus
 and oracle fixtures captured from real yjs for the shapes the app can't author —
 incrementally-typed split strings, concurrent two-client formatting, gc'd documents,
 `mergeUpdates` output (Skip structs), nested lists.
+
+### Live editing: applying remote updates (C1)
+
+B5's projection is the read side; **C1 wires it into the open editor caret-preservingly.**
+The pieces live across `Core/Collaboration` and `Features/Editor`:
+
+- **The manager owns one replica per document.** `DocumentCollaborationManager` already
+  owns per-document collaboration state (ref-counted sessions, a monotonic
+  `remoteChangeToken`); C1 adds a per-document `YDoc` replica beside it. The session now
+  delivers inbound sync update bytes through an `onSyncUpdate` callback (previously it
+  discarded them and only signalled); the manager decodes and `applyUpdate`s them, bumps a
+  monotonic `replicaVersion(for:)`, and exposes `projectedReplica(for:interlinkingOrigin:)`.
+  It is the **single owner that touches the `YDoc`** — the editor receives only value-type
+  projections — and it calls `YDoc.destroy()` when the entry is torn down. A decode/apply
+  throw latches a per-document **`failSafe`**: the replica is destroyed and the document
+  reverts to signal-only (the `remoteChangeToken` fallback still fires — a corrupt replica
+  never drives the editor). `projectedReplica` returns nil until the first update is applied
+  and while `pendingStructs` are outstanding.
+- **`LiveEditingBridge`** (`@MainActor`, one per editor) owns the BlockNote-id ⇄
+  `EditorBlock.id` identity map. On each `replicaVersion` change the view calls
+  `replicaDidChange()`, which — only when the editor is engageable — resolves the replica to
+  `(rendered blocks, markdown)` via `YBlockProjection.renderedEditorDocument` (the escalated
+  rendering `projectedMarkdown` settled on, so the applied blocks and the baseline are
+  consistent by construction), diffs it against the current blocks by BlockNote id
+  (`liveChangeSet`), and applies the change through the editor's surgical funnel. Surviving
+  blocks keep their `EditorBlock.id`, so SwiftUI identity, focus, and scroll survive.
+- **`EditorViewModel.applyLiveRemoteChange` is the one content-swap funnel that is NOT
+  `install(...)`.** `install` re-mints every block id and nulls the caret (correct for a
+  full server-wins swap); the live funnel instead mutates blocks in place, recomputes the
+  focused block's caret with the pure UTF-16 `transformedCaret` rule, and advances the dirty
+  baseline (`savedMarkdown`/`serverBaseline`) to the projected content — so a later
+  tap-to-edit never false-dirties. It **never** enqueues a save, never sets `isDirty`, and
+  never calls `install`.
+- **Engagement is clean-session-only.** `canEngageLiveEditing` is true only while the editor
+  is loaded, not dirty, not discarded/unavailable, and the coordinator reports no pending
+  save, no stored draft, no recorded conflict, and an idle/saved state. On the first
+  keystroke the bridge pauses and the existing A5 signal → refetch → #76 detect-and-ask
+  machinery resumes unchanged. While the bridge is applying live content, the A5 REST
+  refetch is **suppressed** (`isApplyingLiveContent`, evaluated fresh from the same
+  engagement condition the apply uses) — the stream is newer than the 60 s REST snapshot, so
+  installing a stale REST body would reset the caret and regress content.
+- **Read-only in C1.** Nothing is encoded, broadcast, or PATCHed; inbound `.step1` (a peer
+  requesting our state) is ignored. The two-way write path — outbound sync, local-edit
+  transactions, `enqueueLiveSnapshot`, the live-entry gates on the save path — is **C2**.
 
 ### Two Yjs models, deliberately
 

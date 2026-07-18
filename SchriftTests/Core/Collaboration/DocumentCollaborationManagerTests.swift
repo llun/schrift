@@ -223,6 +223,103 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertEqual(manager.remoteChangeToken(for: docID), 0)
     }
 
+    // MARK: - per-document replica (C1: apply, version, projection)
+
+    /// A `.sync`/`.update` frame wrapping real (or malformed) update bytes — the
+    /// same wire shape `syncFrame()` above uses, but carrying payload the
+    /// session's `onSyncUpdate` actually decodes, so these tests drive
+    /// `applyReplicaUpdate` through the real socket → session → manager path
+    /// rather than calling manager internals directly.
+    private func syncUpdateFrame(data: Data) -> Data {
+        let payload = SyncMessage(step: .update, data: data).encodedPayload()
+        return HocuspocusMessage(documentName: docID.uuidString.lowercased(), type: .sync, payload: payload).encoded()
+    }
+
+    func testAppliesInboundUpdateBumpsReplicaVersionAndProjects() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        XCTAssertEqual(manager.replicaVersion(for: docID), 0)
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
+
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        let projected = try XCTUnwrap(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+        XCTAssertEqual(projected.blocks.map(\.node), ["heading", "paragraph"])
+        XCTAssertEqual(projected.blocks[1].runs, [InlineRun("Body")])
+        XCTAssertTrue(projected.isFullyRenderable)
+        XCTAssertFalse(manager.replicaIsFailSafe(for: docID))
+        session?.stop()
+    }
+
+    func testMalformedUpdateSetsFailSafeStopsProjectingButStillSignals() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        // Truncated mid-varint: 0x00 clients of structs, then a delete-set client
+        // count (1) and client id (2) whose range count (0x99) demands a
+        // continuation byte the buffer never supplies — decode throws.
+        let garbage = Data([0x00, 0x01, 0x02, 0x99])
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: garbage))
+
+        await waitUntil { manager.remoteChangeToken(for: docID) == 1 }
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+
+        // A second, real update after failSafe must NOT resurrect projection.
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
+        await waitUntil { manager.remoteChangeToken(for: docID) == 2 }
+        XCTAssertTrue(manager.replicaIsFailSafe(for: docID))
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+        session?.stop()
+    }
+
+    func testPendingStructsSuppressProjection() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        // `Y.mergeUpdates` output where a dropped middle update leaves a `Skip`
+        // (the only realistic source of Skips, per docs/architecture.md): the
+        // third block's container item has its `origin` inside the gap and can
+        // never integrate, so it stays in `pendingStructs` forever. Copied from
+        // `YBlockProjectionOracleTests.mergedWithDroppedMiddleHex` (Fixture 4;
+        // see that file's header comment for the regeneration script).
+        let mergedWithDroppedMiddleHex =
+            "0112010007010e646f63756d656e742d73746f7265030a626c6f636b47726f757007000100030e626c6f636b436f6e7461696e6572070001010309706172616772617068070001020604000103056669727374280001020f6261636b67726f756e64436f6c6f7201770764656661756c74280001020974657874436f6c6f7201770764656661756c74280001020d74657874416c69676e6d656e740177046c6566742800010102696401772431313131313131312d313131312d343131312d383131312d3131313131313131313131310a1787010d030e626c6f636b436f6e7461696e6572070001240309706172616772617068070001250604000126057468697264280001250f6261636b67726f756e64436f6c6f7201770764656661756c74280001250974657874436f6c6f7201770764656661756c74280001250d74657874416c69676e6d656e740177046c6566742800012402696401772433333333333333332d333333332d343333332d383333332d33333333333333333333333300"
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: Data(hex: mergedWithDroppedMiddleHex)))
+
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertFalse(manager.replicaIsFailSafe(for: docID))
+        XCTAssertNil(
+            manager.projectedReplica(for: docID, interlinkingOrigin: nil), "pendingStructs must suppress projection")
+        session?.stop()
+    }
+
+    func testTeardownDestroysReplicaAndResetsVersion() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+
+        manager.release(docID)
+        await waitUntil { manager.activeDocumentCount == 0 }
+        XCTAssertEqual(manager.replicaVersion(for: docID), 0)
+        XCTAssertFalse(manager.replicaIsFailSafe(for: docID))
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+    }
+
     // MARK: - server-support learning
 
     func testRefreshServerSupportReadsCollaborationWsUrl() async {

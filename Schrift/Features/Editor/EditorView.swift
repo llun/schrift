@@ -138,6 +138,11 @@ struct EditorView: View {
     /// so the request/release stays one-shot and balanced even as availability
     /// flips (a session opened only once, released exactly once).
     @State private var holdsCollaborationSession = false
+    /// C1's live-write coordinator. `nil` until the first collaboration-session
+    /// request, because it needs the `collaboration` manager, which only becomes
+    /// available from `@Environment` once the view has been installed — not in
+    /// `init`. Built once and retained in `@State` alongside the session hold.
+    @State private var liveEditingBridge: LiveEditingBridge?
 
     init(
         viewModel: EditorViewModel,
@@ -286,10 +291,21 @@ struct EditorView: View {
         .onChange(of: collaboration.availability) { _, _ in
             requestCollaborationSessionIfNeeded()
         }
+        // C1: a replica update integrated cleanly — hand it to the bridge, which
+        // diffs the projection against the editor's blocks and applies it in place
+        // (when engagement allows) so live edits land under the user's own cursor.
+        .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
+            liveEditingBridge?.replicaDidChange()
+        }
         // Live refresh: a peer touched the document (a change signal on the socket
-        // bumps this token), so debounce a silent revalidation.
+        // bumps this token), so debounce a silent revalidation. Suppressed while the
+        // bridge is actively applying live content — the stream is already newer than
+        // a REST re-fetch would be, and installing a REST body over it would reset the
+        // caret the bridge just preserved.
         .onChange(of: collaboration.remoteChangeToken(for: viewModel.documentID)) { _, _ in
-            viewModel.noteRemoteChange()
+            if liveEditingBridge?.isApplyingLiveContent != true {
+                viewModel.noteRemoteChange()
+            }
         }
         .onDisappear {
             viewModel.flushPendingChanges()
@@ -512,7 +528,18 @@ struct EditorView: View {
     /// Opens a live-collaboration session once, if we don't already hold one and
     /// live editing is available. A no-op when unavailable (`session(for:)`
     /// returns nil), so it can be retried when availability later flips.
+    ///
+    /// Also builds the C1 bridge on first call — lazily, because it needs the
+    /// `collaboration` manager from `@Environment`, which isn't available in
+    /// `init`. Built regardless of whether a session actually opens this call
+    /// (retrying availability later must not mint a second bridge instance and
+    /// lose the first's identity map / seed state).
     private func requestCollaborationSessionIfNeeded() {
+        if liveEditingBridge == nil {
+            liveEditingBridge = LiveEditingBridge(
+                documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,
+                serverOrigin: "https://\(serverHost)")
+        }
         guard !holdsCollaborationSession else { return }
         if collaboration.session(for: viewModel.documentID) != nil {
             holdsCollaborationSession = true
