@@ -71,7 +71,8 @@ func liveChangeSet(
         resolvedIDs.append(id)
     }
 
-    let currentByID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    // Dedup-tolerant so a (should-never-happen) duplicate block id can't crash the editor's live-apply path.
+    let currentByID = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let currentIDsInOrder = current.map(\.id)
     let projectedIDsSet = Set(resolvedIDs)
     let survivorSet = Set(currentIDsInOrder).intersection(projectedIDsSet)

@@ -267,4 +267,34 @@ final class LiveEditingTests: XCTestCase {
         XCTAssertEqual(applied.map(\.text), ["Gamma", "Alpha", "Beta changed"])
         XCTAssertEqual(result.map, map)
     }
+
+    func testInsertBetweenTwoSurvivingBlocks() {
+        // A new block inserted between two surviving blocks. The insert should land after the first
+        // block, and applying the change set should reproduce the projected sequence with the minted
+        // id.
+        let current = [
+            EditorBlock(id: idA, kind: .paragraph, text: "Alpha"),
+            EditorBlock(id: idC, kind: .paragraph, text: "Gamma"),
+        ]
+        let map = ["n1": idA, "n3": idC]
+        let mintedID = UUID(uuidString: "00000001-0000-0000-0000-000000000000")!
+        let projected = [
+            ProjectedEditorBlock(blockNoteID: "n1", kind: .paragraph, text: "Alpha"),
+            ProjectedEditorBlock(blockNoteID: "n2", kind: .paragraph, text: "Beta"),
+            ProjectedEditorBlock(blockNoteID: "n3", kind: .paragraph, text: "Gamma"),
+        ]
+
+        let result = liveChangeSet(
+            current: current, projected: projected, map: map, mintID: counterMintID(startingAt: 1))
+
+        XCTAssertEqual(
+            result.change.changes,
+            [.insert(id: mintedID, kind: .paragraph, text: "Beta", afterID: idA)])
+        XCTAssertEqual(result.map, ["n1": idA, "n2": mintedID, "n3": idC])
+
+        let applied = apply(result.change.changes, to: current)
+        XCTAssertEqual(applied.map(\.id), [idA, mintedID, idC])
+        XCTAssertEqual(applied.map(\.kind), [.paragraph, .paragraph, .paragraph])
+        XCTAssertEqual(applied.map(\.text), ["Alpha", "Beta", "Gamma"])
+    }
 }
