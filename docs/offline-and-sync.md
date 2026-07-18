@@ -102,8 +102,18 @@ wording gated on an actual local copy existing.
   "Start writing" button stays hidden offline (`EditorView.swift:215–221`).
   Offline is read-only; this feature adds offline *reading* of cached content,
   never a path that produces edits which cannot save.
-- No real-time collaboration, live cursors, or automatic multi-user merge. Saves
-  remain full-overwrite / last-write-wins, exactly as today.
+- No real-time collaborative *writing* or live cursors, and saves remain
+  full-overwrite / last-write-wins. **Live *reading* now exists** behind the
+  default-off `schrift.liveCollaboration` flag (Milestone C1): when the editor is
+  clean and joined to the Hocuspocus room, inbound Yjs updates are applied to the
+  open editor caret-preservingly by the `LiveEditingBridge` (see
+  `docs/architecture.md`). It composes with the machinery here rather than replacing
+  it: while the bridge is applying live content the A5 remote-change refetch is
+  **suppressed** (`isApplyingLiveContent`) — the live stream is newer than the 60 s
+  REST snapshot, so installing a stale `formatted-content` body would reset the caret
+  and regress content. On the first keystroke the bridge pauses and the detect-and-ask
+  conflict flow below resumes unchanged; a document with a recorded conflict,
+  `.pendingSync` state, stored draft, or pending save never enters live-apply.
 - Revalidation runs **on open and on explicit pull-to-refresh only** — no
   periodic or background-timer revalidation.
 - No caching of the subpage list (deferred; see "Subpages" below).

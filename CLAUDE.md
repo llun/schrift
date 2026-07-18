@@ -259,8 +259,12 @@ Schrift/
 │   │                    app-scoped DocumentCollaborationManager (keyed sessions,
 │   │                    refcount/linger, scenePhase suspend/resume, reconnect on
 │   │                    the ConnectivityMonitor edge) wired in RootView, dormant
-│   │                    behind the default-off flag; CRDT sync + presence UI land
-│   │                    in later PRs
+│   │                    behind the default-off flag. C1 makes the session deliver
+│   │                    inbound update bytes (onSyncUpdate), gives the manager a
+│   │                    per-document YDoc replica (applyUpdate → replicaVersion +
+│   │                    projectedReplica, failSafe, destroy on teardown), and adds
+│   │                    the caret-preserving LiveEditingBridge (read-side live
+│   │                    apply; the write path is C2)
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
@@ -1022,7 +1026,19 @@ markdown write endpoint**. Understand this before touching the save path:
   otherwise autosave would overwrite the whole server document with an empty
   draft), and every path that puts content on screen must route through
   `EditorViewModel.install(...)` so the markdown round-trip safety check and
-  the dirty baseline are never bypassed.
+  the dirty baseline are never bypassed. **The one sanctioned exception is
+  `applyLiveRemoteChange` (C1)** — the caret-preserving live-apply funnel. Unlike
+  `install`, which re-mints every block id and nulls the caret (a full server-wins
+  swap), it mutates `blocks` in place reusing surviving `EditorBlock.id`s,
+  recomputes the focused caret via the pure UTF-16 `transformedCaret`, and advances
+  the dirty baseline to the projected content. It **never** calls `install`, never
+  `enqueue`s a save, and never sets `isDirty`; it only runs while
+  `canEngageLiveEditing` (loaded, clean, no pending save/draft/conflict, idle/saved)
+  and hands back to the classic A5 + #76 machinery on the first keystroke. While it
+  is applying, the A5 REST refetch is suppressed (`isApplyingLiveContent`) so a stale
+  60 s REST snapshot can't `install` over live content and reset the caret. It is
+  **read-only** — the outbound write path is C2. See `docs/architecture.md`
+  ("Live editing (C1)").
 - Saves go through **`DocumentSaveCoordinator`** (app-scoped; owns its `Task`s so
   navigating away never cancels a save; write-ahead draft to `PendingDraftStore`;
   per-document latest-wins coalescing; background-task assertion; draft replay).
