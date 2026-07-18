@@ -55,9 +55,7 @@ final class LiveEditingBridge {
     /// the A5 fallback refetch on this so a stale REST body can't install over (and
     /// reset the caret of) content the bridge is keeping live.
     var isApplyingLiveContent: Bool {
-        viewModel.canEngageLiveEditing
-            && collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)?.isFullyRenderable
-                == true
+        viewModel.canEngageLiveEditing && resolvedLiveDocument() != nil
     }
 
     init(documentID: UUID, viewModel: EditorViewModel, collaboration: LiveReplicaProviding, serverOrigin: String?) {
@@ -65,6 +63,19 @@ final class LiveEditingBridge {
         self.viewModel = viewModel
         self.collaboration = collaboration
         self.serverOrigin = serverOrigin
+    }
+
+    /// The current replica projected + rendered to editor blocks and markdown, or nil
+    /// if the document isn't live-appliable right now (no replica / not synced / opaque /
+    /// not round-trippable). The SINGLE engagement condition — `replicaDidChange` applies
+    /// exactly this, and `isApplyingLiveContent` reports whether it exists, so the A5
+    /// suppression gate can never disagree with what the bridge actually does.
+    private func resolvedLiveDocument() -> (blocks: [ProjectedEditorBlock], markdown: String)? {
+        guard let projected = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),
+            projected.isFullyRenderable,
+            let rendered = YBlockProjection.renderedEditorDocument(projected)
+        else { return nil }
+        return rendered
     }
 
     /// Called by the view whenever `collaboration.replicaVersion(for:)`
@@ -90,10 +101,7 @@ final class LiveEditingBridge {
         // Not synced yet / opaque / can't self-verify as markdown: leave the
         // document exactly as it is and fall back to the signal-only refresh
         // path (A5) — there is nothing safe to diff against.
-        guard let projected = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),
-            projected.isFullyRenderable,
-            let (rendered, markdown) = YBlockProjection.renderedEditorDocument(projected)
-        else {
+        guard let (rendered, markdown) = resolvedLiveDocument() else {
             isEngaged = false
             return
         }

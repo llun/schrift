@@ -218,6 +218,45 @@ final class LiveEditingBridgeTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks, blocksBefore, "an opaque/pending projection must never touch the editor")
     }
 
+    /// A structurally renderable (`isFullyRenderable == true`) projection that
+    /// still can't round-trip through markdown must be treated identically to an
+    /// opaque/pending one: `replicaDidChange` must not touch the editor, AND
+    /// `isApplyingLiveContent` must report `false` so the A5 REST fallback isn't
+    /// suppressed. Before the fix, `isApplyingLiveContent` checked only
+    /// `isFullyRenderable` (a purely structural check) while `replicaDidChange`
+    /// additionally required `YBlockProjection.renderedEditorDocument` to
+    /// succeed -- the two could disagree, stranding a document with neither a
+    /// live apply nor a REST fallback. The embedded-newline fixture is the same
+    /// shape `YBlockProjectionRenderTests.testParagraphWithEmbeddedNewlineIsNil`
+    /// uses: escape escalation can never fix an embedded "\n", so the writer
+    /// layer returns nil even though the projection itself isn't opaque.
+    func testIsApplyingLiveContentFalseWhenProjectionNotRoundTrippable() async throws {
+        let (viewModel, _) = await loadDocument(content: "Alpha")
+        let blocksBefore = viewModel.blocks
+        let provider = FakeReplicaProvider()
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+
+        let block = ProjectedBlock(
+            id: "x", node: "paragraph", props: [], runs: [InlineRun("a\nb")], fidelity: .modeled)
+        let notRoundTrippable = ProjectedDocument(blocks: [block], isFullyRenderable: true, isFullyModeled: true)
+        XCTAssertTrue(notRoundTrippable.isFullyRenderable, "sanity: the structural check alone passes")
+        XCTAssertNil(
+            YBlockProjection.renderedEditorDocument(notRoundTrippable),
+            "sanity: it's the round-trip verification that actually fails")
+
+        provider.setProjection(notRoundTrippable, for: documentID)
+
+        XCTAssertFalse(
+            bridge.isApplyingLiveContent,
+            "the A5 suppression gate must not claim live content is being applied when it isn't")
+
+        bridge.replicaDidChange()
+
+        XCTAssertFalse(bridge.isEngaged)
+        XCTAssertEqual(viewModel.blocks, blocksBefore, "an unrenderable projection must never touch the editor")
+    }
+
     func testReEngageAfterReturningToCleanReseedsAndResumes() async throws {
         let log = RequestRecorder()
         let (viewModel, coordinator, _) = makeEnvironment()

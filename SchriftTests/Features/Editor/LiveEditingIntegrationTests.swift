@@ -284,9 +284,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
     }
 
     func testFallbackRefetchIsSuppressedWhileBridgeIsApplyingLiveContentButNotWhenDirty() async throws {
-        // A short debounce so the A5 fallback's real (debounced) revalidation
-        // GET would land well inside `waitAndConfirmNever`'s default window if
-        // the suppression gate failed to hold it back.
+        // A short debounce so the dirty branch's real (debounced) A5 revalidation
+        // GET lands quickly once `noteRemoteChange()` is actually called below.
         let (viewModel, _, log) = makeEnvironment(remoteChangeDebounce: .milliseconds(20))
         await viewModel.load()
         let getsAfterLoad = log.count(ofMethod: "GET", urlContaining: "formatted-content")
@@ -301,26 +300,25 @@ final class LiveEditingIntegrationTests: XCTestCase {
         spy.sockets[0].deliver(message: syncUpdateFrame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
-        XCTAssertTrue(bridge.isApplyingLiveContent)
 
-        // Mirrors EditorView's `.onChange(of: collaboration.remoteChangeToken(for:))`
-        // closure exactly: suppress `noteRemoteChange()` while the bridge is
-        // applying live content.
-        if bridge.isApplyingLiveContent != true {
-            viewModel.noteRemoteChange()
-        }
-        await waitAndConfirmNever {
-            log.count(ofMethod: "GET", urlContaining: "formatted-content") > getsAfterLoad
-        }
+        // `EditorView`'s real `.onChange(of: collaboration.remoteChangeToken(for:))`
+        // closure isn't reachable from XCTest (SwiftUI `.onChange` closures can't be
+        // invoked directly), so this verifies the gate VALUE that closure keys on
+        // instead of the closure itself: `isApplyingLiveContent == true` here is
+        // exactly what makes the closure skip calling `viewModel.noteRemoteChange()`
+        // altogether. Asserting "no GET fires" without ever calling
+        // `noteRemoteChange()` would be tautological -- of course nothing fires a
+        // request it never made -- so that call happens for real only on the dirty
+        // branch below, where the gate is false and the call is expected to matter.
+        XCTAssertTrue(bridge.isApplyingLiveContent, "a clean, synced-to-the-stream doc would suppress the fallback")
 
         // Once dirty, the gate must stop suppressing -- the fallback behaves
-        // exactly as it did before this task.
+        // exactly as it did before this task: calling `noteRemoteChange()` for
+        // real now actually fires a debounced GET.
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "a local edit")
         XCTAssertFalse(bridge.isApplyingLiveContent)
-        if bridge.isApplyingLiveContent != true {
-            viewModel.noteRemoteChange()
-        }
+        viewModel.noteRemoteChange()
         await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") > getsAfterLoad }
 
         session?.stop()
