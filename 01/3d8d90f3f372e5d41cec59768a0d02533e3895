@@ -1,0 +1,28 @@
+SchriftTests/Core/Yjs/TextSpanDiffTests.swift
+  s_0d1bafffaaad6d::t_7d465212ed10e6 1-41,46-53,196
+  s_0d1bafffaaad6d::t_e6266a337c2666 54,77-124,132-141,143-157,171-195
+  s_0d1bafffaaad6d::t_c0f6c40b5091bc 125-131,142
+  s_0d1bafffaaad6d::t_59865cc6c7e127 42-45
+  s_0d1bafffaaad6d::t_f00fa624495be6 55-76
+  s_0d1bafffaaad6d::t_5315048c1f7af9 158-170
+Schrift/Core/Yjs/TextSpanDiff.swift
+  s_0d1bafffaaad6d::t_06fc5105504bb3 1-24,30-42,45-59,62-109
+  s_0d1bafffaaad6d::t_cc2efbe58cd0e9 25-29
+  s_0d1bafffaaad6d::t_59865cc6c7e127 43-44,60-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "013d8d90f3f372e5d41cec59768a0d02533e3895",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
