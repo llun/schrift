@@ -115,4 +115,95 @@ enum YWrite {
         // so `n` is non-nil here for every in-range index.
         _ = try insertAfter(transaction, into: parentType, after: n, parentSub: nil, contents)
     }
+
+    /// Delete `length` countable units starting at visible index `index` from
+    /// `parentType`'s children, splitting the boundary items clean. yjs
+    /// `typeListDelete` (@5543).
+    ///
+    /// Two passes over the child list, mirroring yjs exactly:
+    ///
+    /// 1. **Find start** (yjs @5554-5561) — walk forward, counting `index` down over
+    ///    undeleted *countable* items until it lands inside one, splitting that item
+    ///    at the boundary so the deletion begins between two whole items.
+    /// 2. **Delete** (yjs @5563-5572) — from there, delete undeleted items until
+    ///    `length` countable units are gone, splitting the trailing boundary item so
+    ///    only the in-range prefix is removed. `YItem.delete` marks the item deleted,
+    ///    shrinks the parent length, records the range on `transaction.deleteSet`, and
+    ///    tears down its content sub-tree — never re-implement it here.
+    ///
+    /// Two deliberate, behavior-preserving refinements over a literal transliteration,
+    /// both to make the primitive trap-safe and robust without changing what it does
+    /// for the types `typeListDelete` serves:
+    ///
+    /// - **`min(…)` on the `idx`/`remaining` subtractions.** yjs does `index -= n.length`
+    ///   over a JS number that can go harmlessly negative; Swift's `UInt` traps. In the
+    ///   reachable path the subtracted amount always *equals* the item's length (when the
+    ///   item was split at the boundary, it is truncated in place to exactly that many
+    ///   units — the split's right half is discarded), so `min` never actually clamps; it
+    ///   is underflow insurance against a malformed shape, matching how `insert` guards
+    ///   the same walk.
+    /// - **The delete-pass accounting is gated on `countable`.** Literal `typeListDelete`
+    ///   does `length -= n.length` for *every* undeleted item (@5569). That is correct
+    ///   for the types it serves — a `YArray`/`YXmlFragment` child list contains no
+    ///   undeleted *non-countable* item (the only non-countable content is `ContentDeleted`,
+    ///   which is `deleted`, and `ContentFormat`, which exists only in text types), so the
+    ///   non-countable branch is unreachable there and the two spellings are identical.
+    ///   Gating the subtraction (and the boundary split) on `countable` keeps that identity
+    ///   while ensuring a `ContentFormat` — were this ever called on a text child list —
+    ///   is stepped past without wrongly consuming the deletion budget (yjs's own text
+    ///   delete, `deleteText` @6774, likewise only counts `ContentString`/`Type`/`Embed`).
+    ///   The `delete(transaction)` call itself stays unconditional-within-`!deleted`, exactly
+    ///   as yjs @5568.
+    static func delete(
+        _ transaction: YTransaction, from parentType: YType, at index: UInt, length: UInt
+    ) throws {
+        // yjs @5544: a zero-length delete is a no-op. (Also keeps the two walks below
+        // from doing any work.)
+        if length == 0 { return }
+
+        var remaining = length
+        var idx = index
+        // yjs @5547-5552: `findMarker` returns nil with no search markers, so the walk
+        // starts at `_start`.
+        var n = parentType.start
+
+        // yjs @5554-5561: compute the first item to delete. Only undeleted countable
+        // items consume `idx`; a non-countable `ContentFormat` between strings is
+        // skipped without decrementing the visible index.
+        while let cur = n, idx > 0 {
+            if !cur.deleted, cur.countable {
+                if idx < cur.length {
+                    // yjs @5557: split `cur` at the boundary; it is truncated in place to
+                    // the left half, so `cur.length` becomes `idx` and the next line
+                    // drives `idx` to exactly 0.
+                    _ = try YStructStore.getItemCleanStart(
+                        transaction, YID(client: cur.id.client, clock: cur.id.clock + idx))
+                }
+                idx -= min(idx, cur.length)  // yjs @5559 `index -= n.length`, trap-safe
+            }
+            n = cur.right
+        }
+
+        // yjs @5563-5572: delete undeleted items until `remaining` countable units are
+        // gone, splitting the trailing boundary so only the in-range prefix goes.
+        while remaining > 0, let cur = n {
+            if !cur.deleted {
+                if cur.countable, remaining < cur.length {
+                    // yjs @5566: split the trailing boundary item at `remaining`.
+                    _ = try YStructStore.getItemCleanStart(
+                        transaction, YID(client: cur.id.client, clock: cur.id.clock + remaining))
+                }
+                cur.delete(transaction)  // yjs @5568, unconditional within `!deleted`
+                if cur.countable {
+                    remaining -= min(remaining, cur.length)  // yjs @5569, trap-safe
+                }
+            }
+            n = cur.right
+        }
+
+        // yjs @5573-5575 throws `lengthExceeded` when `remaining > 0` here — the range
+        // ran past the end of the child list. Fold it into the store's one
+        // malformed-state signal, matching `insert`'s out-of-range guard.
+        if remaining > 0 { throw YIntegrationError.unexpectedCase }
+    }
 }
