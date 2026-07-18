@@ -1,0 +1,22 @@
+Schrift/Core/Yjs/YWrite.swift
+  s_0d1bafffaaad6d::t_88cc2a05bab2a8 118-208
+SchriftTests/Core/Yjs/YWriteTests.swift
+  s_0d1bafffaaad6d::t_3aa4cd6ea2a6da 166-188
+  s_0d1bafffaaad6d::t_8aafff636790b5 91-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3e57cc693b774630efc21c276973e4fdc8a4299d",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
