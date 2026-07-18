@@ -52,6 +52,11 @@ final class DocumentCollaborationSession {
     /// Fired on the main actor when a peer's change signal (a sync update)
     /// arrives. Signal-only: the payload is not applied, only noted.
     private let onRemoteChange: @MainActor () -> Void
+    /// Fired on the main actor with the raw Yjs update bytes (`SyncMessage.data`)
+    /// for an inbound `.step2`/`.update` sync frame. A peer's `.step1` (a
+    /// request for our state) carries no content and is not delivered here —
+    /// read-only in this milestone.
+    private let onSyncUpdate: @MainActor (Data) -> Void
     private var pumpTask: Task<Void, Never>?
 
     init(
@@ -59,13 +64,15 @@ final class DocumentCollaborationSession {
         transport: CollaborationTransport,
         clientID: UInt = UInt(UInt32.random(in: 1..<UInt32.max)),
         localState: LocalAwarenessState? = nil,
-        onRemoteChange: @escaping @MainActor () -> Void = {}
+        onRemoteChange: @escaping @MainActor () -> Void = {},
+        onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in }
     ) {
         self.documentName = documentName
         self.transport = transport
         self.clientID = clientID
         self.localState = localState
         self.onRemoteChange = onRemoteChange
+        self.onSyncUpdate = onSyncUpdate
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -127,6 +134,14 @@ final class DocumentCollaborationSession {
                 // A peer touched the document — a change signal (not applied here).
                 if state == .connecting || state == .reconnecting { state = .live }
                 onRemoteChange()
+                // Deliver the raw update bytes too, for step2/update frames only —
+                // a malformed or step1 payload is tolerated (onRemoteChange already
+                // fired, so the fallback refresh still happens).
+                if let sync = try? SyncMessage(decodingPayload: message.payload),
+                    sync.step == .step2 || sync.step == .update
+                {
+                    onSyncUpdate(sync.data)
+                }
             case .awareness:
                 // Peers' presence: fold it into `peers` (never including us).
                 if let entries = try? AwarenessCodec.decodePayload(message.payload) {

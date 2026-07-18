@@ -8,12 +8,20 @@ private final class ChangeCounter {
     var count = 0
 }
 
+/// Captures the most recent main-actor sync-update payload for the session
+/// under test.
+@MainActor
+private final class UpdateCapture {
+    var data: Data?
+    var count = 0
+}
+
 @MainActor
 final class DocumentCollaborationSessionTests: XCTestCase {
     private let doc = "11111111-1111-4111-8111-111111111111"
 
-    private func syncFrame(step: SyncStep = .update) -> Data {
-        let payload = SyncMessage(step: step, data: Data([0x00])).encodedPayload()
+    private func syncFrame(step: SyncStep = .update, data: Data = Data([0x00])) -> Data {
+        let payload = SyncMessage(step: step, data: data).encodedPayload()
         return HocuspocusMessage(documentName: doc, type: .sync, payload: payload).encoded()
     }
 
@@ -32,6 +40,18 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         DocumentCollaborationSession(
             documentName: doc, transport: CollaborationTransport(socket: fake),
             onRemoteChange: { counter.count += 1 })
+    }
+
+    private func makeSession(_ fake: FakeWebSocket, _ counter: ChangeCounter, _ capture: UpdateCapture)
+        -> DocumentCollaborationSession
+    {
+        DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake),
+            onRemoteChange: { counter.count += 1 },
+            onSyncUpdate: { data in
+                capture.data = data
+                capture.count += 1
+            })
     }
 
     func testStartSendsEmptyStateVectorHandshakeAndGoesLive() async throws {
@@ -81,6 +101,79 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         fake.deliver(message: awarenessFrame())
         // Presence updates peers, but is not a content change — no signal fires.
         await waitAndConfirmNever { counter.count > 0 }
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    // MARK: - inbound sync update bytes (C1)
+
+    func testDeliversStep2UpdateBytesToOnSyncUpdate() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let capture = UpdateCapture()
+        let session = makeSession(fake, counter, capture)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        let bytes = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        fake.deliver(message: syncFrame(step: .step2, data: bytes))
+        await waitUntil { capture.count == 1 }
+        XCTAssertEqual(capture.data, bytes)
+        XCTAssertEqual(counter.count, 1)
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testDeliversUpdateStepBytesToOnSyncUpdate() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let capture = UpdateCapture()
+        let session = makeSession(fake, counter, capture)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        let bytes = Data([0x01, 0x02, 0x03])
+        fake.deliver(message: syncFrame(step: .update, data: bytes))
+        await waitUntil { capture.count == 1 }
+        XCTAssertEqual(capture.data, bytes)
+        XCTAssertEqual(counter.count, 1)
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testStep1FrameSignalsButDeliversNoBytes() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let capture = UpdateCapture()
+        let session = makeSession(fake, counter, capture)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        fake.deliver(message: syncFrame(step: .step1, data: Data([0x00])))
+        await waitUntil { counter.count == 1 }
+        XCTAssertNil(capture.data)
+        XCTAssertEqual(capture.count, 0)
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testMalformedSyncPayloadSignalsButDeliversNoBytes() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let capture = UpdateCapture()
+        let session = makeSession(fake, counter, capture)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        let garbage = HocuspocusMessage(documentName: doc, type: .sync, payload: Data([0xFF, 0xFF])).encoded()
+        fake.deliver(message: garbage)
+        await waitUntil { counter.count == 1 }
+        XCTAssertNil(capture.data)
+        XCTAssertEqual(capture.count, 0)
 
         session.stop()
         await waitUntil { session.state == .ended(.closed) }
