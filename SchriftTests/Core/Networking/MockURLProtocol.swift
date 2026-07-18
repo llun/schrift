@@ -49,6 +49,27 @@ final class MockURLProtocol: URLProtocol {
     /// the test *process* and blames whichever unrelated test was running.
     nonisolated(unsafe) private static var pendingDeliveries: [DispatchWorkItem] = []
 
+    /// A per-session token, retired at `reset()`, that lets `startLoading` reject a
+    /// leaked request without invalidating its session. A coordinator's unstructured
+    /// save `Task` deliberately outlives its test; under load it can *initiate* its
+    /// content PATCH after the test tore down, while a **later** test's global
+    /// `stubHandler` is installed — recording a phantom `PATCH …/content/` into the
+    /// later test's `RequestRecorder` and flaking its `waitAndConfirmNever` /
+    /// `savesInFlight` assertions.
+    ///
+    /// Invalidating the session at teardown does stop the recording, but creating a
+    /// *new* task on an invalidated `URLSession` raises an uncatchable Objective-C
+    /// `NSException` ("Task created in a session that has been invalidated") that
+    /// terminates the **test process** — the very failure mode this file exists to
+    /// avoid. The leaked task hits it because its `session.data(for:)` runs on the
+    /// `DocsAPIClient` actor concurrently with the main-actor `reset()`. So instead
+    /// each session is tagged (via `httpAdditionalHeaders`) with a token that
+    /// `reset()` retires, and `startLoading` fails a retired-token request *before*
+    /// it reads `stubHandler` — the session stays valid, so nothing ever traps.
+    private static let sessionTokenHeader = "X-MockURLProtocol-Session"
+    nonisolated(unsafe) private static var sessionTokenCounter = 0
+    nonisolated(unsafe) private static var liveSessionTokens: Set<String> = []
+
     /// Written from `stopLoading()` on URLSession's loading thread, read from the
     /// deferred delivery on the main queue — guarded so TSan stays quiet.
     private let cancelLock = NSLock()
@@ -70,6 +91,22 @@ final class MockURLProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        // A request whose session token was retired at `reset()` is a leaked task
+        // from an earlier test. Fail it *before* touching `lastRequest`/`stubHandler`,
+        // so it can never record a phantom request into a later test's
+        // `RequestRecorder`. The session is never invalidated, so this can't raise
+        // the "task created in an invalidated session" NSException that crashes the
+        // process. (A request with no token — a session not from `makeSession()` —
+        // is left alone.)
+        if let token = request.value(forHTTPHeaderField: MockURLProtocol.sessionTokenHeader) {
+            MockURLProtocol.lock.lock()
+            let isLive = MockURLProtocol.liveSessionTokens.contains(token)
+            MockURLProtocol.lock.unlock()
+            if !isLive {
+                client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+                return
+            }
+        }
         MockURLProtocol.lastRequest = request
         guard let handler = MockURLProtocol.stubHandler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
@@ -105,14 +142,18 @@ final class MockURLProtocol: URLProtocol {
     }
 
     /// Call from every `tearDown`. Cancels deliveries still scheduled so none can
-    /// fire into the next test's session. Safe without a drain: deliveries run on
-    /// the main queue, and `tearDown` is already on it.
+    /// fire into the next test's session, and retires every session token
+    /// `makeSession()` handed out so a save `Task` that outlived its test has its
+    /// leaked request rejected by `startLoading` instead of recording into the next
+    /// test's `stubHandler`. Safe without a drain: deliveries run on the main queue,
+    /// and `tearDown` is already on it.
     static func reset() {
         stubHandler = nil
         lastRequest = nil
         lock.lock()
         let items = pendingDeliveries
         pendingDeliveries = []
+        liveSessionTokens.removeAll()
         lock.unlock()
         for item in items { item.cancel() }
     }
@@ -139,6 +180,16 @@ final class MockURLProtocol: URLProtocol {
     static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
+        // Tag every request from this session with a token `reset()` can retire, so a
+        // leaked task's request is rejected at `startLoading` rather than recording
+        // into a later test's log. A monotonic counter keeps tokens unique for the
+        // life of the process, so a retired token is never reissued as live.
+        lock.lock()
+        sessionTokenCounter += 1
+        let token = String(sessionTokenCounter)
+        liveSessionTokens.insert(token)
+        lock.unlock()
+        configuration.httpAdditionalHeaders = [sessionTokenHeader: token]
         return URLSession(configuration: configuration)
     }
 }
