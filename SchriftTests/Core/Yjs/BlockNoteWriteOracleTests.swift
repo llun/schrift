@@ -290,4 +290,67 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         assertProjects(reverse, to: [heXllo, world])
         reverse.destroy()
     }
+
+    // MARK: - Task 9 differential-fuzz findings
+
+    /// **KNOWN B6 WRITE-PATH BUG — pinned by the Task 9 differential fuzz
+    /// (astral / surrogate-torture lane).**
+    ///
+    /// Replacing one astral-plane character with another that **shares its high
+    /// surrogate** — here `"😀"` (U+1F600) → `"😃"` (U+1F603), both high surrogate
+    /// `0xD83D` — drives `TextSpanDiff.diff` to split the surrogate pair: its
+    /// prefix/suffix common-scan works in UTF-16 **units**, so it stops between
+    /// the shared high surrogate (kept) and the differing low surrogate
+    /// (replaced). The inserted piece `String(decoding: [loneLowSurrogate], as:
+    /// UTF16.self)` collapses the lone low surrogate to `U+FFFD` (the yjs#248
+    /// mechanism), and the retained lone high surrogate also renders `U+FFFD`, so
+    /// **both** code units corrupt.
+    ///
+    /// This is a **single-client** edit — no concurrency, no merge order — so it
+    /// is *not* the "converges only when yjs converges" case. B6's own
+    /// incremental update, applied by real **yjs@13.6.31**, renders
+    /// `"\u{FFFD}\u{FFFD}"`, **not** `"😃"` (confirmed against the node oracle;
+    /// for client id 7 the emitted update is
+    /// `0101070ac40704070503efbfbd0107010501` — delete one unit at index 1, then
+    /// insert the 3-byte UTF-8 for `U+FFFD`). A user swapping one emoji for
+    /// another that shares a high surrogate would silently corrupt their text on
+    /// every peer.
+    ///
+    /// **Fix direction:** snap `TextSpanDiff`'s delete/insert boundaries to
+    /// code-**point** boundaries so a surrogate pair is never split (back the
+    /// prefix scan up one unit, and advance the suffix scan one unit, when a
+    /// boundary lands between a high and a low surrogate). This touches only the
+    /// incremental text-replace path, not the byte-identity from-empty anchor.
+    /// When fixed, this test will start passing — remove the `XCTExpectFailure`
+    /// wrapper to turn it into a permanent regression test.
+    func testEmojiSwapSharingHighSurrogateCorruptsToReplacementCharKnownBug() throws {
+        let old = para("😀", id: baseID)  // U+1F600, high surrogate 0xD83D
+        let new = para("😃", id: baseID)  // U+1F603, high surrogate 0xD83D
+        let doc = YDoc(clientID: 7)
+        _ = try BlockNoteWrite.applyEdit(old: [], new: [old], to: doc)
+        _ = try BlockNoteWrite.applyEdit(old: [old], new: [new], to: doc)
+        // Desired: the replica projects to "😃". Currently it projects
+        // "\u{FFFD}\u{FFFD}", so the assertion fails — pinned as a known bug.
+        XCTExpectFailure(
+            "B6 corrupts an emoji swap sharing a high surrogate (yjs#248 via unit-level TextSpanDiff); "
+                + "fix TextSpanDiff to snap to code-point boundaries, then remove this wrapper"
+        ) {
+            assertProjects(doc, to: [new])
+        }
+        doc.destroy()
+    }
+
+    /// The complementary clean case that **bounds** the bug above: inserting a
+    /// whole astral character (never splitting a pair) round-trips correctly, so
+    /// the defect is specifically the shared-high-surrogate *swap*, not emoji
+    /// editing in general. Part of the Task 9 fuzz's astral coverage.
+    func testInsertingAWholeEmojiRoundTrips() throws {
+        let old = para("ab", id: baseID)
+        let new = para("a😀b", id: baseID)  // insert a whole surrogate pair between a and b
+        let doc = YDoc(clientID: 7)
+        _ = try BlockNoteWrite.applyEdit(old: [], new: [old], to: doc)
+        _ = try BlockNoteWrite.applyEdit(old: [old], new: [new], to: doc)
+        assertProjects(doc, to: [new])
+        doc.destroy()
+    }
 }
