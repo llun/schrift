@@ -53,10 +53,15 @@ import Foundation
 /// itself* positioned somewhere flanking would fail (see the three bugs
 /// fixed together: code-outranking-siblings-by-persistence, code losing its
 /// innermost position across a run boundary, and italic landing adjacent to
-/// another `_`). Those are mechanically determinable from characters this
-/// function is placing, not from prose it doesn't control, so they are
-/// checked here — narrowly, using only the scanner's own transcribed
-/// predicates, never by calling `parse`.
+/// another `_`). Those are mechanically determined by this function's own
+/// delimiter placement: a narrow, fixed-position point-lookup at exactly the
+/// positions it placed — never a general re-scan of the output and never a
+/// delimiter stack — using only the scanner's own transcribed predicates,
+/// never by calling `parse`. The lookup does read the two immediate
+/// neighbor characters to judge flanking, and at a run boundary those can be
+/// verbatim text from an adjacent, unmarked run; that is the scanner's own
+/// flanking rule applied at a single known position, not a second parser
+/// re-litigating arbitrary surrounding prose.
 enum InlineMarkdownWriter {
 
     // MARK: - Public API

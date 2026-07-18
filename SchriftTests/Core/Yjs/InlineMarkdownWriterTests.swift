@@ -34,25 +34,29 @@ final class InlineMarkdownWriterTests: XCTestCase {
 
     /// A mark that persists into the next run must not be closed and
     /// reopened — `**bold _bi_**`, not `**bold** **_bi_**`.
-    func testNestedPersistence() {
+    func testNestedPersistence() throws {
         let runs = [
             InlineRun("bold ", marks: [("bold", "{}")]),
             InlineRun("bi", marks: [("bold", "{}"), ("italic", "{}")]),
         ]
-        let output = InlineMarkdownWriter.write(runs, escapeAll: false)
+        let output = try XCTUnwrap(InlineMarkdownWriter.write(runs, escapeAll: false))
         XCTAssertEqual(output, "**bold _bi_**")
+        XCTAssertTrue(
+            InlineMarkdownWriter.runsEquivalent(InlineMarkdown.parse(output), InlineMarkdownWriter.normalized(runs)))
     }
 
     // MARK: 3. Link groups runs sharing an href into one link
 
-    func testLinkGroupsRuns() {
+    func testLinkGroupsRuns() throws {
         let href = "{\"href\":\"https://example.com/x\"}"
         let runs = [
             InlineRun("a", marks: [("link", href)]),
             InlineRun("b", marks: [("link", href), ("bold", "{}")]),
         ]
-        let output = InlineMarkdownWriter.write(runs, escapeAll: false)
+        let output = try XCTUnwrap(InlineMarkdownWriter.write(runs, escapeAll: false))
         XCTAssertEqual(output, "[a**b**](https://example.com/x)")
+        XCTAssertTrue(
+            InlineMarkdownWriter.runsEquivalent(InlineMarkdown.parse(output), InlineMarkdownWriter.normalized(runs)))
     }
 
     // MARK: 4. Whitespace expulsion
@@ -77,10 +81,12 @@ final class InlineMarkdownWriterTests: XCTestCase {
 
     // MARK: 6. Minimal keeps snake_case verbatim
 
-    func testMinimalKeepsSnakeCaseVerbatim() {
+    func testMinimalKeepsSnakeCaseVerbatim() throws {
         let runs = [InlineRun("snake_case a*b")]
-        let output = InlineMarkdownWriter.write(runs, escapeAll: false)
+        let output = try XCTUnwrap(InlineMarkdownWriter.write(runs, escapeAll: false))
         XCTAssertEqual(output, "snake_case a*b")
+        XCTAssertTrue(
+            InlineMarkdownWriter.runsEquivalent(InlineMarkdown.parse(output), InlineMarkdownWriter.normalized(runs)))
     }
 
     // MARK: 7. Structurally-impossible cases return nil
@@ -218,6 +224,20 @@ final class InlineMarkdownWriterTests: XCTestCase {
             // emoji is not "markdown punctuation" (Character.isPunctuation,
             // not isSymbol), so it does not enable flanking either side.
             Case(text: "\u{1F600}_x_\u{1F600}", openIndex: 1, closeIndex: 3, italicizes: false, line: #line),
+            // "+_+x+_+" -> each delimiter has ASCII punctuation as *both*
+            // its outer neighbor and its inner (content-adjacent) neighbor,
+            // so isLeftFlanking and isRightFlanking are simultaneously true
+            // at both the open and the close position — unlike every case
+            // above, which resolves via the single-sided short-circuit
+            // (`guard isRightFlanking else { return true }` /
+            // `guard isLeftFlanking else { return true }`) before ever
+            // reaching the punctuation-neighbor tiebreak. This one lands on
+            // that tiebreak (InlineMarkdown.swift:505/512, mirrored at
+            // `canOpenUnderscore`/`canCloseUnderscore` above): both `+`s are
+            // punctuation, so the tiebreak resolves to `true` at both ends,
+            // and the real scanner does italicize "+x+" (confirmed against
+            // `InlineMarkdown.parse` directly, not just asserted here).
+            Case(text: "+_+x+_+", openIndex: 1, closeIndex: 5, italicizes: true, line: #line),
         ]
 
         for testCase in cases {
