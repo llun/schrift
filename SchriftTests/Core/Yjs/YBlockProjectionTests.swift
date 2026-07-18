@@ -313,4 +313,64 @@ final class YBlockProjectionTests: XCTestCase {
         XCTAssertEqual(reason, "marked code")
         XCTAssertFalse(doc.isFullyRenderable)
     }
+
+    // MARK: - Test 9: checkListItem's `checked` is render-required, like heading's `level`
+
+    // `editorBlock`'s checkListItem branch can only render when `checked` is
+    // present and a bool (`guard case .bool(let checked)? = value(for:
+    // "checked", …)`); it returns nil for anything else. Classification must
+    // agree, or a document gets called fully renderable/modeled yet
+    // `projectedMarkdown` returns nil for the whole thing.
+
+    func testCheckListItemMissingCheckedIsOpaque() throws {
+        let block = BlockNoteBlock(node: "checkListItem", props: baseProps, runs: [], id: "x")
+        let doc = try projectedDoc(fromBlocks: [block])
+        guard case .opaque(let reason) = doc.blocks[0].fidelity else {
+            XCTFail("expected .opaque, got \(doc.blocks[0].fidelity)")
+            return
+        }
+        XCTAssertTrue(reason.contains("checked"), "reason should mention checked: \(reason)")
+        XCTAssertFalse(doc.isFullyRenderable)
+        XCTAssertFalse(doc.isFullyModeled)
+        // The load-bearing assertion: classify and render must agree, so a
+        // block classify calls opaque must also make the whole document
+        // un-renderable as markdown, not just non-fully-modeled.
+        XCTAssertNil(YBlockProjection.projectedMarkdown(doc))
+    }
+
+    func testCheckListItemNonBoolCheckedIsOpaque() throws {
+        let props = baseProps + [("checked", .string("true"))]
+        let block = BlockNoteBlock(node: "checkListItem", props: props, runs: [], id: "x")
+        let doc = try projectedDoc(fromBlocks: [block])
+        guard case .opaque(let reason) = doc.blocks[0].fidelity else {
+            XCTFail("expected .opaque, got \(doc.blocks[0].fidelity)")
+            return
+        }
+        XCTAssertTrue(reason.contains("checked"), "reason should mention checked: \(reason)")
+        XCTAssertFalse(doc.isFullyRenderable)
+        XCTAssertFalse(doc.isFullyModeled)
+        XCTAssertNil(YBlockProjection.projectedMarkdown(doc))
+    }
+
+    func testCheckListItemBoolCheckedStillModeled() throws {
+        // Guards against over-correction: either bool state is still modeled
+        // and renders/round-trips, exactly as before this fix.
+        let checkedProps = baseProps + [("checked", .bool(true))]
+        let checkedBlock = BlockNoteBlock(
+            node: "checkListItem", props: checkedProps, runs: [InlineRun("done")], id: "x")
+        let checkedDoc = try projectedDoc(fromBlocks: [checkedBlock])
+        XCTAssertEqual(checkedDoc.blocks[0].fidelity, .modeled)
+        XCTAssertTrue(checkedDoc.isFullyRenderable)
+        XCTAssertTrue(checkedDoc.isFullyModeled)
+        XCTAssertEqual(YBlockProjection.projectedMarkdown(checkedDoc), "- [x] done\n")
+
+        let uncheckedProps = baseProps + [("checked", .bool(false))]
+        let uncheckedBlock = BlockNoteBlock(
+            node: "checkListItem", props: uncheckedProps, runs: [InlineRun("todo")], id: "y")
+        let uncheckedDoc = try projectedDoc(fromBlocks: [uncheckedBlock])
+        XCTAssertEqual(uncheckedDoc.blocks[0].fidelity, .modeled)
+        XCTAssertTrue(uncheckedDoc.isFullyRenderable)
+        XCTAssertTrue(uncheckedDoc.isFullyModeled)
+        XCTAssertEqual(YBlockProjection.projectedMarkdown(uncheckedDoc), "- [ ] todo\n")
+    }
 }

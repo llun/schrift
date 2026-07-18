@@ -582,6 +582,19 @@ extension YBlockProjection {
     }
 
     private static func classifyCheckListItem(_ props: [ProjectedProp]) -> ProjectionFidelity {
+        // `checked` is render-required — there is no default to pick `- [ ]`
+        // vs `- [x]` from, exactly like heading's `level` — so a missing or
+        // non-bool value is opaque rather than lossy/modeled. This keeps
+        // `editorBlock`'s own `guard case .bool(let checked)? = value(for:
+        // "checked", …)` in lockstep: that guard can only ever succeed for a
+        // block this function has already classified as (at worst) `.lossy`,
+        // never for one it called renderable but that has no bool to read.
+        guard let checkedValue = value(for: "checked", in: props) else {
+            return .opaque(reason: "missing checkListItem checked")
+        }
+        guard case .bool = checkedValue else {
+            return .opaque(reason: "invalid checkListItem checked")
+        }
         let known: Set<String> = ["backgroundColor", "textColor", "textAlignment", "checked"]
         var reasons: [String] = []
         for prop in props {
@@ -590,12 +603,7 @@ extension YBlockProjection {
                 continue
             }
             if prop.key == "checked" {
-                if case .bool = prop.value {
-                    // Either state is modeled; there is no "default" to compare.
-                } else {
-                    reasons.append("prop:checked")
-                }
-                continue
+                continue  // either state is modeled; validity already checked above
             }
             if let def = baseDefaults[prop.key], prop.value != def {
                 reasons.append("prop:\(prop.key)")
