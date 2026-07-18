@@ -588,3 +588,173 @@ extension YBlockProjection {
         return reasons.isEmpty ? .modeled : .lossy(reasons: reasons)
     }
 }
+
+// MARK: - Editor-vocabulary rendering + self-verifying document markdown (B5 Task 4)
+
+extension YBlockProjection {
+    /// Editor-vocabulary rendering of one projected block — the inverse of
+    /// `MarkdownYjs.map`'s node/prop table. `nil` means the block cannot be
+    /// rendered as markdown at this `escapeAll` setting: opaque fidelity
+    /// (checked first, unconditionally), or — for the six text-bearing node
+    /// kinds — a run set `InlineMarkdownWriter.write` itself cannot spell
+    /// (see that type's doc comment for the exhaustive list of why).
+    /// `codeBlock`/`divider`/`image` never call the writer at all: a code
+    /// block's content is always its single run's raw text (code has no
+    /// inline markdown grammar to invert), and `divider`/`image` carry no
+    /// text. `projectedMarkdown` upgrades any single nil here to a
+    /// whole-document nil — a document can't show some blocks as markdown
+    /// and silently drop others.
+    static func editorBlock(_ block: ProjectedBlock, escapeAll: Bool) -> (kind: BlockKind, text: String)? {
+        if block.fidelity.isOpaque { return nil }
+        switch block.node {
+        case "heading":
+            guard case .int(let level)? = value(for: "level", in: block.props) else { return nil }
+            guard let text = InlineMarkdownWriter.write(block.runs, escapeAll: escapeAll) else { return nil }
+            return (.heading(level: level), text)
+        case "paragraph":
+            guard let text = InlineMarkdownWriter.write(block.runs, escapeAll: escapeAll) else { return nil }
+            return (.paragraph, text)
+        case "bulletListItem":
+            guard let text = InlineMarkdownWriter.write(block.runs, escapeAll: escapeAll) else { return nil }
+            return (.bulletItem, text)
+        case "numberedListItem":
+            guard let text = InlineMarkdownWriter.write(block.runs, escapeAll: escapeAll) else { return nil }
+            return (.numberedItem, text)
+        case "checkListItem":
+            guard case .bool(let checked)? = value(for: "checked", in: block.props) else { return nil }
+            guard let text = InlineMarkdownWriter.write(block.runs, escapeAll: escapeAll) else { return nil }
+            return (.checklistItem(checked: checked), text)
+        case "quote":
+            guard let text = InlineMarkdownWriter.write(block.runs, escapeAll: escapeAll) else { return nil }
+            return (.quote, text)
+        case "codeBlock":
+            // Verbatim, never escaped — a code block's content has no inline
+            // markdown grammar for the writer to invert. Absent language
+            // (only reachable from a hand-crafted replica; `MarkdownYjs`
+            // always writes one) defaults to "", the bare-fence spelling.
+            let language: String
+            if case .string(let lang)? = value(for: "language", in: block.props) {
+                language = lang
+            } else {
+                language = ""
+            }
+            return (.codeBlock(language: language), block.runs.first?.text ?? "")
+        case "divider":
+            return (.divider, "")
+        case "image":
+            guard case .string(let url)? = value(for: "url", in: block.props) else { return nil }
+            // Missing `name` defaults to "" — mirrors `classifyImage`'s own
+            // modeled-when-absent rule.
+            let alt: String
+            if case .string(let name)? = value(for: "name", in: block.props) {
+                alt = name
+            } else {
+                alt = ""
+            }
+            return (.image(alt: alt, url: url), "")
+        default:
+            return nil
+        }
+    }
+
+    /// Whole-document markdown: `nil` unless every block renders (via
+    /// `editorBlock`) AND the assembled markdown re-parses
+    /// (`parseEditorBlocks`) back to an equivalent document. Self-verifying,
+    /// with per-block escape escalation: each pass renders every block
+    /// minimally first (`escapeAll: false` for any not-yet-escalated index),
+    /// checks the result, and on a mismatch escalates the *first* offending
+    /// block and retries.
+    ///
+    /// Bounded by construction: the pass budget is `blocks.count + 1`, and
+    /// every non-terminating iteration adds exactly one *new* index to
+    /// `escalated` (`firstMismatch`'s fallback specifically picks an
+    /// un-escalated index — see its doc comment) — so a pass that would need
+    /// a `blocks.count + 1`'th new index has none left to add and instead
+    /// re-reports an already-escalated one, which `escalated.contains(failing)`
+    /// catches and turns into `return nil` on that very iteration. The loop
+    /// never drops content: every attempt renders the *complete* block list
+    /// (nothing is skipped or truncated to make room for escalation), so the
+    /// only two outcomes are a full, verified markdown string or nil.
+    static func projectedMarkdown(_ document: ProjectedDocument) -> String? {
+        guard document.isFullyRenderable else { return nil }
+        var escalated = Set<Int>()  // block indices rendered with escapeAll
+        for _ in 0...document.blocks.count {  // bounded: each pass escalates ≥1 new block or returns
+            var rendered: [EditorBlock] = []
+            for (i, block) in document.blocks.enumerated() {
+                guard let (kind, text) = editorBlock(block, escapeAll: escalated.contains(i)) else { return nil }
+                rendered.append(EditorBlock(kind: kind, text: text))
+            }
+            let markdown = serializeMarkdown(rendered)
+            if let failing = firstMismatch(
+                markdown: markdown, rendered: rendered, against: document, escalated: escalated)
+            {
+                if escalated.contains(failing) { return nil }  // escaping didn't fix it
+                escalated.insert(failing)
+                continue
+            }
+            return markdown
+        }
+        return nil
+    }
+
+    /// Re-parses `markdown` and compares it, block by block, against the
+    /// projected document it was rendered from — `projectedMarkdown`'s
+    /// self-verification. `rendered` is the exact `EditorBlock` list that
+    /// produced `markdown` (one `editorBlock` call per `document.blocks`
+    /// entry, same count and order), which lets this drop the same
+    /// empty-paragraph blocks `serializeMarkdown` itself drops while staying
+    /// aligned with `document.blocks`'s original runs for the text-kind
+    /// comparison below.
+    ///
+    /// Returns the *original* `document.blocks` index of the first block
+    /// whose re-parsed kind/content diverges. `.codeBlock`/`.image` compare
+    /// by `BlockKind` equality alone (it already carries the payload —
+    /// language, or alt+url); every other text-bearing kind additionally
+    /// compares `InlineMarkdown.parse` of the re-parsed text against
+    /// `InlineMarkdownWriter.normalized` of the *original* projected runs via
+    /// `runsEquivalent` (order-insensitive on marks, href-based on links) —
+    /// not against the rendered text, since two different spellings
+    /// (`*x*`/`_x_`) can be equally valid renderings of the same runs.
+    ///
+    /// When the re-parsed block count itself differs from the projected
+    /// count (a block split or merged on re-parse — e.g. an embedded
+    /// newline breaking one block into two lines), no single index can
+    /// always be blamed by construction, so this falls back to the first
+    /// index `escalated` hasn't tried yet. That fallback is what keeps
+    /// `projectedMarkdown`'s loop both bounded *and* fair: every block gets
+    /// one chance to escalate before the document gives up, rather than the
+    /// same (possibly innocent) index being re-reported forever. Once every
+    /// index has already been escalated, it falls back to re-reporting one
+    /// of them, which is exactly what makes the caller's
+    /// `escalated.contains(failing)` check terminate the loop.
+    private static func firstMismatch(
+        markdown: String, rendered: [EditorBlock], against document: ProjectedDocument, escalated: Set<Int>
+    ) -> Int? {
+        var kept: [(originalIndex: Int, kind: BlockKind, text: String, runs: [InlineRun])] = []
+        for (index, pair) in zip(document.blocks, rendered).enumerated() {
+            let (block, editorBlock) = pair
+            if case .paragraph = editorBlock.kind, editorBlock.text.isEmpty { continue }
+            kept.append((index, editorBlock.kind, editorBlock.text, block.runs))
+        }
+        let reparsed = parseEditorBlocks(markdown)
+
+        for i in 0..<min(kept.count, reparsed.count) {
+            let expected = kept[i]
+            let candidate = reparsed[i]
+            guard candidate.kind == expected.kind else { return expected.originalIndex }
+            switch expected.kind {
+            case .codeBlock:
+                if candidate.text != expected.text { return expected.originalIndex }
+            case .divider, .image:
+                break  // the payload is already covered by the `kind` equality above
+            default:
+                let reparsedRuns = InlineMarkdown.parse(candidate.text)
+                if !InlineMarkdownWriter.runsEquivalent(reparsedRuns, InlineMarkdownWriter.normalized(expected.runs)) {
+                    return expected.originalIndex
+                }
+            }
+        }
+        guard kept.count != reparsed.count else { return nil }
+        return document.blocks.indices.first(where: { !escalated.contains($0) }) ?? 0
+    }
+}
