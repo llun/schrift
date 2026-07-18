@@ -278,9 +278,12 @@ Schrift/
 │                        YContent, YStruct/YItem/YGC/YSkip, YType/YDoc, YStructStore,
 │                        YDeleteSet, YTransaction, YStructIntegrator, YStateEncoder
 │                        (B3: encode the live store → v1 update / state vector,
-│                        byte-identical to yjs), and YTextCleanup (B4: remote-change
+│                        byte-identical to yjs), YTextCleanup (B4: remote-change
 │                        format cleanup) — a literal transliteration of
-│                        yjs 13.6.31, gc on by default
+│                        yjs 13.6.31, gc on by default — and YBlockProjection +
+│                        InlineMarkdownWriter (B5: total, never-trapping read-out of
+│                        an integrated replica → BlockNote-vocabulary blocks →
+│                        editor markdown, with per-block fidelity flags)
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
 │   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
@@ -902,6 +905,33 @@ that are easy to violate and expensive to discover:
   in via `diffUpdateV2`, but a pending replica must never be snapshotted). Reuse
   `YUpdateReencoder`'s delete-set/state-vector writers (offset-free, proven);
   transliterate the rest.
+- **The projection (`YBlockProjection`, B5) is total and reads *web-authored*
+  replicas — it never authors content.** `project(_:interlinkingOrigin:)` folds an
+  integrated replica back into `ProjectedBlock`s (the inverse of
+  `BlockNoteYjs.emitInline`) and `projectedMarkdown` renders them to editor markdown.
+  It **never throws and never traps** on any replica shape (clocks are
+  attacker-influenced): anything unrecognised becomes a per-block
+  `ProjectionFidelity` — `.modeled` (round-trips), `.lossy` (renders with the same
+  parity the server's markdown export gives but write-back would drop data), or
+  `.opaque` (no markdown spelling at all; a document with any opaque block is not
+  `isFullyRenderable`, so C1 must not live-apply it). Do not "fix" an unexpected
+  shape by guessing — project it opaque/lossy. `isFullyModeled` is the "safe to write
+  back" contract C2 will gate on, so a **type-mismatched** prop value (a non-bool
+  heading `isToggleable`, a non-string image `name`) must classify `.lossy`/`.opaque`,
+  never `.modeled`. `interlinkingLinkInline` projects as a `[title](origin/docs/id/)`
+  link only when the caller passes the server origin (exact parity with the export),
+  else `.opaque` — never lossy, which would let a classic save flatten the link away.
+- **`InlineMarkdownWriter` (B5) converges on the `InlineMarkdown` scanner — it is not
+  a second parser.** The correctness property is
+  `InlineMarkdown.parse(write(runs)) ≡ normalized(runs)`; where a spelling can't
+  round-trip the writer returns `nil` (and `projectedMarkdown` escalates escaping,
+  then goes opaque) rather than emit markdown that reads back as a different document.
+  It holds a **locked copy** of the scanner's escaping/flanking predicates — a
+  sync-lock test fails if they drift (the same discipline `isEscapable` uses). Any
+  change to the writer must keep **both** the writer tests and the scanner's
+  `InlineLayoutTests` green together; "the golden bytes didn't move" does not prove
+  the scanner is unchanged (see the inline-scanner rules under "Editor & the
+  on-device save").
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **Verify against the oracle, not against reasoning.** Golden fixtures
