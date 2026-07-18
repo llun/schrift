@@ -434,6 +434,19 @@ extension YBlockProjection {
                 reasons.append("unknownProp:\(prop.key)")
                 continue
             }
+            if prop.key == "isToggleable" {
+                // `.bool(true)` already returned `.opaque` above; only
+                // `.bool(false)` is modeled here — the app's own encoder emits
+                // `.bool(false)` explicitly, and absence never reaches this loop.
+                // Any other value type is data a markdown write-back can't
+                // honor (there is no bool to round-trip), so it's lossy rather
+                // than silently falling through as modeled.
+                if case .bool(false) = prop.value {
+                } else {
+                    reasons.append("prop:isToggleable")
+                }
+                continue
+            }
             if let def = baseDefaults[prop.key], prop.value != def {
                 reasons.append("prop:\(prop.key)")
             }
@@ -542,8 +555,17 @@ extension YBlockProjection {
                 if let def = imageDefaults[prop.key], prop.value != def {
                     reasons.append("prop:\(prop.key)")
                 }
-            case "name", "url":
+            case "url":
                 break  // any string is modeled; url's presence was checked above
+            case "name":
+                // Missing `name` defaults to "" (modeled — the app treats an
+                // absent alt as empty text). A non-string value is data a
+                // markdown write-back can't preserve as alt text, so it's
+                // lossy rather than a silent pass-through.
+                if case .string = prop.value {
+                } else {
+                    reasons.append("prop:name")
+                }
             case "caption":
                 if case .string("") = prop.value {
                 } else {

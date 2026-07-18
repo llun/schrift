@@ -225,4 +225,92 @@ final class YBlockProjectionTests: XCTestCase {
             XCTAssertEqual(doc.blocks[0].fidelity, .modeled, "line: \(line)")
         }
     }
+
+    // MARK: - Test 6: type-mismatched prop values classify as lossy, not modeled
+
+    // A malformed/hostile replica can carry a value of the wrong *type* for a
+    // known prop key — not just an unrecognized key or a non-default value.
+    // `isFullyModeled` is the write-back safety gate, so a type mismatch must
+    // never silently fall through as `.modeled`.
+
+    func testHeadingNonBoolToggleableIsLossy() throws {
+        let props = baseProps + [("level", .int(1)), ("isToggleable", .int(1))]
+        let block = BlockNoteBlock(node: "heading", props: props, runs: [], id: "x")
+        let doc = try projectedDoc(fromBlocks: [block])
+        guard case .lossy(let reasons) = doc.blocks[0].fidelity else {
+            XCTFail("expected .lossy, got \(doc.blocks[0].fidelity)")
+            return
+        }
+        XCTAssertEqual(reasons, ["prop:isToggleable"])
+        XCTAssertNotEqual(doc.blocks[0].fidelity, .modeled)
+        XCTAssertFalse(doc.isFullyModeled)
+    }
+
+    func testHeadingToggleableFalseIsModeled() throws {
+        // Guards against over-correction: `.bool(false)` is exactly what the
+        // app's own encoder emits, and must stay modeled.
+        let props = baseProps + [("level", .int(1)), ("isToggleable", .bool(false))]
+        let block = BlockNoteBlock(node: "heading", props: props, runs: [], id: "x")
+        let doc = try projectedDoc(fromBlocks: [block])
+        XCTAssertEqual(doc.blocks[0].fidelity, .modeled)
+        XCTAssertTrue(doc.isFullyModeled)
+    }
+
+    func testImageNonStringNameIsLossy() throws {
+        let props: [(key: String, value: YAnyValue)] = [
+            ("textAlignment", .string("left")),
+            ("backgroundColor", .string("default")),
+            ("name", .bool(true)),
+            ("url", .string("https://x.example/i.png")),
+            ("caption", .string("")),
+            ("showPreview", .bool(true)),
+            ("previewWidth", .undefined),
+        ]
+        let block = BlockNoteBlock(node: "image", props: props, runs: [], id: "x")
+        let doc = try projectedDoc(fromBlocks: [block])
+        guard case .lossy(let reasons) = doc.blocks[0].fidelity else {
+            XCTFail("expected .lossy, got \(doc.blocks[0].fidelity)")
+            return
+        }
+        XCTAssertEqual(reasons, ["prop:name"])
+        XCTAssertNotEqual(doc.blocks[0].fidelity, .modeled)
+        XCTAssertFalse(doc.isFullyModeled)
+    }
+
+    // MARK: - Test 7: fidelity aggregates correctly across a mixed document
+
+    func testMultiBlockAggregatesFidelity() throws {
+        let modeled = BlockNoteBlock(node: "paragraph", props: baseProps, runs: [InlineRun("hi")], id: "a")
+        let coloredProps: [(key: String, value: YAnyValue)] = [
+            ("backgroundColor", .string("default")),
+            ("textColor", .string("red")),
+            ("textAlignment", .string("left")),
+        ]
+        let lossy = BlockNoteBlock(node: "paragraph", props: coloredProps, runs: [], id: "b")
+        let opaque = BlockNoteBlock(node: "fancyThing", props: [], runs: [], id: "c")
+
+        let docWithOpaque = try projectedDoc(fromBlocks: [modeled, lossy, opaque])
+        XCTAssertEqual(docWithOpaque.blocks.count, 3)
+        XCTAssertFalse(docWithOpaque.isFullyRenderable)
+        XCTAssertFalse(docWithOpaque.isFullyModeled)
+
+        let docWithoutOpaque = try projectedDoc(fromBlocks: [modeled, lossy])
+        XCTAssertEqual(docWithoutOpaque.blocks.count, 2)
+        XCTAssertTrue(docWithoutOpaque.isFullyRenderable)
+        XCTAssertFalse(docWithoutOpaque.isFullyModeled)
+    }
+
+    // MARK: - Test 8: marked code is opaque
+
+    func testCodeBlockWithMarkedTextIsOpaque() throws {
+        let run = InlineRun("code", marks: [(key: "bold", valueJSON: "{}")])
+        let block = BlockNoteBlock(node: "codeBlock", props: [], runs: [run], id: "x")
+        let doc = try projectedDoc(fromBlocks: [block])
+        guard case .opaque(let reason) = doc.blocks[0].fidelity else {
+            XCTFail("expected .opaque, got \(doc.blocks[0].fidelity)")
+            return
+        }
+        XCTAssertEqual(reason, "marked code")
+        XCTAssertFalse(doc.isFullyRenderable)
+    }
 }
