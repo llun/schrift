@@ -293,50 +293,44 @@ final class BlockNoteWriteOracleTests: XCTestCase {
 
     // MARK: - Task 9 differential-fuzz findings
 
-    /// **KNOWN B6 WRITE-PATH BUG — pinned by the Task 9 differential fuzz
-    /// (astral / surrogate-torture lane).**
+    /// **Regression test — B6 write-path surrogate-pair split, found by the Task 9
+    /// differential fuzz (astral / surrogate-torture lane) and fixed in
+    /// `TextSpanDiff`.**
     ///
     /// Replacing one astral-plane character with another that **shares its high
     /// surrogate** — here `"😀"` (U+1F600) → `"😃"` (U+1F603), both high surrogate
-    /// `0xD83D` — drives `TextSpanDiff.diff` to split the surrogate pair: its
-    /// prefix/suffix common-scan works in UTF-16 **units**, so it stops between
-    /// the shared high surrogate (kept) and the differing low surrogate
+    /// `0xD83D` — used to drive `TextSpanDiff.diff` to split the surrogate pair:
+    /// its prefix/suffix common-scan works in UTF-16 **units**, so it stopped
+    /// between the shared high surrogate (kept) and the differing low surrogate
     /// (replaced). The inserted piece `String(decoding: [loneLowSurrogate], as:
-    /// UTF16.self)` collapses the lone low surrogate to `U+FFFD` (the yjs#248
-    /// mechanism), and the retained lone high surrogate also renders `U+FFFD`, so
-    /// **both** code units corrupt.
+    /// UTF16.self)` collapsed the lone low surrogate to `U+FFFD` (the yjs#248
+    /// mechanism), and the retained lone high surrogate also rendered `U+FFFD`, so
+    /// **both** code units corrupted.
     ///
     /// This is a **single-client** edit — no concurrency, no merge order — so it
-    /// is *not* the "converges only when yjs converges" case. B6's own
-    /// incremental update, applied by real **yjs@13.6.31**, renders
+    /// was *not* the "converges only when yjs converges" case. Before the fix,
+    /// B6's own incremental update, applied by real **yjs@13.6.31**, rendered
     /// `"\u{FFFD}\u{FFFD}"`, **not** `"😃"` (confirmed against the node oracle;
-    /// for client id 7 the emitted update is
+    /// for client id 7 the emitted update was
     /// `0101070ac40704070503efbfbd0107010501` — delete one unit at index 1, then
     /// insert the 3-byte UTF-8 for `U+FFFD`). A user swapping one emoji for
     /// another that shares a high surrogate would silently corrupt their text on
     /// every peer.
     ///
-    /// **Fix direction:** snap `TextSpanDiff`'s delete/insert boundaries to
+    /// **Fix:** `TextSpanDiff` now snaps its delete/insert boundaries to
     /// code-**point** boundaries so a surrogate pair is never split (back the
-    /// prefix scan up one unit, and advance the suffix scan one unit, when a
+    /// prefix scan up one unit, and back the suffix scan off one unit, when a
     /// boundary lands between a high and a low surrogate). This touches only the
-    /// incremental text-replace path, not the byte-identity from-empty anchor.
-    /// When fixed, this test will start passing — remove the `XCTExpectFailure`
-    /// wrapper to turn it into a permanent regression test.
-    func testEmojiSwapSharingHighSurrogateCorruptsToReplacementCharKnownBug() throws {
+    /// incremental text-replace path, not the byte-identity from-empty anchor, so
+    /// the replica now projects the intended `"😃"`.
+    func testEmojiSwapSharingHighSurrogateProjectsCorrectly() throws {
         let old = para("😀", id: baseID)  // U+1F600, high surrogate 0xD83D
         let new = para("😃", id: baseID)  // U+1F603, high surrogate 0xD83D
         let doc = YDoc(clientID: 7)
         _ = try BlockNoteWrite.applyEdit(old: [], new: [old], to: doc)
         _ = try BlockNoteWrite.applyEdit(old: [old], new: [new], to: doc)
-        // Desired: the replica projects to "😃". Currently it projects
-        // "\u{FFFD}\u{FFFD}", so the assertion fails — pinned as a known bug.
-        XCTExpectFailure(
-            "B6 corrupts an emoji swap sharing a high surrogate (yjs#248 via unit-level TextSpanDiff); "
-                + "fix TextSpanDiff to snap to code-point boundaries, then remove this wrapper"
-        ) {
-            assertProjects(doc, to: [new])
-        }
+        // After the code-point snap the replica projects to "😃", not "\u{FFFD}\u{FFFD}".
+        assertProjects(doc, to: [new])
         doc.destroy()
     }
 

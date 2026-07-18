@@ -35,6 +35,12 @@ enum TextSpanDiff {
         return MarkedText(units: units, marks: marks)
     }
 
+    /// True for a UTF-16 high (leading) surrogate code unit (`0xD800...0xDBFF`).
+    private static func isHighSurrogate(_ u: UInt16) -> Bool { (0xD800...0xDBFF).contains(u) }
+
+    /// True for a UTF-16 low (trailing) surrogate code unit (`0xDC00...0xDFFF`).
+    private static func isLowSurrogate(_ u: UInt16) -> Bool { (0xDC00...0xDFFF).contains(u) }
+
     /// The change to turn `old` into `new`: delete visible [range.lowerBound,
     /// range.upperBound) (UTF-16 indices into old), then insert `pieces`
     /// (self-describing: opens the marks active at the new start, restores the
@@ -46,12 +52,21 @@ enum TextSpanDiff {
         let maxCommon = min(a.units.count, b.units.count)
         var p = 0
         while p < maxCommon, a.units[p] == b.units[p], a.marks[p] == b.marks[p] { p += 1 }
+        // A trailing high surrogate in the common prefix means its low surrogate fell into
+        // the changed region — the prefix boundary is mid-pair. Back it up so the whole
+        // code point is in the changed span (never split a surrogate pair; yjs would render
+        // U+FFFD — yjs#248 — corrupting a swap of two astral chars sharing a high surrogate).
+        if p > 0, isHighSurrogate(a.units[p - 1]) { p -= 1 }
         var s = 0
         let budget = maxCommon - p
         while s < budget,
             a.units[a.units.count - 1 - s] == b.units[b.units.count - 1 - s],
             a.marks[a.marks.count - 1 - s] == b.marks[b.marks.count - 1 - s]
         { s += 1 }
+        // A leading low surrogate in the common suffix means its high surrogate fell into the
+        // changed region — back the suffix off so the whole code point is in the changed span
+        // (the mirror of the prefix snap, for two astral chars sharing a low surrogate).
+        if s > 0, isLowSurrogate(a.units[a.units.count - s]) { s -= 1 }
         let deleteRange = p..<(a.units.count - s)  // UTF-16 indices into old
         // Rebuild the new span [p, newLen - s) as self-describing pieces: the marks
         // active just-left in `new` (marks[p-1]) are what the kept prefix already

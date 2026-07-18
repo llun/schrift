@@ -52,6 +52,33 @@ final class TextSpanDiffTests: XCTestCase {
         XCTAssertEqual(d?.insertPieces, [.string("X")])
     }
 
+    func testAstralSwapSharingHighSurrogateIsNotSplit() {
+        // "😀" (U+1F600 = D83D DE00) -> "😃" (U+1F603 = D83D DE03): both share the
+        // high surrogate 0xD83D, so a unit-level common prefix would stop after it and
+        // split the pair (emitting a lone low surrogate -> U+FFFD, the B6 corruption
+        // the Task 9 fuzz found). The code-point snap backs the prefix boundary up so
+        // the whole pair is replaced: delete 0..<2, insert the whole "😃".
+        let d = TextSpanDiff.diff(old: [InlineRun("😀")], new: [InlineRun("😃")])
+        XCTAssertEqual(d?.deleteRange, 0..<2)
+        XCTAssertEqual(d?.insertPieces, [.string("😃")])
+
+        // The same swap at the END of a longer string, so the prefix scan reaches the
+        // shared high surrogate before stopping at the differing low one: "a😀" -> "a😃"
+        // deletes the whole trailing pair (indices 1..<3) and inserts "😃".
+        let dEnd = TextSpanDiff.diff(old: [InlineRun("a😀")], new: [InlineRun("a😃")])
+        XCTAssertEqual(dEnd?.deleteRange, 1..<3)
+        XCTAssertEqual(dEnd?.insertPieces, [.string("😃")])
+
+        // The mirror case exercising the SUFFIX snap: two astral chars sharing the LOW
+        // surrogate but differing in the high one — "😀" (D83D DE00) -> U+1FA00 (D83E
+        // DE00). The common suffix would otherwise begin with the shared low surrogate
+        // 0xDE00, leaving its high surrogate stranded in the changed region; the snap
+        // backs the suffix off so the whole pair is replaced (delete 0..<2, insert whole).
+        let dLow = TextSpanDiff.diff(old: [InlineRun("😀")], new: [InlineRun("\u{1FA00}")])
+        XCTAssertEqual(dLow?.deleteRange, 0..<2)
+        XCTAssertEqual(dLow?.insertPieces, [.string("\u{1FA00}")])
+    }
+
     func testInsertBeforeDifferentlyFormattedSuffixClosesMark() {
         // "abcd" (ab bold, cd plain) -> "abXcd" (ab bold, X bold, cd plain):
         // insert bold X before the plain kept suffix; the trailing close is REQUIRED.
