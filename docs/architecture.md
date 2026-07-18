@@ -85,7 +85,7 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 │   ├── Networking/       — DocsAPIClient (URLSession + async/await), endpoint definitions, Codable models mirroring DRF serializers, error types
 │   ├── Auth/             — SessionStore (Keychain-backed session-cookie + server URL persistence, re-auth flag), SessionCookies (Codable HTTPCookie snapshot), WebLogin free functions (login-URL/completion detection, cookie sync), KeychainStore
 │   ├── Collaboration/    — Hocuspocus/Yjs live-collaboration layer (wire codecs, WebSocket transport, session state machine, presence), dormant behind the default-off `schrift.liveCollaboration` flag
-│   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration, and the B3 store encoder `YStateEncoder`) — see "The Yjs CRDT core"
+│   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration, the B3 store encoder `YStateEncoder`, and the B5 replica→editor projection `YBlockProjection`/`InlineMarkdownWriter`) — see "The Yjs CRDT core"
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
 │   ├── Home/             — document list: pinned/recent, segmented filter (All/Shared/Pinned), favorite toggle, offline list cache
@@ -111,8 +111,9 @@ Hocuspocus room as the web client and speak real Yjs, rather than PATCHing a
 full-overwrite blob that a live web session would silently overwrite. It lands in
 stages; today it can **decode** an update, **integrate** it into a live document,
 **encode** the integrated document back out (B3) — a full snapshot, a diff against a
-peer's state vector, or a state vector — byte-identical to yjs, and **garbage-collect
-and clean up formatting** on remote transactions (B4). The replica runs with **gc on
+peer's state vector, or a state vector — byte-identical to yjs, **garbage-collect
+and clean up formatting** on remote transactions (B4), and **project** the integrated
+replica back into the editor's block/markdown vocabulary (B5). The replica runs with **gc on
 by default** (`YDoc(gc: true)`, matching a real yjs client and the live write path):
 each transaction, `tryGcDeleteSet` sweeps the replica's *own* deleted items —
 replacing a deleted item's content with a `ContentDeleted` tombstone and a deleted
@@ -134,6 +135,53 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `YDeleteSet` | delete ranges, and applying an update's delete set |
 | `YTransaction` | transaction lifecycle + the merge cleanup that runs after every update |
 | `YStructIntegrator` | the driver: dependency ordering, pending structs, retry |
+| `YBlockProjection` / `InlineMarkdownWriter` | the **read-out** side (B5): projects an integrated replica into BlockNote-vocabulary `ProjectedBlock`s and then into the editor's markdown. See "Projecting the replica" below |
+
+### Projecting the replica (B5)
+
+Decoding and integrating a remote update produces a live `YDoc`; **projection** turns
+that document graph back into something the editor can show, in two pure stages.
+
+- **Stage 1 — `YBlockProjection.project(_:interlinkingOrigin:)`** walks
+  `document-store → blockGroup → blockContainer*` and folds each block's `xmlText`
+  child (its interleaved `ContentString`/`ContentFormat` items) back into `InlineRun`s
+  — the exact inverse of `BlockNoteYjs.emitInline`. It is a **total function**: it
+  never throws and never traps on any replica shape (clocks are attacker-influenced),
+  because anything it does not recognise is recorded as fidelity rather than crashing.
+  Each `ProjectedBlock` carries a `ProjectionFidelity`:
+  - `.modeled` — round-trips losslessly (the block kinds the editor already models,
+    with known marks bold/italic/code/strike/link).
+  - `.lossy(reasons:)` — renders with the same parity the server's own markdown export
+    gives, but a write-back would drop data the editor can't represent (a non-default
+    `textColor`/`backgroundColor`/`textAlignment`, a numbered-list `start ≠ 1`, an
+    image caption). Markdown has no spelling for these, and neither does the export.
+  - `.opaque(reason:)` — cannot be represented as markdown at all (unknown node, a
+    toggle heading's collapsible children, a nested `blockGroup`, unknown inline
+    content). A document with any opaque block is not `isFullyRenderable`.
+  The web's `interlinkingLinkInline` (a `content:'none'` leaf inline node carrying
+  `docId`/`title`) is modeled as a plain `[title](origin/docs/docId/)` link **when the
+  caller supplies the server origin** — exact parity with the server's markdown export,
+  which flattens it the same way — and is `.opaque` otherwise (the pure projection has
+  no origin by default, and a lossy flatten would let a later classic save drop the
+  link). C1 supplies the origin.
+- **Stage 2 — `projectedMarkdown(_:)`** renders those blocks to the editor's markdown
+  via `InlineMarkdownWriter` (runs → markdown) and then **self-verifies**: it re-parses
+  its own output and, block by block, escalates escaping until the round trip holds,
+  returning `nil` rather than ever emitting markdown that would re-parse to a different
+  document. `InlineMarkdownWriter` is the inverse of the `InlineMarkdown` scanner, and
+  the **scanner is its oracle**: the writer's correctness property is
+  `InlineMarkdown.parse(write(runs)) ≡ normalized(runs)`, and where the two would
+  disagree the writer refuses (emits `nil`) rather than lie. It is not a third inline
+  engine — it holds a locked copy of the scanner's escaping/flanking predicates (a
+  sync-lock test fails if they drift, the same discipline `isEscapable` already uses).
+
+`YBlockProjection.project` never produces content the app's own encoder authored; its
+job is to read **web-authored** replicas. Its faithfulness is pinned two ways: an
+exact round-trip over the app's whole golden markdown corpus
+(`encode(md) → decode → integrate → project → markdown == serializeMarkdown(parse(md))`),
+and oracle fixtures captured from real yjs for the shapes the app can't author —
+incrementally-typed split strings, concurrent two-client formatting, gc'd documents,
+`mergeUpdates` output (Skip structs), nested lists.
 
 ### Two Yjs models, deliberately
 
