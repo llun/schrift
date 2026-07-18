@@ -50,6 +50,16 @@ final class LiveEditingBridge {
     /// for the view to gate any "live" UI affordance and for tests.
     private(set) var isEngaged = false
 
+    /// Whether this document is currently being driven by the live stream — the
+    /// engagement condition evaluated FRESH (not the last-apply flag). The view gates
+    /// the A5 fallback refetch on this so a stale REST body can't install over (and
+    /// reset the caret of) content the bridge is keeping live.
+    var isApplyingLiveContent: Bool {
+        viewModel.canEngageLiveEditing
+            && collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)?.isFullyRenderable
+                == true
+    }
+
     init(documentID: UUID, viewModel: EditorViewModel, collaboration: LiveReplicaProviding, serverOrigin: String?) {
         self.documentID = documentID
         self.viewModel = viewModel
