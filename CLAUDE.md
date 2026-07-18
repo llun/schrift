@@ -1516,7 +1516,18 @@ markdown write endpoint**. Understand this before touching the save path:
   `lastRequest` for single-request tests). Call **`MockURLProtocol.reset()`** in
   `tearDown` — not just `stubHandler = nil`. It also drains deferred deliveries:
   one outliving its test reports into a torn-down `URLSession` and kills the test
-  *process*, blaming whichever unrelated test was running at the time.
+  *process*, blaming whichever unrelated test was running at the time. It further
+  **retires every session token `makeSession()` handed out** (each session tags its
+  requests via `httpAdditionalHeaders`), so a coordinator's unstructured save `Task`
+  that outlives its test has its leaked request **rejected in `startLoading`**
+  instead of recording a phantom `PATCH …/content/` into a **later** test's
+  `RequestRecorder` and flaking its `waitAndConfirmNever` / `savesInFlight`
+  assertions (`MockURLProtocolIsolationTests` pins this deterministically). It does
+  **not** invalidate the session: a new task on an invalidated `URLSession` raises an
+  uncatchable ObjC `NSException` that crashes the whole test process — the exact
+  failure mode `reset()` exists to prevent, and one the leaked task would hit
+  because its `session.data(for:)` runs on the `DocsAPIClient` actor concurrently
+  with the main-actor `reset()`.
   For multi-request flows (VM loads, the two-PATCH save, coalescing), pass the
   shared thread-safe `RequestRecorder` (`SchriftTests/Support/AsyncTestHelpers.swift`)
   into the `stubHandler` (`log.record(request)`) and assert on `methods` /
