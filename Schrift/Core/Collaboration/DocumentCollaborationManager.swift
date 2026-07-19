@@ -42,9 +42,14 @@ final class DocumentCollaborationManager {
         /// (yjs relies on a tracing GC; `YDoc.destroy()` breaks the cycles ARC
         /// cannot).
         var replica: YDoc?
-        /// True once at least one inbound update has integrated cleanly. Gates
-        /// `projectedReplica` — a replica that has never seen a real update (or
-        /// whose only updates all failed) has nothing meaningful to project.
+        /// True once the room's **initial full state** has landed — set *only* by
+        /// `markInitialSyncApplied`, fired by the session's `onInitialSync` on the
+        /// first inbound `.step2` (the reply to our SyncStep1). Gates
+        /// `canWriteReplica` (projection + the local-edit write path + the save
+        /// snapshot). An inbound `.update` interleaved *before* that reply builds
+        /// the replica and bumps `replicaVersion`, but must leave this false: a
+        /// replica assembled from a partial incremental update is not the full
+        /// document and must not be projectable/writable/snapshottable.
         var initialSyncApplied = false
         /// True once an inbound update has failed to decode/apply. A corrupt or
         /// half-synced replica must never drive the editor, so once set this
@@ -372,13 +377,24 @@ final class DocumentCollaborationManager {
         let session = DocumentCollaborationSession(
             documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness,
             onRemoteChange: { [weak self] in self?.remoteChangeTokens[documentID, default: 0] += 1 },
-            onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) })
+            onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) },
+            initialSyncStep1: { [weak self] in self?.currentStateVector(for: documentID) ?? Data([0x00]) },
+            onStateRequest: { [weak self] peerVector in self?.stateReply(to: peerVector, for: documentID) },
+            onInitialSync: { [weak self] in self?.markInitialSyncApplied(for: documentID) })
         session.start()
         return session
     }
 
     /// Applies one inbound Yjs update to the document's replica (C1), building
     /// the replica lazily on first call. A no-op once the entry has fail-safed.
+    ///
+    /// This integrates the bytes and bumps `replicaVersion` on **any** inbound
+    /// frame (`.step2` or `.update`), but it does **not** flip
+    /// `initialSyncApplied` — that is the sole province of `markInitialSyncApplied`
+    /// (the session's `onInitialSync`, fired on the first `.step2`). An `.update`
+    /// interleaved before our SyncStep1 reply therefore builds the replica but
+    /// leaves it un-synced (`canWriteReplica` stays false) until the real initial
+    /// sync lands.
     ///
     /// A decode/integrate failure destroys the replica and latches
     /// `replicaFailSafe` rather than retrying or leaving a partially-applied
@@ -393,7 +409,6 @@ final class DocumentCollaborationManager {
         entry.replica = replica
         do {
             try replica.applyUpdate(try YUpdateDecoder.decode(data))
-            entry.initialSyncApplied = true
             entries[documentID] = entry
             replicaVersions[documentID, default: 0] += 1
         } catch {
@@ -403,6 +418,72 @@ final class DocumentCollaborationManager {
             entry.initialSyncApplied = false
             entries[documentID] = entry
         }
+    }
+
+    /// The replica's current state vector, for our own SyncStep1 handshake — a
+    /// statement of everything we already have, so the peer/relay's step2 reply
+    /// is a diff of only what we lack. Falls back to the signal-only one-byte
+    /// empty state vector (`Data([0x00])`) before a replica exists, matching the
+    /// read-only default. On a reconnect/resume the entry (and its replica)
+    /// survives the session rebuild, so a fresh session's handshake re-offers our
+    /// accumulated state — including edits made while suspended — rather than
+    /// asking for the whole document again.
+    private func currentStateVector(for documentID: UUID) -> Data {
+        guard let replica = entries[documentID]?.replica else { return Data([0x00]) }
+        return YStateEncoder.encodeStateVector(replica)
+    }
+
+    /// Replies to a peer's SyncStep1 with a step2 diff of everything they lack —
+    /// this is what re-offers our local edits to a peer or the relay when they
+    /// (re)connect and ask for our state (peer step1 → our step2). Decodes the
+    /// peer's state vector and encodes only the structs past it; `nil` (send
+    /// nothing) when we hold no replica to offer.
+    ///
+    /// Runs synchronously on the main actor inside the session's inbound-frame
+    /// handler, so it must stay cheap — a state-vector-diff encode is fine, and no
+    /// blocking work is deferred. A malformed peer vector (`decodeStateVector`
+    /// throws) or a replica that can't be snapshotted right now (pending structs
+    /// make `encodeStateAsUpdate` throw) yields `nil` rather than trapping — the
+    /// peer will still send us their state, so the room converges regardless.
+    private func stateReply(to peerVector: Data, for documentID: UUID) -> Data? {
+        guard let replica = entries[documentID]?.replica else { return nil }
+        guard let vectorEntries = try? YUpdateDecoder.decodeStateVector(peerVector) else { return nil }
+        // `uniquingKeysWith` (never `uniqueKeysWithValues`) — the peer vector is
+        // attacker-influenced wire data and a duplicate client id would trap. yjs
+        // builds a Map here, so last-writer-wins matches its semantics.
+        let since = Dictionary(vectorEntries.map { ($0.client, $0.clock) }, uniquingKeysWith: { _, latest in latest })
+        return try? YStateEncoder.encodeStateAsUpdate(replica, since: since)
+    }
+
+    /// Marks the document's initial sync applied — fired once per session by the
+    /// session's `onInitialSync` on the **first inbound `.step2`** (the reply to
+    /// our own SyncStep1), and the *sole* authority for `initialSyncApplied`. An
+    /// inbound `.update` interleaved before that reply builds the replica but must
+    /// not mark it synced: a replica assembled from a partial incremental update
+    /// is not the room's full state and must not be writable/snapshottable.
+    /// Idempotent. Safe on a fail-safed/torn-down entry — `canWriteReplica` still
+    /// gates on `replica != nil` and `!replicaFailSafe`, so the flag alone never
+    /// makes a dead replica writable.
+    private func markInitialSyncApplied(for documentID: UUID) {
+        guard var entry = entries[documentID] else { return }
+        entry.initialSyncApplied = true
+        entries[documentID] = entry
+    }
+
+    /// A full-snapshot Yjs v1 update of the document's replica for the classic
+    /// full-overwrite save path — or `nil` when the replica is not writable
+    /// (`canWriteReplica`: no replica, the initial sync hasn't landed, it carries
+    /// unintegrated pending structs, or it has fail-safed). This is the one gate
+    /// the save path checks before snapshotting a live replica instead of
+    /// re-encoding the editor's markdown; a `nil` return means "no trustworthy
+    /// snapshot — fall back to the classic encode." `encodeStateAsUpdate` can only
+    /// throw here on a pending replica, which `canWriteReplica` already excludes,
+    /// so `try?`'s `nil` is a belt-and-braces guard that never traps.
+    func encodeSnapshotForSave(for documentID: UUID) -> Data? {
+        guard let entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+            return nil
+        }
+        return try? YStateEncoder.encodeStateAsUpdate(replica, since: [:])
     }
 
     private func rebuildActiveSessions() {
