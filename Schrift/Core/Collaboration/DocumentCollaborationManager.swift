@@ -168,18 +168,37 @@ final class DocumentCollaborationManager {
         entries[documentID]?.replicaFailSafe ?? false
     }
 
+    /// True when the document's replica has un-integrated pending
+    /// structs/deletes stashed (`YStructStore.pendingStructs`/`pendingDs`), or
+    /// there is no replica at all — in both cases there is nothing safe to
+    /// write on top of. Public so the local-edit write path (C2) can gate a
+    /// transaction on it before minting one.
+    func hasPendingStructs(for documentID: UUID) -> Bool {
+        guard let replica = entries[documentID]?.replica else { return true }
+        return replica.store.pendingStructs != nil || replica.store.pendingDs != nil
+    }
+
+    /// Whether an entry's replica is safe to project *or* write to: it exists,
+    /// at least one update has integrated (`initialSyncApplied`), it hasn't
+    /// fail-safed, and it carries no unintegrated pending structs/deletes
+    /// (`YStructStore.pendingStructs`/`pendingDs`) — writing on top of a
+    /// partially-synced store would build on content that is about to change
+    /// shape the moment the missing dependency arrives. The single
+    /// write-eligibility predicate shared by `projectedReplica` (read) and the
+    /// local-edit write path (C2).
+    private func canWriteReplica(_ entry: Entry) -> Bool {
+        guard let replica = entry.replica else { return false }
+        return entry.initialSyncApplied && !entry.replicaFailSafe && replica.store.pendingStructs == nil
+            && replica.store.pendingDs == nil
+    }
+
     /// The document's live replica projected into BlockNote-vocabulary blocks
     /// (B5's `YBlockProjection.project`), or `nil` when there is nothing safe to
-    /// project: no replica yet, the entry is fail-safed, no update has
-    /// integrated yet, or the replica still has unintegrated pending
-    /// structs/deletes (`YStructStore.pendingStructs`/`pendingDs`) — projecting
-    /// a partially-synced store would show content that is about to change
-    /// shape the moment the missing dependency arrives.
+    /// project — see `canWriteReplica`.
     func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
-        guard let entry = entries[documentID], !entry.replicaFailSafe, entry.initialSyncApplied,
-            let replica = entry.replica,
-            replica.store.pendingStructs == nil, replica.store.pendingDs == nil
-        else { return nil }
+        guard let entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+            return nil
+        }
         return YBlockProjection.project(replica, interlinkingOrigin: interlinkingOrigin)
     }
 

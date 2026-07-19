@@ -303,6 +303,80 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    // MARK: - write-eligibility gate (C2a: hasPendingStructs + canWriteReplica)
+
+    func testHasPendingStructsTrueForUnknownDocument() {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        // No entry at all for this document — nothing writable.
+        XCTAssertTrue(manager.hasPendingStructs(for: docID))
+    }
+
+    func testHasPendingStructsFalseAfterCleanInitialSync() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        XCTAssertTrue(manager.hasPendingStructs(for: docID), "no replica yet")
+
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
+
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertFalse(manager.hasPendingStructs(for: docID))
+        session?.stop()
+    }
+
+    func testHasPendingStructsTrueWhilePendingStructsExist() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        // Same `Y.mergeUpdates`-with-a-dropped-middle-update fixture as
+        // `testPendingStructsSuppressProjection`: the third block's container
+        // item can never integrate and stays in `pendingStructs` forever.
+        let mergedWithDroppedMiddleHex =
+            "0112010007010e646f63756d656e742d73746f7265030a626c6f636b47726f757007000100030e626c6f636b436f6e7461696e6572070001010309706172616772617068070001020604000103056669727374280001020f6261636b67726f756e64436f6c6f7201770764656661756c74280001020974657874436f6c6f7201770764656661756c74280001020d74657874416c69676e6d656e740177046c6566742800010102696401772431313131313131312d313131312d343131312d383131312d3131313131313131313131310a1787010d030e626c6f636b436f6e7461696e6572070001240309706172616772617068070001250604000126057468697264280001250f6261636b67726f756e64436f6c6f7201770764656661756c74280001250974657874436f6c6f7201770764656661756c74280001250d74657874416c69676e6d656e740177046c6566742800012402696401772433333333333333332d333333332d343333332d383333332d33333333333333333333333300"
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: Data(hex: mergedWithDroppedMiddleHex)))
+
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertFalse(manager.replicaIsFailSafe(for: docID))
+        XCTAssertTrue(manager.hasPendingStructs(for: docID), "an unintegrated dependency must read as pending")
+        session?.stop()
+    }
+
+    func testHasPendingStructsTrueAfterFailSafeLatches() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        let garbage = Data([0x00, 0x01, 0x02, 0x99])
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: garbage))
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+
+        // A failed decode/apply destroys the replica — nothing writable.
+        XCTAssertTrue(manager.hasPendingStructs(for: docID))
+        session?.stop()
+    }
+
+    func testHasPendingStructsTrueAfterTeardown() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertFalse(manager.hasPendingStructs(for: docID))
+
+        manager.release(docID)
+        await waitUntil { manager.activeDocumentCount == 0 }
+        XCTAssertTrue(manager.hasPendingStructs(for: docID))
+    }
+
     func testTeardownDestroysReplicaAndResetsVersion() async {
         let spy = SocketFactorySpy()
         let manager = makeManager(linger: 0.05, spy: spy)
