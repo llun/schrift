@@ -57,6 +57,11 @@ final class DocumentCollaborationSession {
     /// request for our state) carries no content and is not delivered here —
     /// read-only in this milestone.
     private let onSyncUpdate: @MainActor (Data) -> Void
+    /// Produces the state vector for the initial SyncStep1 handshake. Defaults
+    /// to the signal-only empty state vector (`Data([0x00])`), so a caller with
+    /// no replica wired keeps today's behavior; C2 passes the real replica's
+    /// state vector instead so the peer's step2 reply is an actual diff.
+    private let initialSyncStep1: @MainActor () -> Data
     private var pumpTask: Task<Void, Never>?
 
     init(
@@ -65,7 +70,8 @@ final class DocumentCollaborationSession {
         clientID: UInt = UInt(UInt32.random(in: 1..<UInt32.max)),
         localState: LocalAwarenessState? = nil,
         onRemoteChange: @escaping @MainActor () -> Void = {},
-        onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in }
+        onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in },
+        initialSyncStep1: @escaping @MainActor () -> Data = { Data([0x00]) }
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -73,6 +79,7 @@ final class DocumentCollaborationSession {
         self.localState = localState
         self.onRemoteChange = onRemoteChange
         self.onSyncUpdate = onSyncUpdate
+        self.initialSyncStep1 = initialSyncStep1
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -84,11 +91,14 @@ final class DocumentCollaborationSession {
         let documentName = self.documentName
         let clientID = self.clientID
         let localState = self.localState
+        let initialSyncStep1 = self.initialSyncStep1
         pumpTask = Task { [weak self] in
             let events = await transport.start()
-            // SyncStep1 with an empty state vector (`Data([0x00])`): the peer
-            // replies with the full update, which we treat as a change signal.
-            let payload = SyncMessage(step: .step1, data: Data([0x00])).encodedPayload()
+            // SyncStep1 with our state vector (the signal-only default is the
+            // one-byte empty vector, `Data([0x00])`, so the peer replies with
+            // its full update — which we treat as a change signal until a real
+            // replica is wired in via `initialSyncStep1`).
+            let payload = SyncMessage(step: .step1, data: initialSyncStep1()).encodedPayload()
             let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
             // A send failure means the socket is already broken; the pump's
             // disconnect event reclassifies the state, so ignore it here.
@@ -116,6 +126,17 @@ final class DocumentCollaborationSession {
     func stop() {
         let transport = self.transport
         Task { await transport.close() }
+    }
+
+    /// Broadcasts a local Yjs update to the room as an unsolicited `.sync`
+    /// `.update` frame (the write side of C2: our own edits, encoded upstream
+    /// into `update`, reach the other peers). A send failure is tolerated the
+    /// same way the handshake's is — the pump's disconnect event reclassifies
+    /// the state, so there is nothing more to do here.
+    func broadcast(update: Data) async {
+        let payload = SyncMessage(step: .update, data: update).encodedPayload()
+        let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
+        try? await transport.send(frame)
     }
 
     /// Best-effort transition to `.live` after the handshake is sent: there is no

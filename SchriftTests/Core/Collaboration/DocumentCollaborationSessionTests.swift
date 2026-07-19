@@ -108,6 +108,48 @@ final class DocumentCollaborationSessionTests: XCTestCase {
 
     // MARK: - inbound sync update bytes (C1)
 
+    // MARK: - outbound write path (C2a)
+
+    func testStartUsesInjectedInitialSyncStep1() async throws {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake),
+            onRemoteChange: { counter.count += 1 }, initialSyncStep1: { Data([0xAA, 0xBB]) })
+        session.start()
+
+        await waitUntil { fake.sentFrames.count == 1 }
+        let sent = try HocuspocusMessage(decoding: fake.sentFrames[0])
+        XCTAssertEqual(sent.documentName, doc)
+        XCTAssertEqual(sent.knownType, .sync)
+        let sync = try SyncMessage(decodingPayload: sent.payload)
+        XCTAssertEqual(sync.step, .step1)
+        XCTAssertEqual(sync.data, Data([0xAA, 0xBB]))
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testBroadcastSendsSyncUpdateFrame() async throws {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let session = makeSession(fake, counter)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        await session.broadcast(update: Data([0x01, 0x02]))
+        await waitUntil { fake.sentFrames.count == 2 }
+        let sent = try HocuspocusMessage(decoding: fake.sentFrames[1])
+        XCTAssertEqual(sent.documentName, doc)
+        XCTAssertEqual(sent.knownType, .sync)
+        let sync = try SyncMessage(decodingPayload: sent.payload)
+        XCTAssertEqual(sync.step, .update)
+        XCTAssertEqual(sync.data, Data([0x01, 0x02]))
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
     func testDeliversStep2UpdateBytesToOnSyncUpdate() async {
         let fake = FakeWebSocket()
         let counter = ChangeCounter()
