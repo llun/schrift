@@ -1942,4 +1942,207 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.lastConfirmedPush(documentID: documentID), "v3")
     }
 
+    // MARK: - Live-snapshot inherits the coordinator invariants (C2b Task 3)
+    //
+    // `saveLiveSnapshot` and `saveDocumentContent` share the identical half-land contract
+    // (a THROW means the content PATCH never confirmed; a non-nil `DocsAPIError` RETURN means
+    // it landed but the title PATCH failed) — see `DocumentSaveCoordinator.start`, which is the
+    // one piece of code both paths share below the public entry points. These tests pin that
+    // contract for the live path specifically, so a future change that special-cases
+    // `save.liveSnapshot` inside `start`/`finish` cannot silently break it.
+
+    /// Half-land, `contentLanded == false`: the content PATCH itself fails transiently
+    /// (offline), so `saveLiveSnapshot` THROWS before it can even attempt the title PATCH.
+    /// `finish` must NOT stamp `lastPushedMarkdown` — the server never confirmed holding this
+    /// body, and stamping it would tell the next replay we pushed content we never actually
+    /// sent, masking a real conflict against whatever the server actually holds.
+    func testLiveSnapshotContentFailureIsRetryableAndLeavesThePushUnstamped() async {
+        let (coordinator, draftStore, contentCache) = makeCoordinator()
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x0A]), projectedMarkdown: "# Unconfirmed", title: "Doc")
+
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, "# Unconfirmed", "the unsent edit stays safely on-device")
+        XCTAssertNil(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown,
+            "the content PATCH never confirmed landing (`saveLiveSnapshot` threw) — the push must not be "
+                + "recorded, or the next replay would wrongly believe the server already holds this body")
+        XCTAssertNil(contentCache.content(for: documentID), "a pending-sync save writes no cache entry")
+    }
+
+    /// Same throw path, a 5xx cause: `retryableSaveFailure` classifies a live snapshot exactly
+    /// like a classic save (mirrors `testServerErrorSaveFailureBecomesPendingSync`).
+    func testLiveSnapshotServerErrorContentFailureBecomesPendingSync() async {
+        let log = RequestRecorder()
+        let (coordinator, _, _) = makeCoordinator()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x0B]), projectedMarkdown: "# Retry me", title: "Doc")
+
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+    }
+
+    /// The mirror classification: a content PATCH the server rejects on the merits (never a
+    /// transport/5xx problem) is `.failed`, not `.pendingSync` — and, being a throw, must still
+    /// leave the push unstamped (mirrors `testFailedSaveKeepsDraftAndReportsFailure`, for the
+    /// live path).
+    func testLiveSnapshotServerRejectedContentBecomesFailedNotPendingSync() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 400, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x0C]), projectedMarkdown: "# Rejected", title: "Doc")
+
+        await waitUntil { self.isFailed(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Rejected")
+        XCTAssertNil(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown,
+            "the content PATCH was rejected outright (never landed) — the push must not be recorded")
+    }
+
+    /// Half-land, `contentLanded == true`: the content PATCH lands (204) but the title PATCH is
+    /// rejected on the merits, so `saveLiveSnapshot` RETURNS a non-nil `DocsAPIError` instead of
+    /// throwing. The server now holds this exact body, so the push must be recorded even though
+    /// the save as a whole reports `.failed` (mirrors `testANonRetryableHalfLandedSaveStillRecordsThePush`).
+    func testLiveSnapshotHalfLandRecordsThePushWhenOnlyTheTitleIsRejected() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 400, headers: [:], body: Data(), error: nil)  // title rejected
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x0D]), projectedMarkdown: "# Half-landed", title: "Doc")
+
+        await waitUntil { self.isFailed(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.lastPushedMarkdown, "# Half-landed",
+            "the content PATCH landed (`saveLiveSnapshot` returned a non-nil error, not a throw) — the push "
+                + "must be recorded even though the save as a whole failed")
+    }
+
+    /// A live snapshot must bump `settledSaves` on settle exactly like a classic save, or a
+    /// revalidation fetch issued just before it would not be recognised as possibly racing it —
+    /// `mayPredateSave` would wrongly clear a marker that in fact predates a landed live write.
+    func testLiveSnapshotSaveMarkerBumpsSettledSavesOnSettle() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _, _) = makeCoordinator()
+        let marker = coordinator.saveMarker(documentID: documentID)
+        XCTAssertFalse(coordinator.mayPredateSave(marker))
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x0E]), projectedMarkdown: "# Marked", title: "Doc")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        XCTAssertTrue(
+            coordinator.mayPredateSave(marker),
+            "the live snapshot must bump `settledSaves` on settle exactly like a classic save")
+    }
+
+    /// **`releaseHeldSave` must still route through `saveLiveSnapshot`, not reconstruct a
+    /// classic save.** A live snapshot held behind a recorded conflict is parked in `queued` as
+    /// the exact `PendingSave` it was enqueued with (bytes + `liveSnapshot` intact); when the
+    /// user resolves the conflict, `releaseHeldSave` hands that same value straight to `start`.
+    /// If it were ever rebuilt from `save.title`/`save.markdown` instead, the released PATCH
+    /// would silently re-derive Yjs bytes from the *projected* markdown via `MarkdownYjs.encode`
+    /// (wrong bytes) and drop the `"websocket": true` flag the server needs to accept a
+    /// full-state snapshot over the live-collaboration channel.
+    func testAReleasedHeldLiveSnapshotStillPatchesThroughSaveLiveSnapshot() async {
+        let bodies = ContentPatchRecorder()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            bodies.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let snapshot = Data([0x11, 0x22])
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date())
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: snapshot, projectedMarkdown: "# Held", title: "Doc")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }  // confirm it was held
+
+        coordinator.resolveConflictKeepingLocal(documentID: documentID)
+
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(
+            bodies.contentValues, [snapshot.base64EncodedString()],
+            "the released save must carry the ORIGINAL snapshot bytes it was held with")
+        XCTAssertEqual(
+            bodies.websocketFlags, [true],
+            "and it must still be tagged websocket:true — a released hold is not a classic save")
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// **`finish`'s plain queued-restart (latest-wins coalescing, no conflict involved) must
+    /// also preserve the live-snapshot identity of the coalesced follow-up.** This is a
+    /// different code path from the conflict-hold release above: when a second live snapshot
+    /// coalesces behind an in-flight one and the first lands, `finish` calls `start` directly
+    /// with the queued `PendingSave` — which must still carry `liveSnapshot` bytes and route
+    /// through `saveLiveSnapshot`, not silently fall back to re-deriving Yjs from markdown.
+    func testACoalescedQueuedRestartOfALiveSnapshotStillCarriesTheWebsocketFlag() async {
+        let bodies = ContentPatchRecorder()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            bodies.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH", url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.2)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, _, _) = makeCoordinator()
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x01]), projectedMarkdown: "v1", title: "Doc")
+        // Coalesces behind the in-flight v1 (no conflict, so this is `finish`'s plain restart —
+        // not `releaseHeldSave`).
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x02]), projectedMarkdown: "v2", title: "Doc")
+
+        await waitUntil(timeout: 5) {
+            self.isSaved(coordinator.state(for: self.documentID)) && bodies.websocketFlags.count == 2
+        }
+
+        XCTAssertEqual(
+            bodies.contentValues, [Data([0x01]).base64EncodedString(), Data([0x02]).base64EncodedString()],
+            "the queued restart must carry the coalesced save's OWN snapshot bytes, not re-derive them")
+        XCTAssertEqual(
+            bodies.websocketFlags, [true, true],
+            "both the first save and the coalesced restart must route through `saveLiveSnapshot`")
+    }
+
 }
