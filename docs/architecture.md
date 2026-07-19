@@ -49,7 +49,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — a two-way *sync engine* now exists (C2a: a real SyncStep1/SyncStep2 handshake, an outbound `applyLocalEdit`/broadcast path, and the write-eligibility gates a save would need), but nothing calls it yet — the editor and the save coordinator are not wired to it (C2b/C2c). The app **reads** live: behind the default-off `schrift.liveCollaboration` flag it joins the Hocuspocus room, integrates inbound Yjs updates into a hand-written replica, and reflects them in the open editor caret-preservingly (Milestones A + B + C1). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)" and "Two-way sync engine (C2a)". Outbound edits still save via a single full-overwrite HTTP PATCH; nothing the app types is broadcast to peers or persisted through the replica yet.
+- Real-time collaborative *writing* (typing that other clients see live) — a two-way *sync engine* now exists (C2a: a real SyncStep1/SyncStep2 handshake, an outbound `applyLocalEdit`/broadcast path, and the write-eligibility gates a save would need), but nothing calls it yet — the editor and the save coordinator are not wired to it. C2b adds the live-snapshot save *mechanism* (`enqueueLiveSnapshot` + `saveLiveSnapshot`, through the existing save coordinator), still uncalled; C2c wires the editor and the ~60 s debounce. The app **reads** live: behind the default-off `schrift.liveCollaboration` flag it joins the Hocuspocus room, integrates inbound Yjs updates into a hand-written replica, and reflects them in the open editor caret-preservingly (Milestones A + B + C1). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)" and "Two-way sync engine (C2a)". Outbound edits still save via a single full-overwrite HTTP PATCH; nothing the app types is broadcast to peers or persisted through the replica yet.
 - Offline editing/sync queue. (Offline *reading* of previously-opened documents
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
@@ -383,9 +383,42 @@ one and adds the outbound write path on top of it.
 - **Still entirely dormant.** Everything above runs only behind the default-off
   `schrift.liveCollaboration` flag, and — this is the C2a boundary — **no
   `Features/Editor` or save-path code calls any of it**: `EditorViewModel` never calls
-  `applyLocalEdit`, and `DocumentSaveCoordinator` never calls `encodeSnapshotForSave`.
-  C2a is the sync *engine*; wiring actual keystrokes and actual saves through it is
-  **C2b/C2c**.
+  `applyLocalEdit`, and **nothing bridges `encodeSnapshotForSave`'s bytes into a save**:
+  C2b adds the save mechanism (`enqueueLiveSnapshot` + `saveLiveSnapshot`), but no editor
+  or collaboration code calls `enqueueLiveSnapshot` yet. C2a is the sync *engine*; wiring
+  actual keystrokes and actual saves through it is **C2b/C2c**.
+
+### Live-snapshot save (C2b)
+
+C2a produced `DocumentCollaborationManager.encodeSnapshotForSave(for:)` — a full-state
+Yjs snapshot of a write-eligible replica — but nothing carried those bytes to the server.
+**C2b adds the save *mechanism*: a new networking primitive and a new save-coordinator
+entry point, both routed through the existing full-overwrite save pipeline so a live save
+inherits every reconcile/baseline/hold invariant. It is still dormant** — no editor or
+collaboration code bridges `encodeSnapshotForSave`'s bytes into it; that wiring (and the
+~60 s debounce) is **C2c**.
+
+- **`DocsAPIClient.saveLiveSnapshot(documentID:title:yjsUpdate:)`** mirrors
+  `saveDocumentContent` exactly — two requests, the same half-land `DocsAPIError?` contract
+  (throws ⇒ content unconfirmed; non-nil ⇒ content landed / title failed; nil ⇒ both landed)
+  — but the content PATCH sends the caller's snapshot **bytes verbatim** (never
+  `MarkdownYjs.encode`) and tags the JSON body with **`"websocket": true`**, which the docs
+  backend uses to distinguish a live-collab snapshot from a REST full-overwrite. It reuses
+  `setContent(…, viaWebSocket:)`; with `viaWebSocket` false (the default) the classic content
+  body is byte-identical to before.
+- **`DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`**
+  queues that save. A live snapshot pushes CRDT **bytes**, but the reconcile machinery is
+  markdown-based, so the coordinator carries the **projected markdown** (what the server
+  renders from the snapshot) as the `PendingSave.markdown` and the draft body. That single
+  choice makes `finish` unable to tell the two paths apart: the write-ahead draft, the
+  enqueue-hold + single-writer conflict rule, latest-wins coalescing, the
+  `lastConfirmedPushMarkdown` stamp, the content-cache write, and `.pendingSync`/`.failed`
+  classification are all **reused unchanged**. The only branch is in `start`, which sees a
+  non-nil `PendingSave.liveSnapshot` and calls `saveLiveSnapshot` instead of
+  `saveDocumentContent`. On success the projected markdown is stamped as
+  `lastConfirmedPushMarkdown`, so a later **downgrade to a classic markdown save of the same
+  body** reconciles via rule 1 (or rule 2's body fallback), never a false conflict against
+  pre-live state.
 
 ### Two Yjs models, deliberately
 

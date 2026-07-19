@@ -781,6 +781,15 @@ unchanged. The VM also updates `displayedSourceMarkdown` to the enqueued markdow
 when it enqueues a save, keeping the staleness comparison anchored to what the
 server is about to hold.
 
+- **Live-collaboration snapshot saves reuse this exact pipeline (C2b).**
+  `DocumentSaveCoordinator.enqueueLiveSnapshot(...)` queues a full-state Yjs snapshot (PATCHed
+  verbatim with `"websocket": true` via `DocsAPIClient.saveLiveSnapshot`) rather than
+  markdown-derived bytes. It carries the **projected markdown** (what the server renders from
+  the snapshot) as the draft body and the `lastConfirmedPushMarkdown` stamp, so the write-ahead
+  draft, the conflict hold, latest-wins coalescing, `draftSyncDecision`, and the content cache
+  behave identically to a classic save — only the network primitive differs. Dormant until C2c
+  wires it; the classic markdown full-overwrite save is unchanged.
+
 ### 4. UI changes in `EditorView`
 
 - **Spinner only for source 4.** `if viewModel.isLoading` stays, but `isLoading`
