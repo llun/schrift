@@ -102,42 +102,25 @@ enum BlockNoteYjs {
     /// Emits the string/format item sequence for a run list, mirroring yjs
     /// `Y.XmlText.applyDelta`: marks are opened when they first appear, carried
     /// across runs, and closed (value `null`) once no longer active — including
-    /// after the final run.
+    /// after the final run. The sequence itself comes from `InlineContent.pieces`
+    /// — the shared shape the write path also builds on — this just encodes each
+    /// piece into an item.
     private static func emitInline(
         _ runs: [InlineRun],
         parentText: Int,
         emit: (YEncoderContent, Int?, String?, Int?, String?) -> Int
     ) {
         var lastClock: Int? = nil  // clock of the previously emitted item's last position
-        var openMarks: [(key: String, valueJSON: String)] = []
-
-        func emitItem(_ content: YEncoderContent) {
+        for piece in InlineContent.pieces(for: runs) {
+            let content: YEncoderContent
+            switch piece {
+            case .string(let s): content = .string(s)
+            case .format(let key, let valueJSON): content = .format(key: key, valueJSON: valueJSON)
+            }
             let origin = lastClock
             let parentClock = lastClock == nil ? parentText : nil
             let start = emit(content, origin, nil, parentClock, nil)
             lastClock = start + content.length - 1
-        }
-
-        for run in runs {
-            let newMarks = run.marks
-            // Close marks that are open but not present (or changed) in this run.
-            for open in openMarks
-            where !newMarks.contains(where: { $0.key == open.key && $0.valueJSON == open.valueJSON }) {
-                emitItem(.format(key: open.key, valueJSON: "null"))
-            }
-            // Open marks newly present in this run.
-            for mark in newMarks
-            where !openMarks.contains(where: { $0.key == mark.key && $0.valueJSON == mark.valueJSON }) {
-                emitItem(.format(key: mark.key, valueJSON: mark.valueJSON))
-            }
-            if !run.text.isEmpty {
-                emitItem(.string(run.text))
-            }
-            openMarks = newMarks
-        }
-        // Close any marks still open after the last run.
-        for open in openMarks {
-            emitItem(.format(key: open.key, valueJSON: "null"))
         }
     }
 }
