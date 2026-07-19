@@ -1,5 +1,16 @@
 import Foundation
 
+/// Errors from the manager's outbound local-edit write path (C2a,
+/// `applyLocalEdit`). A malformed replica that makes `BlockNoteWrite.applyEdit`
+/// throw propagates its own `YIntegrationError` unchanged — this type covers only
+/// the write-eligibility gate.
+enum CollaborationWriteError: Error, Equatable {
+    /// The document's replica is not in a writable state — there is no replica,
+    /// the initial sync has not landed, it carries unintegrated pending structs,
+    /// or it has fail-safed (see `canWriteReplica`). Nothing was mutated.
+    case notWritable
+}
+
 /// App-scoped owner of live-collaboration sessions, keyed by document id — built
 /// once per authenticated server session and injected, alongside `DocsAPIClient`
 /// and `DocumentSaveCoordinator`.
@@ -31,9 +42,14 @@ final class DocumentCollaborationManager {
         /// (yjs relies on a tracing GC; `YDoc.destroy()` breaks the cycles ARC
         /// cannot).
         var replica: YDoc?
-        /// True once at least one inbound update has integrated cleanly. Gates
-        /// `projectedReplica` — a replica that has never seen a real update (or
-        /// whose only updates all failed) has nothing meaningful to project.
+        /// True once the room's **initial full state** has landed — set *only* by
+        /// `markInitialSyncApplied`, fired by the session's `onInitialSync` on the
+        /// first inbound `.step2` (the reply to our SyncStep1). Gates
+        /// `canWriteReplica` (projection + the local-edit write path + the save
+        /// snapshot). An inbound `.update` interleaved *before* that reply builds
+        /// the replica and bumps `replicaVersion`, but must leave this false: a
+        /// replica assembled from a partial incremental update is not the full
+        /// document and must not be projectable/writable/snapshottable.
         var initialSyncApplied = false
         /// True once an inbound update has failed to decode/apply. A corrupt or
         /// half-synced replica must never drive the editor, so once set this
@@ -66,6 +82,11 @@ final class DocumentCollaborationManager {
 
     /// Per-document replica-version counters (see `replicaVersion(for:)`).
     private var replicaVersions: [UUID: Int] = [:]
+
+    /// Per-document local-edit counters (see `localEditVersion(for:)`). Deliberately
+    /// separate from `replicaVersions`/`remoteChangeTokens`: a local edit is our own
+    /// work, already on screen, and must never masquerade as an inbound remote change.
+    private var localEditVersions: [UUID: Int] = [:]
 
     private let serverBaseURL: URL
     private let cookieProvider: @Sendable () -> [HTTPCookie]
@@ -168,19 +189,98 @@ final class DocumentCollaborationManager {
         entries[documentID]?.replicaFailSafe ?? false
     }
 
+    /// True when the document's replica has un-integrated pending
+    /// structs/deletes stashed (`YStructStore.pendingStructs`/`pendingDs`), or
+    /// there is no replica at all — in both cases there is nothing safe to
+    /// write on top of. The write path itself gates on the private
+    /// `canWriteReplica` (which already subsumes this check), so this stays
+    /// public for the not-yet-wired editor live-entry gate (C2b/C2c), which will
+    /// consult it to decide whether the editor may engage live editing on a
+    /// half-synced replica.
+    func hasPendingStructs(for documentID: UUID) -> Bool {
+        guard let replica = entries[documentID]?.replica else { return true }
+        return replica.store.pendingStructs != nil || replica.store.pendingDs != nil
+    }
+
+    /// Whether an entry's replica is safe to project *or* write to: it exists,
+    /// at least one update has integrated (`initialSyncApplied`), it hasn't
+    /// fail-safed, and it carries no unintegrated pending structs/deletes
+    /// (`YStructStore.pendingStructs`/`pendingDs`) — writing on top of a
+    /// partially-synced store would build on content that is about to change
+    /// shape the moment the missing dependency arrives. The single
+    /// write-eligibility predicate shared by `projectedReplica` (read) and the
+    /// local-edit write path (C2).
+    private func canWriteReplica(_ entry: Entry) -> Bool {
+        guard let replica = entry.replica else { return false }
+        return entry.initialSyncApplied && !entry.replicaFailSafe && replica.store.pendingStructs == nil
+            && replica.store.pendingDs == nil
+    }
+
     /// The document's live replica projected into BlockNote-vocabulary blocks
     /// (B5's `YBlockProjection.project`), or `nil` when there is nothing safe to
-    /// project: no replica yet, the entry is fail-safed, no update has
-    /// integrated yet, or the replica still has unintegrated pending
-    /// structs/deletes (`YStructStore.pendingStructs`/`pendingDs`) — projecting
-    /// a partially-synced store would show content that is about to change
-    /// shape the moment the missing dependency arrives.
+    /// project — see `canWriteReplica`.
     func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
-        guard let entry = entries[documentID], !entry.replicaFailSafe, entry.initialSyncApplied,
-            let replica = entry.replica,
-            replica.store.pendingStructs == nil, replica.store.pendingDs == nil
-        else { return nil }
+        guard let entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+            return nil
+        }
         return YBlockProjection.project(replica, interlinkingOrigin: interlinkingOrigin)
+    }
+
+    /// A monotonic counter bumped once per successful `applyLocalEdit` — the
+    /// document's *local* edit version. Deliberately distinct from
+    /// `replicaVersion`: that advances on inbound remote changes the editor
+    /// read-applies, whereas a local edit is our own work, already on screen. `0`
+    /// when no local edit has landed; reset when the document's entry is torn down.
+    func localEditVersion(for documentID: UUID) -> Int {
+        localEditVersions[documentID] ?? 0
+    }
+
+    /// Applies one local BlockNote edit to the document's replica and broadcasts the
+    /// resulting incremental Yjs update to the room — the outbound write path (C2a).
+    ///
+    /// `old` must be the replica's current projection (`projectedReplica`), `new`
+    /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them, mutates the replica
+    /// in place inside its own local transaction, and returns only the structs this
+    /// edit minted; those bytes are returned to the caller *and* broadcast to peers.
+    ///
+    /// **Local-echo suppression is the load-bearing rule.** It bumps
+    /// `localEditVersions` only — never `replicaVersions`/`remoteChangeTokens`, which
+    /// are the *inbound* remote-change signals the editor observes and read-applies.
+    /// Signalling our own keystroke as a remote change would make the editor try to
+    /// read-apply it.
+    ///
+    /// Throws `CollaborationWriteError.notWritable` when the replica is not writable
+    /// (`canWriteReplica`) — nothing is mutated or broadcast. A malformed replica
+    /// that makes `BlockNoteWrite.applyEdit` throw `YIntegrationError` (an integration
+    /// or encode failure leaves a corrupt store) latches `replicaFailSafe` and tears
+    /// the replica down exactly as the inbound apply path does, then **rethrows** the
+    /// underlying error — it never traps.
+    func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+        guard var entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+            throw CollaborationWriteError.notWritable
+        }
+        let update: Data
+        do {
+            update = try BlockNoteWrite.applyEdit(old: old, new: new, to: replica)
+        } catch {
+            // A malformed replica: mirror `applyReplicaUpdate`'s catch — destroy the
+            // corrupt store, latch fail-safe so it never drives the editor again, then
+            // rethrow. Never trap (clocks are peer-influenced — see `CLAUDE.md`).
+            replica.destroy()
+            entry.replica = nil
+            entry.replicaFailSafe = true
+            entry.initialSyncApplied = false
+            entries[documentID] = entry
+            throw error
+        }
+        // Local-echo suppression: bump the local-edit counter only — never the inbound
+        // remote-change signals (`replicaVersions`/`remoteChangeTokens`).
+        localEditVersions[documentID, default: 0] += 1
+        // Broadcast to the room. Fire-and-forget on the main actor, matching the
+        // session's own outbound sends; a nil session (suspended) is a silent no-op.
+        let session = entry.session
+        Task { await session?.broadcast(update: update) }
+        return update
     }
 
     /// The current gate result, in the roadmap's fixed order.
@@ -241,6 +341,7 @@ final class DocumentCollaborationManager {
                 entries.removeValue(forKey: id)
                 remoteChangeTokens.removeValue(forKey: id)
                 replicaVersions.removeValue(forKey: id)
+                localEditVersions.removeValue(forKey: id)
             } else {
                 entries[id]?.session = nil
                 entries[id]?.lingerTask = nil
@@ -279,13 +380,24 @@ final class DocumentCollaborationManager {
         let session = DocumentCollaborationSession(
             documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness,
             onRemoteChange: { [weak self] in self?.remoteChangeTokens[documentID, default: 0] += 1 },
-            onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) })
+            onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) },
+            initialSyncStep1: { [weak self] in self?.currentStateVector(for: documentID) ?? Data([0x00]) },
+            onStateRequest: { [weak self] peerVector in self?.stateReply(to: peerVector, for: documentID) },
+            onInitialSync: { [weak self] in self?.markInitialSyncApplied(for: documentID) })
         session.start()
         return session
     }
 
     /// Applies one inbound Yjs update to the document's replica (C1), building
     /// the replica lazily on first call. A no-op once the entry has fail-safed.
+    ///
+    /// This integrates the bytes and bumps `replicaVersion` on **any** inbound
+    /// frame (`.step2` or `.update`), but it does **not** flip
+    /// `initialSyncApplied` — that is the sole province of `markInitialSyncApplied`
+    /// (the session's `onInitialSync`, fired on the first `.step2`). An `.update`
+    /// interleaved before our SyncStep1 reply therefore builds the replica but
+    /// leaves it un-synced (`canWriteReplica` stays false) until the real initial
+    /// sync lands.
     ///
     /// A decode/integrate failure destroys the replica and latches
     /// `replicaFailSafe` rather than retrying or leaving a partially-applied
@@ -300,7 +412,6 @@ final class DocumentCollaborationManager {
         entry.replica = replica
         do {
             try replica.applyUpdate(try YUpdateDecoder.decode(data))
-            entry.initialSyncApplied = true
             entries[documentID] = entry
             replicaVersions[documentID, default: 0] += 1
         } catch {
@@ -310,6 +421,72 @@ final class DocumentCollaborationManager {
             entry.initialSyncApplied = false
             entries[documentID] = entry
         }
+    }
+
+    /// The replica's current state vector, for our own SyncStep1 handshake — a
+    /// statement of everything we already have, so the peer/relay's step2 reply
+    /// is a diff of only what we lack. Falls back to the signal-only one-byte
+    /// empty state vector (`Data([0x00])`) before a replica exists, matching the
+    /// read-only default. On a reconnect/resume the entry (and its replica)
+    /// survives the session rebuild, so a fresh session's handshake re-offers our
+    /// accumulated state — including edits made while suspended — rather than
+    /// asking for the whole document again.
+    private func currentStateVector(for documentID: UUID) -> Data {
+        guard let replica = entries[documentID]?.replica else { return Data([0x00]) }
+        return YStateEncoder.encodeStateVector(replica)
+    }
+
+    /// Replies to a peer's SyncStep1 with a step2 diff of everything they lack —
+    /// this is what re-offers our local edits to a peer or the relay when they
+    /// (re)connect and ask for our state (peer step1 → our step2). Decodes the
+    /// peer's state vector and encodes only the structs past it; `nil` (send
+    /// nothing) when we hold no replica to offer.
+    ///
+    /// Runs synchronously on the main actor inside the session's inbound-frame
+    /// handler, so it must stay cheap — a state-vector-diff encode is fine, and no
+    /// blocking work is deferred. A malformed peer vector (`decodeStateVector`
+    /// throws) or a replica that can't be snapshotted right now (pending structs
+    /// make `encodeStateAsUpdate` throw) yields `nil` rather than trapping — the
+    /// peer will still send us their state, so the room converges regardless.
+    private func stateReply(to peerVector: Data, for documentID: UUID) -> Data? {
+        guard let replica = entries[documentID]?.replica else { return nil }
+        guard let vectorEntries = try? YUpdateDecoder.decodeStateVector(peerVector) else { return nil }
+        // `uniquingKeysWith` (never `uniqueKeysWithValues`) — the peer vector is
+        // attacker-influenced wire data and a duplicate client id would trap. yjs
+        // builds a Map here, so last-writer-wins matches its semantics.
+        let since = Dictionary(vectorEntries.map { ($0.client, $0.clock) }, uniquingKeysWith: { _, latest in latest })
+        return try? YStateEncoder.encodeStateAsUpdate(replica, since: since)
+    }
+
+    /// Marks the document's initial sync applied — fired once per session by the
+    /// session's `onInitialSync` on the **first inbound `.step2`** (the reply to
+    /// our own SyncStep1), and the *sole* authority for `initialSyncApplied`. An
+    /// inbound `.update` interleaved before that reply builds the replica but must
+    /// not mark it synced: a replica assembled from a partial incremental update
+    /// is not the room's full state and must not be writable/snapshottable.
+    /// Idempotent. Safe on a fail-safed/torn-down entry — `canWriteReplica` still
+    /// gates on `replica != nil` and `!replicaFailSafe`, so the flag alone never
+    /// makes a dead replica writable.
+    private func markInitialSyncApplied(for documentID: UUID) {
+        guard var entry = entries[documentID] else { return }
+        entry.initialSyncApplied = true
+        entries[documentID] = entry
+    }
+
+    /// A full-snapshot Yjs v1 update of the document's replica for the classic
+    /// full-overwrite save path — or `nil` when the replica is not writable
+    /// (`canWriteReplica`: no replica, the initial sync hasn't landed, it carries
+    /// unintegrated pending structs, or it has fail-safed). This is the one gate
+    /// the save path checks before snapshotting a live replica instead of
+    /// re-encoding the editor's markdown; a `nil` return means "no trustworthy
+    /// snapshot — fall back to the classic encode." `encodeStateAsUpdate` can only
+    /// throw here on a pending replica, which `canWriteReplica` already excludes,
+    /// so `try?`'s `nil` is a belt-and-braces guard that never traps.
+    func encodeSnapshotForSave(for documentID: UUID) -> Data? {
+        guard let entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+            return nil
+        }
+        return try? YStateEncoder.encodeStateAsUpdate(replica, since: [:])
     }
 
     private func rebuildActiveSessions() {
@@ -331,6 +508,7 @@ final class DocumentCollaborationManager {
         entries.removeValue(forKey: documentID)
         remoteChangeTokens.removeValue(forKey: documentID)
         replicaVersions.removeValue(forKey: documentID)
+        localEditVersions.removeValue(forKey: documentID)
     }
 }
 

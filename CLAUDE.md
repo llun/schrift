@@ -252,11 +252,12 @@ Schrift/
 │   │                    origin-pinned endpoint builders (CollaborationEndpoint),
 │   │                    the WebSocket transport (WebSocketConnecting seam +
 │   │                    URLSessionWebSocket adapter, CollaborationTransport actor,
-│   │                    CollaborationEvents), the signal-only session state
-│   │                    machine (DocumentCollaborationSession) with availability
-│   │                    gating (LiveCollaborationAvailability + LiveCollaboration‐
-│   │                    Preference + ServerConfig.collaborationWsUrl), and the
-│   │                    app-scoped DocumentCollaborationManager (keyed sessions,
+│   │                    CollaborationEvents), the session state machine
+│   │                    (DocumentCollaborationSession) with availability gating
+│   │                    (LiveCollaborationAvailability +
+│   │                    LiveCollaborationPreference +
+│   │                    ServerConfig.collaborationWsUrl), and the app-scoped
+│   │                    DocumentCollaborationManager (keyed sessions,
 │   │                    refcount/linger, scenePhase suspend/resume, reconnect on
 │   │                    the ConnectivityMonitor edge) wired in RootView, dormant
 │   │                    behind the default-off flag. C1 makes the session deliver
@@ -264,7 +265,23 @@ Schrift/
 │   │                    per-document YDoc replica (applyUpdate → replicaVersion +
 │   │                    projectedReplica, failSafe, destroy on teardown), and adds
 │   │                    the caret-preserving LiveEditingBridge (read-side live
-│   │                    apply; the write path is C2)
+│   │                    apply). C2a makes the handshake real (SyncStep1 now carries
+│   │                    the replica's actual state vector; a peer's SyncStep1 is
+│   │                    answered with a SyncStep2 diff via onStateRequest →
+│   │                    stateReply, deliberately ungated on canWriteReplica so the
+│   │                    room always converges and a reconnect re-offers everything
+│   │                    accumulated so far) and adds the outbound write path:
+│   │                    applyLocalEdit(old:new:for:) wraps B6's
+│   │                    BlockNoteWrite.applyEdit and broadcasts the incremental
+│   │                    update, bumping a separate localEditVersion — never
+│   │                    replicaVersion/remoteChangeToken (local-echo suppression,
+│   │                    or the editor would read-apply its own edit).
+│   │                    initialSyncApplied is set only by onInitialSync on the
+│   │                    first inbound SyncStep2 (an earlier .update still builds
+│   │                    the replica but leaves it non-writable), and
+│   │                    encodeSnapshotForSave(for:) returns nil unless
+│   │                    canWriteReplica. Still dormant — no editor/save-path code
+│   │                    calls any of this yet (C2b/C2c)
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions

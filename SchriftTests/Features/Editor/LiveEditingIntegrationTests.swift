@@ -194,6 +194,19 @@ final class LiveEditingIntegrationTests: XCTestCase {
             .encoded()
     }
 
+    /// The `.step2` reply to our own SyncStep1 — the realistic first inbound
+    /// content frame in a session, and the one that fires `onInitialSync` so the
+    /// manager marks the replica synced (Task 6's authority move: only a `.step2`
+    /// makes the replica projectable/writable; a bare `.update` builds it but
+    /// leaves it un-synced). The initial 3-block document is delivered through
+    /// this; the incremental edits that follow stay `.update`, exactly as a real
+    /// peer's stream arrives (step1 out → step2 in → updates…).
+    private func syncStep2Frame(hex: String) -> Data {
+        let payload = SyncMessage(step: .step2, data: Data(hex: hex)).encodedPayload()
+        return HocuspocusMessage(documentName: documentID.uuidString.lowercased(), type: .sync, payload: payload)
+            .encoded()
+    }
+
     // MARK: - Fixtures (real yjs@13.6.31 captures — see the regeneration script above)
 
     private let initialHex =
@@ -220,7 +233,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
 
         // -- Initial sync: the manager's replica integrates a real 3-block
         // document (heading "Doc" + two paragraphs) delivered over the socket.
-        spy.sockets[0].deliver(message: syncUpdateFrame(hex: initialHex))
+        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
 
@@ -297,7 +310,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
 
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
-        spy.sockets[0].deliver(message: syncUpdateFrame(hex: initialHex))
+        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
 
@@ -335,7 +348,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
 
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
-        spy.sockets[0].deliver(message: syncUpdateFrame(hex: initialHex))
+        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
         XCTAssertTrue(bridge.isApplyingLiveContent, "clean and synced")
