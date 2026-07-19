@@ -536,9 +536,14 @@ struct EditorView: View {
     /// lose the first's identity map / seed state).
     private func requestCollaborationSessionIfNeeded() {
         if liveEditingBridge == nil {
-            liveEditingBridge = LiveEditingBridge(
+            let bridge = LiveEditingBridge(
                 documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,
                 serverOrigin: "https://\(serverHost)")
+            liveEditingBridge = bridge
+            // Thread the outbound write path in (C2c). Weak on the VM side, so no cycle.
+            // The gate inside `forwardLocalEdit` keeps this a no-op until live-write mode
+            // is actually engaged, so classic-only documents are unaffected.
+            viewModel.liveWrite = bridge
         }
         guard !holdsCollaborationSession else { return }
         if collaboration.session(for: viewModel.documentID) != nil {
