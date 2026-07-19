@@ -2,6 +2,37 @@ import XCTest
 
 @testable import Schrift
 
+/// Captures the JSON of every `PATCH …/content/` body, so a live-snapshot test can prove
+/// the base64 bytes and the `"websocket": true` flag actually went out. Lock-guarded
+/// because stubs are delivered on URLSession's protocol thread.
+private final class ContentPatchRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bodies: [[String: Any]] = []
+
+    func record(_ request: URLRequest) {
+        guard request.httpMethod == "PATCH",
+            request.url?.absoluteString.hasSuffix("/content/") == true,
+            let data = bodyData(from: request),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        bodies.append(json)
+    }
+
+    var contentValues: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return bodies.compactMap { $0["content"] as? String }
+    }
+
+    var websocketFlags: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return bodies.map { $0["websocket"] as? Bool ?? false }
+    }
+}
+
 @MainActor
 final class DocumentSaveCoordinatorTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
@@ -1786,6 +1817,129 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNotNil(draftStore.draft(for: documentID), "the draft waits for the user's choice")
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }  // a save is an unstructured Task
         XCTAssertTrue(titles.all.isEmpty, "a conflict never PATCHes a title")
+    }
+
+    // MARK: - Live-snapshot save (C2b)
+
+    /// A queued live snapshot routes to `saveLiveSnapshot`: the content PATCH carries the
+    /// exact snapshot bytes AND `"websocket": true`, then a title PATCH follows.
+    func testEnqueueLiveSnapshotRoutesToSaveLiveSnapshot() async {
+        let bodies = ContentPatchRecorder()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            bodies.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, _, _) = makeCoordinator()
+        let snapshot = Data([0xAA, 0xBB, 0xCC])
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: snapshot, projectedMarkdown: "# Body", title: "Doc")
+
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.methods, ["PATCH", "PATCH"], "content then title")
+        XCTAssertEqual(bodies.contentValues, [snapshot.base64EncodedString()], "the snapshot bytes are sent verbatim")
+        XCTAssertEqual(bodies.websocketFlags, [true], "the content PATCH is tagged websocket:true")
+    }
+
+    /// A classic `enqueue` must NOT leak the live flag — its content PATCH carries no
+    /// `"websocket"` key, and its bytes are the markdown-derived Yjs update, not the raw
+    /// projected markdown.
+    func testClassicEnqueueStillRoutesToSaveDocumentContentWithNoWebsocketFlag() async {
+        let bodies = ContentPatchRecorder()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            bodies.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, _, _) = makeCoordinator()
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Content")
+
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(bodies.websocketFlags, [false], "a classic save never carries the live-collab flag")
+        // A real Yjs v1 update begins with the client-count varUint 0x01 — NOT the raw markdown.
+        let sent = bodies.contentValues.first.flatMap { Data(base64Encoded: $0) }
+        XCTAssertEqual(sent?.first, 0x01, "the classic path still sends MarkdownYjs.encode output")
+    }
+
+    /// Write-ahead: `enqueueLiveSnapshot` persists a draft carrying the **projected
+    /// markdown** as its body and the supplied baseline, before the save completes — so the
+    /// whole reconcile/replay machinery keys off the projected markdown, never the bytes.
+    func testEnqueueLiveSnapshotWritesTheDraftWithProjectedMarkdownAndBaseline() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, saveDelay: 0.3)  // hold the save open so we can read the draft
+        let (coordinator, draftStore, _) = makeCoordinator()
+        let baseline = DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 0), markdown: "# Base", title: "Doc")
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x09]), projectedMarkdown: "# Projected", title: "Doc",
+            baseline: baseline)
+
+        let draft = draftStore.draft(for: documentID)
+        XCTAssertEqual(draft?.markdown, "# Projected", "the draft body is the projected markdown, not the bytes")
+        XCTAssertEqual(draft?.title, "Doc")
+        XCTAssertEqual(draft?.baseline, baseline, "the baseline is threaded through unchanged")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+    }
+
+    /// On live-snapshot success, `lastConfirmedPushMarkdown` is stamped with the **projected
+    /// markdown** — so a later classic reconcile recognises the server as holding our body
+    /// (rule 1) and never raises a conflict against our own live write.
+    func testLiveSnapshotSuccessStampsLastConfirmedPushWithProjectedMarkdown() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _, _) = makeCoordinator()
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x01, 0x02]), projectedMarkdown: "# Projected", title: "Doc")
+
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(
+            coordinator.lastConfirmedPush(documentID: documentID), "# Projected",
+            "the projected markdown is what the server is known to hold")
+    }
+
+    /// Enqueue-hold applies to the live path too: while a conflict is recorded, a queued live
+    /// snapshot writes its draft but starts NO save (an autosave must never push over the
+    /// conflicting server copy unasked), and the state degrades to `.pendingSync`.
+    func testLiveSnapshotIsHeldWhileAConflictIsRecorded() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, draftStore, _) = makeCoordinator()
+        coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 100))
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x07]), projectedMarkdown: "# Held", title: "Doc")
+
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }  // a save is an unstructured Task
+        XCTAssertEqual(coordinator.state(for: documentID), .pendingSync, "a held live save is not a saved save")
+        XCTAssertEqual(draftStore.draft(for: documentID)?.markdown, "# Held", "the write-ahead draft still lands")
+        XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, "# Held", "it sits in the hold")
+    }
+
+    /// Latest-wins coalescing applies to the live path: three snapshots queued behind an
+    /// in-flight save collapse to the newest, which is the only one that reaches the wire.
+    func testLiveSnapshotCoalescesToLatestWhileInFlight() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, saveDelay: 0.2)
+        let (coordinator, _, _) = makeCoordinator()
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x01]), projectedMarkdown: "v1", title: "Doc")
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x02]), projectedMarkdown: "v2", title: "Doc")
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x03]), projectedMarkdown: "v3", title: "Doc")
+
+        XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown, "v3")
+
+        await waitUntil(timeout: 5) { self.isSaved(coordinator.state(for: self.documentID)) }
+        // Two saves total (the first, then the coalesced v3), each one content PATCH.
+        XCTAssertEqual(savesInFlight(log), 2)
+        XCTAssertEqual(coordinator.lastConfirmedPush(documentID: documentID), "v3")
     }
 
 }
