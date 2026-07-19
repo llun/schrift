@@ -1,5 +1,16 @@
 import Foundation
 
+/// Errors from the manager's outbound local-edit write path (C2a,
+/// `applyLocalEdit`). A malformed replica that makes `BlockNoteWrite.applyEdit`
+/// throw propagates its own `YIntegrationError` unchanged — this type covers only
+/// the write-eligibility gate.
+enum CollaborationWriteError: Error, Equatable {
+    /// The document's replica is not in a writable state — there is no replica,
+    /// the initial sync has not landed, it carries unintegrated pending structs,
+    /// or it has fail-safed (see `canWriteReplica`). Nothing was mutated.
+    case notWritable
+}
+
 /// App-scoped owner of live-collaboration sessions, keyed by document id — built
 /// once per authenticated server session and injected, alongside `DocsAPIClient`
 /// and `DocumentSaveCoordinator`.
@@ -66,6 +77,11 @@ final class DocumentCollaborationManager {
 
     /// Per-document replica-version counters (see `replicaVersion(for:)`).
     private var replicaVersions: [UUID: Int] = [:]
+
+    /// Per-document local-edit counters (see `localEditVersion(for:)`). Deliberately
+    /// separate from `replicaVersions`/`remoteChangeTokens`: a local edit is our own
+    /// work, already on screen, and must never masquerade as an inbound remote change.
+    private var localEditVersions: [UUID: Int] = [:]
 
     private let serverBaseURL: URL
     private let cookieProvider: @Sendable () -> [HTTPCookie]
@@ -202,6 +218,63 @@ final class DocumentCollaborationManager {
         return YBlockProjection.project(replica, interlinkingOrigin: interlinkingOrigin)
     }
 
+    /// A monotonic counter bumped once per successful `applyLocalEdit` — the
+    /// document's *local* edit version. Deliberately distinct from
+    /// `replicaVersion`: that advances on inbound remote changes the editor
+    /// read-applies, whereas a local edit is our own work, already on screen. `0`
+    /// when no local edit has landed; reset when the document's entry is torn down.
+    func localEditVersion(for documentID: UUID) -> Int {
+        localEditVersions[documentID] ?? 0
+    }
+
+    /// Applies one local BlockNote edit to the document's replica and broadcasts the
+    /// resulting incremental Yjs update to the room — the outbound write path (C2a).
+    ///
+    /// `old` must be the replica's current projection (`projectedReplica`), `new`
+    /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them, mutates the replica
+    /// in place inside its own local transaction, and returns only the structs this
+    /// edit minted; those bytes are returned to the caller *and* broadcast to peers.
+    ///
+    /// **Local-echo suppression is the load-bearing rule.** It bumps
+    /// `localEditVersions` only — never `replicaVersions`/`remoteChangeTokens`, which
+    /// are the *inbound* remote-change signals the editor observes and read-applies.
+    /// Signalling our own keystroke as a remote change would make the editor try to
+    /// read-apply it.
+    ///
+    /// Throws `CollaborationWriteError.notWritable` when the replica is not writable
+    /// (`canWriteReplica`) — nothing is mutated or broadcast. A malformed replica
+    /// that makes `BlockNoteWrite.applyEdit` throw `YIntegrationError` (an integration
+    /// or encode failure leaves a corrupt store) latches `replicaFailSafe` and tears
+    /// the replica down exactly as the inbound apply path does, then **rethrows** the
+    /// underlying error — it never traps.
+    func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+        guard var entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+            throw CollaborationWriteError.notWritable
+        }
+        let update: Data
+        do {
+            update = try BlockNoteWrite.applyEdit(old: old, new: new, to: replica)
+        } catch {
+            // A malformed replica: mirror `applyReplicaUpdate`'s catch — destroy the
+            // corrupt store, latch fail-safe so it never drives the editor again, then
+            // rethrow. Never trap (clocks are peer-influenced — see `CLAUDE.md`).
+            replica.destroy()
+            entry.replica = nil
+            entry.replicaFailSafe = true
+            entry.initialSyncApplied = false
+            entries[documentID] = entry
+            throw error
+        }
+        // Local-echo suppression: bump the local-edit counter only — never the inbound
+        // remote-change signals (`replicaVersions`/`remoteChangeTokens`).
+        localEditVersions[documentID, default: 0] += 1
+        // Broadcast to the room. Fire-and-forget on the main actor, matching the
+        // session's own outbound sends; a nil session (suspended) is a silent no-op.
+        let session = entry.session
+        Task { await session?.broadcast(update: update) }
+        return update
+    }
+
     /// The current gate result, in the roadmap's fixed order.
     var availability: LiveCollaborationAvailability {
         liveCollaborationAvailability(
@@ -260,6 +333,7 @@ final class DocumentCollaborationManager {
                 entries.removeValue(forKey: id)
                 remoteChangeTokens.removeValue(forKey: id)
                 replicaVersions.removeValue(forKey: id)
+                localEditVersions.removeValue(forKey: id)
             } else {
                 entries[id]?.session = nil
                 entries[id]?.lingerTask = nil
@@ -350,6 +424,7 @@ final class DocumentCollaborationManager {
         entries.removeValue(forKey: documentID)
         remoteChangeTokens.removeValue(forKey: documentID)
         replicaVersions.removeValue(forKey: documentID)
+        localEditVersions.removeValue(forKey: documentID)
     }
 }
 
