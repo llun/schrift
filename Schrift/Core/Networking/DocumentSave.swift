@@ -12,8 +12,23 @@ extension DocsAPIClient {
 
     /// Replaces a document's content. The backend stores content as base64-encoded
     /// Yjs and validates it, so `yjsUpdate` must be a real Yjs update.
-    func setContent(documentID: UUID, yjsUpdate: Data) async throws {
-        let body = try JSONEncoder().encode(["content": yjsUpdate.base64EncodedString()])
+    ///
+    /// `viaWebSocket` tags the PATCH body with `"websocket": true`, which the docs
+    /// backend uses to distinguish a **live-collaboration snapshot** (the current full
+    /// CRDT state pushed while a Hocuspocus room is joined) from a classic REST
+    /// full-overwrite. It defaults to `false`, and when false the body is byte-identical
+    /// to what it has always been (`{"content":"<base64>"}` via `JSONEncoder`), so every
+    /// existing caller and golden expectation is unchanged.
+    func setContent(documentID: UUID, yjsUpdate: Data, viaWebSocket: Bool = false) async throws {
+        let body: Data
+        if viaWebSocket {
+            // Mixed value types (String content + Bool flag) ⇒ JSONSerialization, not a
+            // `[String: String]` JSONEncoder. Only app-authored keys/values here.
+            body = try JSONSerialization.data(
+                withJSONObject: ["content": yjsUpdate.base64EncodedString(), "websocket": true])
+        } else {
+            body = try JSONEncoder().encode(["content": yjsUpdate.base64EncodedString()])
+        }
         try await sendVoid(
             path: "documents/\(documentID.uuidString.lowercased())/content/", method: "PATCH", body: body)
     }
@@ -70,6 +85,36 @@ extension DocsAPIClient {
             // but it must never *rethrow*: the content PATCH has landed, and a throw would tell
             // the caller nothing reached the server, re-opening the conflict-against-your-own-
             // writing bug this signal exists to prevent.
+            return .network(String(describing: error))
+        }
+    }
+
+    /// Full-state live-collaboration snapshot save: PATCH the caller's Yjs bytes (tagged
+    /// `"websocket": true`) then the title. Mirrors `saveDocumentContent`'s **half-land
+    /// contract exactly** — it is two requests and can half-land — but the content bytes
+    /// are a full-state Yjs snapshot the caller already holds
+    /// (`DocumentCollaborationManager.encodeSnapshotForSave`), **not** re-derived from
+    /// markdown via `MarkdownYjs.encode`:
+    ///
+    /// - **throws** ⇒ the *content* PATCH was not confirmed;
+    /// - **returns non-nil** ⇒ the content landed and only the *title* PATCH failed;
+    /// - **returns nil** ⇒ both landed.
+    ///
+    /// The `draftSyncDecision` rule-0/rule-1 backstop covers the unconfirmed-but-applied
+    /// case exactly as it does for `saveDocumentContent`, which is why the result is **not**
+    /// discardable — a caller that ignores it loses the fact that the server holds its bytes.
+    func saveLiveSnapshot(documentID: UUID, title: String, yjsUpdate: Data) async throws -> DocsAPIError? {
+        try await setContent(documentID: documentID, yjsUpdate: yjsUpdate, viaWebSocket: true)
+        do {
+            try await updateTitle(documentID: documentID, title: title)
+            return nil
+        } catch let error as DocsAPIError {
+            return error
+        } catch {
+            // `performRequest` maps everything into `DocsAPIError`, so this is unreachable —
+            // but it must never *rethrow*: the content PATCH has landed, and a throw would tell
+            // the caller nothing reached the server, re-opening the conflict-against-your-own-
+            // writing bug the split return exists to prevent.
             return .network(String(describing: error))
         }
     }
