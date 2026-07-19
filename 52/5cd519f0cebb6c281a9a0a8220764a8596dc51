@@ -1,0 +1,27 @@
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_0d1bafffaaad6d::t_ac7aa437d8caff 627,632-634,637
+  s_0d1bafffaaad6d::t_1dd475dc33d44c 509-531,533-538,543-548,550-566,568-570,572-577,579-584,586-596,598-626,628-631,635-636,638
+  s_0d1bafffaaad6d::t_1bdea07dbcb9fa 532,539-542,549,567,571,578,585,597
+Schrift/Features/Editor/LiveEditingBridge.swift
+  s_0d1bafffaaad6d::t_9434409a4b7eb3 137,146
+  s_0d1bafffaaad6d::t_33db74d033f73f 47
+  s_0d1bafffaaad6d::t_bce1d159ef5bf9 97-100,105
+  s_0d1bafffaaad6d::t_29d0974ae758f4 175-252
+  s_0d1bafffaaad6d::t_b07f97a1f770a2 68-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "525cd519f0cebb6c281a9a0a8220764a8596dc51",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
