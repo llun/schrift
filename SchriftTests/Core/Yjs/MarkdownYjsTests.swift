@@ -96,4 +96,65 @@ final class MarkdownYjsTests: XCTestCase {
         XCTAssertEqual(data.first, 0x01)
         XCTAssertGreaterThan(data.count, 20)
     }
+
+    func testBlockNoteBlocksFromEditorBlocksPreservesStableIDs() {
+        let a = EditorBlock(kind: .paragraph, text: "Alpha")
+        let b = EditorBlock(kind: .heading(level: 1), text: "Beta")
+        let result = MarkdownYjs.blockNoteBlocks(from: [a, b])
+        XCTAssertEqual(result.map(\.id), [a.id.uuidString.lowercased(), b.id.uuidString.lowercased()])
+        XCTAssertEqual(result.map(\.node), ["paragraph", "heading"])
+    }
+
+    func testBlockNoteBlocksFromEmptyEditorBlocksFallsBackToOneParagraph() {
+        let result = MarkdownYjs.blockNoteBlocks(from: [])
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.node, "paragraph")
+    }
+
+    /// Calling the `[EditorBlock]` overload twice on the *same* array must
+    /// yield identical ids — that stability is the whole point of Task 1
+    /// (the live write path's `old` baseline has to line up across edits).
+    func testBlockNoteBlocksFromEditorBlocksIsStableAcrossRepeatedCalls() {
+        let blocks = [EditorBlock(kind: .paragraph, text: "Alpha"), EditorBlock(kind: .quote, text: "Beta")]
+        let first = MarkdownYjs.blockNoteBlocks(from: blocks)
+        let second = MarkdownYjs.blockNoteBlocks(from: blocks)
+        XCTAssertEqual(first.map(\.id), second.map(\.id))
+    }
+
+    /// `.unknown` blocks are the one case `map` doesn't reuse `EditorBlock.id`
+    /// for (it can split one block into N literal-text paragraphs, so a single
+    /// id wouldn't make sense) — it mints a fresh id per line, unchanged from
+    /// the markdown-parse path. This is exactly why a document containing an
+    /// `.unknown` block never qualifies as fully-modeled and so never enters
+    /// the live write path — this overload's id-stability guarantee doesn't
+    /// extend to it.
+    func testUnknownBlockMintsFreshIDsNotTheEditorBlockID() {
+        let block = EditorBlock(kind: .unknown, text: "| a | b |\n| - | - |")
+        let result = MarkdownYjs.blockNoteBlocks(from: [block])
+        XCTAssertEqual(result.count, 2)
+        for mapped in result {
+            XCTAssertNotEqual(mapped.id, block.id.uuidString.lowercased())
+        }
+    }
+
+    /// The String overload is a thin wrapper (`blockNoteBlocks(from:
+    /// parseEditorBlocks(markdown))`) — same markdown produces the same node
+    /// shape either way. It does **not** produce the same ids as a second,
+    /// independent `parseEditorBlocks` call on the same markdown: each parse
+    /// mints its own fresh `EditorBlock.id`s (`EditorBlock.init`'s default
+    /// `id: UUID = UUID()` is evaluated per call), so two parses of identical
+    /// text never share ids. That instability is precisely the defect the
+    /// `[EditorBlock]` overload exists to avoid — the live write path must
+    /// feed it the editor's *actual*, already-parsed `blocks`, never a fresh
+    /// re-parse of `currentMarkdown()`.
+    func testStringOverloadRoutesThroughEditorBlockOverload() {
+        let markdown = "Alpha\n\n# Beta"
+        let blocks = parseEditorBlocks(markdown)
+        let viaBlocks = MarkdownYjs.blockNoteBlocks(from: blocks)
+        let viaString = MarkdownYjs.blockNoteBlocks(from: markdown)
+        XCTAssertEqual(viaString.map(\.node), viaBlocks.map(\.node))
+        XCTAssertNotEqual(
+            viaString.map(\.id), blocks.map { $0.id.uuidString.lowercased() },
+            "the String overload re-parses internally and mints its own ids, independent of any earlier parse")
+    }
 }

@@ -25,7 +25,20 @@ enum MarkdownYjs {
     }
 
     static func blockNoteBlocks(from markdown: String) -> [BlockNoteBlock] {
-        let mapped = parseEditorBlocks(markdown).flatMap(map)
+        blockNoteBlocks(from: parseEditorBlocks(markdown))
+    }
+
+    /// The id-stable core: maps already-parsed editor blocks straight to BlockNote
+    /// blocks, so each block keeps its `EditorBlock.id` (`.uuidString.lowercased()`)
+    /// as its BlockNote id. The live write path (C2c) relies on this stability —
+    /// re-parsing `currentMarkdown()` would mint fresh ids each call, so survivors
+    /// would never match across two edits and every keystroke would rebuild the
+    /// whole document. `.unknown` blocks still mint fresh ids (they map to N
+    /// paragraphs), but a document with an `.unknown` block is never
+    /// write-eligible (its projection is not `isFullyModeled`), so it stays
+    /// read-live and this coarseness is unreachable in the write path.
+    static func blockNoteBlocks(from blocks: [EditorBlock]) -> [BlockNoteBlock] {
+        let mapped = blocks.flatMap(map)
         // BlockNote documents must contain at least one block.
         return mapped.isEmpty ? [emptyParagraph()] : mapped
     }
