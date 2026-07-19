@@ -1,0 +1,23 @@
+SchriftTests/Core/Collaboration/DocumentCollaborationSessionTests.swift
+  s_0d1bafffaaad6d::t_2729f183d6aaba 111-152
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_0d1bafffaaad6d::t_bf05b83557e1f1 60-64,73-74,82
+  s_0d1bafffaaad6d::t_25f210269fc3cb 94,97-101
+  s_0d1bafffaaad6d::t_91d3a40c3aca31 131-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "bb254d7f479d185834b40db60c14f0c9bb4ad8b6",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
