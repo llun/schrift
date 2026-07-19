@@ -49,7 +49,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is not built yet (Milestone C2). The app now **reads** live: behind the default-off `schrift.liveCollaboration` flag it joins the Hocuspocus room, integrates inbound Yjs updates into a hand-written replica, and reflects them in the open editor caret-preservingly (Milestones A + B + C1). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)". Outbound edits still save via a single full-overwrite HTTP PATCH; nothing the app types is broadcast yet.
+- Real-time collaborative *writing* (typing that other clients see live) — a two-way *sync engine* now exists (C2a: a real SyncStep1/SyncStep2 handshake, an outbound `applyLocalEdit`/broadcast path, and the write-eligibility gates a save would need), but nothing calls it yet — the editor and the save coordinator are not wired to it (C2b/C2c). The app **reads** live: behind the default-off `schrift.liveCollaboration` flag it joins the Hocuspocus room, integrates inbound Yjs updates into a hand-written replica, and reflects them in the open editor caret-preservingly (Milestones A + B + C1). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)" and "Two-way sync engine (C2a)". Outbound edits still save via a single full-overwrite HTTP PATCH; nothing the app types is broadcast to peers or persisted through the replica yet.
 - Offline editing/sync queue. (Offline *reading* of previously-opened documents
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
@@ -226,9 +226,14 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   refetch is **suppressed** (`isApplyingLiveContent`, evaluated fresh from the same
   engagement condition the apply uses) — the stream is newer than the 60 s REST snapshot, so
   installing a stale REST body would reset the caret and regress content.
-- **Read-only in C1.** Nothing is encoded, broadcast, or PATCHed; inbound `.step1` (a peer
-  requesting our state) is ignored. The two-way write path — outbound sync, local-edit
-  transactions, `enqueueLiveSnapshot`, the live-entry gates on the save path — is **C2**.
+- **Read-only in C1 — the sync engine itself now exists (C2a, below), but nothing calls
+  it.** At C1, nothing was encoded, broadcast, or PATCHed, and a peer's inbound `.step1`
+  was ignored outright. **C2a** built the two-way sync *engine* one layer down — the
+  session answers a peer's `.step1` with a real `.step2` diff, and the manager's
+  `applyLocalEdit` turns a local edit into a broadcast update — but the editor still never
+  calls `applyLocalEdit` and the save coordinator still never calls
+  `encodeSnapshotForSave`. Wiring either of those in (`enqueueLiveSnapshot`, the live-entry
+  gates on the save path) is **C2b/C2c**.
 
 ### Local-edit transactions (B6)
 
@@ -309,6 +314,78 @@ the collaboration session, transport, and save coordinator.
   divergences after fixing one bug: an early version diffed at raw UTF-16-unit
   boundaries and could split a surrogate pair, which the fuzz caught; the code-point
   snap described above is the fix.
+
+### Two-way sync engine (C2a)
+
+C1 wires the *read* side into the editor; B6 can turn an edit into bytes but has zero
+runtime callers. **C2a wires the two together into a real bidirectional sync engine,
+entirely inside `Core/Collaboration` (`DocumentCollaborationSession` +
+`DocumentCollaborationManager`) — no editor or save-path code calls any of it yet.** It
+replaces the earlier milestones' signal-only, empty-state-vector handshake with a real
+one and adds the outbound write path on top of it.
+
+- **A real handshake, in both directions.** `DocumentCollaborationSession.start()` no
+  longer always sends the one-byte empty state vector for its own SyncStep1 — it calls
+  the manager-supplied `initialSyncStep1()` closure, which returns
+  `YStateEncoder.encodeStateVector(replica)` once a replica exists (still the empty
+  vector before that), so a peer's `.step2` reply becomes an actual diff of what we
+  lack, not a full-document dump. Symmetrically, the session answers a **peer's** own
+  `.step1` through `onStateRequest`, which the manager wires to `stateReply(to:for:)`:
+  decode the peer's state vector, `YStateEncoder.encodeStateAsUpdate(replica, since:)` a
+  diff of everything they're missing, and send it back as a `.step2` frame. `stateReply`
+  is deliberately **ungated on `canWriteReplica`** — offering a subset of our own
+  monotonic CRDT state is always safe, even mid-sync, so the room keeps converging
+  regardless; only the save-snapshot path needs the stronger gate (below). Because an
+  entry's replica survives session rebuilds, `stateReply` re-offers a reconnecting peer
+  *everything accumulated so far* — including edits made while the app was suspended.
+- **`initialSyncApplied` has exactly one setter.** The session's `onInitialSync` fires
+  once per session, on the *first* inbound `.step2` — the reply to our own SyncStep1 —
+  and only that callback (`markInitialSyncApplied`) flips the flag. An `.update` arriving
+  before that reply still builds the replica and bumps `replicaVersion` (so the
+  change-signal fallback keeps firing), but must leave `initialSyncApplied` false: a
+  replica assembled from a partial incremental update is not the room's full state and
+  is not yet safe to project, write to, or snapshot.
+- **`DocumentCollaborationManager.applyLocalEdit(old:new:for:)` is the outbound write
+  path.** It wraps B6's `BlockNoteWrite.applyEdit(old:new:to:)` on the manager-owned
+  replica (inside that call's own local transaction), broadcasts the returned
+  incremental update via the session's `broadcast(update:)`, and bumps a counter that is
+  **deliberately separate from the inbound signals**: `localEditVersion`, never
+  `replicaVersion`/`remoteChangeToken`. Those two are what a future editor integration
+  would read as "a remote peer changed the document" — bumping them for our own edit
+  would make something read-apply the keystroke we just made ourselves. This is
+  local-echo suppression, and it is the load-bearing rule of the whole write path.
+- **One write-eligibility gate, shared by read and write.** `canWriteReplica` — a
+  replica exists, its initial sync has landed, it carries no unintegrated
+  `pendingStructs`/`pendingDs`, and it hasn't fail-safed — already gated
+  `projectedReplica` (C1/B5); C2a reuses the identical predicate for `applyLocalEdit`
+  (throws `CollaborationWriteError.notWritable`, mutating nothing, when it fails) and for
+  `encodeSnapshotForSave(for:)` (returns `nil` instead of a snapshot). A
+  `BlockNoteWrite.applyEdit` throw — a malformed replica — is handled exactly like an
+  inbound decode/apply failure: the replica is destroyed, `replicaFailSafe` latches
+  permanently (so this document's replica is never rebuilt or trusted again this
+  session), and the error is rethrown, never trapped — clocks are peer/edit-influenced
+  and this store must not crash on them.
+- **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
+  path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
+  when `canWriteReplica` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
+  calls it yet — the classic full-overwrite markdown-encode save is completely unchanged
+  until C2c wires this in as its replacement source of truth.
+- **Verification.** Deterministic two-peer integration tests (`LiveSyncConvergenceTests`)
+  drive two real `DocumentCollaborationManager`s through a paired fake-socket relay and
+  assert convergence at the **projected-document** level (never store bytes) across the
+  handshake, one-way edit propagation, and concurrent edits from both peers. A
+  session-local differential-fuzz harness (never committed, per the zero-dependency
+  rule) additionally drove roughly 25,000 seeds / 162,000 document-level comparisons
+  against node yjs 13.6.31 across handshake-diff (including merged/gc'd-peer state
+  vectors), broadcast/concurrent, and producer-shape lanes, with **0 divergences**; the
+  harness itself was mutation-verified — a deliberately reintroduced bug in the
+  diff-slicing path was confirmed to fail it before the real fix was restored.
+- **Still entirely dormant.** Everything above runs only behind the default-off
+  `schrift.liveCollaboration` flag, and — this is the C2a boundary — **no
+  `Features/Editor` or save-path code calls any of it**: `EditorViewModel` never calls
+  `applyLocalEdit`, and `DocumentSaveCoordinator` never calls `encodeSnapshotForSave`.
+  C2a is the sync *engine*; wiring actual keystrokes and actual saves through it is
+  **C2b/C2c**.
 
 ### Two Yjs models, deliberately
 

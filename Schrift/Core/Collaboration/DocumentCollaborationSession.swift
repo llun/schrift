@@ -2,14 +2,22 @@ import Foundation
 
 /// The live-collaboration session for one document.
 ///
-/// **Signal-only for content in this milestone.** It joins the Hocuspocus room,
-/// performs the empty-state-vector handshake (send SyncStep1 with a one-byte
-/// empty state vector, so the peer replies with everything), and reports that a
-/// peer touched the document — it does **not** apply a CRDT (that is Milestone
-/// B/C); the change signal is what a later PR turns into a refresh. **Presence is
-/// real:** it broadcasts our `{name, color}` awareness and tracks peers'
-/// awareness into `peers`. Disconnects are classified into terminal vs.
-/// reconnect-eligible states so the manager can decide whether to retry.
+/// **Pure transport/state machine — the manager owns the replica (C2a).** This
+/// class never decodes or applies a CRDT itself; it carries the real Yjs sync
+/// protocol over the wire and hands the manager everything it needs to do so.
+/// It joins the Hocuspocus room, sends SyncStep1 with the state vector the
+/// manager supplies (`initialSyncStep1` — the real replica's state once one
+/// exists, else the signal-only one-byte empty vector), answers a peer's own
+/// SyncStep1 with a SyncStep2 diff the manager computes (`onStateRequest`), and
+/// signals initial sync completion (`onInitialSync`) on the first inbound
+/// SyncStep2. Inbound sync bytes (`.step2`/`.update`) are handed to the manager
+/// via `onSyncUpdate`, and `broadcast(update:)` sends the manager's own local
+/// edits (encoded upstream by B6) out to the room. `onRemoteChange` also still
+/// fires on every inbound sync frame, as a change-signal fallback independent of
+/// whether the replica integrates it. **Presence is real:** it broadcasts our
+/// `{name, color}` awareness and tracks peers' awareness into `peers`.
+/// Disconnects are classified into terminal vs. reconnect-eligible states so the
+/// manager can decide whether to retry.
 ///
 /// `@MainActor @Observable` like every view-adjacent store: a screen observes
 /// `state`/`peers`, and `onRemoteChange` is delivered on the main actor.
