@@ -38,6 +38,19 @@ final class DocumentSaveCoordinator {
     struct PendingSave: Equatable, Sendable {
         let title: String
         let markdown: String
+        /// Non-nil ⇒ a **live-collaboration full-state Yjs snapshot** to PATCH verbatim
+        /// (tagged `"websocket": true`) via `client.saveLiveSnapshot`, instead of re-deriving
+        /// bytes from `markdown` through `MarkdownYjs.encode`. `markdown` still carries the
+        /// **projected** markdown (what the server renders from the snapshot), so every
+        /// reconcile/baseline/cache rule in `finish` is byte-for-byte identical between the
+        /// two paths — only which network primitive `start` calls differs.
+        let liveSnapshot: Data?
+
+        init(title: String, markdown: String, liveSnapshot: Data? = nil) {
+            self.title = title
+            self.markdown = markdown
+            self.liveSnapshot = liveSnapshot
+        }
     }
 
     enum DocSaveState: Equatable, Sendable {
@@ -252,7 +265,33 @@ final class DocumentSaveCoordinator {
     /// a conflict; it defaults to nil so legacy call sites (and tests) route to the
     /// tolerance rule exactly as before.
     func enqueue(documentID: UUID, title: String, markdown: String, baseline: DraftBaseline? = nil) {
-        let save = PendingSave(title: title, markdown: markdown)
+        enqueue(documentID: documentID, save: PendingSave(title: title, markdown: markdown), baseline: baseline)
+    }
+
+    /// Queue a **live-collaboration full-state snapshot** save. `snapshot` is the Yjs bytes
+    /// to PATCH verbatim (tagged `"websocket": true`); `projectedMarkdown` is what the server
+    /// will render from them and is the value **every** reconcile/baseline/cache rule keys
+    /// off — it becomes the write-ahead draft body, the `lastConfirmedPushMarkdown` stamp on
+    /// success, and the content-cache body, exactly as a classic save's markdown does. This
+    /// reuses the identical write-ahead draft, enqueue-hold, single-writer, and latest-wins
+    /// machinery as the classic `enqueue` (they share the private core below); the only
+    /// difference reaches `start`, which sees a non-nil `liveSnapshot` and calls
+    /// `saveLiveSnapshot` instead of `saveDocumentContent`.
+    ///
+    /// Dormant until C2c: nothing calls it yet (C2b is the mechanism, not the wiring).
+    func enqueueLiveSnapshot(
+        documentID: UUID, snapshot: Data, projectedMarkdown: String, title: String, baseline: DraftBaseline? = nil
+    ) {
+        enqueue(
+            documentID: documentID,
+            save: PendingSave(title: title, markdown: projectedMarkdown, liveSnapshot: snapshot),
+            baseline: baseline)
+    }
+
+    /// The shared core of both public entry points. Classic and live saves differ only in the
+    /// `PendingSave` handed here (a live save carries `liveSnapshot` bytes and a projected
+    /// `markdown`); the draft write, enqueue-hold, and latest-wins logic below are identical.
+    private func enqueue(documentID: UUID, save: PendingSave, baseline: DraftBaseline?) {
         // The draft carries the last-confirmed-push so `draftSyncDecision` rule 1 can
         // recognise our own writes on the next replay (even across a relaunch).
         //
@@ -270,7 +309,8 @@ final class DocumentSaveCoordinator {
             lastConfirmedPushMarkdown[documentID] ?? draftStore.draft(for: documentID)?.lastPushedMarkdown
         draftStore.save(
             PendingDraft(
-                documentID: documentID, title: title, markdown: markdown, updatedAt: Date(), baseline: baseline,
+                documentID: documentID, title: save.title, markdown: save.markdown, updatedAt: Date(),
+                baseline: baseline,
                 lastPushedMarkdown: lastPushed,
                 // Carry the hold through: `enqueue` rebuilds the whole draft, so omitting this
                 // would silently erase a persisted conflict on the next keystroke.
@@ -658,8 +698,16 @@ final class DocumentSaveCoordinator {
                 // A non-nil return means the CONTENT PATCH landed and only the title failed:
                 // the save still counts as failed (retryability is classified from the same
                 // error) but the server holds our body, so `finish` must record the push.
-                let titleFailure = try await client.saveDocumentContent(
-                    documentID: documentID, title: save.title, markdown: save.markdown)
+                let titleFailure: DocsAPIError?
+                if let snapshot = save.liveSnapshot {
+                    // Live-collaboration snapshot: PATCH the CRDT bytes verbatim (websocket:true).
+                    titleFailure = try await client.saveLiveSnapshot(
+                        documentID: documentID, title: save.title, yjsUpdate: snapshot)
+                } else {
+                    // Classic full-overwrite: re-derive Yjs bytes from the markdown.
+                    titleFailure = try await client.saveDocumentContent(
+                        documentID: documentID, title: save.title, markdown: save.markdown)
+                }
                 finish(documentID: documentID, save: save, error: titleFailure, contentLanded: true)
             } catch {
                 // A throw means the content PATCH was not **confirmed** — NOT that nothing

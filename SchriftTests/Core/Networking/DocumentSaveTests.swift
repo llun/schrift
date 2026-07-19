@@ -182,4 +182,118 @@ final class DocumentSaveClientTests: XCTestCase {
         }
         XCTAssertEqual(log.requests.count, 1, "the title PATCH must not be attempted after the content failed")
     }
+
+    /// Decodes a request body as a heterogeneous JSON object (the live-snapshot
+    /// content body mixes a String `content` with a Bool `websocket`, which the
+    /// existing `[String: String]` `jsonBody` helper cannot represent).
+    private func anyJSONBody(_ request: URLRequest?) -> [String: Any]? {
+        request.flatMap(bodyData(from:)).flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        }
+    }
+
+    // MARK: - Live-snapshot save (C2b)
+
+    func testSaveLiveSnapshotPatchesGivenBytesWithWebsocketFlagThenTitle() async throws {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)  // title
+        }
+        let client = makeClient()
+        // Deliberately NOT a real Yjs update — proves the bytes are passed through
+        // verbatim, never re-derived from markdown via MarkdownYjs.encode.
+        let snapshot = Data([0xAA, 0xBB, 0xCC])
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: realDocumentID, title: "Notes", yjsUpdate: snapshot)
+
+        XCTAssertNil(titleFailure, "both PATCHes landed")
+        XCTAssertEqual(log.requests.map(\.httpMethod), ["PATCH", "PATCH"])
+        XCTAssertEqual(
+            log.requests[0].url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/content/")
+        XCTAssertEqual(
+            log.requests[1].url?.absoluteString,
+            "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
+
+        let contentBody = try XCTUnwrap(anyJSONBody(log.requests[0]))
+        XCTAssertEqual(contentBody["content"] as? String, snapshot.base64EncodedString())
+        XCTAssertEqual(contentBody["websocket"] as? Bool, true, "the live snapshot is tagged websocket:true")
+
+        let titleBody = try XCTUnwrap(anyJSONBody(log.requests[1]))
+        XCTAssertEqual(titleBody["title"] as? String, "Notes")
+    }
+
+    func testSaveLiveSnapshotTitleOnlyFailureReturnsTheErrorInsteadOfThrowing() async throws {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("/content/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)  // the title PATCH
+        }
+        let client = makeClient()
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: realDocumentID, title: "Notes", yjsUpdate: Data([0x01]))
+
+        XCTAssertEqual(
+            titleFailure, .server(statusCode: 500), "content landed — report the title failure, do not throw")
+        XCTAssertEqual(log.requests.map(\.httpMethod), ["PATCH", "PATCH"], "both were attempted")
+    }
+
+    func testSaveLiveSnapshotContentFailureThrowsAndNeverAttemptsTheTitle() async {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.saveLiveSnapshot(documentID: realDocumentID, title: "Notes", yjsUpdate: Data([0x01]))
+            XCTFail("a failed content PATCH must throw")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 500))
+        } catch {
+            XCTFail("expected DocsAPIError, got \(error)")
+        }
+        XCTAssertEqual(log.requests.count, 1, "the title PATCH must not be attempted after the content failed")
+    }
+
+    // MARK: - setContent websocket flag
+
+    func testSetContentViaWebSocketAddsTheFlag() async throws {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }
+        let client = makeClient()
+        let yjs = Data([0x01, 0x02, 0x03])
+
+        try await client.setContent(documentID: realDocumentID, yjsUpdate: yjs, viaWebSocket: true)
+
+        let body = try XCTUnwrap(anyJSONBody(MockURLProtocol.lastRequest))
+        XCTAssertEqual(body["content"] as? String, yjs.base64EncodedString())
+        XCTAssertEqual(body["websocket"] as? Bool, true)
+    }
+
+    func testSetContentWithoutWebSocketOmitsTheFlagAndIsByteIdenticalToClassic() async throws {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }
+        let client = makeClient()
+        let yjs = Data([0x01, 0x02, 0x03])
+
+        try await client.setContent(documentID: realDocumentID, yjsUpdate: yjs)  // default: not a live snapshot
+
+        let body = try XCTUnwrap(anyJSONBody(MockURLProtocol.lastRequest))
+        XCTAssertNil(body["websocket"], "a classic content PATCH must never carry the live-collab flag")
+        // Byte-for-byte identical to the pre-C2b encoder output.
+        let sent = try XCTUnwrap(MockURLProtocol.lastRequest.flatMap(bodyData(from:)))
+        let expected = try JSONEncoder().encode(["content": yjs.base64EncodedString()])
+        XCTAssertEqual(sent, expected, "the classic content body must be byte-identical to before C2b")
+    }
 }

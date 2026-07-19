@@ -1103,6 +1103,24 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; draft replay).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
+- **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
+  `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
+  (C2b) PATCHes a full-state Yjs snapshot verbatim via
+  `DocsAPIClient.saveLiveSnapshot(documentID:title:yjsUpdate:)` — bytes the collaboration
+  manager already holds (`encodeSnapshotForSave`), **not** re-derived from markdown — tagging
+  the content body with `"websocket": true` (through `setContent(…, viaWebSocket:)`; the
+  classic body stays byte-identical when false). Because reconcile is markdown-based, the
+  coordinator carries the **projected markdown** as the `PendingSave.markdown` / draft body /
+  `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
+  `draftSyncDecision`, and the content cache are all **reused unchanged** — the only branch is
+  in `start` (non-nil `PendingSave.liveSnapshot` ⇒ `saveLiveSnapshot`). **The accepted v1
+  trade:** the persisted `PendingDraft` carries only `projectedMarkdown`, never the snapshot
+  bytes, so a transiently-failed live save that `syncPendingDrafts` later replays goes through
+  the classic `enqueue`/`saveDocumentContent` path — re-encoding the same rendered markdown via
+  `MarkdownYjs.encode` rather than resending the original CRDT bytes. Content is preserved
+  (same markdown), CRDT history for that one save is flattened, and the replay is still
+  conflict-checked like any other. It stays **dormant until C2c** wires it; never bypass the
+  coordinator to persist a live edit.
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping
