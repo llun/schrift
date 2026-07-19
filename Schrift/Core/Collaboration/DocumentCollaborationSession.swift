@@ -54,14 +54,28 @@ final class DocumentCollaborationSession {
     private let onRemoteChange: @MainActor () -> Void
     /// Fired on the main actor with the raw Yjs update bytes (`SyncMessage.data`)
     /// for an inbound `.step2`/`.update` sync frame. A peer's `.step1` (a
-    /// request for our state) carries no content and is not delivered here —
-    /// read-only in this milestone.
+    /// request for our state) carries no content of its own and is routed to
+    /// `onStateRequest` instead.
     private let onSyncUpdate: @MainActor (Data) -> Void
     /// Produces the state vector for the initial SyncStep1 handshake. Defaults
     /// to the signal-only empty state vector (`Data([0x00])`), so a caller with
     /// no replica wired keeps today's behavior; C2 passes the real replica's
     /// state vector instead so the peer's step2 reply is an actual diff.
     private let initialSyncStep1: @MainActor () -> Data
+    /// Called on the main actor with a peer's step1 state-vector payload
+    /// (`SyncMessage.data`) when they request our state. A non-nil return is
+    /// sent back as a `.sync` `.step2` frame carrying the diff; `nil` (the
+    /// default — no replica wired) sends nothing, matching today's read-only
+    /// behavior.
+    private let onStateRequest: @MainActor (Data) -> Data?
+    /// Fired on the main actor exactly once, on the first inbound `.step2`
+    /// frame — the reply to our own SyncStep1, i.e. the peer has sent us
+    /// everything we were missing. Runs *after* `onSyncUpdate` has delivered
+    /// that frame's bytes, so the manager can integrate them before marking
+    /// the initial sync applied.
+    private let onInitialSync: @MainActor () -> Void
+    /// Latches `onInitialSync` to a single firing per session.
+    private var didInitialSync = false
     private var pumpTask: Task<Void, Never>?
 
     init(
@@ -71,7 +85,9 @@ final class DocumentCollaborationSession {
         localState: LocalAwarenessState? = nil,
         onRemoteChange: @escaping @MainActor () -> Void = {},
         onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in },
-        initialSyncStep1: @escaping @MainActor () -> Data = { Data([0x00]) }
+        initialSyncStep1: @escaping @MainActor () -> Data = { Data([0x00]) },
+        onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
+        onInitialSync: @escaping @MainActor () -> Void = {}
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -80,6 +96,8 @@ final class DocumentCollaborationSession {
         self.onRemoteChange = onRemoteChange
         self.onSyncUpdate = onSyncUpdate
         self.initialSyncStep1 = initialSyncStep1
+        self.onStateRequest = onStateRequest
+        self.onInitialSync = onInitialSync
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -146,6 +164,18 @@ final class DocumentCollaborationSession {
         if state == .connecting || state == .reconnecting { state = .live }
     }
 
+    /// Replies to a peer's `.step1` state-vector request with a `.step2` diff.
+    /// `handle` is synchronous (called inline from the event pump loop), so —
+    /// like `stop()` — the actual send is an unstructured `Task`; a failure is
+    /// tolerated the same way every other send here is, via the pump's
+    /// disconnect event.
+    private func sendStep2(_ data: Data) {
+        let payload = SyncMessage(step: .step2, data: data).encodedPayload()
+        let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
+        let transport = self.transport
+        Task { try? await transport.send(frame) }
+    }
+
     private func handle(_ event: CollaborationEvent) {
         switch event {
         case .message(let message):
@@ -155,12 +185,26 @@ final class DocumentCollaborationSession {
                 // A peer touched the document — a change signal (not applied here).
                 if state == .connecting || state == .reconnecting { state = .live }
                 onRemoteChange()
-                // Deliver the raw update bytes too, for step2/update frames only —
-                // a malformed or step1 payload is tolerated (onRemoteChange already
-                // fired, so the fallback refresh still happens).
-                if let sync = try? SyncMessage(decodingPayload: message.payload),
-                    sync.step == .step2 || sync.step == .update
-                {
+                // A malformed payload is tolerated (onRemoteChange already fired,
+                // so the fallback refresh still happens).
+                guard let sync = try? SyncMessage(decodingPayload: message.payload) else { return }
+                switch sync.step {
+                case .step1:
+                    // A peer requesting our state; reply with a diff only if the
+                    // caller can produce one (a replica is wired in) — nil keeps
+                    // today's read-only behavior of sending nothing back.
+                    if let reply = onStateRequest(sync.data) {
+                        sendStep2(reply)
+                    }
+                case .step2:
+                    // Deliver the bytes first so the manager integrates them, THEN
+                    // signal "initial sync applied" — never the other order.
+                    onSyncUpdate(sync.data)
+                    if !didInitialSync {
+                        didInitialSync = true
+                        onInitialSync()
+                    }
+                case .update:
                     onSyncUpdate(sync.data)
                 }
             case .awareness:

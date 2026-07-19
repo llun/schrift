@@ -16,6 +16,23 @@ private final class UpdateCapture {
     var count = 0
 }
 
+/// Captures a peer's step1 state-vector request and hands back a scripted
+/// reply (or nil for "no diff to send").
+@MainActor
+private final class StateRequestCapture {
+    var received: Data?
+    var count = 0
+    var reply: Data?
+}
+
+/// Counts `onInitialSync` firings and records the interleaving with
+/// `onSyncUpdate` so the ordering guarantee is checked, not just the count.
+@MainActor
+private final class InitialSyncRecorder {
+    var count = 0
+    var callOrder: [String] = []
+}
+
 @MainActor
 final class DocumentCollaborationSessionTests: XCTestCase {
     private let doc = "11111111-1111-4111-8111-111111111111"
@@ -51,6 +68,19 @@ final class DocumentCollaborationSessionTests: XCTestCase {
             onSyncUpdate: { data in
                 capture.data = data
                 capture.count += 1
+            })
+    }
+
+    private func makeSession(_ fake: FakeWebSocket, _ counter: ChangeCounter, stateRequest: StateRequestCapture)
+        -> DocumentCollaborationSession
+    {
+        DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake),
+            onRemoteChange: { counter.count += 1 },
+            onStateRequest: { data in
+                stateRequest.received = data
+                stateRequest.count += 1
+                return stateRequest.reply
             })
     }
 
@@ -216,6 +246,111 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         await waitUntil { counter.count == 1 }
         XCTAssertNil(capture.data)
         XCTAssertEqual(capture.count, 0)
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    // MARK: - inbound peer step1 + first-sync signal (C2a)
+
+    func testStep1FrameInvokesOnStateRequestAndSendsStep2Reply() async throws {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let stateRequest = StateRequestCapture()
+        stateRequest.reply = Data([0xDD])
+        let session = makeSession(fake, counter, stateRequest: stateRequest)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        fake.deliver(message: syncFrame(step: .step1, data: Data([0xCC])))
+        await waitUntil { fake.sentFrames.count == 2 }
+        XCTAssertEqual(stateRequest.received, Data([0xCC]))
+        XCTAssertEqual(stateRequest.count, 1)
+        let sent = try HocuspocusMessage(decoding: fake.sentFrames[1])
+        XCTAssertEqual(sent.documentName, doc)
+        XCTAssertEqual(sent.knownType, .sync)
+        let sync = try SyncMessage(decodingPayload: sent.payload)
+        XCTAssertEqual(sync.step, .step2)
+        XCTAssertEqual(sync.data, Data([0xDD]))
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testStep1FrameWithNilReplySendsNoFrame() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let stateRequest = StateRequestCapture()  // reply stays nil
+        let session = makeSession(fake, counter, stateRequest: stateRequest)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        fake.deliver(message: syncFrame(step: .step1, data: Data([0xCC])))
+        await waitUntil { stateRequest.count == 1 }
+        XCTAssertEqual(stateRequest.received, Data([0xCC]))
+        await waitAndConfirmNever { fake.sentFrames.count > 1 }
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testFirstStep2FrameFiresOnInitialSyncOnceAfterOnSyncUpdate() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let capture = UpdateCapture()
+        let initialSync = InitialSyncRecorder()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake),
+            onRemoteChange: { counter.count += 1 },
+            onSyncUpdate: { data in
+                capture.data = data
+                capture.count += 1
+                initialSync.callOrder.append("onSyncUpdate")
+            },
+            onInitialSync: {
+                initialSync.count += 1
+                initialSync.callOrder.append("onInitialSync")
+            })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        let bytes = Data([0x01, 0x02])
+        fake.deliver(message: syncFrame(step: .step2, data: bytes))
+        await waitUntil { initialSync.count == 1 }
+        XCTAssertEqual(capture.count, 1)
+        XCTAssertEqual(capture.data, bytes)
+        // onSyncUpdate (bytes integrated) must run before onInitialSync (the
+        // manager's "initial sync applied" latch) — never the reverse.
+        XCTAssertEqual(initialSync.callOrder, ["onSyncUpdate", "onInitialSync"])
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    func testOnInitialSyncDoesNotFireAgainOnSubsequentStep2OrUpdate() async {
+        let fake = FakeWebSocket()
+        let counter = ChangeCounter()
+        let capture = UpdateCapture()
+        let initialSync = InitialSyncRecorder()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake),
+            onRemoteChange: { counter.count += 1 },
+            onSyncUpdate: { data in
+                capture.data = data
+                capture.count += 1
+            },
+            onInitialSync: { initialSync.count += 1 })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+
+        fake.deliver(message: syncFrame(step: .step2, data: Data([0x01])))
+        await waitUntil { initialSync.count == 1 }
+
+        fake.deliver(message: syncFrame(step: .step2, data: Data([0x02])))
+        await waitUntil { capture.count == 2 }
+        fake.deliver(message: syncFrame(step: .update, data: Data([0x03])))
+        await waitUntil { capture.count == 3 }
+        XCTAssertEqual(initialSync.count, 1)
 
         session.stop()
         await waitUntil { session.state == .ended(.closed) }
