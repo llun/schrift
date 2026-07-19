@@ -44,7 +44,7 @@ protocol LiveReplicaProviding: AnyObject {
 /// seam, which keeps this class testable with a scripted fake.
 @MainActor
 @Observable
-final class LiveEditingBridge {
+final class LiveEditingBridge: EditorLiveWriteCoordinating {
     private let documentID: UUID
     private let viewModel: EditorViewModel
     private let collaboration: LiveReplicaProviding
@@ -65,6 +65,22 @@ final class LiveEditingBridge {
     /// never reset a "seeded" flag either.
     private var map: [String: UUID] = [:]
 
+    /// The replica's current projection expressed as `[BlockNoteBlock]` (the `old` for
+    /// the next `applyLocalEdit`). Built from the editor's own blocks the moment they
+    /// reflect the projection — captured on every engage (`replicaDidChange`) and
+    /// re-synced after every `applyLiveRemoteChange`. `nil` while disengaged, which
+    /// keeps writes from flowing before the read side has aligned the editor with the
+    /// replica. Editor ids are stable within a session, so a survivor keeps its id across
+    /// forwards and reconciles in place instead of a whole-document rebuild.
+    private var lastAppliedBlocks: [BlockNoteBlock]?
+
+    /// The pending ~60 s snapshot debounce (cancel-and-reschedule on each forward).
+    private var snapshotTask: Task<Void, Never>?
+    /// True while un-snapshotted local forwards exist; `flushPendingLiveSnapshot` only
+    /// fires when set.
+    private var hasPendingSnapshot = false
+    private let snapshotInterval: Duration
+
     /// Whether the last `replicaDidChange()` call found a usable projection
     /// and (if engagement allowed it) is actively driving the editor. Exposed
     /// for the view to gate any "live" UI affordance and for tests.
@@ -78,11 +94,15 @@ final class LiveEditingBridge {
         viewModel.canEngageLiveEditing && resolvedLiveDocument() != nil
     }
 
-    init(documentID: UUID, viewModel: EditorViewModel, collaboration: LiveReplicaProviding, serverOrigin: String?) {
+    init(
+        documentID: UUID, viewModel: EditorViewModel, collaboration: LiveReplicaProviding,
+        serverOrigin: String?, snapshotInterval: Duration = .seconds(60)
+    ) {
         self.documentID = documentID
         self.viewModel = viewModel
         self.collaboration = collaboration
         self.serverOrigin = serverOrigin
+        self.snapshotInterval = snapshotInterval
     }
 
     /// The current replica projected + rendered to editor blocks and markdown, or nil
@@ -114,6 +134,7 @@ final class LiveEditingBridge {
         // clearing content.
         guard viewModel.canEngageLiveEditing else {
             isEngaged = false
+            lastAppliedBlocks = nil  // writes must not flow while disengaged
             return
         }
 
@@ -122,6 +143,7 @@ final class LiveEditingBridge {
         // path (A5) — there is nothing safe to diff against.
         guard let (rendered, markdown) = resolvedLiveDocument() else {
             isEngaged = false
+            lastAppliedBlocks = nil
             return
         }
 
@@ -150,6 +172,84 @@ final class LiveEditingBridge {
         if !change.changes.isEmpty {
             viewModel.applyLiveRemoteChange(change, projectedMarkdown: markdown, projectedTitle: nil)
         }
+
+        // Capture the write baseline once the editor reflects the projection — the `old`
+        // for the next forward. Done on every engage (including an empty diff) and after
+        // every remote apply, so `old` always describes the replica's current projection.
+        // A local forward advances this itself; a remote apply lands here and re-syncs it,
+        // which is why a peer's edit never desyncs the next local diff.
+        lastAppliedBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+    }
+
+    // MARK: - Live write path (C2c)
+
+    /// Forward one local edit to the shared replica (see `EditorLiveWriteCoordinating`).
+    /// Returns `true` when the edit was integrated live (peers notified + a snapshot
+    /// scheduled) so the classic REST autosave must NOT run; `false` downgrades to
+    /// classic, which persists the same on-screen content — the edit is never lost.
+    func forwardLocalEdit() -> Bool {
+        let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
+        guard canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection),
+            let old = lastAppliedBlocks
+        else { return false }  // not engaged / lossy / no baseline yet ⇒ classic
+
+        // `new` is built from the editor's own id-stable blocks (Task 1) — NOT re-parsed
+        // markdown, which would mint fresh ids and force a whole-document rebuild each edit.
+        let new = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+        guard (try? collaboration.applyLocalEdit(old: old, new: new, for: documentID)) != nil else {
+            // notWritable, or a malformed replica that just fail-safed. Downgrade to
+            // classic for this edit; the classic save persists the current content, and
+            // the fail-safed replica keeps every later edit downgrading too.
+            return false
+        }
+        // Advance the baseline. A local forward does NOT bump the inbound `replicaVersion`
+        // (C2a echo suppression), so `replicaDidChange`/`applyLiveRemoteChange` never re-fire
+        // on our own edit — no self-echo loop, and this is the only place that advances it
+        // between remote applies.
+        lastAppliedBlocks = new
+        hasPendingSnapshot = true
+        scheduleSnapshot()
+        return true
+    }
+
+    /// Fire any pending debounced live snapshot immediately (Done / background /
+    /// disappear). A no-op when nothing is pending.
+    func flushPendingLiveSnapshot() {
+        snapshotTask?.cancel()
+        snapshotTask = nil
+        guard hasPendingSnapshot else { return }
+        fireSnapshot()
+    }
+
+    /// Cancel-and-reschedule the ~60 s debounce. Uses the injected `snapshotInterval`
+    /// (short in tests) and `Task.sleep` — never a wall clock — so the fire is
+    /// deterministic and cancels cleanly.
+    private func scheduleSnapshot() {
+        snapshotTask?.cancel()
+        let interval = snapshotInterval
+        snapshotTask = Task { [weak self] in
+            try? await Task.sleep(for: interval)
+            guard !Task.isCancelled else { return }
+            self?.fireSnapshot()
+        }
+    }
+
+    private func fireSnapshot() {
+        hasPendingSnapshot = false
+        snapshotTask = nil
+        // TOP SAFETY: a nil snapshot (un-synced / pending structs / fail-safed) means there
+        // is no trustworthy full state — never PATCH, or a half-synced replica would wipe the
+        // document. Re-check `isFullyModeled` here too: the projection can have gone lossy
+        // between the forward and this fire. `snapshot` and `markdown` are both read from the
+        // replica (not the editor), so the persisted body is exactly what the server renders
+        // from the bytes. If either fails, skip — the un-snapshotted work is still on screen
+        // and a later classic downgrade save persists it.
+        guard let snapshot = collaboration.encodeSnapshotForSave(for: documentID),
+            let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),
+            projection.isFullyModeled,
+            let markdown = YBlockProjection.projectedMarkdown(projection)
+        else { return }
+        viewModel.persistLiveSnapshot(snapshot, projectedMarkdown: markdown)
     }
 
     /// Seeds `map` by pairing the editor's *current* blocks to the freshly

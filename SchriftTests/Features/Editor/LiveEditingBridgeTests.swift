@@ -506,4 +506,134 @@ final class LiveEditingBridgeTests: XCTestCase {
             "identity survives two consecutive text-only edits with no install() in between")
         XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha", "Beta3", "Gamma"])
     }
+
+    // MARK: - Write side (C2c)
+
+    /// Engage read-mode first (so `lastAppliedBlocks` is captured), then return the bridge.
+    private func engagedWriteBridge(content: String) async throws
+        -> (viewModel: EditorViewModel, provider: FakeReplicaProvider, bridge: LiveEditingBridge)
+    {
+        let (viewModel, _) = await loadDocument(content: content)
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        provider.snapshotData = Data([0xAA])
+        let projection = try projectedDoc(fromMarkdown: content.replacingOccurrences(of: "\\n", with: "\n"))
+        provider.setProjection(projection, for: documentID)
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+        viewModel.liveWrite = bridge
+        bridge.replicaDidChange()  // engage read-side ⇒ captures the write baseline
+        XCTAssertTrue(bridge.isEngaged)
+        return (viewModel, provider, bridge)
+    }
+
+    func testLocalEditForwardsToReplicaWithoutStartingAClassicSave() async throws {
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+
+        XCTAssertEqual(provider.appliedEdits.count, 1, "the keystroke was forwarded to the replica exactly once")
+        XCTAssertEqual(provider.appliedEdits[0].new.map(\.node), ["paragraph"])
+        XCTAssertFalse(viewModel.isDirty, "no classic dirty state in live mode")
+        // `EditorViewModel.liveWrite` is WEAK (the bridge holds the view model strongly),
+        // so — exactly as the view retains it in production — the test must keep the bridge
+        // alive across the edit, or `liveWrite` would be nil and the edit would downgrade.
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testForwardOldBaselineIsTheLastAppliedProjectionAndAdvances() async throws {
+        // `old` is the captured baseline (the projection), `new` is the current
+        // id-stable blocks — and the baseline advances so a second forward's `old`
+        // is the first forward's `new`, not the stale original.
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        viewModel.startEditing()
+        let blockID = viewModel.blocks[0].id
+        viewModel.updateText(blockID: blockID, text: "Alpha edited")
+        viewModel.updateText(blockID: blockID, text: "Alpha edited twice")
+
+        XCTAssertEqual(provider.appliedEdits.count, 2)
+        XCTAssertEqual(
+            provider.appliedEdits[0].old.map(\.runs), [InlineMarkdown.parse("Alpha")],
+            "first forward's `old` is the captured baseline")
+        XCTAssertEqual(
+            provider.appliedEdits[1].old.map(\.runs), [InlineMarkdown.parse("Alpha edited")],
+            "second forward's `old` is the advanced baseline — the first forward's `new`")
+        XCTAssertEqual(
+            provider.appliedEdits[1].new.map(\.runs), [InlineMarkdown.parse("Alpha edited twice")])
+        XCTAssertEqual(
+            provider.appliedEdits[0].new.map(\.id), provider.appliedEdits[1].old.map(\.id),
+            "id-stable: the survivor keeps its id across forwards")
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testForwardingDoesNotLoopBackAsARemoteApply() async throws {
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+        // `applyLocalEdit` does not bump replicaVersion (C2a), so replicaDidChange never
+        // re-fires; exactly one forward, and the editor's own text is intact.
+        XCTAssertEqual(provider.appliedEdits.count, 1)
+        XCTAssertEqual(viewModel.blocks[0].text, "Alpha edited")
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testSnapshotDebounceRunsALiveSave() async throws {
+        // `loadDocument`'s stub returns 200 for any request, so the snapshot's PATCH
+        // succeeds; assert the terminal `.saved` state, not the transient write-ahead
+        // draft (which `finish` clears on success — a flaky thing to poll).
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        provider.snapshotData = Data([0xBE, 0xEF])
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+
+        // `state(for:) == .saved` cannot be spelled (DocSaveState.saved carries a Date);
+        // the VM's payload-free SaveState projects it, and is `.saved` only when the
+        // coordinator is `.saved` AND the VM is not dirty.
+        await waitUntil { viewModel.saveState == .saved }
+        // isDirty stayed false throughout, so nothing but `persistLiveSnapshot` could
+        // have started this save — the debounced snapshot ran.
+        XCTAssertFalse(viewModel.isDirty)
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testNilSnapshotNeverStartsASave() async throws {
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        provider.snapshotData = nil  // TOP SAFETY: half-synced / fail-safed ⇒ no PATCH
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+        bridge.flushPendingLiveSnapshot()  // fire now; nothing to snapshot
+        // Nothing enqueued, so the state never leaves `.idle` and no draft was written.
+        XCTAssertEqual(viewModel.saveCoordinator.state(for: documentID), .idle)
+        XCTAssertNil(viewModel.saveCoordinator.storedDraft(documentID: documentID))
+    }
+
+    func testFlushFiresThePendingSnapshotImmediately() async throws {
+        // The debounce interval is 20 ms but flush fires it now, before the timer;
+        // the PATCH lands, so the terminal state is `.saved`.
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        provider.snapshotData = Data([0xBE, 0xEF])
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+        bridge.flushPendingLiveSnapshot()
+
+        await waitUntil { viewModel.saveState == .saved }
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    func testThrowingApplyLocalEditDowngradesTheEditToClassic() async throws {
+        // Projection stays modeled (gate passes), but `applyLocalEdit` throws — a
+        // malformed replica that fail-safes. The `try?` guard downgrades to classic.
+        let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
+        provider.applyResult = .failure(YIntegrationError.unexpectedCase)
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+
+        // The edit reached the replica (the gate passed) and then threw, proving this is
+        // the throw-downgrade — not a bridge that was never consulted.
+        XCTAssertEqual(provider.appliedEdits.count, 1, "the forward was attempted before it threw")
+        XCTAssertTrue(viewModel.isDirty, "a throwing/fail-safed replica falls back to the classic dirty path")
+        XCTAssertEqual(viewModel.blocks[0].text, "Alpha edited", "the edit is on screen for the classic save")
+        withExtendedLifetime(bridge) {}
+    }
 }
