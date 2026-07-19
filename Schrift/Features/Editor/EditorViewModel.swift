@@ -1717,6 +1717,11 @@ final class EditorViewModel {
     /// coordinator, which persists a draft immediately and saves in the
     /// background, outliving this screen.
     func flushPendingChanges() {
+        // Fire any pending live snapshot first. In live mode `isDirty` is false, so the classic
+        // guard below early-returns; this line is what makes Done / background / onDisappear (all
+        // funnel through here) persist the debounced live snapshot. A no-op when nothing is
+        // pending or `liveWrite` is nil, so the classic flush is unchanged.
+        liveWrite?.flushPendingLiveSnapshot()
         autosaveTask?.cancel()
         autosaveTask = nil
         dirtySince = nil
@@ -2022,6 +2027,25 @@ final class EditorViewModel {
     }
 
     private func markDirty() {
+        // Live-collaboration write path (C2c). When live-write mode is engaged the bridge
+        // forwards this edit to the shared replica, broadcasts it to peers, and schedules the
+        // debounced full-state snapshot — so the classic REST autosave must NOT also run (it
+        // would double-save and fight the live stream). Returning here leaves `isDirty` false:
+        // the replica + periodic snapshot own durability, and the classic dirty/draft
+        // machinery stays out of it — and *staying* clean is what keeps `canEngageLiveEditing`
+        // true so the document stays live. A `false` return (delegate absent, not engaged, or
+        // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
+        // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
+        // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
+        if liveWrite?.forwardLocalEdit() == true {
+            // Any REST "Updated" stash is strictly older than the replica now (which already
+            // holds every peer's edit), so drop it silently — never conflict-record, and never
+            // let it install over live content when editing ends.
+            pendingFreshContent = nil
+            updateAvailable = false
+            return
+        }
+
         // `dirtySince` FIRST: `abandonPendingFreshContent` feeds it to rule 3 as the local clock
         // for a baseline-less document, and a nil `dirtySince` there falls back to `Date()` —
         // which is always within tolerance of the server, so rule 3 would answer `.push`
@@ -2046,6 +2070,14 @@ final class EditorViewModel {
     }
 
     // MARK: - Live collaboration bridge
+
+    /// The outbound live-write delegate, set by `EditorView` to the `LiveEditingBridge`
+    /// once it is built (C2c). **Weak** — the bridge holds this view model strongly, so a
+    /// strong reference here would be a retain cycle. `nil` (classic-only, and every unit
+    /// test that doesn't set it) makes `markDirty`/`flushPendingChanges` behave exactly as
+    /// before: `nil?.forwardLocalEdit() == true` is `false`, so the guard is a pure no-op.
+    /// The manager is never referenced here — only this protocol.
+    weak var liveWrite: EditorLiveWriteCoordinating?
 
     /// Whether a live-collaboration remote change may be applied to this screen
     /// right now (C2+; this is the gate the bridge consults before calling
@@ -2174,6 +2206,32 @@ final class EditorViewModel {
         }
         serverBaseline = DraftBaseline(
             serverUpdatedAt: nil, markdown: projectedMarkdown, title: projectedTitle ?? title)
+    }
+
+    /// Persist a live-collaboration full-state snapshot (C2c). Called by the bridge when the
+    /// ~60 s debounce fires (or is flushed via `flushPendingLiveSnapshot`). `projectedMarkdown`
+    /// is what the server renders from `snapshot`, so it is the body every reconcile/baseline/
+    /// cache rule keys off — exactly as a classic save's markdown. Advancing the dirty baseline
+    /// to it keeps the classic machinery coherent for a later **downgrade**: a subsequent classic
+    /// save sees `draftSyncDecision` rule 1 (`lastConfirmedPush` == the server body this snapshot
+    /// wrote) and resolves `.push`, never a false conflict.
+    ///
+    /// Guarded like every save funnel: no content loaded, or a deleted document, would let a
+    /// snapshot write-ahead a draft (and PATCH) for something that must not be saved.
+    func persistLiveSnapshot(_ snapshot: Data, projectedMarkdown: String) {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        saveCoordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: snapshot, projectedMarkdown: projectedMarkdown,
+            title: title, baseline: serverBaseline)
+        savedMarkdown = projectedMarkdown
+        displayedSourceMarkdown = projectedMarkdown
+        lastSyncedAt = Date()
+        // Our own push; rule 1 recognises it, so `serverUpdatedAt` may stay nil (mirrors
+        // `applyLiveRemoteChange`). Carry the prior server timestamp when we had one: if this
+        // snapshot never reaches the server (transient failure) the server is still at that
+        // timestamp, so rule 2 replays by timestamp rather than raising a spurious conflict.
+        serverBaseline = DraftBaseline(
+            serverUpdatedAt: serverBaseline?.serverUpdatedAt, markdown: projectedMarkdown, title: title)
     }
 
     /// The surviving block that should take focus when the block the caret was
