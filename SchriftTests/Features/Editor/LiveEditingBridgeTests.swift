@@ -567,12 +567,71 @@ final class LiveEditingBridgeTests: XCTestCase {
         withExtendedLifetime(bridge) {}
     }
 
+    /// Guards the remote-resync -> forward interaction, the highest-stakes property in the
+    /// write path and the one no other test pins: after a REMOTE change lands, the next LOCAL
+    /// forward must diff against the RESYNCED (post-remote) baseline, not the stale pre-remote
+    /// one. `replicaDidChange` re-syncs `lastAppliedBlocks` to the projection at the very end,
+    /// after applying the remote change (`LiveEditingBridge.swift` ~176-181) — `forwardLocalEdit`
+    /// then reads that stored baseline as `old` (~192-194). If the resync were ever dropped or
+    /// moved above the remote apply, `old` would still describe the pre-remote document while
+    /// `new` describes post-remote-plus-local content, and `applyLocalEdit` would compute a diff
+    /// against the wrong base — a corrupted incremental update broadcast to every peer, silently
+    /// (this test would be the only thing to catch it: nothing else composes a remote apply with
+    /// a following local forward).
+    func testForwardAfterRemoteChangeUsesTheResyncedBaseline() async throws {
+        let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        provider.snapshotData = Data([0xAA])
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+        viewModel.liveWrite = bridge
+
+        // 1. Engage read-mode and establish the initial write baseline (mirrors
+        // `engagedWriteBridge`, but keeps a handle on `initialProjection` so step 2 can carry
+        // its BlockNote ids forward, exactly like `testRemoteTextChangeAppliesToEditorBlocks`).
+        let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
+        provider.setProjection(initialProjection, for: documentID)
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged)
+        let preRemoteBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+
+        // 2. A REMOTE change lands through the bridge — same evolving replica (carried ids),
+        // only the first paragraph's text changed.
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alpha remote\n\nBeta", carryingIDsFrom: initialProjection),
+            for: documentID)
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha remote", "Beta"], "sanity: the remote edit landed")
+        let postRemoteBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+        XCTAssertNotEqual(postRemoteBlocks, preRemoteBlocks, "sanity: the projection actually moved")
+
+        // 3. A LOCAL edit forwards next.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha remote then local")
+
+        // 4. THE TEETH: `old` must be the resynced POST-remote projection, never the PRE-remote
+        // baseline captured at step 1. If the resync regressed, the first assertion below fails
+        // (and the second would spuriously pass, since `old` would equal `preRemoteBlocks`).
+        XCTAssertEqual(provider.appliedEdits.count, 1)
+        let old = provider.appliedEdits[0].old
+        XCTAssertEqual(old, postRemoteBlocks, "forward's `old` must be the resynced post-remote baseline")
+        XCTAssertNotEqual(old, preRemoteBlocks, "forward's `old` must not be the stale pre-remote baseline")
+        withExtendedLifetime(bridge) {}
+    }
+
     func testForwardingDoesNotLoopBackAsARemoteApply() async throws {
         let (viewModel, provider, bridge) = try await engagedWriteBridge(content: "Alpha")
         viewModel.startEditing()
         viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
         // `applyLocalEdit` does not bump replicaVersion (C2a), so replicaDidChange never
         // re-fires; exactly one forward, and the editor's own text is intact.
+        // Note: the real protection against a self-echo loop is C2a's echo suppression
+        // (`applyLocalEdit` not bumping `replicaVersion`) plus the view wiring that observes
+        // it — this unit test is a regression floor, since nothing here observes
+        // `replicaVersion` and so a real loop can't manifest in this harness either way.
         XCTAssertEqual(provider.appliedEdits.count, 1)
         XCTAssertEqual(viewModel.blocks[0].text, "Alpha edited")
         withExtendedLifetime(bridge) {}
