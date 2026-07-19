@@ -2145,4 +2145,60 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             "both the first save and the coalesced restart must route through `saveLiveSnapshot`")
     }
 
+    // MARK: - Downgrade / reconcile coherence (C2b Task 4)
+
+    /// **Downgrade coherence.** After a live snapshot lands (stamping
+    /// `lastConfirmedPushMarkdown = projectedMarkdown`), a stored draft written afterward
+    /// carries that stamp, so a later markdown-based reconcile against a server holding the
+    /// projected body hits `draftSyncDecision` rule 1 ("the server's most recent writer was
+    /// us") — a `.push`, never a false `.conflict` against pre-live state — **even though the
+    /// server's `updated_at` is far newer than the draft**. This is what lets C2c fall back
+    /// from the live-snapshot path to a classic save without inventing a conflict.
+    func testAClassicReconcileAfterALiveSnapshotDoesNotFalseConflict() async {
+        let log = RequestRecorder()
+        let (coordinator, draftStore, _) = makeCoordinator()
+
+        // 1. A live snapshot lands, rendering "# Body" on the server.
+        stubSavePipeline(log: log)
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x07]), projectedMarkdown: "# Body", title: "Doc")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(coordinator.lastConfirmedPush(documentID: documentID), "# Body")
+
+        // 2. A later offline edit is queued as a draft, stamped with what the snapshot pushed.
+        let lastPushed = coordinator.lastConfirmedPush(documentID: documentID)
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Body edited more", updatedAt: Date(),
+                baseline: nil, lastPushedMarkdown: lastPushed))
+
+        // 3. The reconcile sees the server still holding the projected body "# Body" with a far
+        //    NEWER updated_at (a pre-live-baseline timestamp would otherwise trip a conflict).
+        let serverBody = Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "# Body", "created_at": "2099-01-01T00:00:00Z", "updated_at": "2099-01-01T00:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: serverBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)  // content / title PATCH
+        }
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            coordinator.conflict(for: documentID),
+            "rule 1 recognises the server body as our own live-snapshot push — never a conflict")
+        // `savesInFlight` counts every content PATCH sent by this test, including step 1's live
+        // snapshot — so the reconcile's own replay is the SECOND one; waiting on `>= 1` would
+        // pass instantly (before the replay's async save even lands) and race the draft-cleared
+        // assertion below.
+        await waitUntil { self.savesInFlight(log) >= 2 }
+        await waitUntil { draftStore.draft(for: self.documentID) == nil }
+        XCTAssertNil(draftStore.draft(for: documentID), "the draft replayed and cleared")
+    }
+
 }
