@@ -192,8 +192,11 @@ final class DocumentCollaborationManager {
     /// True when the document's replica has un-integrated pending
     /// structs/deletes stashed (`YStructStore.pendingStructs`/`pendingDs`), or
     /// there is no replica at all — in both cases there is nothing safe to
-    /// write on top of. Public so the local-edit write path (C2) can gate a
-    /// transaction on it before minting one.
+    /// write on top of. The write path itself gates on the private
+    /// `canWriteReplica` (which already subsumes this check), so this stays
+    /// public for the not-yet-wired editor live-entry gate (C2b/C2c), which will
+    /// consult it to decide whether the editor may engage live editing on a
+    /// half-synced replica.
     func hasPendingStructs(for documentID: UUID) -> Bool {
         guard let replica = entries[documentID]?.replica else { return true }
         return replica.store.pendingStructs != nil || replica.store.pendingDs != nil

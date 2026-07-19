@@ -189,7 +189,14 @@ final class DocumentCollaborationSession {
         case .message(let message):
             guard message.documentName == documentName else { return }
             switch message.knownType {
-            case .sync:
+            case .sync, .syncReply:
+                // A `Sync`(0) frame (a peer's own edit / SyncStep1) or a
+                // `SyncReply`(4) frame (a real Hocuspocus server's answer to our
+                // Sync+SyncStep1 handshake, carrying the initial document). Both
+                // wrap a y-sync payload whose *subtype* — step1/step2/update —
+                // decides the behavior, so they are handled identically on receive
+                // (y-provider 3.4.4 does the same). We only ever *send* `Sync`(0);
+                // `SyncReply` is server-originated.
                 // A peer touched the document — a change signal (not applied here).
                 if state == .connecting || state == .reconnecting { state = .live }
                 onRemoteChange()

@@ -248,6 +248,16 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         return HocuspocusMessage(documentName: docID.uuidString.lowercased(), type: .sync, payload: payload).encoded()
     }
 
+    /// A `SyncReply`(4)/`.step2` frame — what a *real* Hocuspocus server sends in
+    /// answer to our `Sync`(0)+SyncStep1 handshake (the app only ever *sends*
+    /// `Sync`(0)). It must drive the identical path as `syncStep2Frame`: fire
+    /// `onInitialSync`, mark the replica synced, and make it writable.
+    private func syncReplyStep2Frame(data: Data) -> Data {
+        let payload = SyncMessage(step: .step2, data: data).encodedPayload()
+        return HocuspocusMessage(documentName: docID.uuidString.lowercased(), type: .syncReply, payload: payload)
+            .encoded()
+    }
+
     /// A `.sync`/`.step1` frame carrying a peer's state vector — a peer/relay
     /// asking us for our state. The session routes it to `onStateRequest` →
     /// `stateReply`, and a non-nil reply is sent back as a `.step2` diff.
@@ -652,6 +662,38 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
         await waitUntil { manager.projectedReplica(for: docID, interlinkingOrigin: nil) != nil }
         XCTAssertNotNil(manager.encodeSnapshotForSave(for: docID))
+        session?.stop()
+    }
+
+    /// The impact of the SyncReply(4) routing fix, end to end: a production
+    /// Hocuspocus server answers our `Sync`(0)+SyncStep1 with a `SyncReply`(4)+
+    /// SyncStep2, not a `Sync`(0)+SyncStep2. Delivering that real reply through the
+    /// socket → session → manager path must fire `onInitialSync` and mark the
+    /// replica synced, so `canWriteReplica` flips true — projection, the save
+    /// snapshot, and `applyLocalEdit` all become available. Before the fix the
+    /// type-4 frame was dropped, so the replica never became writable.
+    func testSyncReplyStep2SeedsWritableReplicaLikeSyncStep2() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+        XCTAssertNil(manager.encodeSnapshotForSave(for: docID))
+
+        let base = [para("hello", id: blockID)]
+        spy.sockets[0].deliver(message: syncReplyStep2Frame(data: BlockNoteYjs.encode(base, clientID: 1)))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+
+        // canWriteReplica is now true across every write-eligibility surface.
+        XCTAssertNotNil(
+            manager.projectedReplica(for: docID, interlinkingOrigin: nil),
+            "the SyncReply(4) initial sync makes the replica projectable")
+        XCTAssertNotNil(
+            manager.encodeSnapshotForSave(for: docID), "the SyncReply(4) initial sync makes the save snapshot available"
+        )
+        let update = try manager.applyLocalEdit(old: base, new: [para("heXllo", id: blockID)], for: docID)
+        XCTAssertFalse(update.isEmpty, "applyLocalEdit succeeds once the SyncReply-seeded replica is writable")
+        XCTAssertEqual(manager.localEditVersion(for: docID), 1)
         session?.stop()
     }
 
