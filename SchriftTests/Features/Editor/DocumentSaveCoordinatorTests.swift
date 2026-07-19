@@ -1994,6 +1994,11 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
             documentID: documentID, snapshot: Data([0x0B]), projectedMarkdown: "# Retry me", title: "Doc")
 
         await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        // `saveLiveSnapshot` PATCHes content first and throws before attempting the title
+        // PATCH, so exactly one request should have reached the stub — the failed content one.
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), 1, "the content PATCH throws before a title PATCH is attempted")
     }
 
     /// The mirror classification: a content PATCH the server rejects on the merits (never a
@@ -2020,6 +2025,10 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertNil(
             draftStore.draft(for: documentID)?.lastPushedMarkdown,
             "the content PATCH was rejected outright (never landed) — the push must not be recorded")
+        // A rejected content PATCH throws before the title PATCH is attempted — same
+        // half-land short-circuit as the transient case above.
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), 1, "the content PATCH throws before a title PATCH is attempted")
     }
 
     /// Half-land, `contentLanded == true`: the content PATCH lands (204) but the title PATCH is
@@ -2068,6 +2077,27 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         XCTAssertTrue(
             coordinator.mayPredateSave(marker),
             "the live snapshot must bump `settledSaves` on settle exactly like a classic save")
+    }
+
+    /// Mirrors `testSaveSuccessWritesContentCacheEntry` for the live path: `finish`'s
+    /// content-cache write is not gated on `save.liveSnapshot == nil`, so a landed live
+    /// snapshot must write through exactly like a classic save. Pins that against a future
+    /// `if save.liveSnapshot == nil` guard slipping in around the cache write.
+    func testLiveSnapshotSuccessWritesContentCacheEntry() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _, contentCache) = makeCoordinator(backgroundTasks: .noop)
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x0F]), projectedMarkdown: "# Live Content", title: "Doc")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        let entry = contentCache.content(for: documentID)
+        XCTAssertEqual(entry?.title, "Doc")
+        XCTAssertEqual(
+            entry?.markdown, "# Live Content", "the cache body is the projected markdown, not the raw snapshot bytes")
+        XCTAssertNotNil(entry?.syncedAt)
+        XCTAssertNil(entry?.serverUpdatedAt, "a void PATCH carries no server timestamp")
     }
 
     /// **`releaseHeldSave` must still route through `saveLiveSnapshot`, not reconstruct a
