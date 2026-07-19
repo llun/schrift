@@ -14,6 +14,23 @@ protocol LiveReplicaProviding: AnyObject {
     /// or `nil` when there is nothing safe to project yet (no replica, not
     /// synced, fail-safed, or still holding unintegrated pending structs/deletes).
     func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument?
+
+    // MARK: - Write side (C2c)
+
+    /// Applies one local BlockNote edit to the replica and broadcasts the resulting
+    /// incremental Yjs update; throws when the replica is not writable or malformed
+    /// (which latches fail-safe). `old` must be the replica's current projection.
+    func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data
+    /// A full-state Yjs v1 snapshot for the classic save path, or `nil` when the
+    /// replica is not writable (no replica / not initial-synced / pending structs /
+    /// fail-safed). A `nil` return is the TOP SAFETY gate: never PATCH.
+    func encodeSnapshotForSave(for documentID: UUID) -> Data?
+    /// True once an inbound update failed to decode/apply — the replica must never
+    /// drive the editor again.
+    func replicaIsFailSafe(for documentID: UUID) -> Bool
+    /// True when the replica has un-integrated pending structs/deletes, or there is
+    /// no replica — nothing safe to write on top of.
+    func hasPendingStructs(for documentID: UUID) -> Bool
 }
 
 /// C1's per-editor live-write coordinator: owns the BlockNote-id ⇄

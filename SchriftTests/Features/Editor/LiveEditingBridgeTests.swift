@@ -142,9 +142,33 @@ final class LiveEditingBridgeTests: XCTestCase {
         func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
             projections[documentID]
         }
+
+        // Added for the C2c write seam. The read-only tests never call these.
+        var snapshotData: Data?
+        var failSafe = false
+        var pendingStructsFlag = true
+        private(set) var appliedEdits: [(old: [BlockNoteBlock], new: [BlockNoteBlock])] = []
+        var applyResult: Result<Data, Error> = .success(Data([0x01]))
+
+        func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+            appliedEdits.append((old, new))
+            return try applyResult.get()
+        }
+        func encodeSnapshotForSave(for documentID: UUID) -> Data? { snapshotData }
+        func replicaIsFailSafe(for documentID: UUID) -> Bool { failSafe }
+        func hasPendingStructs(for documentID: UUID) -> Bool { pendingStructsFlag }
     }
 
     // MARK: - Tests
+
+    func testManagerConformsToTheWriteSeam() {
+        // Compile-time proof the manager satisfies the extended protocol; a value
+        // typed as the protocol must expose the write methods.
+        let provider: LiveReplicaProviding = DocumentCollaborationManager.inert()
+        XCTAssertNil(provider.encodeSnapshotForSave(for: documentID))
+        XCTAssertFalse(provider.replicaIsFailSafe(for: documentID))
+        XCTAssertTrue(provider.hasPendingStructs(for: documentID), "no replica ⇒ nothing safe to write on")
+    }
 
     func testRemoteTextChangeAppliesToEditorBlocks() async throws {
         let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta\\n\\nGamma")
