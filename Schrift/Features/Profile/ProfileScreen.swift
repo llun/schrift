@@ -8,6 +8,11 @@ struct ProfileScreen: View {
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
+    // Live collaboration is opt-in (default off): the write path is verified in CI but the
+    // on-device end-to-end WebSocket check against a real server is still owed. The manager
+    // reads this key live (RootView's `featureEnabled` closure), so writing it here is the
+    // entire wiring — see `LiveCollaborationPreference`.
+    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool = false
 
     @State private var isConfirmingDisconnect = false
     @State private var showAppearanceSheet = false
@@ -77,7 +82,9 @@ struct ProfileScreen: View {
     private var preferencesSection: some View {
         ListSection(
             header: loc[.profile_prefs],
-            footer: loc[.profile_prefs_footer]
+            // The section footer is a single `Text`, which renders the newline — one
+            // sentence per toggle (Work offline, then Live collaboration).
+            footer: loc[.profile_prefs_footer] + "\n" + loc[.profile_live_collaboration_footer]
         ) {
             ListRow(
                 icon: .dark_mode,
@@ -98,6 +105,9 @@ struct ProfileScreen: View {
             }
             ProfileTrailingRow(icon: .cloud_off, title: loc[.profile_work_offline]) {
                 Switch(isOn: $workOffline)
+            }
+            ProfileTrailingRow(icon: .group, title: loc[.profile_live_collaboration]) {
+                Switch(isOn: $liveCollaboration)
             }
         }
     }
