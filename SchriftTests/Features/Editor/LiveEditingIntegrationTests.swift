@@ -215,6 +215,14 @@ final class LiveEditingIntegrationTests: XCTestCase {
     private let insertHex =
         "01080133870119030e626c6f636b436f6e7461696e6572070001330309706172616772617068070001340604000135055468697264280001340f6261636b67726f756e64436f6c6f7201770764656661756c74280001340974657874436f6c6f7201770764656661756c74280001340d74657874416c69676e6d656e740177046c6566742800013302696401772434343434343434342d343434342d343434342d383434342d3434343434343434343434340101011005"
     private let removeHex = "000101021005190d"
+    /// A real yjs@13.6.31 delta removing the **first paragraph** ("First", index 1)
+    /// from the initial 3-block document, computed against the initial state vector —
+    /// so it applies directly on top of `initialHex` alone (unlike `removeHex`, which
+    /// removes index 2 in the four-step fixture sequence). It shifts "Second" from
+    /// index 2 to index 1, which is what makes a *stale* write baseline mis-position a
+    /// local edit. Regeneration (appended to the script above):
+    /// `blockGroup.delete(1, 1); hex(Y.encodeStateAsUpdate(doc, sv1))`.
+    private let removeFirstParagraphHex = "000101010d0c"
 
     // MARK: - Tests
 
@@ -365,5 +373,318 @@ final class LiveEditingIntegrationTests: XCTestCase {
         XCTAssertFalse(bridge.isApplyingLiveContent, "a dirty view model is never treated as applying live content")
 
         session?.stop()
+    }
+
+    // MARK: - Write-side capstone (Task 7)
+    //
+    // The environment/fake helpers below mirror `LiveEditingBridgeTests`' helpers of the
+    // same name -- Swift `private` is file-scoped, so they can't be reused directly.
+
+    private func formattedBody(
+        content: String, title: String = "Doc", updatedAt: String = "2026-01-15T10:30:00Z"
+    ) -> Data {
+        Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "\(title)", "content": "\(content)", "created_at": "2026-01-15T10:30:00Z", "updated_at": "\(updatedAt)"}
+            """.utf8)
+    }
+
+    /// Loads `content` into a clean view model, ready for `canEngageLiveEditing` to be true.
+    private func loadDocument(content: String) async -> (
+        viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator
+    ) {
+        let (viewModel, coordinator, _) = makeEnvironment()
+        let body = formattedBody(content: content)
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        return (viewModel, coordinator)
+    }
+
+    /// Builds a `ProjectedDocument` from markdown via the same pipeline a save uses
+    /// (`MarkdownYjs.encode` -> `YUpdateDecoder.decode` -> `YDoc.applyUpdate`). See
+    /// `LiveEditingBridgeTests`' helper of the same name for the full rationale on
+    /// `carryingIDsFrom` (simulating two snapshots of one evolving replica).
+    private func projectedDoc(fromMarkdown md: String, carryingIDsFrom reference: ProjectedDocument? = nil) throws
+        -> ProjectedDocument
+    {
+        let doc = YDoc(clientID: 99)
+        try doc.applyUpdate(try YUpdateDecoder.decode(MarkdownYjs.encode(markdown: md, clientID: 1)))
+        var projected = YBlockProjection.project(doc)
+        doc.destroy()
+        if let reference, reference.blocks.count == projected.blocks.count {
+            for index in projected.blocks.indices {
+                projected.blocks[index].id = reference.blocks[index].id
+            }
+        }
+        return projected
+    }
+
+    /// A scripted `LiveReplicaProviding`: no socket, no real replica -- a per-document
+    /// version counter and projection the test controls directly, plus the C2c write
+    /// seam (`applyLocalEdit`/`encodeSnapshotForSave`/`replicaIsFailSafe`/`hasPendingStructs`).
+    private final class FakeReplicaProvider: LiveReplicaProviding {
+        private var versions: [UUID: Int] = [:]
+        private var projections: [UUID: ProjectedDocument] = [:]
+
+        func setVersion(_ version: Int, for documentID: UUID) {
+            versions[documentID] = version
+        }
+
+        func setProjection(_ projection: ProjectedDocument?, for documentID: UUID) {
+            if let projection {
+                projections[documentID] = projection
+            } else {
+                projections.removeValue(forKey: documentID)
+            }
+        }
+
+        func replicaVersion(for documentID: UUID) -> Int {
+            versions[documentID] ?? 0
+        }
+
+        func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
+            projections[documentID]
+        }
+
+        /// Stored, not auto-fired: the capstone drives `bridge.replicaDidChange()`
+        /// directly, so it keeps explicit control of when the read-apply runs (the real
+        /// manager fires this synchronously on integrate — see the C2c race test).
+        private var replicaObserver: (() -> Void)?
+        func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID) {
+            replicaObserver = observer
+        }
+
+        var snapshotData: Data?
+        var failSafe = false
+        var pendingStructsFlag = true
+        private(set) var appliedEdits: [(old: [BlockNoteBlock], new: [BlockNoteBlock])] = []
+        var applyResult: Result<Data, Error> = .success(Data([0x01]))
+
+        func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+            appliedEdits.append((old, new))
+            return try applyResult.get()
+        }
+        func encodeSnapshotForSave(for documentID: UUID) -> Data? { snapshotData }
+        func replicaIsFailSafe(for documentID: UUID) -> Bool { failSafe }
+        func hasPendingStructs(for documentID: UUID) -> Bool { pendingStructsFlag }
+    }
+
+    /// Captures method/url/body for every request issued after it is installed, so the
+    /// capstone test can confirm the live-snapshot PATCH actually carries
+    /// `"websocket": true` and that the downgrade's classic save is an ordinary,
+    /// distinguishable content PATCH. `RequestRecorder` (used elsewhere in this file)
+    /// only tracks method/url, not the body, which this test needs to tell the two
+    /// content PATCHes apart.
+    private final class BodyRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [(method: String, url: String, body: Data?)] = []
+
+        func record(_ request: URLRequest) {
+            let entry = (request.httpMethod ?? "", request.url?.absoluteString ?? "", bodyData(from: request))
+            lock.lock()
+            entries.append(entry)
+            lock.unlock()
+        }
+
+        func entries(ofMethod method: String, urlContaining substring: String) -> [(
+            method: String, url: String, body: Data?
+        )] {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries.filter { $0.method == method && $0.url.contains(substring) }
+        }
+    }
+
+    /// The capstone: engage a live-write session, forward a local edit, apply a remote
+    /// change (re-syncing the write baseline), let the debounced snapshot save land, then
+    /// force a fail-safe downgrade and confirm the next edit persists through the classic
+    /// path with no data loss and no false conflict. Drives the real `EditorViewModel` +
+    /// `LiveEditingBridge` + `DocumentSaveCoordinator`, with `MockURLProtocol` standing in
+    /// for the server -- proving Tasks 1-6 compose end to end.
+    func testLiveSessionForwardsRemoteAppliesSnapshotsThenDowngradesOnFailSafe() async throws {
+        // 1. Engage a clean, fully-synced, fully-modeled document.
+        let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        provider.snapshotData = Data([0x01, 0x02])
+        let projection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
+        provider.setProjection(projection, for: documentID)
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+        viewModel.liveWrite = bridge
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged)
+        XCTAssertTrue(
+            canEngageLiveWrite(
+                canEngageLiveEditing: viewModel.canEngageLiveEditing,
+                projection: provider.projectedReplica(for: documentID, interlinkingOrigin: nil)),
+            "a clean, synced, fully-modeled document is live-write-eligible")
+
+        // Every request from here on is recorded so steps 4 and 5 can inspect what
+        // actually reached "the server".
+        let requests = BodyRecorder()
+        MockURLProtocol.stubHandler = { request in
+            requests.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        // 2. A local edit forwards to the replica (and would broadcast); no classic dirty.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha!")
+        XCTAssertEqual(provider.appliedEdits.count, 1)
+        XCTAssertFalse(viewModel.isDirty)
+        XCTAssertEqual(
+            requests.entries(ofMethod: "PATCH", urlContaining: "/content/").count, 0,
+            "no classic markdown enqueue -- the forward, not a REST save, carried the edit")
+
+        // 3. The debounced snapshot runs and settles (`loadDocument`'s stub answers the PATCH
+        //    200, so `finish` clears the write-ahead draft -- the gate is restored for step 4).
+        await waitUntil { viewModel.saveState == .saved }
+
+        let snapshotPatches = requests.entries(ofMethod: "PATCH", urlContaining: "/content/")
+        XCTAssertEqual(snapshotPatches.count, 1, "the debounced snapshot fired exactly one content PATCH")
+        if let body = snapshotPatches.first?.body,
+            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        {
+            XCTAssertEqual(json["websocket"] as? Bool, true, "a live snapshot save is tagged websocket: true")
+            XCTAssertEqual(
+                json["content"] as? String, provider.snapshotData?.base64EncodedString(),
+                "the exact CRDT bytes the replica handed the bridge are what got PATCHed")
+        } else {
+            XCTFail("content PATCH body was not JSON")
+        }
+        let titlePatches = requests.entries(ofMethod: "PATCH", urlContaining: documentID.uuidString.lowercased())
+            .filter { !$0.url.contains("/content/") }
+        XCTAssertEqual(titlePatches.count, 1, "the live snapshot save also PATCHes the title")
+
+        // 4. A remote change applies caret-preservingly and re-syncs the write baseline.
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alpha!\n\nBeta2", carryingIDsFrom: projection), for: documentID)
+        provider.setVersion(1, for: documentID)
+        bridge.replicaDidChange()
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha!", "Beta2"])
+
+        // 5. Downgrade: `applyLocalEdit` now throws (a fail-safed replica). The gate still
+        // passes (projection modeled, doc clean), so the throw is what forces the
+        // fallback -- the next edit runs the classic dirty path without losing content.
+        provider.applyResult = .failure(YIntegrationError.unexpectedCase)
+        viewModel.updateText(blockID: viewModel.blocks[1].id, text: "Beta2 classic")
+        XCTAssertTrue(viewModel.isDirty, "fail-safe ⇒ classic path resumes")
+        XCTAssertEqual(viewModel.blocks[1].text, "Beta2 classic", "no content lost across the downgrade")
+
+        // The downgraded edit must actually reach the server through the classic save
+        // funnel, land cleanly, and raise no false conflict -- step 3's `persistLiveSnapshot`
+        // baseline advance is what keeps this classic push from misreading the server as
+        // having diverged out from under it.
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveCoordinator.state(for: self.documentID) != .saving }
+        XCTAssertEqual(viewModel.saveState, .saved, "the downgraded classic save landed")
+        XCTAssertNil(viewModel.syncConflict, "no false conflict raised by the downgraded save")
+
+        let allContentPatches = requests.entries(ofMethod: "PATCH", urlContaining: "/content/")
+        XCTAssertEqual(
+            allContentPatches.count, 2, "one live-snapshot PATCH (step 3) plus one classic downgrade PATCH")
+        if let classicBody = allContentPatches.last?.body,
+            let classicJSON = try? JSONSerialization.jsonObject(with: classicBody) as? [String: Any]
+        {
+            XCTAssertNil(classicJSON["websocket"], "the downgraded save is an ordinary classic PATCH, not tagged")
+        } else {
+            XCTFail("classic content PATCH body was not JSON")
+        }
+
+        // `EditorViewModel.liveWrite` is WEAK (the bridge holds the view model strongly), so
+        // -- exactly as the view retains it in production -- the test must keep the bridge
+        // alive across every `await` above, or `liveWrite` would go nil mid-test and every
+        // forward after that point would silently downgrade for the wrong reason.
+        withExtendedLifetime(bridge) {}
+    }
+
+    /// Regression for the C2c stale-`lastAppliedBlocks` race — the write path's one
+    /// genuine correctness hazard. `applyReplicaUpdate` integrates a remote update and
+    /// bumps `replicaVersion` in a single main-actor turn, but the read-apply that
+    /// re-syncs the bridge's write baseline used to be *deferred* to a later turn
+    /// (SwiftUI `.onChange(of: replicaVersion)`). A keystroke landing in that gap
+    /// forwarded a local edit diffed against the *pre-update* projection, and
+    /// `BlockNoteWrite.applyEdit` maps each `old[index].id` to the replica's live
+    /// container **by position** — so after a structural remote change (here: a block
+    /// removed, shifting the one the user edits from index 2 to index 1) the edit is
+    /// mis-positioned, corrupting the very replica peers receive the broadcast from.
+    ///
+    /// The fix makes the read-apply synchronous with the integrate: the manager fires
+    /// the bridge's registered observer in the same turn it bumps the version, so by the
+    /// time any keystroke runs, the editor and `lastAppliedBlocks` already reflect the
+    /// remote change. This test drives the **real** stack and deliberately does NOT call
+    /// `bridge.replicaDidChange()` after delivering the remote update — that manual call
+    /// stands in for the *deferred* `.onChange` the other tests model, and withholding it
+    /// leaves the synchronous observer the fix adds as the only thing that can re-sync the
+    /// baseline before the keystroke. Against the pre-fix code both assertions fail: the
+    /// editor never merges the remote remove, and the shared replica ends up corrupt.
+    func testLocalForwardAfterRemoteUpdateForwardsAgainstTheMergedReplicaNotAStaleBaseline() async throws {
+        let (viewModel, _, _) = makeEnvironment()
+        await viewModel.load()
+        XCTAssertTrue(viewModel.hasLoadedContent)
+
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: documentID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+        viewModel.liveWrite = bridge
+        // The view registers the synchronous read-apply observer on session acquisition
+        // (`EditorView.requestCollaborationSessionIfNeeded`); model that here since this test
+        // drives the stack without the view. Registering AFTER `session(for:)` above mirrors
+        // production order exactly.
+        bridge.registerReplicaObserver()
+
+        // -- Initial sync: engage on the real 3-block document [Doc, First, Second].
+        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
+        bridge.replicaDidChange()  // models the deferred `.onChange` firing normally
+        XCTAssertTrue(bridge.isEngaged)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
+        let secondID = viewModel.blocks[2].id
+
+        // The user taps into "Second" to edit it. Still clean, so still live-eligible.
+        viewModel.startEditing()
+
+        // -- A remote peer removes "First", shifting "Second" from index 2 to index 1.
+        // The replica integrates it and bumps the version -- but this test deliberately
+        // does NOT call `bridge.replicaDidChange()` here, reproducing the exact window in
+        // which the deferred read-apply has not run yet.
+        spy.sockets[0].deliver(message: syncUpdateFrame(hex: removeFirstParagraphHex))
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 2 }
+
+        // -- The keystroke lands in that window. With the fix, delivering the remote
+        // update above already fired the synchronous observer, so the editor and write
+        // baseline are caught up to [Doc, Second] and this forwards correctly. Without it,
+        // `old` still describes [Doc, First, Second] and the edit is mis-positioned.
+        viewModel.updateText(blockID: secondID, text: "Second!")
+
+        // 1. The editor merged the remote remove AND kept the local edit.
+        XCTAssertEqual(
+            viewModel.blocks.map(\.text), ["Doc", "Second!"],
+            "the editor reflects the remote remove merged with the local edit")
+
+        // 2. THE MONEY CHECK: the replica the broadcast derives from projects to the same
+        // merged document -- no corruption reaches peers. The edit reached the shifted
+        // container, rather than being lost or duplicated onto a stale position.
+        let projected = manager.projectedReplica(for: documentID, interlinkingOrigin: nil)
+        let rendered = try XCTUnwrap(projected.flatMap { YBlockProjection.renderedEditorDocument($0) })
+        XCTAssertEqual(
+            rendered.blocks.map(\.text), ["Doc", "Second!"],
+            "the shared replica is the correct merge -- the local edit reached the right container")
+        XCTAssertEqual(rendered.blocks.map(\.kind), [.heading(level: 1), .paragraph])
+
+        session?.stop()
+        withExtendedLifetime(bridge) {}
     }
 }

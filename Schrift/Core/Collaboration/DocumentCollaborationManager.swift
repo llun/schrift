@@ -88,6 +88,27 @@ final class DocumentCollaborationManager {
     /// work, already on screen, and must never masquerade as an inbound remote change.
     private var localEditVersions: [UUID: Int] = [:]
 
+    /// Per-document synchronous "replica changed" observers (C2c). Fired inside
+    /// `applyReplicaUpdate` on the **same main-actor turn** it bumps `replicaVersion`,
+    /// so the editor bridge's write baseline (`LiveEditingBridge.lastAppliedBlocks`) is
+    /// re-synced to the integrated replica *before* any keystroke can run. Without this
+    /// synchronous hook the read-apply is deferred to a later turn (the view's
+    /// `.onChange(of: replicaVersion)`), leaving a window in which a local forward diffs
+    /// its edit against the pre-update projection — and `BlockNoteWrite.applyEdit` maps
+    /// `old` to the replica's containers by position, so a structural remote change in
+    /// that window corrupts the broadcast. The stored closure captures the bridge
+    /// weakly (a dead bridge self-neutralises). Its lifecycle is kept aligned with the
+    /// per-document entry: the bridge registers via `setReplicaObserver` on every live
+    /// **session (re)acquisition** (`EditorView.requestCollaborationSessionIfNeeded`, not
+    /// at bridge construction), and `teardownIfIdle` drops it — so it exists exactly while
+    /// a live entry does. That symmetry is load-bearing: registering at construction
+    /// instead would both leak (a document that never opens a session — the default
+    /// feature-off path — would register an observer no teardown ever clears) and go stale
+    /// (a reopen after the entry was torn down would keep the reused bridge's now-dropped
+    /// observer, silently degrading back to the deferred `.onChange`). Not the
+    /// awareness/change-signal path — this is strictly the replica-integrated edge.
+    private var replicaObservers: [UUID: () -> Void] = [:]
+
     private let serverBaseURL: URL
     private let cookieProvider: @Sendable () -> [HTTPCookie]
     private let featureEnabled: @MainActor () -> Bool
@@ -180,6 +201,16 @@ final class DocumentCollaborationManager {
     /// session rebuilds; reset when the document's entry is torn down.
     func replicaVersion(for documentID: UUID) -> Int {
         replicaVersions[documentID] ?? 0
+    }
+
+    /// Registers a synchronous observer fired the instant an inbound update integrates
+    /// for `documentID`, or clears it with `nil`. The `LiveEditingBridge` registers
+    /// `replicaDidChange` here so its live-write baseline stays in lock-step with the
+    /// replica (see `replicaObservers` for why a *deferred* re-apply is unsafe). A later
+    /// registration replaces the prior one — one bridge per open document — and the
+    /// document's teardown drops it.
+    func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID) {
+        replicaObservers[documentID] = observer
     }
 
     /// True once an inbound update has failed to decode/apply for this
@@ -414,6 +445,12 @@ final class DocumentCollaborationManager {
             try replica.applyUpdate(try YUpdateDecoder.decode(data))
             entries[documentID] = entry
             replicaVersions[documentID, default: 0] += 1
+            // Synchronous read-apply (C2c): hand the freshly-integrated replica to the
+            // editor bridge *now*, in the same turn as the version bump, so a keystroke
+            // can never race in and forward a local edit against a stale projection.
+            // The entry/version are already consistent above; a nil observer (no editor
+            // open, or a non-live document) is a no-op. See `replicaObservers`.
+            replicaObservers[documentID]?()
         } catch {
             replica.destroy()
             entry.replica = nil
@@ -509,6 +546,7 @@ final class DocumentCollaborationManager {
         remoteChangeTokens.removeValue(forKey: documentID)
         replicaVersions.removeValue(forKey: documentID)
         localEditVersions.removeValue(forKey: documentID)
+        replicaObservers.removeValue(forKey: documentID)
     }
 }
 

@@ -297,4 +297,18 @@ final class LiveEditingTests: XCTestCase {
         XCTAssertEqual(applied.map(\.kind), [.paragraph, .paragraph, .paragraph])
         XCTAssertEqual(applied.map(\.text), ["Alpha", "Beta", "Gamma"])
     }
+
+    // MARK: - canEngageLiveWrite
+
+    func testCanEngageLiveWriteRequiresBaseGateAndFullyModeledProjection() {
+        let modeled = ProjectedDocument(blocks: [], isFullyRenderable: true, isFullyModeled: true)
+        let lossy = ProjectedDocument(blocks: [], isFullyRenderable: true, isFullyModeled: false)
+
+        XCTAssertTrue(canEngageLiveWrite(canEngageLiveEditing: true, projection: modeled))
+        XCTAssertFalse(canEngageLiveWrite(canEngageLiveEditing: false, projection: modeled), "base gate closed")
+        XCTAssertFalse(canEngageLiveWrite(canEngageLiveEditing: true, projection: lossy), "lossy ⇒ no write")
+        XCTAssertFalse(
+            canEngageLiveWrite(canEngageLiveEditing: true, projection: nil),
+            "nil projection ⇒ no replica / not synced / pending / fail-safed")
+    }
 }

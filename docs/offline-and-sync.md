@@ -102,18 +102,30 @@ wording gated on an actual local copy existing.
   "Start writing" button stays hidden offline (`EditorView.swift:215–221`).
   Offline is read-only; this feature adds offline *reading* of cached content,
   never a path that produces edits which cannot save.
-- No real-time collaborative *writing* or live cursors, and saves remain
-  full-overwrite / last-write-wins. **Live *reading* now exists** behind the
-  default-off `schrift.liveCollaboration` flag (Milestone C1): when the editor is
-  clean and joined to the Hocuspocus room, inbound Yjs updates are applied to the
-  open editor caret-preservingly by the `LiveEditingBridge` (see
-  `docs/architecture.md`). It composes with the machinery here rather than replacing
-  it: while the bridge is applying live content the A5 remote-change refetch is
-  **suppressed** (`isApplyingLiveContent`) — the live stream is newer than the 60 s
-  REST snapshot, so installing a stale `formatted-content` body would reset the caret
-  and regress content. On the first keystroke the bridge pauses and the detect-and-ask
-  conflict flow below resumes unchanged; a document with a recorded conflict,
-  `.pendingSync` state, stored draft, or pending save never enters live-apply.
+- No live cursors. Saves remain full-overwrite / last-write-wins **when the classic
+  path is what's active** — see "Cache stays consistent on save" (§3) below for the
+  live-snapshot save path that now runs alongside it. **Live *reading* and, as of
+  C2c, live *writing* now exist** behind
+  the default-off `schrift.liveCollaboration` flag (Milestones C1/C2a/C2b/C2c): when
+  the editor is clean and joined to the Hocuspocus room, inbound Yjs updates are
+  applied to the open editor caret-preservingly by the `LiveEditingBridge` (see
+  `docs/architecture.md`), and — once the replica is fully modeled — an outbound
+  keystroke is forwarded to the replica and broadcast instead of driving the classic
+  autosave. It composes with the machinery here rather than replacing it: while the
+  bridge is applying live content the A5 remote-change refetch is **suppressed**
+  (`isApplyingLiveContent`) — the live stream is newer than the 60 s REST snapshot, so
+  installing a stale `formatted-content` body would reset the caret and regress
+  content. On the first keystroke that fails to engage live-write, the bridge pauses
+  and the detect-and-ask conflict flow below resumes unchanged; a document with a
+  recorded conflict, `.pendingSync` state, stored draft, or pending save never enters
+  live-apply or live-write. The live-write branch of `markDirty` also **feeds** that
+  flow rather than sitting outside it: a REST "Updated" stash can still be sitting in
+  `pendingFreshContent` while a live session is engaged (a pull-to-refresh is not
+  suppressed by `isApplyingLiveContent`), and abandoning it on the first forwarded
+  keystroke runs the same conflict detection the classic branch runs — a diverged
+  stash records a conflict (which then blocks re-entering live-write), a non-diverged
+  one drops silently. This remains dormant in production — the flag defaults off and
+  there is no user-facing toggle yet (C3).
 - Revalidation runs **on open and on explicit pull-to-refresh only** — no
   periodic or background-timer revalidation.
 - No caching of the subpage list (deferred; see "Subpages" below).
@@ -781,14 +793,26 @@ unchanged. The VM also updates `displayedSourceMarkdown` to the enqueued markdow
 when it enqueues a save, keeping the staleness comparison anchored to what the
 server is about to hold.
 
-- **Live-collaboration snapshot saves reuse this exact pipeline (C2b).**
-  `DocumentSaveCoordinator.enqueueLiveSnapshot(...)` queues a full-state Yjs snapshot (PATCHed
-  verbatim with `"websocket": true` via `DocsAPIClient.saveLiveSnapshot`) rather than
-  markdown-derived bytes. It carries the **projected markdown** (what the server renders from
-  the snapshot) as the draft body and the `lastConfirmedPushMarkdown` stamp, so the write-ahead
-  draft, the conflict hold, latest-wins coalescing, `draftSyncDecision`, and the content cache
-  behave identically to a classic save — only the network primitive differs. Dormant until C2c
-  wires it; the classic markdown full-overwrite save is unchanged.
+- **Live-collaboration snapshot saves reuse this exact pipeline (C2b), and C2c is
+  what actually enqueues one.** `DocumentSaveCoordinator.enqueueLiveSnapshot(...)`
+  queues a full-state Yjs snapshot (PATCHed verbatim with `"websocket": true` via
+  `DocsAPIClient.saveLiveSnapshot`) rather than markdown-derived bytes. It carries the
+  **projected markdown** (what the server renders from the snapshot) as the draft body
+  and the `lastConfirmedPushMarkdown` stamp, so the write-ahead draft, the conflict
+  hold, latest-wins coalescing, `draftSyncDecision`, and the content cache behave
+  identically to a classic save — only the network primitive differs. So there are now
+  **two save paths converging on the same coordinator**: classic full-overwrite
+  (blocks → markdown → `MarkdownYjs.encode` → `saveDocumentContent`, driven by
+  `flushPendingChanges`/`enqueue`) and live full-state snapshot
+  (`LiveEditingBridge`'s ~60 s debounce → `EditorViewModel.persistLiveSnapshot` →
+  `enqueueLiveSnapshot` → `saveLiveSnapshot`), sharing every draft/baseline/cache rule
+  above. **Invariant:** a live snapshot is enqueued only when
+  `DocumentCollaborationManager.encodeSnapshotForSave` returns non-nil (the replica is
+  synced, clean of pending structs, and not fail-safed) **and** the fresh projection is
+  `isFullyModeled` — either failing means the debounce fire is skipped outright, no
+  PATCH is sent, and the editor either stays read-live (never engaging writes) or its
+  next keystroke downgrades to a classic autosave of the on-screen content. The server
+  document is never overwritten from a half-synced or lossy replica.
 
 ### 4. UI changes in `EditorView`
 

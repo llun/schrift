@@ -155,3 +155,37 @@ func transformedCaret(old: String, new: String, caret: Int) -> Int {
 
     return min(max(result, 0), newLength)
 }
+
+// MARK: - Live-write engagement (C2c)
+
+/// Whether the editor may currently drive live **writes** (C2c). Composes the C1
+/// read-engage gate (`EditorViewModel.canEngageLiveEditing`: loaded, clean, no
+/// dirty/pending-save/stored-draft/conflict, idle/saved) with the replica being
+/// **fully modeled**. A `nil` projection already encodes "no replica / not
+/// initial-synced / has pending structs / fail-safed" (the manager returns nil
+/// from `projectedReplica` unless `canWriteReplica`), so those facts fold into the
+/// single `projection != nil` check; `isFullyModeled` is the extra write-only
+/// requirement, so the tracked `old` baseline can never desync from a lossy/opaque
+/// projection. A document with any non-modeled block stays read-live.
+func canEngageLiveWrite(canEngageLiveEditing: Bool, projection: ProjectedDocument?) -> Bool {
+    guard canEngageLiveEditing, let projection else { return false }
+    return projection.isFullyModeled
+}
+
+/// The editor's outbound live-write seam, implemented by `LiveEditingBridge` (which
+/// owns the `DocumentCollaborationManager` reference) and held **weakly** by
+/// `EditorViewModel`. This is how the write path is threaded into `markDirty`
+/// without the manager ever entering the view model.
+@MainActor
+protocol EditorLiveWriteCoordinating: AnyObject {
+    /// Forward one local edit to the shared replica if live-write mode is engaged.
+    /// Returns `true` when the edit was handled live (the replica integrated + peers
+    /// were notified and a snapshot scheduled), meaning the classic REST autosave
+    /// must NOT also run. Returns `false` when not engaged (or a malformed replica
+    /// fail-safed), in which case the caller proceeds down the classic path —
+    /// this is the downgrade to classic.
+    func forwardLocalEdit() -> Bool
+    /// Fire any pending debounced live snapshot immediately (Done / background /
+    /// disappear). A no-op when nothing is pending.
+    func flushPendingLiveSnapshot()
+}

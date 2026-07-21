@@ -290,6 +290,101 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    /// C2c: a registered replica observer fires **synchronously, in the same main-actor
+    /// turn** an inbound update integrates and bumps `replicaVersion` — this is what lets
+    /// the editor bridge re-sync its write baseline before any keystroke can race in. The
+    /// observer records the version it *sees* when fired; requiring it to already equal the
+    /// post-integrate value (never a stale `0`) pins the "same turn as the bump" contract,
+    /// since a deferred fire could only ever observe a value set in an earlier turn.
+    func testInboundIntegrateFiresTheReplicaObserverSynchronouslyAfterTheVersionBump() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        var fireCount = 0
+        var versionsSeenAtFire: [Int] = []
+        // `[weak manager]` avoids a retain cycle (the manager stores this closure).
+        manager.setReplicaObserver(
+            { [weak manager] in
+                fireCount += 1
+                versionsSeenAtFire.append(manager?.replicaVersion(for: self.docID) ?? -1)
+            }, for: docID)
+
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncStep2Frame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+
+        XCTAssertEqual(fireCount, 1, "the observer fires exactly once per integrated update")
+        XCTAssertEqual(
+            versionsSeenAtFire, [1],
+            "it fires AFTER the version bump, in the same turn — never a deferred stale read")
+        session?.stop()
+    }
+
+    /// The observer is strictly the *integrated-cleanly* edge: a malformed update
+    /// fail-safes the replica and does **not** bump `replicaVersion`, so there is no
+    /// trustworthy state to hand the editor and the observer must stay silent (the
+    /// change-signal fallback via `remoteChangeToken` still fires — tested separately).
+    func testMalformedInboundUpdateDoesNotFireTheReplicaObserver() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        var fireCount = 0
+        manager.setReplicaObserver({ fireCount += 1 }, for: docID)
+
+        let garbage = Data([0x00, 0x01, 0x02, 0x99])
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: garbage))
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+        XCTAssertEqual(fireCount, 0, "a fail-safed (non-integrated) update never fires the read-apply observer")
+        session?.stop()
+    }
+
+    /// The observer's lifecycle is tied to the per-document ENTRY, not the bridge: it is
+    /// dropped when the document is torn down after linger and must be RE-REGISTERED when the
+    /// document is reopened. The `LiveEditingBridge` (held in `EditorView.@State`) outlives a
+    /// teardown, and its init does NOT register — the view re-registers on every session
+    /// (re)acquisition. This pins that contract: teardown clears the observer, a bare reopen
+    /// therefore fires nothing (the stale-baseline race the synchronous observer exists to
+    /// close), and re-registration on reopen restores the synchronous read-apply.
+    func testReplicaObserverIsClearedOnTeardownAndRestoredByReRegistrationOnReopen() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        var fireCount = 0
+        manager.setReplicaObserver({ fireCount += 1 }, for: docID)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncStep2Frame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertEqual(fireCount, 1, "the observer fires while registered and the entry is live")
+
+        // Tear the document down after linger — the entry (and its observer) is dropped.
+        manager.release(docID)
+        await waitUntil { manager.activeDocumentCount == 0 }
+
+        // Reopen: a fresh entry+session is acquired for the SAME document, but WITHOUT the view
+        // re-registering the observer. An inbound update integrates and bumps the version, yet
+        // fires nothing — this is exactly the gap that reopened the race before the fix.
+        _ = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 2 }
+        spy.sockets[1].deliver(message: syncStep2Frame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertEqual(fireCount, 1, "teardown cleared the observer; a bare reopen fires nothing")
+
+        // The view re-registers on acquisition (`LiveEditingBridge.registerReplicaObserver`) —
+        // model that, and the synchronous read-apply is restored for the reopened document.
+        manager.setReplicaObserver({ fireCount += 1 }, for: docID)
+        spy.sockets[1].deliver(message: syncStep2Frame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 2 }
+        XCTAssertEqual(fireCount, 2, "re-registering on reopen restores the synchronous observer")
+
+        manager.release(docID)
+    }
+
     func testMalformedUpdateSetsFailSafeStopsProjectingButStillSignals() async {
         let spy = SocketFactorySpy()
         let manager = makeManager(spy: spy)

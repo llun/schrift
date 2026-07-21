@@ -399,4 +399,206 @@ final class EditorViewModelLiveTests: XCTestCase {
         XCTAssertTrue(viewModel.isUnavailable)
         XCTAssertFalse(viewModel.canEngageLiveEditing)
     }
+
+    // MARK: - Live-write mode split (C2c)
+
+    func testLiveEditForwardsAndSkipsClassicDirtyMachinery() async {
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha")
+        await viewModel.load()
+        let live = FakeLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+
+        XCTAssertEqual(live.forwardCount, 1, "the keystroke was offered to the live delegate")
+        XCTAssertFalse(viewModel.isDirty, "live mode never engages the classic dirty machinery")
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "no classic REST save enqueued")
+    }
+
+    func testClassicEditIsUntouchedWhenLiveDelegateDeclines() async {
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha")
+        await viewModel.load()
+        let live = FakeLiveWrite()
+        live.handleLive = false  // downgrade / not engaged
+        viewModel.liveWrite = live
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+
+        XCTAssertEqual(live.forwardCount, 1, "the edit was offered to the delegate, which declined")
+        XCTAssertTrue(viewModel.isDirty, "the classic dirty machinery runs exactly as before")
+        // The edit is not lost: the autosave debounce holds it (10 s), and it is
+        // captured in `blocks`. Downgrade never drops an edit.
+        _ = coordinator
+    }
+
+    // MARK: - Live-write path: REST stash conflict detection (C2c, Finding 1)
+
+    /// A REST "Updated" stash (`pendingFreshContent`, from an A5 refetch while an editing
+    /// session was open) can still exist while live-write is engaged: a pull-to-refresh, or a
+    /// signal landing just as engagement toggles, is not suppressed the way `noteRemoteChange`
+    /// is suppressed by `isApplyingLiveContent`. That stash may hold a co-author's
+    /// REST-originated edit the live replica never saw (a classic client saving without
+    /// joining the collaboration room). `markDirty`'s live branch must abandon the stash
+    /// through the same conflict-aware path the classic branch uses
+    /// (`abandonPendingFreshContent`), or the next live snapshot silently full-overwrites it.
+    func testLiveEditRecordsConflictWhenAbandoningADivergedFetchedBody() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha", log: log)
+        await viewModel.load()
+
+        let live = FakeLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+
+        // An open editing session, still clean — live-write stays engaged
+        // (`canEngageLiveEditing` does not care about editing mode, only
+        // dirty/save/draft/conflict state).
+        viewModel.startEditing()
+        XCTAssertTrue(viewModel.canEngageLiveEditing, "precondition: live-write is engaged before the stash lands")
+
+        // A co-author's REST-originated edit lands as the stash, with a newer `updated_at`.
+        let coauthorBody = formattedBody(content: "Beta", updatedAt: "2026-02-20T10:30:00Z")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "the fetched body is stashed behind the banner")
+        XCTAssertNil(coordinator.conflict(for: documentID), "…and is merely offered, not yet a conflict")
+
+        // The user keeps typing — forwarded live, never through the classic dirty machinery.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha changed")
+
+        XCTAssertEqual(live.forwardCount, 1, "the edit was forwarded to the live delegate")
+        XCTAssertFalse(viewModel.isDirty, "live mode never engages the classic dirty machinery")
+        XCTAssertFalse(viewModel.updateAvailable, "the stash is cleared…")
+        XCTAssertNotNil(
+            coordinator.conflict(for: documentID),
+            "…but a diverged server body we fetched and showed the user must not be silently overwritten by "
+                + "the next live snapshot — abandoning it must record the conflict")
+
+        // A recorded conflict downgrades live engagement, so the coordinator's enqueue-hold
+        // (not a bare full-state PATCH) protects the co-author's edit the next time a
+        // snapshot fires.
+        XCTAssertFalse(viewModel.canEngageLiveEditing)
+    }
+
+    /// The complement: a stash that turns out NOT to have diverged (the local live edit
+    /// happens to converge on the same text) must still be dropped, but with no conflict
+    /// recorded — the common case must keep working exactly as it did before Finding 1's fix.
+    func testLiveEditDropsAConvergedStashWithNoConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha", log: log)
+        await viewModel.load()
+
+        let live = FakeLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+
+        viewModel.startEditing()
+
+        let coauthorBody = formattedBody(content: "Beta", updatedAt: "2026-02-20T10:30:00Z")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "the fetched body is stashed behind the banner")
+
+        // The local live edit happens to converge on exactly the stashed text (rule 0: the
+        // local body already equals the fetched server body — nothing to conflict about).
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Beta")
+
+        XCTAssertEqual(live.forwardCount, 1, "the edit was forwarded to the live delegate")
+        XCTAssertFalse(viewModel.updateAvailable, "the stash is dropped in the common (non-diverged) case too")
+        XCTAssertNil(coordinator.conflict(for: documentID), "no conflict when nothing actually diverged")
+        XCTAssertTrue(viewModel.canEngageLiveEditing, "live engagement is untouched when nothing conflicted")
+    }
+
+    func testPersistLiveSnapshotEnqueuesLiveSaveAndAdvancesBaseline() async {
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha")
+        await viewModel.load()
+        XCTAssertNil(coordinator.storedDraft(documentID: documentID))
+
+        viewModel.persistLiveSnapshot(Data([0x0A, 0x0B]), projectedMarkdown: "Alpha live")
+
+        // The projected markdown is the live save's write-ahead draft body (read
+        // synchronously — a confirmed save removes the draft in the coordinator's `finish`).
+        // Its own baseline still describes the pre-snapshot server state the snapshot descends
+        // from ("Alpha"), exactly like a classic save's baseline.
+        let liveDraft = coordinator.storedDraft(documentID: documentID)
+        XCTAssertEqual(liveDraft?.markdown, "Alpha live", "the projected markdown is the live save's write-ahead body")
+        XCTAssertEqual(
+            liveDraft?.baseline?.markdown, "Alpha", "the snapshot descends from the pre-snapshot server state")
+
+        // Let the live save settle (its stub returns 200), recording `lastConfirmedPush`
+        // and clearing the draft.
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+
+        // The VM's dirty baseline advanced to the projected content: a later classic edit's
+        // draft carries "Alpha live" as its baseline (markdown + title), so a downgrade
+        // reconciles by body-equality and never false-conflicts (C2b coherence).
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha classic")
+        viewModel.flushPendingChanges()
+        let classicDraft = coordinator.storedDraft(documentID: documentID)
+        XCTAssertEqual(classicDraft?.markdown, "Alpha classic\n", "the classic edit is what enqueued this draft")
+        XCTAssertEqual(classicDraft?.baseline?.markdown, "Alpha live", "the baseline advanced to the live snapshot")
+        XCTAssertEqual(classicDraft?.baseline?.title, "Doc")
+
+        // Let the classic save settle so nothing outlives the test into tearDown.
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+    }
+
+    func testFlushPendingChangesFiresLiveFlush() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        let live = FakeLiveWrite()
+        viewModel.liveWrite = live
+
+        viewModel.flushPendingChanges()
+
+        XCTAssertEqual(live.flushCount, 1, "the pending live snapshot is flushed before the classic guard")
+    }
+
+    func testNoLiveDelegateRunsClassicPathUnchanged() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha")
+        await viewModel.load()
+        // No `liveWrite` set — the mode-split guard is a pure no-op (`nil?.x == true`
+        // is false), so the classic dirty machinery runs exactly as today.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+
+        XCTAssertTrue(viewModel.isDirty, "with no delegate the classic path is untouched")
+    }
+}
+
+/// A scripted stand-in for the C1/C2c `LiveEditingBridge`. `handleLive` toggles
+/// whether `forwardLocalEdit()` claims the edit (live) or declines it (downgrade).
+@MainActor
+private final class FakeLiveWrite: EditorLiveWriteCoordinating {
+    var handleLive = false
+    private(set) var forwardCount = 0
+    private(set) var flushCount = 0
+    func forwardLocalEdit() -> Bool {
+        forwardCount += 1
+        return handleLive
+    }
+    func flushPendingLiveSnapshot() { flushCount += 1 }
 }
