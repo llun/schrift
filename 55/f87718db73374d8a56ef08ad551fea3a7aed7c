@@ -1,0 +1,31 @@
+docs/architecture.md
+  s_0d1bafffaaad6d::t_d25e99846a45a1 382-389
+  s_0d1bafffaaad6d::t_c57ebb68522aef 425-531
+  s_0d1bafffaaad6d::t_1aec2e791c1fc2 52
+  s_0d1bafffaaad6d::t_527fd0175c1ce4 397-401
+  s_0d1bafffaaad6d::t_4077396d1b4d46 229-235
+docs/offline-and-sync.md
+  s_0d1bafffaaad6d::t_69954e4c51de1c 106-108
+  s_0d1bafffaaad6d::t_87ffcef39db24b 790-809
+  s_0d1bafffaaad6d::t_6089d4d7eaa902 105,109-122
+CLAUDE.md
+  s_0d1bafffaaad6d::t_71592a7746c4fd 1131,1133-1186
+  s_0d1bafffaaad6d::t_21fa7a1811b90b 283-292
+  s_0d1bafffaaad6d::t_a5c6ea7cfd9071 1107-1108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "55f87718db73374d8a56ef08ad551fea3a7aed7c",
+  "prompts": {},
+  "sessions": {
+    "s_0d1bafffaaad6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6618fb7a-d442-469d-8f26-b7be5246620b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
