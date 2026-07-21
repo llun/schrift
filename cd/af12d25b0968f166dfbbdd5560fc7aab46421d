@@ -1,0 +1,21 @@
+Schrift/Core/Collaboration/LiveCollaborationPreference.swift
+  s_3edba91c397280::t_09e3030df8d828 3-9
+docs/offline-and-sync.md
+  s_3edba91c397280::t_57707f2e20ac5f 127-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "cdaf12d25b0968f166dfbbdd5560fc7aab46421d",
+  "prompts": {},
+  "sessions": {
+    "s_3edba91c397280": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aac2534a-a63b-458d-89e9-ab96eb82fe9a",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
