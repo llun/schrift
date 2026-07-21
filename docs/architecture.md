@@ -49,7 +49,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — a two-way *sync engine* now exists (C2a: a real SyncStep1/SyncStep2 handshake, an outbound `applyLocalEdit`/broadcast path, and the write-eligibility gates a save would need), but nothing calls it yet — the editor and the save coordinator are not wired to it. C2b adds the live-snapshot save *mechanism* (`enqueueLiveSnapshot` + `saveLiveSnapshot`, through the existing save coordinator), still uncalled; C2c wires the editor and the ~60 s debounce. The app **reads** live: behind the default-off `schrift.liveCollaboration` flag it joins the Hocuspocus room, integrates inbound Yjs updates into a hand-written replica, and reflects them in the open editor caret-preservingly (Milestones A + B + C1). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)" and "Two-way sync engine (C2a)". Outbound edits still save via a single full-overwrite HTTP PATCH; nothing the app types is broadcast to peers or persisted through the replica yet.
+- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is still **dormant in production** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user (currently nobody; there is no UI toggle yet — see C3) turns it on. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
 - Offline editing/sync queue. (Offline *reading* of previously-opened documents
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
@@ -226,14 +226,13 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   refetch is **suppressed** (`isApplyingLiveContent`, evaluated fresh from the same
   engagement condition the apply uses) — the stream is newer than the 60 s REST snapshot, so
   installing a stale REST body would reset the caret and regress content.
-- **Read-only in C1 — the sync engine itself now exists (C2a, below), but nothing calls
-  it.** At C1, nothing was encoded, broadcast, or PATCHed, and a peer's inbound `.step1`
-  was ignored outright. **C2a** built the two-way sync *engine* one layer down — the
-  session answers a peer's `.step1` with a real `.step2` diff, and the manager's
-  `applyLocalEdit` turns a local edit into a broadcast update — but the editor still never
-  calls `applyLocalEdit` and the save coordinator still never calls
-  `encodeSnapshotForSave`. Wiring either of those in (`enqueueLiveSnapshot`, the live-entry
-  gates on the save path) is **C2b/C2c**.
+- **Read-only in C1 — the write path is now wired on top of it (C2a/C2b/C2c, below).**
+  At C1, nothing was encoded, broadcast, or PATCHed, and a peer's inbound `.step1` was
+  ignored outright. **C2a** built the two-way sync *engine* one layer down (the session
+  answers a peer's `.step1` with a real `.step2` diff, and the manager's `applyLocalEdit`
+  turns a local edit into a broadcast update); **C2b** added the save *mechanism*
+  (`enqueueLiveSnapshot`/`saveLiveSnapshot`); **C2c** is what finally calls both from the
+  editor — see "Editor wiring — the write path complete (C2c)".
 
 ### Local-edit transactions (B6)
 
@@ -380,13 +379,14 @@ one and adds the outbound write path on top of it.
   vectors), broadcast/concurrent, and producer-shape lanes, with **0 divergences**; the
   harness itself was mutation-verified — a deliberately reintroduced bug in the
   diff-slicing path was confirmed to fail it before the real fix was restored.
-- **Still entirely dormant.** Everything above runs only behind the default-off
-  `schrift.liveCollaboration` flag, and — this is the C2a boundary — **no
-  `Features/Editor` or save-path code calls any of it**: `EditorViewModel` never calls
-  `applyLocalEdit`, and **nothing bridges `encodeSnapshotForSave`'s bytes into a save**:
-  C2b adds the save mechanism (`enqueueLiveSnapshot` + `saveLiveSnapshot`), but no editor
-  or collaboration code calls `enqueueLiveSnapshot` yet. C2a is the sync *engine*; wiring
-  actual keystrokes and actual saves through it is **C2b/C2c**.
+- **Dormant only behind the flag, not behind missing callers.** At C2a, no
+  `Features/Editor` or save-path code called any of this — that was the C2a boundary.
+  C2b then added the save mechanism (`enqueueLiveSnapshot`/`saveLiveSnapshot`) with
+  still no caller. **C2c is what closes the loop**: the editor now calls
+  `applyLocalEdit` (via `LiveEditingBridge.forwardLocalEdit`) and `enqueueLiveSnapshot`
+  (via `EditorViewModel.persistLiveSnapshot`) for real. Everything still runs only
+  behind the default-off `schrift.liveCollaboration` flag — see "Editor wiring — the
+  write path complete (C2c)".
 
 ### Live-snapshot save (C2b)
 
@@ -394,9 +394,11 @@ C2a produced `DocumentCollaborationManager.encodeSnapshotForSave(for:)` — a fu
 Yjs snapshot of a write-eligible replica — but nothing carried those bytes to the server.
 **C2b adds the save *mechanism*: a new networking primitive and a new save-coordinator
 entry point, both routed through the existing full-overwrite save pipeline so a live save
-inherits every reconcile/baseline/hold invariant. It is still dormant** — no editor or
-collaboration code bridges `encodeSnapshotForSave`'s bytes into it; that wiring (and the
-~60 s debounce) is **C2c**.
+inherits every reconcile/baseline/hold invariant.** At C2b this was still dormant — no
+editor or collaboration code bridged `encodeSnapshotForSave`'s bytes into it. **C2c
+bridges it**: `LiveEditingBridge`'s ~60 s debounce calls `encodeSnapshotForSave` and, when
+it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` — see
+"Editor wiring — the write path complete (C2c)" below.
 
 - **`DocsAPIClient.saveLiveSnapshot(documentID:title:yjsUpdate:)`** mirrors
   `saveDocumentContent` exactly — two requests, the same half-land `DocsAPIError?` contract
@@ -419,6 +421,113 @@ collaboration code bridges `encodeSnapshotForSave`'s bytes into it; that wiring 
   `lastConfirmedPushMarkdown`, so a later **downgrade to a classic markdown save of the same
   body** reconciles via rule 1 (or rule 2's body fallback), never a false conflict against
   pre-live state.
+
+### Editor wiring — the write path complete (C2c)
+
+C2a built the sync engine, C2b built the save mechanism; **C2c is what actually calls
+either from the editor.** It is the last PR of the write path — after it, two-way live
+editing (forward → broadcast → remote caret-preserving apply → periodic snapshot save →
+graceful downgrade) is wired end to end, still entirely behind the default-off
+`schrift.liveCollaboration` flag.
+
+- **An id-stable `[BlockNoteBlock]` builder is the prerequisite.** `applyLocalEdit`
+  diffs an `old`/`new` BlockNote block pair by id, so `old` must be the replica's
+  current projection expressed with the *same* ids the editor is about to diff against
+  — and those ids must survive across keystrokes, or every edit would look like a
+  whole-document replace. `MarkdownYjs.blockNoteBlocks(from: [EditorBlock])` is that
+  builder: it maps each `EditorBlock` straight to a `BlockNoteBlock` reusing
+  `EditorBlock.id` as the BlockNote id, bypassing `parseEditorBlocks`'s markdown
+  re-parse entirely (which mints a fresh id per call and would make every keystroke
+  diff as insert-everything/remove-everything). The existing `blockNoteBlocks(from:
+  markdown)` — used by the classic save — is unchanged; this is an additional overload,
+  not a replacement.
+- **The write-delegate seam mirrors C1's read seam.** `EditorLiveWriteCoordinating`
+  (`forwardLocalEdit() -> Bool`, `flushPendingLiveSnapshot()`) is a small `@MainActor`
+  protocol `LiveEditingBridge` conforms to; `EditorViewModel` holds it as `weak var
+  liveWrite: EditorLiveWriteCoordinating?`, set once by `EditorView` after it lazily
+  builds the bridge (the same call site that builds the C1 bridge — there is only one
+  bridge instance, and it plays both roles). The manager itself never enters
+  `EditorViewModel` — only this protocol does, exactly as C1 kept `LiveReplicaProviding`
+  as the only seam for reads. `LiveReplicaProviding` gained the write-side members
+  (`applyLocalEdit`, `encodeSnapshotForSave`, `replicaIsFailSafe`, `hasPendingStructs`)
+  that `DocumentCollaborationManager` already exposed from C2a — no new adapter code was
+  needed.
+- **`canEngageLiveWrite` extends the C1 read gate with one more requirement.**
+  `canEngageLiveEditing` (loaded, clean, no dirty/pending-save/draft/conflict,
+  idle/saved) is necessary but not sufficient for writing: a `nil` projection already
+  folds in "no replica / not initial-synced / pending structs / fail-safed" (the
+  manager only returns a projection when `canWriteReplica` holds), and on top of that
+  the write path additionally requires `projection.isFullyModeled` — a document with
+  any lossy or opaque block (an `.unknown` block, a prop type mismatch, …) stays
+  **read**-live but never engages the write path, because such a projection can't
+  round-trip back through `blockNoteBlocks(from:)` without the tracked `old` baseline
+  silently drifting from what the replica actually holds.
+- **The mode split lives in `EditorViewModel.markDirty()`.** Every mutator already
+  calls `markDirty()` after mutating `blocks` in place. Its first line is now `if
+  liveWrite?.forwardLocalEdit() == true { … ; return }`: when live-write is engaged,
+  the edit is forwarded to the replica (integrated + broadcast + a snapshot
+  scheduled) and `markDirty` returns **without** touching `isDirty`, `dirtySince`, the
+  autosave timer, or the draft/conflict machinery — durability now belongs to the
+  replica and the periodic snapshot, and staying clean is exactly what keeps
+  `canEngageLiveEditing` true so the document *stays* live across a run of keystrokes.
+  When `forwardLocalEdit()` returns `false` — `liveWrite` is `nil` (every existing
+  test, and any screen without a bridge), the write gate declined, or the replica
+  fail-safed — `markDirty` falls straight through to the classic body, byte-for-byte
+  as before C2c. `nil?.forwardLocalEdit() == true` is `false` by Swift's optional-chain
+  semantics, so the classic path needed no test changes to stay green.
+- **The mutate-then-`markDirty` order is what makes the downgrade lossless.** Every
+  call site mutates `blocks` first and calls `markDirty()` after, so by the time
+  `forwardLocalEdit()` declines, the on-screen edit is already there — the classic
+  path that runs next persists exactly that content. No edit is ever lost to a
+  declined live forward; at worst it takes one extra classic autosave cycle.
+- **`LiveEditingBridge.forwardLocalEdit()`** re-checks `canEngageLiveWrite` against a
+  freshly read projection (never a cached engagement flag), builds `new` from
+  `viewModel.blocks` via the id-stable builder, and calls
+  `collaboration.applyLocalEdit(old:new:for:)` with the bridge's tracked
+  `lastAppliedBlocks` as `old`. A thrown `applyLocalEdit` (a malformed replica
+  fail-safing) is swallowed and reported as `false` — downgrade, not a crash. On
+  success the bridge advances `lastAppliedBlocks = new`, marks a snapshot pending, and
+  (re)schedules the ~60 s debounce; it deliberately does **not** bump the inbound
+  `replicaVersion`/`remoteChangeToken` (C2a's local-echo suppression), so the forward
+  never loops back through `replicaDidChange()` and re-applies the user's own edit to
+  themselves.
+- **The `old` baseline (`lastAppliedBlocks`) is captured only when the editor is known
+  to equal the projection**, and nowhere else: on every engage (`replicaDidChange`,
+  including a no-op empty diff) and again after every `applyLiveRemoteChange`. A local
+  forward advances it itself (to `new`). This is why a peer's edit landing between two
+  of the user's own keystrokes never desyncs the next local diff — the baseline is
+  re-synced the moment the remote change is folded in, before the next keystroke can
+  read it.
+- **The snapshot debounce is bridge-owned, cancel-and-reschedule, ~60 s** (injectable
+  for tests), mirroring the autosave debounce pattern elsewhere in the editor. When it
+  fires (`fireSnapshot`) it re-derives everything fresh from the replica rather than
+  trusting state captured at schedule time: `encodeSnapshotForSave` (nil ⇒ **skip, no
+  PATCH** — the un-snapshotted edit is still safely on screen and a later classic save
+  will persist it), a fresh `projectedReplica` re-checked for `isFullyModeled` (the
+  projection can have gone lossy between the forward and the fire), and
+  `YBlockProjection.projectedMarkdown` for the reconcile-facing body. Only when all
+  three succeed does it call `EditorViewModel.persistLiveSnapshot`, which enqueues
+  through `saveCoordinator.enqueueLiveSnapshot` (C2b) exactly as a classic save would,
+  and advances the local dirty baseline (`savedMarkdown`, `serverBaseline`,
+  `lastSyncedAt`) so a subsequent downgrade to a classic save reconciles via rule 1 —
+  never a false conflict against the app's own live-pushed content.
+  `flushPendingLiveSnapshot()` fires the same path immediately (Done / background /
+  view teardown) instead of waiting out the debounce, and is a no-op when nothing is
+  pending.
+- **Verification.** An end-to-end integration test drives a scripted `LiveReplicaProviding`
+  fake through a full session — engage, forward a local edit, apply a remote change,
+  let the debounce fire a snapshot, then force a fail-safe and confirm the next edit
+  downgrades to the classic autosave path — alongside the existing C2a differential
+  fuzz (unchanged; C2c adds no new sync-engine surface, only editor callers of it).
+  Every pre-existing `EditorViewModelTests` test passes unchanged, which is the
+  standing proof that the classic path is untouched when `liveWrite` is `nil`.
+
+**C3 (separate follow-up):** the user-facing Profile toggle for
+`schrift.liveCollaboration` and its default decision, remaining L10n, and any
+header/status refinements for live mode (e.g. the "Synced X ago" caption is not yet
+advanced by a landed live snapshot). C2c ships the write path behind the existing
+default-off flag only — on-device WebSocket verification against a real
+collaboration-capable server is also owed and non-gating.
 
 ### Two Yjs models, deliberately
 

@@ -280,8 +280,16 @@ Schrift/
 │   │                    first inbound SyncStep2 (an earlier .update still builds
 │   │                    the replica but leaves it non-writable), and
 │   │                    encodeSnapshotForSave(for:) returns nil unless
-│   │                    canWriteReplica. Still dormant — no editor/save-path code
-│   │                    calls any of this yet (C2b/C2c)
+│   │                    canWriteReplica. C2b adds the save mechanism
+│   │                    (enqueueLiveSnapshot/saveLiveSnapshot) through the existing
+│   │                    save coordinator. C2c (Features/Editor) is what finally
+│   │                    calls both: LiveEditingBridge.forwardLocalEdit forwards a
+│   │                    local keystroke to applyLocalEdit + schedules a ~60s
+│   │                    snapshot debounce, EditorViewModel.markDirty's mode split
+│   │                    forwards instead of dirtying when a weak liveWrite
+│   │                    delegate is engaged, and persistLiveSnapshot calls
+│   │                    enqueueLiveSnapshot. Still dormant behind the default-off
+│   │                    flag — C3 owes the user-facing toggle
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
@@ -1096,7 +1104,8 @@ markdown write endpoint**. Understand this before touching the save path:
   and hands back to the classic A5 + #76 machinery on the first keystroke. While it
   is applying, the A5 REST refetch is suppressed (`isApplyingLiveContent`) so a stale
   60 s REST snapshot can't `install` over live content and reset the caret. It is
-  **read-only** — the outbound write path is C2. See `docs/architecture.md`
+  **read-only** — the outbound write path (C2, now wired end-to-end by C2c below) is
+  a separate funnel that never calls `install` either. See `docs/architecture.md`
   ("Live editing (C1)").
 - Saves go through **`DocumentSaveCoordinator`** (app-scoped; owns its `Task`s so
   navigating away never cancels a save; write-ahead draft to `PendingDraftStore`;
@@ -1119,8 +1128,62 @@ markdown write endpoint**. Understand this before touching the save path:
   the classic `enqueue`/`saveDocumentContent` path — re-encoding the same rendered markdown via
   `MarkdownYjs.encode` rather than resending the original CRDT bytes. Content is preserved
   (same markdown), CRDT history for that one save is flattened, and the replay is still
-  conflict-checked like any other. It stays **dormant until C2c** wires it; never bypass the
+  conflict-checked like any other. **C2c wires this in** (below); never bypass the
   coordinator to persist a live edit.
+- **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
+  for reads.** `EditorLiveWriteCoordinating` (`forwardLocalEdit() -> Bool`,
+  `flushPendingLiveSnapshot()`) is implemented by `LiveEditingBridge` and held as `weak var
+  liveWrite: EditorLiveWriteCoordinating?` on `EditorViewModel` — the collaboration manager
+  never enters the view model, only this protocol does, and `EditorView` sets it once after
+  lazily building the (single, dual-role) bridge.
+  - **The mode split lives in `markDirty()`.** Its first line is
+    `if liveWrite?.forwardLocalEdit() == true { …; return }`: in live mode a keystroke
+    forwards to the replica (integrate + broadcast + schedule the snapshot debounce) and
+    returns **without** setting `isDirty`, touching `dirtySince`, or starting the autosave
+    timer — durability now belongs to the replica/snapshot, and staying clean is what keeps
+    `canEngageLiveEditing` true across a run of keystrokes. `nil?.forwardLocalEdit() == true`
+    is `false`, so with `liveWrite` unset (every pre-C2c test, any screen without a bridge)
+    this is a provable no-op and the classic path is byte-for-byte unchanged — the standing
+    proof is that every existing `EditorViewModelTests` test passes with no changes.
+  - **The write gate (`canEngageLiveWrite`) is the C1 read gate plus one thing:**
+    `canEngageLiveEditing` (loaded, clean, no dirty/pending-save/draft/conflict,
+    idle/saved) **and** the fresh projection is `isFullyModeled`. A document with any
+    `.unknown`/lossy/opaque block never satisfies this — it stays read-live but can never
+    write-live, because such a projection can't round-trip back through
+    `blockNoteBlocks(from:)` without the tracked `old` baseline silently desyncing from
+    the replica.
+  - **Downgrade never loses an edit.** Every mutator already mutates `blocks` *before*
+    calling `markDirty()`, so by the time `forwardLocalEdit()` declines (delegate nil, gate
+    closed, or a thrown `applyLocalEdit` from a fail-safing replica), the on-screen edit is
+    already there for the classic path that runs next to persist. At worst this costs one
+    extra classic autosave cycle, never content.
+  - **The write baseline (`old`) is id-stable and re-synced, never re-parsed.**
+    `MarkdownYjs.blockNoteBlocks(from: [EditorBlock])` (a new overload beside the
+    markdown-parsing one) maps each `EditorBlock` straight to a `BlockNoteBlock` reusing
+    `EditorBlock.id` as the BlockNote id — **never** a fresh `currentMarkdown()` re-parse,
+    which mints new ids per call and would make every keystroke diff as a whole-document
+    replace and clobber concurrent peers. The bridge captures this baseline
+    (`lastAppliedBlocks`) only when the editor is known to equal the projection: on every
+    engage (including a no-op empty diff) and again after every `applyLiveRemoteChange` —
+    so a peer's edit landing between two local keystrokes re-syncs `old` before the next
+    local diff reads it. A local forward advances the baseline itself.
+  - **TOP SAFETY, restated at the debounce:** the bridge's ~60 s cancel-and-reschedule
+    snapshot fire re-derives everything fresh (never trusts state captured at schedule
+    time) — `encodeSnapshotForSave` returning `nil` means **skip, no PATCH**, and the
+    projection is re-checked for `isFullyModeled` because it can have gone lossy between
+    the forward and the fire. Only when both hold does `persistLiveSnapshot` enqueue
+    through `enqueueLiveSnapshot`, advancing the classic dirty baseline
+    (`savedMarkdown`/`serverBaseline`) so a later downgrade-to-classic save reconciles via
+    `draftSyncDecision` rule 1 (its `lastConfirmedPush` already equals the live-pushed
+    body) — never a false conflict against the app's own write.
+  - Verified by an end-to-end integration test (engage → forward → remote apply →
+    debounce-fires-a-snapshot → force fail-safe → next edit downgrades) plus the existing
+    C2a differential fuzz (unchanged; C2c adds editor callers, not new sync-engine
+    surface). **Still dormant behind the default-off `schrift.liveCollaboration` flag —
+    C3 (separate, not yet built) owes the user-facing Profile toggle, its default
+    decision, and on-device WebSocket verification against a real collaboration-capable
+    server.** See `docs/architecture.md` ("Editor wiring — the write path complete
+    (C2c)").
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping
