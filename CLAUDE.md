@@ -1331,7 +1331,15 @@ markdown write endpoint**. Understand this before touching the save path:
   `markDirty` drops the stash — and **records a conflict as it does** (a server body the app
   fetched *and showed the user* cannot be silently overwritten by the next autosave);
   `startEditing` only hides the banner and deliberately **keeps** the stash, or the first
-  real keystroke would have nothing left to detect.
+  real keystroke would have nothing left to detect. **This holds in the live-write branch
+  too (C2c)** — `markDirty`'s `liveWrite?.forwardLocalEdit() == true` branch calls the same
+  `abandonPendingFreshContent()`, not a silent drop, because a stash can still be sitting
+  there while a live session is engaged (a pull-to-refresh isn't suppressed by
+  `isApplyingLiveContent` the way the A5 change-signal is) and may hold a co-author's
+  REST-originated edit the live replica never saw. A divergent stash records a conflict,
+  which flips `canEngageLiveEditing` false so the next `persistLiveSnapshot` is held by the
+  coordinator's enqueue-hold instead of full-overwriting it, and the document downgrades to
+  classic; a non-diverged stash still drops silently, exactly as before.
   `reconcileDraft`'s server-wins rule still installs directly even mid-edit,
   which is why `install(...)` clears `focusedBlockID`/`cursorRequest`/`selection`
   — every content swap re-identifies the blocks.

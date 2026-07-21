@@ -466,15 +466,31 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   calls `markDirty()` after mutating `blocks` in place. Its first line is now `if
   liveWrite?.forwardLocalEdit() == true { … ; return }`: when live-write is engaged,
   the edit is forwarded to the replica (integrated + broadcast + a snapshot
-  scheduled) and `markDirty` returns **without** touching `isDirty`, `dirtySince`, the
-  autosave timer, or the draft/conflict machinery — durability now belongs to the
-  replica and the periodic snapshot, and staying clean is exactly what keeps
-  `canEngageLiveEditing` true so the document *stays* live across a run of keystrokes.
-  When `forwardLocalEdit()` returns `false` — `liveWrite` is `nil` (every existing
-  test, and any screen without a bridge), the write gate declined, or the replica
-  fail-safed — `markDirty` falls straight through to the classic body, byte-for-byte
-  as before C2c. `nil?.forwardLocalEdit() == true` is `false` by Swift's optional-chain
+  scheduled) and `markDirty` returns **without** touching `isDirty`, `dirtySince`, or
+  the autosave timer — durability now belongs to the replica and the periodic
+  snapshot, and staying clean is exactly what keeps `canEngageLiveEditing` true so
+  the document *stays* live across a run of keystrokes. When `forwardLocalEdit()`
+  returns `false` — `liveWrite` is `nil` (every existing test, and any screen
+  without a bridge), the write gate declined, or the replica fail-safed —
+  `markDirty` falls straight through to the classic body, byte-for-byte as before
+  C2c. `nil?.forwardLocalEdit() == true` is `false` by Swift's optional-chain
   semantics, so the classic path needed no test changes to stay green.
+- **The live branch still runs the conflict-aware stash drop.** A REST "Updated"
+  stash (`pendingFreshContent`) can exist even while a live session is engaged — a
+  pull-to-refresh is not suppressed by `isApplyingLiveContent` the way the A5
+  change-signal is, and the stash may hold a co-author's REST-originated edit the
+  live replica never saw (a classic client saving without joining the
+  collaboration room). So the live branch calls the same `abandonPendingFreshContent()`
+  the classic branch calls, not a bare `pendingFreshContent = nil`: a stash that
+  diverges from `serverBaseline` records a conflict exactly as it would on the
+  classic path, which flips `canEngageLiveEditing` false so the *next*
+  `persistLiveSnapshot` is parked behind the coordinator's enqueue-hold instead of
+  full-overwriting the co-author's edit, and the document downgrades to classic. A
+  stash that turns out not to have diverged is still dropped silently, with no
+  conflict — the common case is unchanged. This is the one piece of
+  draft/conflict machinery the live branch *does* touch; everything else
+  (`isDirty`, `dirtySince`, the autosave timer, the draft store) stays untouched,
+  exactly as the paragraph above describes.
 - **The mutate-then-`markDirty` order is what makes the downgrade lossless.** Every
   call site mutates `blocks` first and calls `markDirty()` after, so by the time
   `forwardLocalEdit()` declines, the on-screen edit is already there — the classic

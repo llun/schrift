@@ -1629,7 +1629,16 @@ final class EditorViewModel {
                 return
             }
             rawMarkdown = appended
-            blocks = parseEditorBlocks(appended)
+            // Append only the new image block rather than re-parsing the whole
+            // document (`parseEditorBlocks(appended)`, as this used to do): a fresh
+            // parse mints a brand-new `EditorBlock.id` for EVERY block, so a
+            // subsequent live forward would diff the whole document as a delete-all
+            // + reinsert and clobber a concurrent peer's edits. `markdownAppendingImage`
+            // only ever adds a trailing, blank-line-separated image line, so appending
+            // the equivalent block to the existing (id-stable) array reproduces exactly
+            // what re-parsing `appended` would show, without disturbing any other
+            // block's identity.
+            blocks.append(EditorBlock(kind: .image(alt: "", url: url)))
             markDirty()
             return
         }
@@ -2038,11 +2047,21 @@ final class EditorViewModel {
         // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
         // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
         if liveWrite?.forwardLocalEdit() == true {
-            // Any REST "Updated" stash is strictly older than the replica now (which already
-            // holds every peer's edit), so drop it silently — never conflict-record, and never
-            // let it install over live content when editing ends.
-            pendingFreshContent = nil
-            updateAvailable = false
+            // A stash can exist here too: `canEngageLiveEditing` only guarantees no save/
+            // draft/conflict was pending at *engage* time, and an A5 signal is suppressed
+            // only while the bridge is actively applying live content — a pull-to-refresh
+            // (or a signal that lands just as engagement drops and re-establishes) can still
+            // set `pendingFreshContent` while a live session is running. That stash may carry
+            // a co-author's REST-originated edit the live replica never saw (a classic client
+            // saving without joining the collaboration room). Route it through the same
+            // conflict-aware drop the classic path uses rather than discarding it silently —
+            // `abandonPendingFreshContent` records a conflict only when the stash actually
+            // diverges from `serverBaseline` (which the live path keeps current), so the
+            // common case (no divergence) still drops the stash with no conflict. A recorded
+            // conflict flips `canEngageLiveEditing` false, so the next `persistLiveSnapshot`
+            // enqueue is held instead of full-overwriting the co-author's edit, and the
+            // document downgrades to classic — never lost.
+            abandonPendingFreshContent()
             return
         }
 

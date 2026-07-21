@@ -436,6 +436,100 @@ final class EditorViewModelLiveTests: XCTestCase {
         _ = coordinator
     }
 
+    // MARK: - Live-write path: REST stash conflict detection (C2c, Finding 1)
+
+    /// A REST "Updated" stash (`pendingFreshContent`, from an A5 refetch while an editing
+    /// session was open) can still exist while live-write is engaged: a pull-to-refresh, or a
+    /// signal landing just as engagement toggles, is not suppressed the way `noteRemoteChange`
+    /// is suppressed by `isApplyingLiveContent`. That stash may hold a co-author's
+    /// REST-originated edit the live replica never saw (a classic client saving without
+    /// joining the collaboration room). `markDirty`'s live branch must abandon the stash
+    /// through the same conflict-aware path the classic branch uses
+    /// (`abandonPendingFreshContent`), or the next live snapshot silently full-overwrites it.
+    func testLiveEditRecordsConflictWhenAbandoningADivergedFetchedBody() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha", log: log)
+        await viewModel.load()
+
+        let live = FakeLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+
+        // An open editing session, still clean — live-write stays engaged
+        // (`canEngageLiveEditing` does not care about editing mode, only
+        // dirty/save/draft/conflict state).
+        viewModel.startEditing()
+        XCTAssertTrue(viewModel.canEngageLiveEditing, "precondition: live-write is engaged before the stash lands")
+
+        // A co-author's REST-originated edit lands as the stash, with a newer `updated_at`.
+        let coauthorBody = formattedBody(content: "Beta", updatedAt: "2026-02-20T10:30:00Z")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "the fetched body is stashed behind the banner")
+        XCTAssertNil(coordinator.conflict(for: documentID), "…and is merely offered, not yet a conflict")
+
+        // The user keeps typing — forwarded live, never through the classic dirty machinery.
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha changed")
+
+        XCTAssertEqual(live.forwardCount, 1, "the edit was forwarded to the live delegate")
+        XCTAssertFalse(viewModel.isDirty, "live mode never engages the classic dirty machinery")
+        XCTAssertFalse(viewModel.updateAvailable, "the stash is cleared…")
+        XCTAssertNotNil(
+            coordinator.conflict(for: documentID),
+            "…but a diverged server body we fetched and showed the user must not be silently overwritten by "
+                + "the next live snapshot — abandoning it must record the conflict")
+
+        // A recorded conflict downgrades live engagement, so the coordinator's enqueue-hold
+        // (not a bare full-state PATCH) protects the co-author's edit the next time a
+        // snapshot fires.
+        XCTAssertFalse(viewModel.canEngageLiveEditing)
+    }
+
+    /// The complement: a stash that turns out NOT to have diverged (the local live edit
+    /// happens to converge on the same text) must still be dropped, but with no conflict
+    /// recorded — the common case must keep working exactly as it did before Finding 1's fix.
+    func testLiveEditDropsAConvergedStashWithNoConflict() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "Alpha", log: log)
+        await viewModel.load()
+
+        let live = FakeLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+
+        viewModel.startEditing()
+
+        let coauthorBody = formattedBody(content: "Beta", updatedAt: "2026-02-20T10:30:00Z")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: coauthorBody, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        XCTAssertTrue(viewModel.updateAvailable, "the fetched body is stashed behind the banner")
+
+        // The local live edit happens to converge on exactly the stashed text (rule 0: the
+        // local body already equals the fetched server body — nothing to conflict about).
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Beta")
+
+        XCTAssertEqual(live.forwardCount, 1, "the edit was forwarded to the live delegate")
+        XCTAssertFalse(viewModel.updateAvailable, "the stash is dropped in the common (non-diverged) case too")
+        XCTAssertNil(coordinator.conflict(for: documentID), "no conflict when nothing actually diverged")
+        XCTAssertTrue(viewModel.canEngageLiveEditing, "live engagement is untouched when nothing conflicted")
+    }
+
     func testPersistLiveSnapshotEnqueuesLiveSaveAndAdvancesBaseline() async {
         let (viewModel, coordinator, _, _) = makeEnvironment()
         stubLoad(content: "Alpha")

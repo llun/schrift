@@ -118,8 +118,14 @@ wording gated on an actual local copy existing.
   content. On the first keystroke that fails to engage live-write, the bridge pauses
   and the detect-and-ask conflict flow below resumes unchanged; a document with a
   recorded conflict, `.pendingSync` state, stored draft, or pending save never enters
-  live-apply or live-write. This remains dormant in production — the flag defaults
-  off and there is no user-facing toggle yet (C3).
+  live-apply or live-write. The live-write branch of `markDirty` also **feeds** that
+  flow rather than sitting outside it: a REST "Updated" stash can still be sitting in
+  `pendingFreshContent` while a live session is engaged (a pull-to-refresh is not
+  suppressed by `isApplyingLiveContent`), and abandoning it on the first forwarded
+  keystroke runs the same conflict detection the classic branch runs — a diverged
+  stash records a conflict (which then blocks re-entering live-write), a non-diverged
+  one drops silently. This remains dormant in production — the flag defaults off and
+  there is no user-facing toggle yet (C3).
 - Revalidation runs **on open and on explicit pull-to-refresh only** — no
   periodic or background-timer revalidation.
 - No caching of the subpage list (deferred; see "Subpages" below).

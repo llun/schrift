@@ -272,6 +272,34 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty, "the save must be flushed to the coordinator, not left to the debounce")
     }
 
+    /// A late (post-Done) photo insert must not disturb the identity of any block it
+    /// didn't touch. The reading branch used to re-parse the whole appended source
+    /// (`blocks = parseEditorBlocks(appended)`), which mints a fresh `EditorBlock.id`
+    /// for every block — including the ones the insert never touched — so a
+    /// subsequent live forward would diff the entire document as a delete-all +
+    /// reinsert and clobber a concurrent peer's edits (C2c Finding 3). Appending only
+    /// the new image block keeps every existing id stable.
+    func testInsertPhotoAfterLeavingEditModePreservesExistingBlockIdentities() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        viewModel.blocks = [
+            EditorBlock(kind: .paragraph, text: "First"),
+            EditorBlock(kind: .paragraph, text: "Second"),
+        ]
+        let existingIDs = viewModel.blocks.map(\.id)
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.mode, .reading)
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertEqual(
+            Array(viewModel.blocks.prefix(existingIDs.count)).map(\.id), existingIDs,
+            "the two untouched paragraphs must keep the exact ids they had before the insert")
+        XCTAssertEqual(
+            viewModel.blocks.count, existingIDs.count + 1, "exactly one new block — the image — was appended")
+        XCTAssertEqual(viewModel.blocks.last?.kind, .image(alt: "", url: expectedMediaURL))
+    }
+
     /// A source ending in an unterminated fence swallows anything appended to it, so
     /// the image would render as literal code. We must neither rewrite the source to
     /// make room (that invents an empty code block the user never wrote) nor report
