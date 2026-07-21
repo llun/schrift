@@ -143,6 +143,17 @@ final class LiveEditingBridgeTests: XCTestCase {
             projections[documentID]
         }
 
+        /// The bridge's registered synchronous read-apply observer. Stored (not
+        /// auto-fired on `setVersion`) so tests keep explicit control of *when* the
+        /// re-apply runs; `fireReplicaObserver` models the real manager firing it in
+        /// the same turn it integrates an update (see `DocumentCollaborationManager
+        /// .replicaObservers`).
+        private var replicaObserver: (() -> Void)?
+        func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID) {
+            replicaObserver = observer
+        }
+        func fireReplicaObserver() { replicaObserver?() }
+
         // Added for the C2c write seam. The read-only tests never call these.
         var snapshotData: Data?
         var failSafe = false
@@ -619,6 +630,58 @@ final class LiveEditingBridgeTests: XCTestCase {
         let old = provider.appliedEdits[0].old
         XCTAssertEqual(old, postRemoteBlocks, "forward's `old` must be the resynced post-remote baseline")
         XCTAssertNotEqual(old, preRemoteBlocks, "forward's `old` must not be the stale pre-remote baseline")
+        withExtendedLifetime(bridge) {}
+    }
+
+    /// C2c Critical #2: the bridge registers a **synchronous** read-apply observer with the
+    /// provider in `init`, so a remote change re-syncs the write baseline the instant it
+    /// integrates — not a deferred turn later. Unlike
+    /// `testForwardAfterRemoteChangeUsesTheResyncedBaseline` (which drives the remote apply via
+    /// a manual `bridge.replicaDidChange()`, modelling the deferred `.onChange`), this drives it
+    /// **only** through the observer the fix registers (`fireReplicaObserver`, modelling the
+    /// manager firing it in the same turn it integrates). If the bridge never registered, or the
+    /// observer didn't re-apply, `old` would stay the pre-remote baseline and the forward would
+    /// corrupt the broadcast — the real-replica end-to-end proof is
+    /// `LiveEditingIntegrationTests`' race test.
+    func testRemoteChangeViaTheSyncObserverResyncsTheBaselineBeforeAForward() async throws {
+        let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+        viewModel.liveWrite = bridge
+
+        // Engage on the initial projection (first engage models the normal path).
+        let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
+        provider.setProjection(initialProjection, for: documentID)
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged)
+        let preRemoteBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+
+        // A remote change integrates. The manager would bump the version and fire the
+        // registered observer in the SAME turn; modelled here by advancing the projection and
+        // firing the observer, with NO manual `bridge.replicaDidChange()`.
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alpha remote\n\nBeta", carryingIDsFrom: initialProjection),
+            for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        XCTAssertEqual(
+            viewModel.blocks.map(\.text), ["Alpha remote", "Beta"],
+            "the observer alone applied the remote change (no manual replicaDidChange)")
+        let postRemoteBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+        XCTAssertNotEqual(postRemoteBlocks, preRemoteBlocks, "sanity: the projection actually moved")
+
+        // The next local forward must diff against the post-remote baseline the observer synced.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha remote then local")
+        XCTAssertEqual(provider.appliedEdits.count, 1)
+        XCTAssertEqual(
+            provider.appliedEdits[0].old, postRemoteBlocks,
+            "the observer-driven remote apply re-synced `old` to the post-remote projection")
+        XCTAssertNotEqual(
+            provider.appliedEdits[0].old, preRemoteBlocks, "`old` is never the stale pre-remote baseline")
         withExtendedLifetime(bridge) {}
     }
 

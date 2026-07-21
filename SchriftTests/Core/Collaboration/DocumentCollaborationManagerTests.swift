@@ -290,6 +290,58 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    /// C2c: a registered replica observer fires **synchronously, in the same main-actor
+    /// turn** an inbound update integrates and bumps `replicaVersion` — this is what lets
+    /// the editor bridge re-sync its write baseline before any keystroke can race in. The
+    /// observer records the version it *sees* when fired; requiring it to already equal the
+    /// post-integrate value (never a stale `0`) pins the "same turn as the bump" contract,
+    /// since a deferred fire could only ever observe a value set in an earlier turn.
+    func testInboundIntegrateFiresTheReplicaObserverSynchronouslyAfterTheVersionBump() async throws {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        var fireCount = 0
+        var versionsSeenAtFire: [Int] = []
+        // `[weak manager]` avoids a retain cycle (the manager stores this closure).
+        manager.setReplicaObserver(
+            { [weak manager] in
+                fireCount += 1
+                versionsSeenAtFire.append(manager?.replicaVersion(for: self.docID) ?? -1)
+            }, for: docID)
+
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncStep2Frame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+
+        XCTAssertEqual(fireCount, 1, "the observer fires exactly once per integrated update")
+        XCTAssertEqual(
+            versionsSeenAtFire, [1],
+            "it fires AFTER the version bump, in the same turn — never a deferred stale read")
+        session?.stop()
+    }
+
+    /// The observer is strictly the *integrated-cleanly* edge: a malformed update
+    /// fail-safes the replica and does **not** bump `replicaVersion`, so there is no
+    /// trustworthy state to hand the editor and the observer must stay silent (the
+    /// change-signal fallback via `remoteChangeToken` still fires — tested separately).
+    func testMalformedInboundUpdateDoesNotFireTheReplicaObserver() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        var fireCount = 0
+        manager.setReplicaObserver({ fireCount += 1 }, for: docID)
+
+        let garbage = Data([0x00, 0x01, 0x02, 0x99])
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: garbage))
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+        XCTAssertEqual(fireCount, 0, "a fail-safed (non-integrated) update never fires the read-apply observer")
+        session?.stop()
+    }
+
     func testMalformedUpdateSetsFailSafeStopsProjectingButStillSignals() async {
         let spy = SocketFactorySpy()
         let manager = makeManager(spy: spy)

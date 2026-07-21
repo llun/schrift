@@ -514,6 +514,29 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   of the user's own keystrokes never desyncs the next local diff — the baseline is
   re-synced the moment the remote change is folded in, before the next keystroke can
   read it.
+- **That "before the next keystroke" guarantee needs the read-apply to be _synchronous_
+  with the integrate — a deferred re-apply is a correctness bug.** `replicaDidChange` is
+  driven two ways. The obvious one is the view's `.onChange(of: collaboration
+  .replicaVersion(for:))`, but that fires on a *later* SwiftUI turn than the one in which
+  `DocumentCollaborationManager.applyReplicaUpdate` integrated the update and bumped the
+  version. A keystroke slotting into that gap runs `forwardLocalEdit` with `old` still
+  describing the *pre-update* projection while the replica has already moved — and
+  `BlockNoteWrite.applyEdit` maps each `old[index]` to the replica's live container **by
+  position**, so a structural remote change in the window (a block removed or inserted,
+  shifting positions) mis-applies the local edit and broadcasts a corrupt update to every
+  peer (concretely, a phantom duplicate block). The fix makes the re-apply run in the
+  **same main-actor turn** as the integrate: the bridge registers a per-document observer
+  with the manager (`setReplicaObserver`), and `applyReplicaUpdate` fires it immediately
+  after bumping `replicaVersion`, so the editor and `lastAppliedBlocks` are caught up to
+  the integrated replica before any keystroke can run. Approaches that instead "catch up
+  the remote change first, then forward" were rejected: a `replicaDidChange` run *after*
+  the keystroke would overwrite `blocks` with the projection and lose the un-forwarded
+  keystroke (`applyLiveRemoteChange` is a server-wins fold, not a three-way merge); the
+  synchronous re-apply avoids the merge entirely because it always runs while the editor
+  holds no un-forwarded local edit. The observer fires only on a clean integrate (never a
+  fail-safed/non-bumped update), holds the bridge weakly (no retain cycle), and is cleared
+  on the document's teardown; the deferred `.onChange` is retained as an idempotent
+  backstop (firing `replicaDidChange` twice is a proven empty-diff no-op).
 - **The snapshot debounce is bridge-owned, cancel-and-reschedule, ~60 s** (injectable
   for tests), mirroring the autosave debounce pattern elsewhere in the editor. When it
   fires (`fireSnapshot`) it re-derives everything fresh from the replica rather than
@@ -535,7 +558,17 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   let the debounce fire a snapshot, then force a fail-safe and confirm the next edit
   downgrades to the classic autosave path — alongside the existing C2a differential
   fuzz (unchanged; C2c adds no new sync-engine surface, only editor callers of it).
-  Every pre-existing `EditorViewModelTests` test passes unchanged, which is the
+  A separate deterministic **stale-baseline race regression** drives the *real* stack
+  (`FakeWebSocket → session → manager → real replica → bridge → view model`): it delivers
+  a remote update that removes a block (shifting the one the user edits), withholds the
+  deferred `.onChange` re-sync, then forwards a local edit and asserts the manager's own
+  replica projects to the correctly merged document — no corruption reaching peers. It
+  fails against a deferred-only re-apply (editor `[Doc, First, Second!]`, replica `[Doc,
+  Second, Second!]`) and passes with the synchronous observer. Manager- and bridge-level
+  unit tests pin the two halves (the manager fires the observer in the same turn it bumps
+  the version and stays silent on a fail-safe; the bridge registers it in `init` and a
+  remote change delivered *only* through the observer re-syncs `old` before the next
+  forward). Every pre-existing `EditorViewModelTests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
 
 **C3 (separate follow-up):** the user-facing Profile toggle for

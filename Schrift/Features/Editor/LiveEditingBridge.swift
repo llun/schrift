@@ -14,6 +14,12 @@ protocol LiveReplicaProviding: AnyObject {
     /// or `nil` when there is nothing safe to project yet (no replica, not
     /// synced, fail-safed, or still holding unintegrated pending structs/deletes).
     func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument?
+    /// Registers a synchronous observer fired the instant an inbound update integrates
+    /// (or clears it with `nil`). The bridge registers `replicaDidChange` so its write
+    /// baseline is re-synced in the **same turn** the replica changes — never left stale
+    /// for a racing local forward (see `replicaVersion` and `forwardLocalEdit`). The
+    /// view's deferred `.onChange(of: replicaVersion)` alone would leave that window open.
+    func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID)
 
     // MARK: - Write side (C2c)
 
@@ -103,6 +109,15 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         self.collaboration = collaboration
         self.serverOrigin = serverOrigin
         self.snapshotInterval = snapshotInterval
+        // Register for a SYNCHRONOUS read-apply the moment the replica integrates an
+        // inbound update. The view also wires a deferred `.onChange(of: replicaVersion)`
+        // that calls `replicaDidChange()`, but that fires a turn later — leaving a window
+        // in which `lastAppliedBlocks` is stale relative to the replica, so a keystroke
+        // there would forward a local edit diffed against the wrong projection and
+        // corrupt the broadcast (see `forwardLocalEdit`). This hook closes that window by
+        // re-syncing in the same turn the manager bumps the version. `[weak self]` so the
+        // manager's stored closure never keeps this bridge alive.
+        collaboration.setReplicaObserver({ [weak self] in self?.replicaDidChange() }, for: documentID)
     }
 
     /// The current replica projected + rendered to editor blocks and markdown, or nil

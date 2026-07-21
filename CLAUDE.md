@@ -1167,6 +1167,24 @@ markdown write endpoint**. Understand this before touching the save path:
     engage (including a no-op empty diff) and again after every `applyLiveRemoteChange` —
     so a peer's edit landing between two local keystrokes re-syncs `old` before the next
     local diff reads it. A local forward advances the baseline itself.
+  - **That re-sync must be SYNCHRONOUS with the integrate, not deferred.** The read-apply
+    (`replicaDidChange`) is driven two ways: the view's `.onChange(of: replicaVersion)`
+    (deferred to a later SwiftUI turn) **and** — load-bearing — a per-document observer the
+    bridge registers with `DocumentCollaborationManager` (`setReplicaObserver`), which
+    `applyReplicaUpdate` fires in the **same main-actor turn** it integrates an inbound
+    update and bumps `replicaVersion`. The deferred `.onChange` alone left a race window: a
+    keystroke landing after a remote update integrated but before the deferred re-apply
+    forwarded a local edit whose `old` still described the *pre-update* projection, and
+    `BlockNoteWrite.applyEdit` maps each `old[index].id` to the replica's live container
+    **by position** — so a structural remote change in that window (a block removed/inserted
+    shifting positions) mis-applied the edit and broadcast a corrupt update to peers (a
+    phantom duplicate block, verified). The synchronous observer closes the window by
+    re-syncing the baseline in the same turn the replica changes, so the editor and
+    `lastAppliedBlocks` always reflect the integrated replica before any keystroke can run.
+    The observer fires **only** on a clean integrate (never on a fail-safed/non-bumped
+    update), captures the bridge weakly (no retain cycle; a dead bridge self-neutralises),
+    and is cleared on the document's teardown. Firing `replicaDidChange` twice (observer +
+    deferred `.onChange`) is a proven no-op — an empty diff re-sets the same baseline.
   - **TOP SAFETY, restated at the debounce:** the bridge's ~60 s cancel-and-reschedule
     snapshot fire re-derives everything fresh (never trusts state captured at schedule
     time) — `encodeSnapshotForSave` returning `nil` means **skip, no PATCH**, and the
@@ -1177,9 +1195,12 @@ markdown write endpoint**. Understand this before touching the save path:
     `draftSyncDecision` rule 1 (its `lastConfirmedPush` already equals the live-pushed
     body) — never a false conflict against the app's own write.
   - Verified by an end-to-end integration test (engage → forward → remote apply →
-    debounce-fires-a-snapshot → force fail-safe → next edit downgrades) plus the existing
-    C2a differential fuzz (unchanged; C2c adds editor callers, not new sync-engine
-    surface). **Still dormant behind the default-off `schrift.liveCollaboration` flag —
+    debounce-fires-a-snapshot → force fail-safe → next edit downgrades), a deterministic
+    stale-baseline **race regression** (remote update integrated + `replicaVersion` bumped,
+    then a local forward *before* the deferred re-sync — asserting the emitted update
+    projects the real replica to the merged document, no corruption reaching peers), plus
+    the existing C2a differential fuzz (unchanged; C2c adds editor callers, not new
+    sync-engine surface). **Still dormant behind the default-off `schrift.liveCollaboration` flag —
     C3 (separate, not yet built) owes the user-facing Profile toggle, its default
     decision, and on-device WebSocket verification against a real collaboration-capable
     server.** See `docs/architecture.md` ("Editor wiring — the write path complete

@@ -215,6 +215,14 @@ final class LiveEditingIntegrationTests: XCTestCase {
     private let insertHex =
         "01080133870119030e626c6f636b436f6e7461696e6572070001330309706172616772617068070001340604000135055468697264280001340f6261636b67726f756e64436f6c6f7201770764656661756c74280001340974657874436f6c6f7201770764656661756c74280001340d74657874416c69676e6d656e740177046c6566742800013302696401772434343434343434342d343434342d343434342d383434342d3434343434343434343434340101011005"
     private let removeHex = "000101021005190d"
+    /// A real yjs@13.6.31 delta removing the **first paragraph** ("First", index 1)
+    /// from the initial 3-block document, computed against the initial state vector —
+    /// so it applies directly on top of `initialHex` alone (unlike `removeHex`, which
+    /// removes index 2 in the four-step fixture sequence). It shifts "Second" from
+    /// index 2 to index 1, which is what makes a *stale* write baseline mis-position a
+    /// local edit. Regeneration (appended to the script above):
+    /// `blockGroup.delete(1, 1); hex(Y.encodeStateAsUpdate(doc, sv1))`.
+    private let removeFirstParagraphHex = "000101010d0c"
 
     // MARK: - Tests
 
@@ -444,6 +452,14 @@ final class LiveEditingIntegrationTests: XCTestCase {
             projections[documentID]
         }
 
+        /// Stored, not auto-fired: the capstone drives `bridge.replicaDidChange()`
+        /// directly, so it keeps explicit control of when the read-apply runs (the real
+        /// manager fires this synchronously on integrate — see the C2c race test).
+        private var replicaObserver: (() -> Void)?
+        func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID) {
+            replicaObserver = observer
+        }
+
         var snapshotData: Data?
         var failSafe = false
         var pendingStructsFlag = true
@@ -587,6 +603,83 @@ final class LiveEditingIntegrationTests: XCTestCase {
         // -- exactly as the view retains it in production -- the test must keep the bridge
         // alive across every `await` above, or `liveWrite` would go nil mid-test and every
         // forward after that point would silently downgrade for the wrong reason.
+        withExtendedLifetime(bridge) {}
+    }
+
+    /// Regression for the C2c stale-`lastAppliedBlocks` race — the write path's one
+    /// genuine correctness hazard. `applyReplicaUpdate` integrates a remote update and
+    /// bumps `replicaVersion` in a single main-actor turn, but the read-apply that
+    /// re-syncs the bridge's write baseline used to be *deferred* to a later turn
+    /// (SwiftUI `.onChange(of: replicaVersion)`). A keystroke landing in that gap
+    /// forwarded a local edit diffed against the *pre-update* projection, and
+    /// `BlockNoteWrite.applyEdit` maps each `old[index].id` to the replica's live
+    /// container **by position** — so after a structural remote change (here: a block
+    /// removed, shifting the one the user edits from index 2 to index 1) the edit is
+    /// mis-positioned, corrupting the very replica peers receive the broadcast from.
+    ///
+    /// The fix makes the read-apply synchronous with the integrate: the manager fires
+    /// the bridge's registered observer in the same turn it bumps the version, so by the
+    /// time any keystroke runs, the editor and `lastAppliedBlocks` already reflect the
+    /// remote change. This test drives the **real** stack and deliberately does NOT call
+    /// `bridge.replicaDidChange()` after delivering the remote update — that manual call
+    /// stands in for the *deferred* `.onChange` the other tests model, and withholding it
+    /// leaves the synchronous observer the fix adds as the only thing that can re-sync the
+    /// baseline before the keystroke. Against the pre-fix code both assertions fail: the
+    /// editor never merges the remote remove, and the shared replica ends up corrupt.
+    func testLocalForwardAfterRemoteUpdateForwardsAgainstTheMergedReplicaNotAStaleBaseline() async throws {
+        let (viewModel, _, _) = makeEnvironment()
+        await viewModel.load()
+        XCTAssertTrue(viewModel.hasLoadedContent)
+
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: documentID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+        viewModel.liveWrite = bridge
+
+        // -- Initial sync: engage on the real 3-block document [Doc, First, Second].
+        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
+        bridge.replicaDidChange()  // models the deferred `.onChange` firing normally
+        XCTAssertTrue(bridge.isEngaged)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
+        let secondID = viewModel.blocks[2].id
+
+        // The user taps into "Second" to edit it. Still clean, so still live-eligible.
+        viewModel.startEditing()
+
+        // -- A remote peer removes "First", shifting "Second" from index 2 to index 1.
+        // The replica integrates it and bumps the version -- but this test deliberately
+        // does NOT call `bridge.replicaDidChange()` here, reproducing the exact window in
+        // which the deferred read-apply has not run yet.
+        spy.sockets[0].deliver(message: syncUpdateFrame(hex: removeFirstParagraphHex))
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 2 }
+
+        // -- The keystroke lands in that window. With the fix, delivering the remote
+        // update above already fired the synchronous observer, so the editor and write
+        // baseline are caught up to [Doc, Second] and this forwards correctly. Without it,
+        // `old` still describes [Doc, First, Second] and the edit is mis-positioned.
+        viewModel.updateText(blockID: secondID, text: "Second!")
+
+        // 1. The editor merged the remote remove AND kept the local edit.
+        XCTAssertEqual(
+            viewModel.blocks.map(\.text), ["Doc", "Second!"],
+            "the editor reflects the remote remove merged with the local edit")
+
+        // 2. THE MONEY CHECK: the replica the broadcast derives from projects to the same
+        // merged document -- no corruption reaches peers. The edit reached the shifted
+        // container, rather than being lost or duplicated onto a stale position.
+        let projected = manager.projectedReplica(for: documentID, interlinkingOrigin: nil)
+        let rendered = try XCTUnwrap(projected.flatMap { YBlockProjection.renderedEditorDocument($0) })
+        XCTAssertEqual(
+            rendered.blocks.map(\.text), ["Doc", "Second!"],
+            "the shared replica is the correct merge -- the local edit reached the right container")
+        XCTAssertEqual(rendered.blocks.map(\.kind), [.heading(level: 1), .paragraph])
+
+        session?.stop()
         withExtendedLifetime(bridge) {}
     }
 }
