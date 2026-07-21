@@ -268,6 +268,9 @@ enum Strings_sl {
         .profile_language: "Jezik",
         .profile_notifications: "Obvestila",
         .profile_work_offline: "Delo brez povezave",
+        .profile_live_collaboration: "Sodelovanje v živo",
+        .profile_live_collaboration_footer:
+            "Sodelovanje v živo sproti usklajuje vaše urejanje z drugimi, kadar strežnik to podpira.",
         .profile_server: "Strežnik",
         .profile_server_footer: "Aplikacija se poveže s katerim koli strežnikom Schrift z vašo obstoječo spletno sejo.",
         .profile_connected: "Povezano",

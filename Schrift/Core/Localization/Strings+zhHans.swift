@@ -251,6 +251,8 @@ enum Strings_zhHans {
         .profile_language: "语言",
         .profile_notifications: "通知",
         .profile_work_offline: "离线工作",
+        .profile_live_collaboration: "实时协作",
+        .profile_live_collaboration_footer: "实时协作会在服务器支持时，将您的编辑与其他人实时同步。",
         .profile_server: "服务器",
         .profile_server_footer: "该应用会使用您现有的网页会话连接到任意 Schrift 服务器。",
         .profile_connected: "已连接",

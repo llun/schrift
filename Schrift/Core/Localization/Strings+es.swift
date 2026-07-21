@@ -261,6 +261,9 @@ enum Strings_es {
         .profile_language: "Idioma",
         .profile_notifications: "Notificaciones",
         .profile_work_offline: "Trabajar sin conexión",
+        .profile_live_collaboration: "Colaboración en vivo",
+        .profile_live_collaboration_footer:
+            "La colaboración en vivo sincroniza tus cambios con los demás en tiempo real cuando tu servidor lo admite.",
         .profile_server: "Servidor",
         .profile_server_footer: "La aplicación se conecta a cualquier servidor Schrift usando tu sesión web existente.",
         .profile_connected: "Conectado",

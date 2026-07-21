@@ -260,6 +260,9 @@ enum Strings_de {
         .profile_language: "Sprache",
         .profile_notifications: "Benachrichtigungen",
         .profile_work_offline: "Offline arbeiten",
+        .profile_live_collaboration: "Live-Zusammenarbeit",
+        .profile_live_collaboration_footer:
+            "Die Live-Zusammenarbeit synchronisiert Ihre Änderungen in Echtzeit mit anderen, wenn Ihr Server dies unterstützt.",
         .profile_server: "Server",
         .profile_server_footer: "Die App verbindet sich mit jedem Schrift-Server über Ihre bestehende Web-Sitzung.",
         .profile_connected: "Verbunden",
