@@ -548,6 +548,13 @@ struct EditorView: View {
         guard !holdsCollaborationSession else { return }
         if collaboration.session(for: viewModel.documentID) != nil {
             holdsCollaborationSession = true
+            // Register the bridge's synchronous read-apply observer on every session
+            // (re)acquisition, NOT once at bridge construction. The manager drops it when
+            // this document's entry is torn down after linger, but the bridge (held in
+            // `@State`) outlives that, so a reopen must re-register or the C2c stale-baseline
+            // race reopens. Keying it to acquisition also means a document that never opens a
+            // session (feature off / unsupported / offline) never registers one — no leak.
+            liveEditingBridge?.registerReplicaObserver()
         }
     }
 

@@ -109,14 +109,23 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         self.collaboration = collaboration
         self.serverOrigin = serverOrigin
         self.snapshotInterval = snapshotInterval
-        // Register for a SYNCHRONOUS read-apply the moment the replica integrates an
-        // inbound update. The view also wires a deferred `.onChange(of: replicaVersion)`
-        // that calls `replicaDidChange()`, but that fires a turn later — leaving a window
-        // in which `lastAppliedBlocks` is stale relative to the replica, so a keystroke
-        // there would forward a local edit diffed against the wrong projection and
-        // corrupt the broadcast (see `forwardLocalEdit`). This hook closes that window by
-        // re-syncing in the same turn the manager bumps the version. `[weak self]` so the
-        // manager's stored closure never keeps this bridge alive.
+    }
+
+    /// (Re)registers the SYNCHRONOUS read-apply observer with the collaboration manager, so
+    /// an inbound update re-syncs the write baseline in the **same main-actor turn** it
+    /// integrates — rather than a `.onChange(of: replicaVersion)` turn later, which would
+    /// leave a window in which `lastAppliedBlocks` is stale relative to the replica and a
+    /// keystroke there forwards a local edit diffed against the wrong projection, corrupting
+    /// the broadcast (see `forwardLocalEdit`). `EditorView` calls this on **every live-session
+    /// (re)acquisition** — deliberately NOT once at construction. The manager drops the
+    /// observer when the document's entry is torn down after linger, but this bridge instance
+    /// outlives that teardown (the view holds it in `@State` across navigation), so a reopen
+    /// must re-register or the race reopens; and keying registration to *acquisition* means a
+    /// document that never opens a session (the default feature-off path, an unsupported
+    /// server, offline) never registers one, so nothing accumulates. Registration is
+    /// idempotent (the manager replaces by document id). `[weak self]` so the manager's stored
+    /// closure never keeps this bridge alive.
+    func registerReplicaObserver() {
         collaboration.setReplicaObserver({ [weak self] in self?.replicaDidChange() }, for: documentID)
     }
 

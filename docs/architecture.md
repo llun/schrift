@@ -536,7 +536,19 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   holds no un-forwarded local edit. The observer fires only on a clean integrate (never a
   fail-safed/non-bumped update), holds the bridge weakly (no retain cycle), and is cleared
   on the document's teardown; the deferred `.onChange` is retained as an idempotent
-  backstop (firing `replicaDidChange` twice is a proven empty-diff no-op).
+  backstop (firing `replicaDidChange` twice is a proven empty-diff no-op). Its lifecycle is
+  the **per-document entry's**, not the bridge's: the bridge registers it
+  (`registerReplicaObserver`) on every live-session **(re)acquisition** from
+  `EditorView.requestCollaborationSessionIfNeeded` — deliberately *not* at construction —
+  and `teardownIfIdle` drops it, so it exists exactly while a live entry does. Registering
+  at construction would be wrong at both ends: the bridge lives in the view's `@State` and
+  outlives a linger-teardown, so a reopen would keep a now-dropped observer and silently
+  degrade to the deferred path (reopening the race); and a document that never opens a
+  session (the default flag-off path) would register an observer no teardown ever clears (a
+  leak). This lifecycle contract is pinned by a manager test (teardown clears it, a bare
+  reopen fires nothing, re-registration restores it) and the boundary between read-live and
+  write-live by a bridge test (a lossy-but-renderable projection engages the read side yet
+  downgrades a local edit to classic).
 - **The snapshot debounce is bridge-owned, cancel-and-reschedule, ~60 s** (injectable
   for tests), mirroring the autosave debounce pattern elsewhere in the editor. When it
   fires (`fireSnapshot`) it re-derives everything fresh from the replica rather than

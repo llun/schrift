@@ -1185,6 +1185,16 @@ markdown write endpoint**. Understand this before touching the save path:
     update), captures the bridge weakly (no retain cycle; a dead bridge self-neutralises),
     and is cleared on the document's teardown. Firing `replicaDidChange` twice (observer +
     deferred `.onChange`) is a proven no-op — an empty diff re-sets the same baseline.
+    **The observer's lifecycle is the per-document entry's, not the bridge's:** the bridge
+    (`registerReplicaObserver`) registers it on every live-session **(re)acquisition** in
+    `EditorView.requestCollaborationSessionIfNeeded` — *not* at bridge construction — and
+    `teardownIfIdle` drops it, so it exists exactly while a live entry does. Registering at
+    construction instead is wrong at both ends: the bridge is held in the view's `@State`
+    and outlives a linger-teardown, so a reopen would keep a now-dropped observer and
+    silently degrade to the deferred `.onChange` (reopening the race); and a document that
+    never opens a session (the default flag-off path, an unsupported server, offline) would
+    register an observer no teardown ever clears (an unbounded leak). Keying it to
+    acquisition avoids both.
   - **TOP SAFETY, restated at the debounce:** the bridge's ~60 s cancel-and-reschedule
     snapshot fire re-derives everything fresh (never trusts state captured at schedule
     time) — `encodeSnapshotForSave` returning `nil` means **skip, no PATCH**, and the

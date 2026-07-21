@@ -651,6 +651,9 @@ final class LiveEditingBridgeTests: XCTestCase {
             documentID: documentID, viewModel: viewModel, collaboration: provider,
             serverOrigin: nil, snapshotInterval: .milliseconds(20))
         viewModel.liveWrite = bridge
+        // The view registers the observer on session acquisition, not at bridge init; model
+        // that so `provider.fireReplicaObserver()` below has an observer to fire.
+        bridge.registerReplicaObserver()
 
         // Engage on the initial projection (first engage models the normal path).
         let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
@@ -682,6 +685,48 @@ final class LiveEditingBridgeTests: XCTestCase {
             "the observer-driven remote apply re-synced `old` to the post-remote projection")
         XCTAssertNotEqual(
             provider.appliedEdits[0].old, preRemoteBlocks, "`old` is never the stale pre-remote baseline")
+        withExtendedLifetime(bridge) {}
+    }
+
+    /// C2c: a document that projects `isFullyRenderable` but NOT `isFullyModeled` (it has a
+    /// lossy block that renders with export parity but cannot round-trip through
+    /// `blockNoteBlocks(from:)`) is READ-live but never WRITE-live. `canEngageLiveWrite`'s extra
+    /// `isFullyModeled` requirement is the guard, and this pins the boundary end-to-end at the
+    /// bridge: the read side engages (the projection renders), yet a local keystroke downgrades
+    /// to the classic path (`forwardLocalEdit` declines, no `applyLocalEdit`) so a lossy
+    /// projection is never diffed and broadcast.
+    func testLossyProjectionEngagesReadLiveButDowngradesLocalEditsToClassic() async throws {
+        let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+        viewModel.liveWrite = bridge
+
+        // A projection that renders (read-live) but is NOT fully modeled — take a real
+        // fully-modeled projection and flip the write-only flag, keeping it renderable.
+        var lossy = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
+        lossy.isFullyModeled = false
+        XCTAssertTrue(lossy.isFullyRenderable, "sanity: the projection still renders")
+        provider.setProjection(lossy, for: documentID)
+
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged, "a renderable projection engages the read side")
+        XCTAssertTrue(bridge.isApplyingLiveContent, "read-live even though it is not write-live")
+        XCTAssertFalse(
+            canEngageLiveWrite(
+                canEngageLiveEditing: viewModel.canEngageLiveEditing,
+                projection: provider.projectedReplica(for: documentID, interlinkingOrigin: nil)),
+            "a lossy projection is not write-eligible")
+
+        // A local edit must downgrade to classic (the forward declines), never write-live.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha edited")
+        XCTAssertEqual(
+            provider.appliedEdits.count, 0, "a lossy projection never forwards a local edit to the replica")
+        XCTAssertTrue(viewModel.isDirty, "the edit fell through to the classic dirty path")
+        XCTAssertEqual(viewModel.blocks[0].text, "Alpha edited", "the edit is on screen for the classic save")
         withExtendedLifetime(bridge) {}
     }
 

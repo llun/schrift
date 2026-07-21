@@ -97,7 +97,15 @@ final class DocumentCollaborationManager {
     /// its edit against the pre-update projection — and `BlockNoteWrite.applyEdit` maps
     /// `old` to the replica's containers by position, so a structural remote change in
     /// that window corrupts the broadcast. The stored closure captures the bridge
-    /// weakly (a dead bridge self-neutralises); `teardownIfIdle` also drops it. Not the
+    /// weakly (a dead bridge self-neutralises). Its lifecycle is kept aligned with the
+    /// per-document entry: the bridge registers via `setReplicaObserver` on every live
+    /// **session (re)acquisition** (`EditorView.requestCollaborationSessionIfNeeded`, not
+    /// at bridge construction), and `teardownIfIdle` drops it — so it exists exactly while
+    /// a live entry does. That symmetry is load-bearing: registering at construction
+    /// instead would both leak (a document that never opens a session — the default
+    /// feature-off path — would register an observer no teardown ever clears) and go stale
+    /// (a reopen after the entry was torn down would keep the reused bridge's now-dropped
+    /// observer, silently degrading back to the deferred `.onChange`). Not the
     /// awareness/change-signal path — this is strictly the replica-integrated edge.
     private var replicaObservers: [UUID: () -> Void] = [:]
 

@@ -639,6 +639,11 @@ final class LiveEditingIntegrationTests: XCTestCase {
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
         viewModel.liveWrite = bridge
+        // The view registers the synchronous read-apply observer on session acquisition
+        // (`EditorView.requestCollaborationSessionIfNeeded`); model that here since this test
+        // drives the stack without the view. Registering AFTER `session(for:)` above mirrors
+        // production order exactly.
+        bridge.registerReplicaObserver()
 
         // -- Initial sync: engage on the real 3-block document [Doc, First, Second].
         spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
