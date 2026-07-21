@@ -288,8 +288,8 @@ Schrift/
 │   │                    snapshot debounce, EditorViewModel.markDirty's mode split
 │   │                    forwards instead of dirtying when a weak liveWrite
 │   │                    delegate is engaged, and persistLiveSnapshot calls
-│   │                    enqueueLiveSnapshot. Still dormant behind the default-off
-│   │                    flag — C3 owes the user-facing toggle
+│   │                    enqueueLiveSnapshot. Opt-in via the C3 Profile toggle
+│   │                    (default off — see Features/Profile)
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
 │   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
@@ -1210,11 +1210,14 @@ markdown write endpoint**. Understand this before touching the save path:
     then a local forward *before* the deferred re-sync — asserting the emitted update
     projects the real replica to the merged document, no corruption reaching peers), plus
     the existing C2a differential fuzz (unchanged; C2c adds editor callers, not new
-    sync-engine surface). **Still dormant behind the default-off `schrift.liveCollaboration` flag —
-    C3 (separate, not yet built) owes the user-facing Profile toggle, its default
-    decision, and on-device WebSocket verification against a real collaboration-capable
-    server.** See `docs/architecture.md` ("Editor wiring — the write path complete
-    (C2c)").
+    sync-engine surface). **Opt-in behind the default-off `schrift.liveCollaboration`
+    flag — the C3 Profile toggle (Profile → Preferences → "Live collaboration", an
+    `@AppStorage(LiveCollaborationPreference.key)` switch) is the only writer. The
+    default stays off pending the owed on-device WebSocket verification against a real
+    collaboration-capable server (non-gating follow-up); the flag is read lazily, so a
+    flip affects newly requested sessions, not screens already open.** See
+    `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
+    "C3 (shipped)" paragraph).
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping
