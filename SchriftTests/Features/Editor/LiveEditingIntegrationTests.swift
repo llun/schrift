@@ -366,4 +366,227 @@ final class LiveEditingIntegrationTests: XCTestCase {
 
         session?.stop()
     }
+
+    // MARK: - Write-side capstone (Task 7)
+    //
+    // The environment/fake helpers below mirror `LiveEditingBridgeTests`' helpers of the
+    // same name -- Swift `private` is file-scoped, so they can't be reused directly.
+
+    private func formattedBody(
+        content: String, title: String = "Doc", updatedAt: String = "2026-01-15T10:30:00Z"
+    ) -> Data {
+        Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "\(title)", "content": "\(content)", "created_at": "2026-01-15T10:30:00Z", "updated_at": "\(updatedAt)"}
+            """.utf8)
+    }
+
+    /// Loads `content` into a clean view model, ready for `canEngageLiveEditing` to be true.
+    private func loadDocument(content: String) async -> (
+        viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator
+    ) {
+        let (viewModel, coordinator, _) = makeEnvironment()
+        let body = formattedBody(content: content)
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        await viewModel.load()
+        return (viewModel, coordinator)
+    }
+
+    /// Builds a `ProjectedDocument` from markdown via the same pipeline a save uses
+    /// (`MarkdownYjs.encode` -> `YUpdateDecoder.decode` -> `YDoc.applyUpdate`). See
+    /// `LiveEditingBridgeTests`' helper of the same name for the full rationale on
+    /// `carryingIDsFrom` (simulating two snapshots of one evolving replica).
+    private func projectedDoc(fromMarkdown md: String, carryingIDsFrom reference: ProjectedDocument? = nil) throws
+        -> ProjectedDocument
+    {
+        let doc = YDoc(clientID: 99)
+        try doc.applyUpdate(try YUpdateDecoder.decode(MarkdownYjs.encode(markdown: md, clientID: 1)))
+        var projected = YBlockProjection.project(doc)
+        doc.destroy()
+        if let reference, reference.blocks.count == projected.blocks.count {
+            for index in projected.blocks.indices {
+                projected.blocks[index].id = reference.blocks[index].id
+            }
+        }
+        return projected
+    }
+
+    /// A scripted `LiveReplicaProviding`: no socket, no real replica -- a per-document
+    /// version counter and projection the test controls directly, plus the C2c write
+    /// seam (`applyLocalEdit`/`encodeSnapshotForSave`/`replicaIsFailSafe`/`hasPendingStructs`).
+    private final class FakeReplicaProvider: LiveReplicaProviding {
+        private var versions: [UUID: Int] = [:]
+        private var projections: [UUID: ProjectedDocument] = [:]
+
+        func setVersion(_ version: Int, for documentID: UUID) {
+            versions[documentID] = version
+        }
+
+        func setProjection(_ projection: ProjectedDocument?, for documentID: UUID) {
+            if let projection {
+                projections[documentID] = projection
+            } else {
+                projections.removeValue(forKey: documentID)
+            }
+        }
+
+        func replicaVersion(for documentID: UUID) -> Int {
+            versions[documentID] ?? 0
+        }
+
+        func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
+            projections[documentID]
+        }
+
+        var snapshotData: Data?
+        var failSafe = false
+        var pendingStructsFlag = true
+        private(set) var appliedEdits: [(old: [BlockNoteBlock], new: [BlockNoteBlock])] = []
+        var applyResult: Result<Data, Error> = .success(Data([0x01]))
+
+        func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+            appliedEdits.append((old, new))
+            return try applyResult.get()
+        }
+        func encodeSnapshotForSave(for documentID: UUID) -> Data? { snapshotData }
+        func replicaIsFailSafe(for documentID: UUID) -> Bool { failSafe }
+        func hasPendingStructs(for documentID: UUID) -> Bool { pendingStructsFlag }
+    }
+
+    /// Captures method/url/body for every request issued after it is installed, so the
+    /// capstone test can confirm the live-snapshot PATCH actually carries
+    /// `"websocket": true` and that the downgrade's classic save is an ordinary,
+    /// distinguishable content PATCH. `RequestRecorder` (used elsewhere in this file)
+    /// only tracks method/url, not the body, which this test needs to tell the two
+    /// content PATCHes apart.
+    private final class BodyRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [(method: String, url: String, body: Data?)] = []
+
+        func record(_ request: URLRequest) {
+            let entry = (request.httpMethod ?? "", request.url?.absoluteString ?? "", bodyData(from: request))
+            lock.lock()
+            entries.append(entry)
+            lock.unlock()
+        }
+
+        func entries(ofMethod method: String, urlContaining substring: String) -> [(
+            method: String, url: String, body: Data?
+        )] {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries.filter { $0.method == method && $0.url.contains(substring) }
+        }
+    }
+
+    /// The capstone: engage a live-write session, forward a local edit, apply a remote
+    /// change (re-syncing the write baseline), let the debounced snapshot save land, then
+    /// force a fail-safe downgrade and confirm the next edit persists through the classic
+    /// path with no data loss and no false conflict. Drives the real `EditorViewModel` +
+    /// `LiveEditingBridge` + `DocumentSaveCoordinator`, with `MockURLProtocol` standing in
+    /// for the server -- proving Tasks 1-6 compose end to end.
+    func testLiveSessionForwardsRemoteAppliesSnapshotsThenDowngradesOnFailSafe() async throws {
+        // 1. Engage a clean, fully-synced, fully-modeled document.
+        let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        provider.snapshotData = Data([0x01, 0x02])
+        let projection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
+        provider.setProjection(projection, for: documentID)
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+        viewModel.liveWrite = bridge
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged)
+        XCTAssertTrue(
+            canEngageLiveWrite(
+                canEngageLiveEditing: viewModel.canEngageLiveEditing,
+                projection: provider.projectedReplica(for: documentID, interlinkingOrigin: nil)),
+            "a clean, synced, fully-modeled document is live-write-eligible")
+
+        // Every request from here on is recorded so steps 4 and 5 can inspect what
+        // actually reached "the server".
+        let requests = BodyRecorder()
+        MockURLProtocol.stubHandler = { request in
+            requests.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        // 2. A local edit forwards to the replica (and would broadcast); no classic dirty.
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "Alpha!")
+        XCTAssertEqual(provider.appliedEdits.count, 1)
+        XCTAssertFalse(viewModel.isDirty)
+        XCTAssertEqual(
+            requests.entries(ofMethod: "PATCH", urlContaining: "/content/").count, 0,
+            "no classic markdown enqueue -- the forward, not a REST save, carried the edit")
+
+        // 3. The debounced snapshot runs and settles (`loadDocument`'s stub answers the PATCH
+        //    200, so `finish` clears the write-ahead draft -- the gate is restored for step 4).
+        await waitUntil { viewModel.saveState == .saved }
+
+        let snapshotPatches = requests.entries(ofMethod: "PATCH", urlContaining: "/content/")
+        XCTAssertEqual(snapshotPatches.count, 1, "the debounced snapshot fired exactly one content PATCH")
+        if let body = snapshotPatches.first?.body,
+            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        {
+            XCTAssertEqual(json["websocket"] as? Bool, true, "a live snapshot save is tagged websocket: true")
+            XCTAssertEqual(
+                json["content"] as? String, provider.snapshotData?.base64EncodedString(),
+                "the exact CRDT bytes the replica handed the bridge are what got PATCHed")
+        } else {
+            XCTFail("content PATCH body was not JSON")
+        }
+        let titlePatches = requests.entries(ofMethod: "PATCH", urlContaining: documentID.uuidString.lowercased())
+            .filter { !$0.url.contains("/content/") }
+        XCTAssertEqual(titlePatches.count, 1, "the live snapshot save also PATCHes the title")
+
+        // 4. A remote change applies caret-preservingly and re-syncs the write baseline.
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alpha!\n\nBeta2", carryingIDsFrom: projection), for: documentID)
+        provider.setVersion(1, for: documentID)
+        bridge.replicaDidChange()
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha!", "Beta2"])
+
+        // 5. Downgrade: `applyLocalEdit` now throws (a fail-safed replica). The gate still
+        // passes (projection modeled, doc clean), so the throw is what forces the
+        // fallback -- the next edit runs the classic dirty path without losing content.
+        provider.applyResult = .failure(YIntegrationError.unexpectedCase)
+        viewModel.updateText(blockID: viewModel.blocks[1].id, text: "Beta2 classic")
+        XCTAssertTrue(viewModel.isDirty, "fail-safe ⇒ classic path resumes")
+        XCTAssertEqual(viewModel.blocks[1].text, "Beta2 classic", "no content lost across the downgrade")
+
+        // The downgraded edit must actually reach the server through the classic save
+        // funnel, land cleanly, and raise no false conflict -- step 3's `persistLiveSnapshot`
+        // baseline advance is what keeps this classic push from misreading the server as
+        // having diverged out from under it.
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveCoordinator.state(for: self.documentID) != .saving }
+        XCTAssertEqual(viewModel.saveState, .saved, "the downgraded classic save landed")
+        XCTAssertNil(viewModel.syncConflict, "no false conflict raised by the downgraded save")
+
+        let allContentPatches = requests.entries(ofMethod: "PATCH", urlContaining: "/content/")
+        XCTAssertEqual(
+            allContentPatches.count, 2, "one live-snapshot PATCH (step 3) plus one classic downgrade PATCH")
+        if let classicBody = allContentPatches.last?.body,
+            let classicJSON = try? JSONSerialization.jsonObject(with: classicBody) as? [String: Any]
+        {
+            XCTAssertNil(classicJSON["websocket"], "the downgraded save is an ordinary classic PATCH, not tagged")
+        } else {
+            XCTFail("classic content PATCH body was not JSON")
+        }
+
+        // `EditorViewModel.liveWrite` is WEAK (the bridge holds the view model strongly), so
+        // -- exactly as the view retains it in production -- the test must keep the bridge
+        // alive across every `await` above, or `liveWrite` would go nil mid-test and every
+        // forward after that point would silently downgrade for the wrong reason.
+        withExtendedLifetime(bridge) {}
+    }
 }
