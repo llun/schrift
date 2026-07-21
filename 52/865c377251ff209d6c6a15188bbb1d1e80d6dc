@@ -1,0 +1,19 @@
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_3edba91c397280::t_4683df2d024d5f 637-639
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "52865c377251ff209d6c6a15188bbb1d1e80d6dc",
+  "prompts": {},
+  "sessions": {
+    "s_3edba91c397280": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aac2534a-a63b-458d-89e9-ab96eb82fe9a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
