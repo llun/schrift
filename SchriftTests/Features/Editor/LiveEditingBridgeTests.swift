@@ -634,8 +634,9 @@ final class LiveEditingBridgeTests: XCTestCase {
     }
 
     /// C2c Critical #2: the bridge registers a **synchronous** read-apply observer with the
-    /// provider in `init`, so a remote change re-syncs the write baseline the instant it
-    /// integrates — not a deferred turn later. Unlike
+    /// provider (via `registerReplicaObserver()`, which the view calls on each live-session
+    /// acquisition — not at bridge construction), so a remote change re-syncs the write baseline
+    /// the instant it integrates — not a deferred turn later. Unlike
     /// `testForwardAfterRemoteChangeUsesTheResyncedBaseline` (which drives the remote apply via
     /// a manual `bridge.replicaDidChange()`, modelling the deferred `.onChange`), this drives it
     /// **only** through the observer the fix registers (`fireReplicaObserver`, modelling the
