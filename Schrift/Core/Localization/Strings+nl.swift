@@ -258,6 +258,9 @@ enum Strings_nl {
         .profile_language: "Taal",
         .profile_notifications: "Meldingen",
         .profile_work_offline: "Offline werken",
+        .profile_live_collaboration: "Live samenwerken",
+        .profile_live_collaboration_footer:
+            "Live samenwerken synchroniseert bewerkingen in realtime met anderen wanneer de server dit ondersteunt.",
         .profile_server: "Server",
         .profile_server_footer: "De app maakt verbinding met elke Schrift-server via uw bestaande websessie.",
         .profile_connected: "Verbonden",

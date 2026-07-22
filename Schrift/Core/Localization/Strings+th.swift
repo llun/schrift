@@ -253,6 +253,9 @@ enum Strings_th {
         .profile_language: "ภาษา",
         .profile_notifications: "การแจ้งเตือน",
         .profile_work_offline: "ทำงานออฟไลน์",
+        .profile_live_collaboration: "การทำงานร่วมกันแบบเรียลไทม์",
+        .profile_live_collaboration_footer:
+            "การทำงานร่วมกันแบบเรียลไทม์จะซิงค์การแก้ไขของคุณกับผู้อื่นทันทีเมื่อเซิร์ฟเวอร์ของคุณรองรับ",
         .profile_server: "เซิร์ฟเวอร์",
         .profile_server_footer: "แอปเชื่อมต่อกับเซิร์ฟเวอร์ Schrift ใดก็ได้โดยใช้เซสชันเว็บที่มีอยู่ของคุณ",
         .profile_connected: "เชื่อมต่อแล้ว",

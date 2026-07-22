@@ -287,6 +287,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case profile_language = "profile.language"  // "Language"
     case profile_notifications = "profile.notifications"  // "Notifications"
     case profile_work_offline = "profile.work_offline"  // "Work offline"
+    case profile_live_collaboration = "profile.live_collaboration"  // "Live collaboration"
+    case profile_live_collaboration_footer = "profile.live_collaboration_footer"
     case profile_server = "profile.server"  // "Server"
     case profile_server_footer = "profile.server_footer"
     // "The app connects to any Schrift server using your existing web session."

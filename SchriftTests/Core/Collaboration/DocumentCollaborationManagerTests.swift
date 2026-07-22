@@ -342,6 +342,32 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    /// C3: the Profile toggle writes `LiveCollaborationPreference.key` and nothing else —
+    /// the manager must observe the flip mid-session because `featureEnabled` is a live
+    /// closure evaluated on every `availability` read, not a captured value. If someone
+    /// "optimizes" it into a stored Bool, this fails and the toggle silently stops working
+    /// until the next app launch.
+    func testAvailabilityTracksTheLivePreferenceFlagMidSession() {
+        let suiteName = "DocumentCollaborationManagerTests.pref.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let spy = SocketFactorySpy()
+        let manager = DocumentCollaborationManager(
+            serverBaseURL: baseURL,
+            cookieProvider: { [] },
+            featureEnabled: { LiveCollaborationPreference.isEnabled(defaults) },
+            isOffline: { false },
+            serverConfigProvider: { nil },
+            socketFactory: spy.factory)
+        manager.serverSupportsLiveCollaboration = true
+
+        XCTAssertEqual(manager.availability, .featureDisabled, "unset flag ⇒ off (the default)")
+        defaults.set(true, forKey: LiveCollaborationPreference.key)
+        XCTAssertEqual(manager.availability, .available, "the flip is visible with no manager rebuild")
+        defaults.set(false, forKey: LiveCollaborationPreference.key)
+        XCTAssertEqual(manager.availability, .featureDisabled, "and turning it off is too")
+    }
+
     /// The observer's lifecycle is tied to the per-document ENTRY, not the bridge: it is
     /// dropped when the document is torn down after linger and must be RE-REGISTERED when the
     /// document is reopened. The `LiveEditingBridge` (held in `EditorView.@State`) outlives a

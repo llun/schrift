@@ -49,7 +49,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is still **dormant in production** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user (currently nobody; there is no UI toggle yet — see C3) turns it on. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
+- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3; default off pending the on-device WebSocket verification). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
 - Offline editing/sync queue. (Offline *reading* of previously-opened documents
   was added 2026-07-03; editing still requires connectivity.)
 - Comments/threads.
@@ -583,12 +583,25 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   forward). Every pre-existing `EditorViewModelTests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
 
-**C3 (separate follow-up):** the user-facing Profile toggle for
-`schrift.liveCollaboration` and its default decision, remaining L10n, and any
-header/status refinements for live mode (e.g. the "Synced X ago" caption is not yet
-advanced by a landed live snapshot). C2c ships the write path behind the existing
-default-off flag only — on-device WebSocket verification against a real
-collaboration-capable server is also owed and non-gating.
+**C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
+collaboration"** switch (`ProfileScreen`, a `ProfileTrailingRow` + `Switch` exactly like
+the sibling Notifications/Work-offline rows) backed by
+`@AppStorage(LiveCollaborationPreference.key)`. Writing that key is the *entire* wiring:
+`RootView` builds the collaboration manager with `featureEnabled:
+{ LiveCollaborationPreference.isEnabled() }`, a live closure re-evaluated on every
+`availability` read — pinned by
+`DocumentCollaborationManagerTests.testAvailabilityTracksTheLivePreferenceFlagMidSession`,
+which fails if anyone "optimizes" it into a captured Bool. **The default is OFF /
+opt-in** (decision 2026-07-21): the write path is CI-verified but the on-device
+end-to-end WebSocket check against a real collaboration-capable server is still owed, so
+users must opt in; flipping the default waits for that verification. Deliberate,
+documented semantics: the flag is read lazily, so a flip affects **newly requested
+sessions** (opening a document, reconnect, resume) — it does not retroactively open or
+close sockets on screens already showing a document; fully consistent from the next
+document-open or app launch. Still open as follow-ups: the on-device WS verification
+(type on iPhone → see it in Safari, and back; non-gating) and any live-mode
+header/status refinements (e.g. the "Synced X ago" caption is not yet advanced by a
+landed live snapshot).
 
 ### Two Yjs models, deliberately
 

@@ -251,6 +251,8 @@ enum Strings_zhHant {
         .profile_language: "語言",
         .profile_notifications: "通知",
         .profile_work_offline: "離線工作",
+        .profile_live_collaboration: "即時協作",
+        .profile_live_collaboration_footer: "即時協作會在伺服器支援時，將您的編輯與其他人即時同步。",
         .profile_server: "伺服器",
         .profile_server_footer: "該應用程式會使用您現有的網頁工作階段連線至任何 Schrift 伺服器。",
         .profile_connected: "已連線",

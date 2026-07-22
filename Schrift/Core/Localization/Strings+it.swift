@@ -256,6 +256,9 @@ enum Strings_it {
         .profile_language: "Lingua",
         .profile_notifications: "Notifiche",
         .profile_work_offline: "Lavora offline",
+        .profile_live_collaboration: "Collaborazione dal vivo",
+        .profile_live_collaboration_footer:
+            "La collaborazione dal vivo sincronizza le modifiche con gli altri in tempo reale quando il server la supporta.",
         .profile_server: "Server",
         .profile_server_footer: "L’app si connette a qualsiasi server Schrift utilizzando la sessione web esistente.",
         .profile_connected: "Connesso",

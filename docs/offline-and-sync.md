@@ -124,8 +124,10 @@ wording gated on an actual local copy existing.
   suppressed by `isApplyingLiveContent`), and abandoning it on the first forwarded
   keystroke runs the same conflict detection the classic branch runs — a diverged
   stash records a conflict (which then blocks re-entering live-write), a non-diverged
-  one drops silently. This remains dormant in production — the flag defaults off and
-  there is no user-facing toggle yet (C3).
+  one drops silently. This is **opt-in** in production: the flag defaults off, and the
+  C3 Profile toggle (Profile → Preferences → "Live collaboration") is its only writer —
+  a user who enables it makes the live-write branch reachable, so changes to the sync
+  machinery must account for it.
 - Revalidation runs **on open and on explicit pull-to-refresh only** — no
   periodic or background-timer revalidation.
 - No caching of the subpage list (deferred; see "Subpages" below).
