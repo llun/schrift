@@ -1,0 +1,19 @@
+# Keeps the SHA-pinned GitHub Actions current: dependabot opens a PR when a
+# pinned action has a newer release, updating both the SHA and the trailing
+# `# vX.Y.Z` comment. Each PR still gates on the `Build & Test` check, so a bump
+# can't land unverified. Actions only — the app has a deliberate
+# zero-third-party-runtime-dependency posture (see CLAUDE.md), and Ruby/fastlane
+# are bumped intentionally via `bundle update`, not automatically.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # One combined PR per run rather than one per action.
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
