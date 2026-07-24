@@ -1111,6 +1111,28 @@ markdown write endpoint**. Understand this before touching the save path:
   otherwise save a mangled url and drop the tail. Note the column-zero contract
   means an **indented** image now renders verbatim rather than as an image (it
   used to render as one); no content is lost either way.
+- **An embedded image is fetched on render only when it is same-origin as the
+  user's server; otherwise it is tap-to-load.** `![alt](url)` is author-controlled
+  (a co-author, a web client, a live peer), and `AsyncImage` GETs on appear, so an
+  off-origin image would disclose the *reader's* IP/User-Agent/timing to a host the
+  author chose (cookies are domain-scoped, so it is the request itself that leaks,
+  not the session). `imageLoadPolicy(for:serverOrigin:)`
+  (`Features/Editor/ImageLoadPolicy.swift`) decides: it composes `siteOrigin` on a
+  **throwaway `URL(string:)`** on both sides (never re-normalizing
+  `BlockKind.image.url`, so `extract_attachments()` byte-matching and the golden
+  encoder are untouched) and fail-closes to `.confirm` on anything it can't parse or
+  an empty server origin. It is a true origin test (scheme+host+port, host-not-suffix,
+  IPv6, case-insensitive) and deliberately **stricter** than `documentLinkAction`,
+  which ignores the port — a request is at stake here, not just tap interception.
+  `serverOrigin` is derived once in `RootView` (`siteOrigin(for: serverURL)`) and
+  threaded, required (non-defaulted), to **both** render sites — the reading
+  `MarkdownImageView` and the editing `BlockEditorRow.imageLeaf` — so a new image
+  render path is a compile error until it passes the gate; route any such path
+  through `MarkdownImageView`. Consent is view-local `@State` keyed on the exact
+  approved `URL` (not a `Bool`), so a live edit that swaps the URL under a reused
+  `EditorBlock.id` can't auto-load. **Known accepted residual:** `AsyncImage` follows
+  redirects, so a same-origin URL the trusted server 302s off-origin still leaks; the
+  fix (a redirect-blocking `URLSession` delegate) is a follow-up.
 - Two view-model invariants protect the full-overwrite save: editing may only
   begin once `hasLoadedContent` is true (`startEditing` guards on it —
   otherwise autosave would overwrite the whole server document with an empty
