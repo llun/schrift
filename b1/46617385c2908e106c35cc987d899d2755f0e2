@@ -1,0 +1,29 @@
+SchriftTests/Core/Auth/KeychainStoreTests.swift
+  s_5d624218c1a684::t_721f97712124fe 106,108-112
+SchriftTests/Core/Yjs/Lib0DecoderTests.swift
+  s_5d624218c1a684::t_af5b664e996495 171-177,179,185,190-201
+  s_5d624218c1a684::t_82a379eb9f5f8b 202-203
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_5d624218c1a684::t_2bcec36b5b0bde 67-89
+SchriftTests/Core/Auth/FakeKeychainStore.swift
+  s_5d624218c1a684::t_a4d2a025a646c9 7-9,22-24
+  s_5d624218c1a684::t_8a418544f0ad45 25
+CLAUDE.md
+  s_5d624218c1a684::t_992e617c90c14f 1699-1706
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "b146617385c2908e106c35cc987d899d2755f0e2",
+  "prompts": {},
+  "sessions": {
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
