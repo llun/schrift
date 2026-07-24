@@ -286,6 +286,63 @@ final class Lib0DecoderTests: XCTestCase {
         assertThrows(Lib0DecodingError.truncated) { _ = try decoder.readVarInt() }
     }
 
+    // MARK: - readAny nesting depth
+
+    /// `depth` nested single-element arrays (tag 117 + count 1 per level)
+    /// wrapping a `null` (tag 126) at the bottom.
+    private func nestedArrayAny(depth: Int) -> Data {
+        Data(Array(repeating: [0x75, 0x01] as [UInt8], count: depth).flatMap { $0 } + [0x7E])
+    }
+
+    func testReadAnyDecodesNestingUpToTheCap() throws {
+        // The cap counts levels of nesting, so a value nested exactly
+        // `maxAnyNestingDepth` deep is still valid input and must decode.
+        var decoder = Lib0Decoder(nestedArrayAny(depth: Lib0Decoder.maxAnyNestingDepth))
+        var value = try decoder.readAny()
+        for _ in 0..<Lib0Decoder.maxAnyNestingDepth {
+            guard case .array(let inner) = value, inner.count == 1 else {
+                return XCTFail("expected a single-element array at every level, got \(value)")
+            }
+            value = inner[0]
+        }
+        XCTAssertEqual(value, .null)
+    }
+
+    func testReadAnyRejectsNestingPastTheCap() {
+        // Without the depth guard this recurses once per level and a large enough
+        // input overflows the stack — a fatal fault no `catch` can intercept, on
+        // bytes that arrive from a peer. One level past the cap must throw.
+        var decoder = Lib0Decoder(nestedArrayAny(depth: Lib0Decoder.maxAnyNestingDepth + 1))
+        assertThrows(Lib0DecodingError.anyNestingTooDeep) { _ = try decoder.readAny() }
+    }
+
+    func testReadAnyRejectsDeeplyNestedObjects() {
+        // The object tag (118) nests through a different branch than the array
+        // tag, so it needs its own guard: `76 01` + a one-char key per level.
+        let level: [UInt8] = [0x76, 0x01, 0x01, 0x61]  // {"a": <next>}
+        let bytes: [UInt8] = Array(repeating: level, count: 20_000).flatMap { $0 } + [0x7E]
+        var decoder = Lib0Decoder(Data(bytes))
+        assertThrows(Lib0DecodingError.anyNestingTooDeep) { _ = try decoder.readAny() }
+    }
+
+    func testReadAnyStillDecodesRealisticBlockProps() throws {
+        // The shape the cap must never reject: a BlockNote props object of
+        // primitives, one level deep. `{"textAlignment":"left","level":1}`
+        var encoder = Lib0Encoder()
+        encoder.writeAny(
+            .object([
+                YAnyObjectEntry(key: "textAlignment", value: .string("left")),
+                YAnyObjectEntry(key: "level", value: .int(1)),
+            ]))
+        var decoder = Lib0Decoder(encoder.data)
+        XCTAssertEqual(
+            try decoder.readAny(),
+            .object([
+                YAnyObjectEntry(key: "textAlignment", value: .string("left")),
+                YAnyObjectEntry(key: "level", value: .int(1)),
+            ]))
+    }
+
     func testVarUint8ArrayLengthBeyondIntMaxThrowsTruncated() {
         // A length varUint of 2^63 exceeds Int.max, so `Int(exactly:) ?? Int.max`
         // clamps it to Int.max and readBytes reports truncation instead of trapping

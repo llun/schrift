@@ -436,6 +436,29 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    func testDeeplyNestedAnyUpdateFailsSafeInsteadOfCrashingTheProcess() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        // A hostile peer's frame: one ContentAny value that is 20k nested
+        // single-element arrays. `readAny` recurses per level, so without its
+        // depth cap this overflows the stack — and a stack overflow is a machine
+        // fault, not an error, so `applyReplicaUpdate`'s fail-safe `catch` could
+        // not contain it and the whole app would die on a peer's say-so. Reaching
+        // the assertions below at all is the regression test; fail-safe latching
+        // proves the throw lands where every other malformed frame lands.
+        let header = Data(hex: "01012a000801017401")
+        let nested = Data(Array(repeating: [0x75, 0x01] as [UInt8], count: 20_000).flatMap { $0 } + [0x7E])
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: header + nested))
+
+        await waitUntil { manager.remoteChangeToken(for: docID) == 1 }
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+        session?.stop()
+    }
+
     func testPendingStructsSuppressProjection() async throws {
         let spy = SocketFactorySpy()
         let manager = makeManager(spy: spy)
