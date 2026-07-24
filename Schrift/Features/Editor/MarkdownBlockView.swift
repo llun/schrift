@@ -65,6 +65,9 @@ func markdownHeadingFont(level: Int) -> Font {
 
 struct MarkdownBlockView: View {
     let block: EditorBlock
+    /// Origin the embedded image gate compares against (`imageLoadPolicy`).
+    /// Required (no default) so a new render site can't silently skip the gate.
+    let serverOrigin: String
     var numberedIndex: Int = 1
 
     var body: some View {
@@ -139,7 +142,7 @@ struct MarkdownBlockView: View {
 
         case .image(let alt, let url):
             if let imageURL = URL(string: url) {
-                MarkdownImageView(alt: alt, url: imageURL)
+                MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
             } else {
                 Text("![\(alt)](\(url))")
                     .font(DocsFont.code)
@@ -160,17 +163,44 @@ struct MarkdownBlockView: View {
     }
 }
 
-/// Renders a document image inline. `AsyncImage` fetches through
-/// `URLSession.shared`, which carries the `docs.llun.dev` session cookie from
-/// `HTTPCookieStorage.shared`, so authenticated media loads without extra
-/// plumbing. A failed load degrades to a tappable link so the URL is never lost.
+/// Renders a document image inline. When the image is same-origin as the user's
+/// Docs server (`imageLoadPolicy`) it fetches through `URLSession.shared`, which
+/// carries the session cookie from `HTTPCookieStorage.shared`, so authenticated
+/// media loads without extra plumbing. An image from any other origin renders a
+/// tap-to-load placeholder and issues no request until the reader taps it — an
+/// off-origin `AsyncImage` would leak the reader's IP/User-Agent/timing to a host
+/// the document's author chose. A failed load degrades to a tappable link so the
+/// URL is never lost.
+///
+/// Known residual: `AsyncImage` follows HTTP redirects, so a same-origin URL that
+/// the user's own server 302s off-origin still leaks. Out of v1 scope (see the
+/// architecture doc); the fix would be a custom loader with a redirect-blocking
+/// `URLSession` delegate.
 struct MarkdownImageView: View {
     let alt: String
     let url: URL
+    /// `siteOrigin(for:)` of the signed-in server. "" blocks everything — the
+    /// safe direction.
+    let serverOrigin: String
 
     @Environment(LocalizationStore.self) private var loc
 
+    /// The cross-origin URL the reader approved, if any. Held as the *URL*, not a
+    /// `Bool`: `applyLiveRemoteChange` reuses a surviving block's `EditorBlock.id`,
+    /// so this view's identity — and this `@State` — outlives a content change, and
+    /// consent for one host must never carry to a URL an edit later swapped in.
+    /// View-local and never persisted: approval is one URL, one session.
+    @State private var approvedURL: URL?
+
+    private var shouldLoad: Bool {
+        imageLoadPolicy(for: url, serverOrigin: serverOrigin) == .allow || approvedURL == url
+    }
+
     var body: some View {
+        if shouldLoad { remoteImage } else { tapToLoad }
+    }
+
+    private var remoteImage: some View {
         AsyncImage(url: url) { phase in
             switch phase {
             case .success(let image):
@@ -188,6 +218,42 @@ struct MarkdownImageView: View {
                 placeholder
             }
         }
+    }
+
+    /// Off-origin: a card (the same family as `fallbackLink` — "we are not showing
+    /// the image", not the spinner that promises one is coming) that fetches only
+    /// when tapped. `Button` rather than `.onTapGesture` so it takes the tap from
+    /// the reading row's own tap-to-edit gesture, carries the button trait, and
+    /// flattens its two labels into one accessibility element.
+    private var tapToLoad: some View {
+        Button {
+            approvedURL = url
+        } label: {
+            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
+                MaterialSymbol(.image, size: 16)
+                    .foregroundStyle(DocsColor.textTertiary)
+                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                    Text(loc[.editor_image_external])
+                        .foregroundStyle(DocsColor.textBrand)
+                    if let host = url.host {
+                        // host is document content — never localized.
+                        Text(host)
+                            .foregroundStyle(DocsColor.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .font(DocsFont.footnote)
+            .padding(DocsSpacing.spaceSM)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DocsColor.surfaceSunken)
+            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+            .contentShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(loc.format(.editor_image_external_a11y, url.host ?? url.absoluteString))
     }
 
     private var placeholder: some View {
@@ -218,19 +284,46 @@ struct MarkdownImageView: View {
     }
 }
 
-#Preview {
-    ScrollView {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-            MarkdownBlockView(block: EditorBlock(kind: .paragraph, text: "Visit https://docs.llun.dev for details."))
-            MarkdownBlockView(
-                block: EditorBlock(kind: .paragraph, text: "A [markdown link](https://example.com) inline."))
-            MarkdownBlockView(block: EditorBlock(kind: .quote, text: "A quote should read as its own aside."))
-            MarkdownBlockView(
-                block: EditorBlock(kind: .unknown, text: "Line one with https://a.example\nLine two continues."))
-            MarkdownBlockView(
-                block: EditorBlock(kind: .image(alt: "diagram", url: "https://docs.llun.dev/media/sample.png")))
+private struct MarkdownBlockCatalog: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .paragraph, text: "Visit https://docs.llun.dev for details."),
+                    serverOrigin: serverOrigin)
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .paragraph, text: "A [markdown link](https://example.com) inline."),
+                    serverOrigin: serverOrigin)
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .quote, text: "A quote should read as its own aside."),
+                    serverOrigin: serverOrigin)
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .unknown, text: "Line one with https://a.example\nLine two continues."),
+                    serverOrigin: serverOrigin)
+                // Same-origin attachment: auto-loads.
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .image(alt: "diagram", url: "https://docs.llun.dev/media/sample.png")),
+                    serverOrigin: serverOrigin)
+                // Off-origin image: tap-to-load placeholder.
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .image(alt: "tracker", url: "https://tracker.example/beacon.png")),
+                    serverOrigin: serverOrigin)
+            }
+            .padding()
         }
-        .padding()
     }
-    .environment(LocalizationStore())
+
+    private let serverOrigin = "https://docs.llun.dev"
+}
+
+#Preview("Light") {
+    MarkdownBlockCatalog()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.light)
+}
+
+#Preview("Dark") {
+    MarkdownBlockCatalog()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.dark)
 }
