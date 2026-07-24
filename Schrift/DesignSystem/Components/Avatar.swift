@@ -50,6 +50,12 @@ func avatarColorHexString(for name: String) -> String {
 
 struct Avatar: View {
     let name: String
+    /// Optional avatar image. No call site supplies one today, so the
+    /// `AsyncImage` branch below is currently dead — but if a future consumer
+    /// wires in a peer- or document-supplied URL (e.g. collaboration presence),
+    /// it MUST be origin-gated first: an off-origin `AsyncImage` leaks the
+    /// viewer's IP/User-Agent/timing on render, exactly as `imageLoadPolicy`
+    /// (`Features/Editor/ImageLoadPolicy.swift`) prevents for document images.
     var imageURL: URL? = nil
     var size: CGFloat = 36
 

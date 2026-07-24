@@ -238,7 +238,7 @@ enum Strings_en {
         .editor_image_a11y: "Image",
         .editor_image_loading_a11y: "Loading image",
         .editor_image_loading_named_a11y: "Loading image: %@",
-        .editor_image_external: "External image · Tap to load",
+        .editor_image_external: "External image · tap to load",
         .editor_image_external_a11y: "External image from %@. Tap to load.",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
