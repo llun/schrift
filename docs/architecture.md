@@ -754,12 +754,25 @@ bytes was thousands of stack frames; `Lib0Decoder.maxAnyNestingDepth` (64) now c
 it and throws `anyNestingTooDeep`. Unlike the clock rule this is a **deliberate
 narrowing** rather than oracle parity — a JS decoder also refuses, but only in the
 thousands — accepted because real `.any` content nests two or three deep and the
-refusal simply fail-safes the update. **Known residual gap:** the delete/gc walk
-(`YItem.delete` → `YContent.delete` → `YType.deleteChildren`, and the gc sibling) is
-still recursive on the replica's type-nesting depth and is wire-reachable — a single
-~20k-deep nested-type update (~140 KB) overflows the stack on delete-set apply, while
-integration itself is iterative and safe far past that. Fixing it edits the
-transliterated store, so it is tracked as a separate, sign-off-gated change.
+refusal simply fail-safes the update.
+
+The delete and gc cascades are a second such recursion. They
+(`YItem.delete → ContentType.delete → YType.deleteChildren → YItem.delete`,
+and the `YItem.gc` twin) recurse once per nested `ContentType` level — a depth one
+crafted inbound update fully controls — so a ~20k-deep nested-type chain (~140 KB)
+overflows the stack. Integration itself is iterative and safe far past that; only
+delete/gc recurse, which matches yjs (it too accepts deep integration and refuses deep
+delete/gc with a catchable `RangeError`). `YTransaction.maxTypeNestingDepth` (2048)
+bounds both cascades: `YItem.gc` throws directly (already `throws`), while the
+non-throwing `YItem.delete` flags `transaction.recursionLimitExceeded`, which
+`cleanupTransactions` — the single chokepoint every transaction drains through —
+converts into a thrown `.recursionLimitExceeded`, discarding the half-marked store
+before gc/merge read it. It is a deliberate narrowing (oracle-faithful at the
+accept/reject boundary and byte-identical below the cap — the golden `deleteNestedType`
+fixture is unmoved — but stricter than V8 between the cap and its ~4000 limit),
+accepted because real documents nest ~2 type levels per visual indent. The cap should
+be re-measured on a Release build, and a deep-nesting differential-fuzz lane run,
+before the live-collaboration flag is ever defaulted on.
 
 ### Teardown is the owner's job
 

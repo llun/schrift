@@ -935,12 +935,34 @@ that are easy to violate and expensive to discover:
   three deep (BlockNote props are flat objects of primitives) and the refusal is
   contained — the update fail-safes rather than corrupting anything.
   **Any recursive path that walks attacker-shaped data needs the same
-  treatment**; depth is input, not structure. **Known gap (not yet fixed):**
-  `YItem.delete` → `YContent.delete` → `YType.deleteChildren` → `YItem.delete`
-  is still unbounded and wire-reachable — a single update building a ~20k-deep
-  nested-type chain (~140 KB) crashes the process on the delete-set apply. gc has
-  the same shape. Integration itself is iterative and safe to 200k. Fixing it
-  touches the transliterated store, so it is a separate, sign-off-gated change.
+  treatment**; depth is input, not structure.
+- **The delete and gc cascades are the other wire-reachable recursion.** They —
+  the delete and gc cascades (`YItem.delete → ContentType.delete → YType.deleteChildren
+  → YItem.delete`, and the `YItem.gc` twin) recurse once per nested `ContentType`
+  level, and that depth is fully attacker-controlled by one inbound update (~7 wire
+  bytes per level). Unbounded, a ~20k-deep chain (~140 KB) overruns the native stack
+  — an `EXC_BAD_ACCESS`, *not* a Swift error, so it bypasses
+  `DocumentCollaborationManager.applyReplicaUpdate`'s fail-safe `catch` and crashes
+  the app. **Integration itself is iterative** (a deep chain integrates safely past
+  200k) — only *delete*/*gc* recurse, matching yjs, which likewise accepts deep
+  integration and refuses deep delete/gc (a catchable `RangeError`).
+  `YTransaction.maxTypeNestingDepth` (2048) bounds both: `YItem.gc` is already
+  `throws` so it refuses directly; `YItem.delete` is a **non-throwing** override so
+  it flags `transaction.recursionLimitExceeded`, and `cleanupTransactions` — the one
+  chokepoint every transaction (wire, local write, nested cleanup) drains through —
+  converts the flag into a thrown `.recursionLimitExceeded`, discarding the
+  half-marked store wholesale before gc/merge trust it. This is a **deliberate
+  narrowing**, oracle-faithful at the accept/reject boundary (both refuse deep
+  delete/gc, converge byte-identically below the cap — the golden `deleteNestedType`
+  gc fixture is unmoved) but stricter than V8 in the [cap, ~V8-limit] band; accepted
+  because real documents nest ~2 type levels per visual indent (~200 for an absurd
+  100-indent doc). The cap must be **re-measured on a Release build** before the
+  `schrift.liveCollaboration` flag is defaulted on, and a deep-nesting differential-
+  fuzz lane (both delete-set orderings, gc on/off) is owed then; landing behind the
+  default-off flag with the unit + manager tests green is the accepted interim. The
+  traversal *bodies* are the untouched yjs transliteration — only depth bookkeeping
+  wraps the one descent in each. `YDoc.destroy()`, `YStateEncoder`, `YItem.integrate`,
+  and `YBlockProjection` are all iterative or opaque-at-first-level and need no cap.
 - **The encode side (`YStateEncoder`, B3) derives the wire info byte — it never
   replays a stored one.** `encodeStateAsUpdate(doc, since:)` (full snapshot / diff
   against a state vector) and `encodeStateVector(doc)` transliterate yjs's
