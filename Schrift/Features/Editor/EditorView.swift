@@ -117,6 +117,9 @@ struct EditorView: View {
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
     let serverHost: String
+    /// Origin the reading/editing surfaces gate embedded images against
+    /// (`imageLoadPolicy`) — off-origin images are tap-to-load.
+    let serverOrigin: String
     var linkRole: LinkRole? = nil
     var initialIsFavorite: Bool = false
     var isOffline: Bool = false
@@ -148,6 +151,7 @@ struct EditorView: View {
         viewModel: EditorViewModel,
         reach: LinkReach,
         serverHost: String,
+        serverOrigin: String,
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
@@ -158,6 +162,7 @@ struct EditorView: View {
         self.viewModel = viewModel
         self.reach = reach
         self.serverHost = serverHost
+        self.serverOrigin = serverOrigin
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
         self.isOffline = isOffline
@@ -372,7 +377,7 @@ struct EditorView: View {
             // The save status and Done button live in the editing header
             // (`EditorSaveBar`, rendered above in `body`), so the surface is
             // just the block canvas.
-            BlockEditorView(viewModel: viewModel)
+            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin)
                 .safeAreaInset(edge: .bottom) {
                     VStack(spacing: DocsSpacing.spaceXS) {
                         if viewModel.isUploadingPhoto {
@@ -447,7 +452,8 @@ struct EditorView: View {
                     VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
                         ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
                             MarkdownBlockView(
-                                block: block, numberedIndex: numberedIndex(of: index, in: viewModel.blocks)
+                                block: block, serverOrigin: serverOrigin,
+                                numberedIndex: numberedIndex(of: index, in: viewModel.blocks)
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -725,7 +731,8 @@ struct EditorView: View {
             saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop)
         ),
         reach: .restricted,
-        serverHost: "docs.llun.dev"
+        serverHost: "docs.llun.dev",
+        serverOrigin: "https://docs.llun.dev"
     )
     .environment(LocalizationStore())
     .environment(DocumentCollaborationManager.inert())

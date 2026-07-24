@@ -233,6 +233,8 @@ enum Strings_zhHans {
         .editor_image_a11y: "图片",
         .editor_image_loading_a11y: "正在加载图片",
         .editor_image_loading_named_a11y: "正在加载图片：%@",
+        .editor_image_external: "外部图片 · 点按加载",
+        .editor_image_external_a11y: "来自 %@ 的外部图片。点按加载。",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "在末尾添加段落",

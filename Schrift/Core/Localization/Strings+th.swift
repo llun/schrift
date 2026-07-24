@@ -235,6 +235,8 @@ enum Strings_th {
         .editor_image_a11y: "รูปภาพ",
         .editor_image_loading_a11y: "กำลังโหลดรูปภาพ",
         .editor_image_loading_named_a11y: "กำลังโหลดรูปภาพ: %@",
+        .editor_image_external: "รูปภาพภายนอก · แตะเพื่อโหลด",
+        .editor_image_external_a11y: "รูปภาพภายนอกจาก %@ แตะเพื่อโหลด",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "เพิ่มย่อหน้าที่ท้ายสุด",

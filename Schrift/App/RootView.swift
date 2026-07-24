@@ -33,6 +33,9 @@ private struct AuthenticatedHomeContainer: View {
     @State private var collaboration: DocumentCollaborationManager
     let serverURL: URL
     let serverHost: String
+    /// `siteOrigin(for: serverURL)` — the origin document images are gated
+    /// against (see `imageLoadPolicy`). Threaded alongside `serverHost`.
+    let serverOrigin: String
     let sessionStore: SessionStore
     let onSignOut: () -> Void
 
@@ -75,6 +78,7 @@ private struct AuthenticatedHomeContainer: View {
                 socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
+        serverOrigin = siteOrigin(for: serverURL) ?? ""
         self.sessionStore = sessionStore
         self.onSignOut = onSignOut
     }
@@ -82,9 +86,10 @@ private struct AuthenticatedHomeContainer: View {
     var body: some View {
         Group {
             if horizontalSizeClass == .regular {
-                HomeSplitView(viewModel: viewModel, serverHost: serverHost)
+                HomeSplitView(viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin)
             } else {
-                HomeView(viewModel: viewModel, serverHost: serverHost, onSignOut: onSignOut)
+                HomeView(
+                    viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin, onSignOut: onSignOut)
             }
         }
         .sheet(

@@ -46,6 +46,8 @@ final class MarkdownBlockViewTests: XCTestCase {
 
     // Standalone-image classification now lives in the parser
     // (`parseImageLine` → `.image` blocks); see MarkdownParserTests.
+    // Off-origin image gating (which images auto-load vs tap-to-load) lives in
+    // `imageLoadPolicy`; see ImageLoadPolicyTests.
 
     // MARK: - Unknown-block prose detection
 

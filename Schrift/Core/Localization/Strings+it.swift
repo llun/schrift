@@ -237,6 +237,8 @@ enum Strings_it {
         .editor_image_a11y: "Immagine",
         .editor_image_loading_a11y: "Caricamento immagine",
         .editor_image_loading_named_a11y: "Caricamento immagine: %@",
+        .editor_image_external: "Immagine esterna · Tocca per caricare",
+        .editor_image_external_a11y: "Immagine esterna da %@. Tocca per caricare.",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Aggiungi paragrafo alla fine",

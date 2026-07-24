@@ -239,6 +239,8 @@ enum Strings_nl {
         .editor_image_a11y: "Afbeelding",
         .editor_image_loading_a11y: "Afbeelding laden",
         .editor_image_loading_named_a11y: "Afbeelding laden: %@",
+        .editor_image_external: "Externe afbeelding · Tik om te laden",
+        .editor_image_external_a11y: "Externe afbeelding van %@. Tik om te laden.",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Alinea toevoegen aan het einde",

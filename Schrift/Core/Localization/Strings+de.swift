@@ -241,6 +241,8 @@ enum Strings_de {
         .editor_image_a11y: "Bild",
         .editor_image_loading_a11y: "Bild wird geladen",
         .editor_image_loading_named_a11y: "Bild wird geladen: %@",
+        .editor_image_external: "Externes Bild · Zum Laden tippen",
+        .editor_image_external_a11y: "Externes Bild von %@. Zum Laden tippen.",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Absatz am Ende hinzufügen",

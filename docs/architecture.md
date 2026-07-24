@@ -26,7 +26,12 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
 - **Rich editor content.** A standalone `![alt](url)` line with an absolute
   http(s) URL is a first-class image block through the whole editor/save
   pipeline, and photos can be inserted from the library (uploaded, then embedded
-  on success).
+  on success). An embedded image whose origin matches the user's Docs server
+  (every `/media/…` attachment) auto-loads; one hosted anywhere else renders a
+  tap-to-load placeholder and fetches nothing until the reader taps it, closing a
+  render-time IP/User-Agent/timing disclosure to a host the document's author
+  chose (`imageLoadPolicy`). Redirect-after-load — a same-origin URL the trusted
+  server 302s off-origin — is a known accepted residual.
 - **Design-system refresh.** A complete adaptive dark theme, in-app localization
   across 11 languages with live switching, a restructured Profile, layout-fidelity
   work, and read-only version history browsing. In-app version *restore* and

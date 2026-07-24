@@ -247,6 +247,8 @@ enum Strings_sl {
         .editor_image_a11y: "Slika",
         .editor_image_loading_a11y: "Nalaganje slike",
         .editor_image_loading_named_a11y: "Nalaganje slike: %@",
+        .editor_image_external: "Zunanja slika · Tapnite za nalaganje",
+        .editor_image_external_a11y: "Zunanja slika z %@. Tapnite za nalaganje.",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Dodaj odstavek na koncu",

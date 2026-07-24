@@ -256,11 +256,15 @@ enum L10nKey: String, CaseIterable, Sendable {
     case versions_error = "versions.error"  // "Couldn't load versions. Please try again."
     case versions_empty = "versions.empty"  // "No earlier versions yet."
 
-    // Editor - inline image (MarkdownImageView; accessibility labels only —
-    // the image alt text is document content and is never localized)
+    // Editor - inline image (MarkdownImageView). The image alt text and the
+    // image's host are document content and are never localized; these are the
+    // chrome around them. `external*` label the tap-to-load placeholder shown for
+    // an image hosted anywhere but the user's own server — see `imageLoadPolicy`.
     case editor_image_a11y = "editor.image.a11y"  // "Image"
     case editor_image_loading_a11y = "editor.image.loading_a11y"  // "Loading image"
     case editor_image_loading_named_a11y = "editor.image.loading_named_a11y"  // "Loading image: %@"
+    case editor_image_external = "editor.image.external"  // "External image · Tap to load"
+    case editor_image_external_a11y = "editor.image.external_a11y"  // "External image from %@. Tap to load."
 
     // Editor - block canvas accessibility labels (BlockEditorView)
     case editor_add_paragraph_a11y = "editor.add_paragraph_a11y"  // "Add paragraph at end"
