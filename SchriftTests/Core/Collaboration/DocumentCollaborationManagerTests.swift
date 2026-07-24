@@ -459,6 +459,37 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         session?.stop()
     }
 
+    func testDeepNestingUpdateEngagesFailSafeInsteadOfCrashing() async {
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: docID)
+        await waitUntil { spy.sockets.count == 1 }
+
+        // A hostile peer's frame: a nested-type chain far deeper than
+        // maxTypeNestingDepth, with a delete set that removes the root. The
+        // delete cascade recurses one native frame per level; unbounded it
+        // stack-overflows — a machine fault this fail-safe catch could not
+        // contain, crashing the app on a peer's say-so. Reaching the assertions
+        // is the regression test; the depth cap makes it a thrown error the
+        // manager fail-safes on, exactly like any other malformed frame. (A
+        // regression here reads as "Restarting after unexpected exit", a process
+        // crash — not a normal failure.)
+        let frame = DeepNestingFixtures.nestedTypeChain(depth: 6000, deleteRoot: true)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: frame))
+
+        await waitUntil { manager.remoteChangeToken(for: docID) == 1 }
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+        XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
+        XCTAssertNil(manager.encodeSnapshotForSave(for: docID))
+
+        // A later real update must not resurrect projection, and nothing crashed.
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
+        await waitUntil { manager.remoteChangeToken(for: docID) == 2 }
+        XCTAssertTrue(manager.replicaIsFailSafe(for: docID))
+        session?.stop()
+    }
+
     func testPendingStructsSuppressProjection() async throws {
         let spy = SocketFactorySpy()
         let manager = makeManager(spy: spy)
