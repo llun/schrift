@@ -37,6 +37,12 @@ final class SessionStore {
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
+            // A session stored by a build that predates the ThisDeviceOnly
+            // accessibility class would otherwise keep the weaker one for as long
+            // as it stays valid — which is indefinitely, since nothing re-saves
+            // until sign-out or a 401. Best-effort and idempotent.
+            keychain.upgradeAccessibility(forKey: Self.authenticatedKeychainKey)
+            keychain.upgradeAccessibility(forKey: Self.sessionCookiesKeychainKey)
             restoreSessionCookies()
         }
     }

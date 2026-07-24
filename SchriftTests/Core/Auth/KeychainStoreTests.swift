@@ -41,26 +41,31 @@ final class KeychainStoreTests: XCTestCase {
         XCTAssertNoThrow(try store.delete(forKey: "dev.llun.Schrift.test.neverExisted"))
     }
 
-    func testSavedItemIsThisDeviceOnlyAndNotSynchronized() throws {
-        // Session credentials must not ride an encrypted backup onto another
-        // device, and must never sync through iCloud. Read the attributes the
-        // item was actually stored with rather than trusting the save query.
-        try store.save("secret".data(using: .utf8)!, forKey: key)
-
+    /// Reads back the attributes the item at `key` was actually stored with.
+    /// `kSecAttrSynchronizableAny` makes the synchronizable attribute reliably
+    /// present in the result so an assertion on it can't be vacuous.
+    private func storedAttributes() throws -> [String: Any] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
         XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &result), errSecSuccess)
-        let attributes = try XCTUnwrap(result as? [String: Any])
+        return try XCTUnwrap(result as? [String: Any])
+    }
 
+    func testSavedItemIsThisDeviceOnlyAndNotSynchronized() throws {
+        // Session credentials must not ride an encrypted backup onto another
+        // device, and must never sync through iCloud.
+        try store.save("secret".data(using: .utf8)!, forKey: key)
+        let attributes = try storedAttributes()
         XCTAssertEqual(
             attributes[kSecAttrAccessible as String] as? String,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
-        XCTAssertNotEqual(attributes[kSecAttrSynchronizable as String] as? Bool, true)
+        XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
     }
 
     func testOverwriteKeepsTheThisDeviceOnlyAccessibility() throws {
@@ -69,18 +74,37 @@ final class KeychainStoreTests: XCTestCase {
         // downgrade a session stored by an earlier build.
         try store.save("first".data(using: .utf8)!, forKey: key)
         try store.save("second".data(using: .utf8)!, forKey: key)
+        XCTAssertEqual(
+            try storedAttributes()[kSecAttrAccessible as String] as? String,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+    }
 
-        let query: [String: Any] = [
+    func testUpgradeAccessibilityMigratesAnItemStoredWithTheOldDefault() throws {
+        // Seed an item the way a build predating the ThisDeviceOnly baseline did:
+        // a raw SecItemAdd under kSecAttrAccessibleWhenUnlocked (backup-eligible).
+        let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecValueData as String: "legacy".data(using: .utf8)!,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]
-        var result: AnyObject?
-        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &result), errSecSuccess)
-        let attributes = try XCTUnwrap(result as? [String: Any])
+        XCTAssertEqual(SecItemAdd(addQuery as CFDictionary, nil), errSecSuccess)
         XCTAssertEqual(
-            attributes[kSecAttrAccessible as String] as? String,
+            try storedAttributes()[kSecAttrAccessible as String] as? String,
+            kSecAttrAccessibleWhenUnlocked as String,
+            "precondition: item starts on the weaker class")
+
+        store.upgradeAccessibility(forKey: key)
+
+        XCTAssertEqual(
+            try storedAttributes()[kSecAttrAccessible as String] as? String,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        // The value must survive the in-place attribute rewrite.
+        XCTAssertEqual(try store.load(forKey: key), "legacy".data(using: .utf8))
+    }
+
+    func testUpgradeAccessibilityOnMissingKeyIsANoOp() {
+        // Best-effort: a user who was never signed in has no item to migrate.
+        store.upgradeAccessibility(forKey: "dev.llun.Schrift.test.neverExisted")
     }
 }
