@@ -1,0 +1,33 @@
+Schrift/Core/Auth/KeychainStore.swift
+  s_5d624218c1a684::t_ec06908b886b8a 24,26-41,51,58-73
+  s_5d624218c1a684::t_1305e6bff52fd5 8-16
+  s_4074db98cab964::t_0bfb39f4959e7d 74-75
+SchriftTests/Core/Auth/KeychainStoreTests.swift
+  s_5d624218c1a684::t_7bd4e8a8a48eae 44-47,51,57-58,60-64,68,77-80,82-85,88-89,91,93-100,102-108
+Schrift/Core/Auth/SessionStore.swift
+  s_5d624218c1a684::t_da3fc5dc79a1a6 40-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "03766cf633fca65c1289601f9e7f8b228b486dce",
+  "prompts": {},
+  "sessions": {
+    "s_4074db98cab964": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c33ae999-5e09-4367-b055-c4406d93725e",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
