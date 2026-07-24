@@ -76,13 +76,26 @@ final class YTransaction {
     /// throw V8's catchable `RangeError: Maximum call stack size exceeded`, the
     /// update is rejected, and the process survives. This cap makes Schrift do the
     /// same — refuse through a *thrown* `YIntegrationError.recursionLimitExceeded`
-    /// the manager fail-safes on. It sits ~10× above any real document (BlockNote
-    /// nests ~2 type levels per visual indent, so even an absurd 100-indent
-    /// document is ~200 levels) and well below the depth at which Swift's own
-    /// recursion faulted (empirically >5000 levels, Debug, iPhone 17 simulator),
-    /// so it refuses only crafted adversarial replicas and never a document a real
-    /// editor can produce. See CLAUDE.md "Malformed input must throw, never trap".
-    static let maxTypeNestingDepth = 2048
+    /// the manager fail-safes on.
+    ///
+    /// **The value is chosen for the *device* main-thread stack, not the
+    /// simulator's.** `applyReplicaUpdate` runs on `@MainActor`, so this recursion
+    /// is on the main thread — ~1 MB on a real iOS device, but the iOS Simulator
+    /// inherits the macOS host's far larger (~8 MB) main-thread stack. On the
+    /// simulator the fault floor measured >5000 levels (the deep repro crashed
+    /// around 20k); extrapolated to a ~1 MB device stack that is roughly 8× lower.
+    /// Each nesting level costs ~3 native frames on the delete path (`YItem.delete
+    /// → YContent.delete → YType.deleteChildren`) and ~2 on gc, so 256 levels is
+    /// ≲800 frames — safely inside 1 MB even in a Debug build — while still ~25×
+    /// above realistic content (a normal document nests only a handful of type
+    /// levels; even an absurd 100-visual-indent document is ~200 levels, and a
+    /// document that *does* exceed 256 simply falls back to classic REST editing,
+    /// losing live collaboration but no data). It is deliberately conservative:
+    /// **the exact device-safe ceiling is owed a real-device, Release-build
+    /// measurement before the `schrift.liveCollaboration` flag is defaulted on** —
+    /// a *simulator* Release measurement would not expose the device stack.
+    /// See CLAUDE.md "Malformed input must throw, never trap".
+    static let maxTypeNestingDepth = 256
 
     /// Current depth of the in-progress delete cascade (`YItem.delete`). The gc
     /// cascade threads its depth as a parameter instead, because `YItem.gc` is

@@ -503,7 +503,13 @@ final class YItem: YStruct {
     /// and survive.
     func gc(_ store: YStructStore, parentGCd: Bool, depth: Int = 0) throws {
         guard deleted else { throw YIntegrationError.unexpectedCase }
-        guard depth <= YTransaction.maxTypeNestingDepth else {
+        // `depth` is the item's own nesting level (top-level entry is 0, matching
+        // the delete counter's pre-increment value at the same level). The strict
+        // `<` mirrors `enterDeleteRecursion`'s `deleteRecursionDepth < cap`, so the
+        // two cascades refuse a chain at the *same* depth regardless of delete-set
+        // ordering — outermost-first (delete path) and innermost-first (gc path)
+        // agree.
+        guard depth < YTransaction.maxTypeNestingDepth else {
             throw YIntegrationError.recursionLimitExceeded
         }
         try content.gc(store, depth: depth)
