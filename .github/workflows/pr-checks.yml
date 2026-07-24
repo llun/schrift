@@ -40,10 +40,14 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      # Actions are pinned to full commit SHAs (not mutable tags) so a moved or
+      # compromised tag can't change what runs here — see docs/ci.md. The
+      # trailing comment records the human-readable version; dependabot
+      # (.github/dependabot.yml) opens bump PRs that keep both in sync.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Match testflight.yml so PR checks and releases build with the same Xcode.
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: latest-stable
 
@@ -118,7 +122,7 @@ jobs:
       # The result bundle is only interesting when something failed.
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results
           path: TestResults.xcresult
