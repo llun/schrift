@@ -1696,7 +1696,14 @@ markdown write endpoint**. Understand this before touching the save path:
   `HTTPCookieStorage` alone drops it when iOS kills the process) and
   `SessionStore.init` restores them into `HTTPCookieStorage.shared`
   synchronously, before RootView builds the API client. Deleted on sign-out.
-  Never log cookie values; never add `kSecAttrSynchronizable`.
+  Never log cookie values; never add `kSecAttrSynchronizable`. Items are stored
+  `…WhenUnlockedThisDeviceOnly` (a live session stays on the device that got it;
+  the cost is one re-login after a device migration), re-applied on every
+  delete-then-add `save` and back-filled onto pre-existing items by
+  `SessionStore.init` via `KeychainStore.upgradeAccessibility`. **If a Keychain
+  read or write ever moves onto a background-task path** (none today) this must
+  become `…AfterFirstUnlockThisDeviceOnly`, or a background launch reads nil and
+  silently signs the user out.
 - `DocumentContentCacheStore` is the one **file-based** store (full document
   bodies are too large for UserDefaults): stateless over its directory,
   `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction

@@ -168,20 +168,37 @@ final class Lib0DecoderTests: XCTestCase {
 
     func testReadAnyDepthBudgetIsPerCallNotCumulative() {
         // The budget is a per-value parameter, so siblings each start fresh and a
-        // WIDE document is fine. If a future refactor made `depth` a stored
-        // property, these 200 flat siblings would blow the cap and throw — a
-        // silent live-collab breakage on real content. Array of 200 nulls, then
-        // an object with 200 primitive entries.
+        // WIDE document is fine. A *broken* stored-property refactor (increment on
+        // entry, no decrement) would climb once per sibling and throw — a silent
+        // live-collab breakage on real content. Width is tied to the cap so this
+        // stays a regression test even if the cap is raised. Array of N nulls,
+        // then an object with N primitive entries.
+        let width = Lib0Decoder.maxAnyNestingDepth * 4
+
         var wideArray = Lib0Encoder()
-        wideArray.writeAny(.array(Array(repeating: .null, count: 200)))
+        wideArray.writeAny(.array(Array(repeating: .null, count: width)))
         var arrayDecoder = Lib0Decoder(wideArray.data)
         XCTAssertNoThrow(try arrayDecoder.readAny())
 
         var wideObject = Lib0Encoder()
         wideObject.writeAny(
-            .object((0..<200).map { YAnyObjectEntry(key: "k\($0)", value: .int($0)) }))
+            .object((0..<width).map { YAnyObjectEntry(key: "k\($0)", value: .int($0)) }))
         var objectDecoder = Lib0Decoder(wideObject.data)
         XCTAssertNoThrow(try objectDecoder.readAny())
+    }
+
+    func testReadAnyDecodesAMixedTypePropsObject() {
+        // A realistic BlockNote props shape: a shallow object mixing string and
+        // int values must round-trip (the specific mixed shape the wide-object
+        // test above doesn't pin).
+        var encoder = Lib0Encoder()
+        let props = YAnyValue.object([
+            YAnyObjectEntry(key: "textAlignment", value: .string("left")),
+            YAnyObjectEntry(key: "level", value: .int(1)),
+        ])
+        encoder.writeAny(props)
+        var decoder = Lib0Decoder(encoder.data)
+        XCTAssertEqual(try? decoder.readAny(), props)
     }
 
     // MARK: - round-trips against Lib0Encoder

@@ -103,8 +103,12 @@ final class KeychainStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(forKey: key), "legacy".data(using: .utf8))
     }
 
-    func testUpgradeAccessibilityOnMissingKeyIsANoOp() {
+    func testUpgradeAccessibilityOnMissingKeyDoesNotCreateAnItem() throws {
         // Best-effort: a user who was never signed in has no item to migrate.
-        store.upgradeAccessibility(forKey: "dev.llun.Schrift.test.neverExisted")
+        // SecItemUpdate must never *create* the item — that would materialise a
+        // phantom credential.
+        let missing = "dev.llun.Schrift.test.neverExisted"
+        store.upgradeAccessibility(forKey: missing)
+        XCTAssertNil(try store.load(forKey: missing))
     }
 }
