@@ -1,0 +1,24 @@
+CLAUDE.md
+  s_5d624218c1a684::t_4e888bd1147c5e 943-944,946-967,970-974
+docs/architecture.md
+  s_5d624218c1a684::t_095da6499eb44e 762-779
+SchriftTests/Core/Yjs/YDeepNestingRecursionTests.swift
+  s_5d624218c1a684::t_4d10c24168fb6c 104
+  s_5d624218c1a684::t_786edccf7ada8c 69-74,84-98,102-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "7fa56cdb3ec61d365fefe105c6474df8da60e26e",
+  "prompts": {},
+  "sessions": {
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
