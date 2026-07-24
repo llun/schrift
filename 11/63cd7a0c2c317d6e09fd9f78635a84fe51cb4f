@@ -1,0 +1,22 @@
+Schrift/Core/Auth/KeychainStore.swift
+  s_5d624218c1a684::t_41b6db09d26f02 18-25,27,37
+  s_5d624218c1a684::t_fd4f0b244aad0f 15-17,26
+SchriftTests/Core/Auth/KeychainStoreTests.swift
+  s_5d624218c1a684::t_8e0040eaeb4aad 43-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "1163cd7a0c2c317d6e09fd9f78635a84fe51cb4f",
+  "prompts": {},
+  "sessions": {
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
