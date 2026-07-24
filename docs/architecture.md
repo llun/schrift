@@ -759,20 +759,24 @@ refusal simply fail-safes the update.
 The delete and gc cascades are a second such recursion. They
 (`YItem.delete → ContentType.delete → YType.deleteChildren → YItem.delete`,
 and the `YItem.gc` twin) recurse once per nested `ContentType` level — a depth one
-crafted inbound update fully controls — so a ~20k-deep nested-type chain (~140 KB)
-overflows the stack. Integration itself is iterative and safe far past that; only
-delete/gc recurse, which matches yjs (it too accepts deep integration and refuses deep
-delete/gc with a catchable `RangeError`). `YTransaction.maxTypeNestingDepth` (2048)
-bounds both cascades: `YItem.gc` throws directly (already `throws`), while the
-non-throwing `YItem.delete` flags `transaction.recursionLimitExceeded`, which
-`cleanupTransactions` — the single chokepoint every transaction drains through —
-converts into a thrown `.recursionLimitExceeded`, discarding the half-marked store
-before gc/merge read it. It is a deliberate narrowing (oracle-faithful at the
-accept/reject boundary and byte-identical below the cap — the golden `deleteNestedType`
-fixture is unmoved — but stricter than V8 between the cap and its ~4000 limit),
-accepted because real documents nest ~2 type levels per visual indent. The cap should
-be re-measured on a Release build, and a deep-nesting differential-fuzz lane run,
-before the live-collaboration flag is ever defaulted on.
+crafted inbound update fully controls. On the **simulator** (a large host stack) a
+~20k-deep chain (~140 KB) overflows; the vulnerable path runs `@MainActor`, and a real
+device's ~1 MB main-thread stack is ~8× smaller, so its floor is far lower.
+Integration itself is iterative and safe far past that; only delete/gc recurse, which
+matches yjs (it too accepts deep integration and refuses deep delete/gc with a catchable
+`RangeError`). `YTransaction.maxTypeNestingDepth` (**256** — sized for the device stack,
+≲800 native frames, ~25× above realistic content) bounds both cascades: `YItem.gc`
+throws directly (already `throws`), while the non-throwing `YItem.delete` flags
+`transaction.recursionLimitExceeded`, which `cleanupTransactions` — the single chokepoint
+every transaction drains through — converts into a thrown `.recursionLimitExceeded`,
+discarding the half-marked store before gc/merge read it (the two guards are symmetric,
+so both delete-set orderings refuse at the same depth). It is a deliberate narrowing
+(oracle-faithful at the accept/reject boundary and byte-identical below the cap — the
+golden `deleteNestedType` fixture is unmoved — but stricter than V8 above it), accepted
+because real documents nest ~2 type levels per visual indent and a deeper one merely
+loses live collaboration, not data. The cap must be re-measured on a **real device**,
+Release build (a simulator build has the host's large stack), and a deep-nesting
+differential-fuzz lane run, before the live-collaboration flag is ever defaulted on.
 
 ### Teardown is the owner's job
 

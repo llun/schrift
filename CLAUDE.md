@@ -940,26 +940,38 @@ that are easy to violate and expensive to discover:
   the delete and gc cascades (`YItem.delete → ContentType.delete → YType.deleteChildren
   → YItem.delete`, and the `YItem.gc` twin) recurse once per nested `ContentType`
   level, and that depth is fully attacker-controlled by one inbound update (~7 wire
-  bytes per level). Unbounded, a ~20k-deep chain (~140 KB) overruns the native stack
-  — an `EXC_BAD_ACCESS`, *not* a Swift error, so it bypasses
+  bytes per level). Unbounded, a deep chain overruns the native stack — an
+  `EXC_BAD_ACCESS`, *not* a Swift error, so it bypasses
   `DocumentCollaborationManager.applyReplicaUpdate`'s fail-safe `catch` and crashes
-  the app. **Integration itself is iterative** (a deep chain integrates safely past
-  200k) — only *delete*/*gc* recurse, matching yjs, which likewise accepts deep
-  integration and refuses deep delete/gc (a catchable `RangeError`).
-  `YTransaction.maxTypeNestingDepth` (2048) bounds both: `YItem.gc` is already
-  `throws` so it refuses directly; `YItem.delete` is a **non-throwing** override so
-  it flags `transaction.recursionLimitExceeded`, and `cleanupTransactions` — the one
-  chokepoint every transaction (wire, local write, nested cleanup) drains through —
-  converts the flag into a thrown `.recursionLimitExceeded`, discarding the
-  half-marked store wholesale before gc/merge trust it. This is a **deliberate
-  narrowing**, oracle-faithful at the accept/reject boundary (both refuse deep
-  delete/gc, converge byte-identically below the cap — the golden `deleteNestedType`
-  gc fixture is unmoved) but stricter than V8 in the [cap, ~V8-limit] band; accepted
-  because real documents nest ~2 type levels per visual indent (~200 for an absurd
-  100-indent doc). The cap must be **re-measured on a Release build** before the
+  the app (on the **simulator**, whose main-thread stack is large, the crash needs a
+  ~20k-deep chain / ~140 KB; a real device's `@MainActor` main-thread stack is ~1 MB,
+  roughly 8× smaller, so its floor is far lower). **Integration itself is iterative**
+  (a deep chain integrates safely past 200k) — only *delete*/*gc* recurse, matching
+  yjs, which likewise accepts deep integration and refuses deep delete/gc (a catchable
+  `RangeError`). `YTransaction.maxTypeNestingDepth` (**256** — chosen for the device
+  stack, ≲800 native frames even in Debug, and ~25× above realistic content) bounds
+  both: `YItem.gc` is already `throws` so it refuses directly; `YItem.delete` is a
+  **non-throwing** override so it flags `transaction.recursionLimitExceeded`, and
+  `cleanupTransactions` — the one chokepoint every transaction (wire, local write,
+  nested cleanup) drains through — converts the flag into a thrown
+  `.recursionLimitExceeded`, discarding the half-marked store wholesale before gc/merge
+  trust it. The two guards are symmetric (`enterDeleteRecursion`'s `< cap` and
+  `YItem.gc`'s `depth < cap`), so both delete-set orderings refuse at the same depth.
+  This is a **deliberate narrowing**, oracle-faithful at the accept/reject boundary
+  (both refuse deep delete/gc, converge byte-identically below the cap — the golden
+  `deleteNestedType` gc fixture is unmoved) but stricter than V8 in the [cap,
+  ~V8-limit] band; accepted because real documents nest ~2 type levels per visual
+  indent (~200 even for an absurd 100-indent doc), and a document that *does* exceed
+  256 loses live collaboration (falls back to classic REST editing) but no data. The
+  cap must be **re-measured on a real device, Release build** (a *simulator* Release
+  build has the host's large stack and would give a false all-clear) before the
   `schrift.liveCollaboration` flag is defaulted on, and a deep-nesting differential-
   fuzz lane (both delete-set orderings, gc on/off) is owed then; landing behind the
-  default-off flag with the unit + manager tests green is the accepted interim. The
+  default-off flag with the unit + manager tests green is the accepted interim.
+  **Load-bearing invariant the flag relies on:** the replica must be destroyed on any
+  `applyUpdate` throw (as `applyReplicaUpdate` does) — a caller that caught and reused
+  the same `YDoc` would leave `transactionCleanups` non-empty and skip the flag check
+  on the next transaction. The
   traversal *bodies* are the untouched yjs transliteration — only depth bookkeeping
   wraps the one descent in each. `YDoc.destroy()`, `YStateEncoder`, `YItem.integrate`,
   and `YBlockProjection` are all iterative or opaque-at-first-level and need no cap.

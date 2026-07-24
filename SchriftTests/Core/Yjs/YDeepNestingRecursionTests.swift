@@ -66,6 +66,12 @@ final class YDeepNestingRecursionTests: XCTestCase {
 
     // MARK: - Boundary (read the cap, don't hard-code it)
 
+    // The delete-side (`enterDeleteRecursion`) and gc-side (`YItem.gc`) guards are
+    // deliberately symmetric — both refuse a chain at the same depth regardless of
+    // delete-set ordering. `testDepthAtTheCapSucceeds`/`…OnePastTheCapRefuses`
+    // exercise the outermost-first (delete) boundary; the `…ViaGCGuard` pair below
+    // exercises the innermost-first (gc) boundary at the same threshold.
+
     func testDepthAtTheCapSucceeds() throws {
         // A chain exactly `maxTypeNestingDepth` deep deletes + gcs without refusal.
         try applyChain(depth: YTransaction.maxTypeNestingDepth, gc: true, deleteRoot: true)
@@ -75,11 +81,27 @@ final class YDeepNestingRecursionTests: XCTestCase {
         assertRefuses(depth: YTransaction.maxTypeNestingDepth + 1, gc: true)
     }
 
+    func testDepthAtTheCapSucceedsViaGCGuard() throws {
+        // Innermost-first: the delete cascades stay shallow, so this pins the
+        // gc-side boundary specifically. Exactly at the cap must succeed.
+        try applyChain(
+            depth: YTransaction.maxTypeNestingDepth, gc: true, deleteRoot: true, innermostFirst: true)
+    }
+
+    func testDepthOnePastTheCapRefusesViaGCGuard() {
+        // One past the cap, innermost-first, must refuse via the gc guard — the
+        // symmetric twin of `testDepthOnePastTheCapRefuses`. Without the `<`/`<=`
+        // symmetry fix, this depth would slip through gc (accepted) while the
+        // delete path refused it.
+        assertRefuses(depth: YTransaction.maxTypeNestingDepth + 1, gc: true, innermostFirst: true)
+    }
+
     // MARK: - Below the cap is a provable no-op
 
     func testShallowDepthDeletesAndGCsCleanly() throws {
-        try applyChain(depth: 500, gc: true, deleteRoot: true)
-        try applyChain(depth: 500, gc: false, deleteRoot: true)
+        let depth = YTransaction.maxTypeNestingDepth / 2
+        try applyChain(depth: depth, gc: true, deleteRoot: true)
+        try applyChain(depth: depth, gc: false, deleteRoot: true)
     }
 
     func testWideShallowDeleteDoesNotRefuse() throws {
