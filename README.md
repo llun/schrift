@@ -6,11 +6,13 @@ Schrift is a native iOS/iPadOS client for [La Suite Numérique Docs](https://git
 
 Browse, search, and edit documents; share and manage permissions; and read a
 document's version history (browsing is native, restoring a version currently
-hands off to the web app). The app supports **Light/Dark/System appearance**
-and an **in-app language picker covering 11 languages** (English, French,
-Spanish, German, Italian, Dutch, Portuguese, Slovene, Thai, and
-Simplified/Traditional Chinese) that switches the UI live, with no relaunch —
-document content itself is never translated.
+hands off to the web app). Real-time **live collaboration** (Yjs/Hocuspocus over
+a WebSocket) is built in behind a default-off Profile toggle, pending on-device
+verification against a collaboration-capable server. The app supports
+**Light/Dark/System appearance** and an **in-app language picker covering 11
+languages** (English, French, Spanish, German, Italian, Dutch, Portuguese,
+Slovene, Thai, and Simplified/Traditional Chinese) that switches the UI live,
+with no relaunch — document content itself is never translated.
 
 ## Design & architecture docs
 
