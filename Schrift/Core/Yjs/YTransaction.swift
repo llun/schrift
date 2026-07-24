@@ -56,6 +56,60 @@ final class YTransaction {
             changed[oid] = entry
         }
     }
+
+    // MARK: - Deep-nesting recursion guard
+
+    /// The maximum `ContentType` nesting depth the delete and gc cascades descend
+    /// before the whole update is refused.
+    ///
+    /// `YItem.delete → ContentType.delete → YType.deleteChildren → YItem.delete`
+    /// and `YItem.gc → ContentType.gc → YItem.gc` each recurse once per nested
+    /// `ContentType` level, consuming native stack proportional to the replica's
+    /// live type-nesting depth — a depth a single crafted inbound update fully
+    /// controls (~7 wire bytes per level). Past a few thousand levels that
+    /// recursion overruns the thread's guard page and raises `EXC_BAD_ACCESS`: a
+    /// *machine fault*, not a Swift error, so it bypasses
+    /// `DocumentCollaborationManager.applyReplicaUpdate`'s fail-safe `catch` and
+    /// crashes the app.
+    ///
+    /// yjs refuses the same input: at deep nesting `Item.delete`/`ContentType.delete`
+    /// throw V8's catchable `RangeError: Maximum call stack size exceeded`, the
+    /// update is rejected, and the process survives. This cap makes Schrift do the
+    /// same — refuse through a *thrown* `YIntegrationError.recursionLimitExceeded`
+    /// the manager fail-safes on. It sits ~10× above any real document (BlockNote
+    /// nests ~2 type levels per visual indent, so even an absurd 100-indent
+    /// document is ~200 levels) and well below the depth at which Swift's own
+    /// recursion faulted (empirically >5000 levels, Debug, iPhone 17 simulator),
+    /// so it refuses only crafted adversarial replicas and never a document a real
+    /// editor can produce. See CLAUDE.md "Malformed input must throw, never trap".
+    static let maxTypeNestingDepth = 2048
+
+    /// Current depth of the in-progress delete cascade (`YItem.delete`). The gc
+    /// cascade threads its depth as a parameter instead, because `YItem.gc` is
+    /// already `throws`; `YItem.delete` is a non-throwing override and so signals
+    /// refusal via this counter + the `recursionLimitExceeded` flag.
+    private var deleteRecursionDepth = 0
+
+    /// Set when a delete cascade in this transaction hit `maxTypeNestingDepth` and
+    /// stopped descending. `cleanupTransactions` converts it into a thrown
+    /// `.recursionLimitExceeded`, so the partially-marked store is discarded
+    /// wholesale (the manager destroys the replica and latches `failSafe`) and is
+    /// never observed.
+    var recursionLimitExceeded = false
+
+    /// Enter one delete-cascade level. Returns `false` (without entering) when
+    /// descending further would exceed `maxTypeNestingDepth`; the caller then flags
+    /// the transaction and stops descending. Pair with `exitDeleteRecursion()`.
+    func enterDeleteRecursion() -> Bool {
+        guard deleteRecursionDepth < YTransaction.maxTypeNestingDepth else { return false }
+        deleteRecursionDepth += 1
+        return true
+    }
+
+    /// Leave one delete-cascade level.
+    func exitDeleteRecursion() {
+        deleteRecursionDepth -= 1
+    }
 }
 
 // MARK: - Running a transaction
@@ -121,6 +175,20 @@ extension YDoc {
         guard i < transactionCleanups.count else { return }
         let transaction = transactionCleanups[i]
         let store = transaction.doc.store
+
+        // A delete cascade in this transaction hit `maxTypeNestingDepth` and
+        // stopped descending — `YItem.delete` is a non-throwing override, so it
+        // flags the transaction rather than throwing. This is the single universal
+        // chokepoint: every delete (wire `readAndApply`, local
+        // `BlockNoteWrite.applyEdit`, and the nested `YTextCleanup` transacts) runs
+        // inside some transaction, and every transaction — top-level or
+        // cleanup-spawned — is drained here exactly once. Refuse the whole update
+        // now, before gc/merge trust the half-marked store. yjs's own deep
+        // recursion throws a catchable `RangeError` on the same input; the caller
+        // (`applyReplicaUpdate`) destroys and fail-safes this replica.
+        if transaction.recursionLimitExceeded {
+            throw YIntegrationError.recursionLimitExceeded
+        }
 
         // yjs `try` block.
         let observerOutcome = Result {

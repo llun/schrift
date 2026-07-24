@@ -10,13 +10,23 @@ import Foundation
 /// - `methodUnimplemented` is yjs's `error.methodUnimplemented()` — a content
 ///   kind that cannot be split (`ContentBinary`, `ContentEmbed`, …). Reaching it
 ///   means an update claimed a split inside single-unit content.
+/// - `recursionLimitExceeded` — the delete or gc cascade nests `ContentType`s
+///   deeper than `YTransaction.maxTypeNestingDepth`. `YItem.delete`/`YItem.gc`
+///   descend the live type graph one native stack frame per nesting level, and a
+///   single crafted inbound update controls that depth; a deep chain overflows
+///   the native stack — an uncatchable `EXC_BAD_ACCESS`, not a Swift error, which
+///   defeats `DocumentCollaborationManager.applyReplicaUpdate`'s fail-safe
+///   `catch`. yjs refuses the identical input by throwing a catchable
+///   stack-overflow `RangeError`; refusing here reaches the same outcome without
+///   the trap. See `YTransaction.maxTypeNestingDepth`.
 ///
-/// Both are *malformed-input* signals, not bugs to recover from: the caller
+/// All are *malformed-input* signals, not bugs to recover from: the caller
 /// (`YDocument.applyUpdate`, later PRs) turns them into the roadmap's `failSafe`
 /// state, which permanently forbids snapshot PATCHes from that replica.
 enum YIntegrationError: Error, Equatable {
     case unexpectedCase
     case methodUnimplemented
+    case recursionLimitExceeded
 }
 
 // MARK: - Live content model
@@ -260,18 +270,22 @@ enum YContent {
     /// `parentGCd: true`, so each child is replaced by a `GC` struct, then clears
     /// the type's `start`/`map`. Non-mutating on the `YContent` value: it only
     /// mutates the referenced `YType` (a class).
-    func gc(_ store: YStructStore) throws {
+    ///
+    /// `depth` is the `ContentType` nesting level, threaded so `YItem.gc` can
+    /// bound the recursion (see `YTransaction.maxTypeNestingDepth`). It defaults
+    /// to 0 so the driver (`tryGcDeleteSet`) and existing tests need no change.
+    func gc(_ store: YStructStore, depth: Int = 0) throws {
         guard case .type(let type) = self else { return }
         var item = type.start
         while let current = item {
-            try current.gc(store, parentGCd: true)
+            try current.gc(store, parentGCd: true, depth: depth + 1)
             item = current.right
         }
         type.start = nil
         for (_, mapHead) in type.map {
             var item: YItem? = mapHead
             while let current = item {
-                try current.gc(store, parentGCd: true)
+                try current.gc(store, parentGCd: true, depth: depth + 1)
                 item = current.left
             }
         }

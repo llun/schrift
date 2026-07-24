@@ -449,6 +449,21 @@ final class YItem: YStruct {
 
     /// yjs `Item.delete` (@9908) — mark deleted, shrink the parent, record the
     /// range on the transaction, and let the content tear down its sub-tree.
+    ///
+    /// yjs recurses through the content (`content.delete` → `ContentType.delete` →
+    /// `YType.deleteChildren` → `Item.delete`), one native stack frame per
+    /// `ContentType` nesting level. That depth is attacker-controlled on an inbound
+    /// update, and a deep chain overflows the native stack — an uncatchable machine
+    /// fault, not a throw, so it slips past `applyReplicaUpdate`'s fail-safe `catch`.
+    /// Bound the descent: past `maxTypeNestingDepth`, stop descending and flag the
+    /// transaction. `cleanupTransactions` — the one site every transaction is
+    /// drained through — converts the flag into a thrown `recursionLimitExceeded`,
+    /// so the half-marked replica is destroyed and fail-safed, never observed.
+    /// `delete` is a **non-throwing** override of `YStruct.delete`, so it cannot
+    /// throw directly (that would ripple to `YGC`/`YSkip` and every delete call
+    /// site); the flag is the signal. Everything above the guard — the mark, the
+    /// delete-set range, the changed-type record — already ran, so for every input
+    /// below the cap this is pure bookkeeping and the visit order is unchanged.
     override func delete(_ transaction: YTransaction) {
         guard !deleted else { return }
         // yjs dereferences `parent` unguarded here; it is a resolved type for every
@@ -459,6 +474,11 @@ final class YItem: YStruct {
         markDeleted()
         transaction.deleteSet.add(client: id.client, clock: id.clock, length: length)
         if let parentType { transaction.addChangedType(parentType, parentSub: parentSub) }
+        guard transaction.enterDeleteRecursion() else {
+            transaction.recursionLimitExceeded = true
+            return
+        }
+        defer { transaction.exitDeleteRecursion() }
         content.delete(transaction)
     }
 
@@ -472,9 +492,21 @@ final class YItem: YStruct {
     /// becomes a `ContentDeleted` tombstone, which the following merge then
     /// coalesces with adjacent tombstones. A non-deleted item here is malformed —
     /// yjs throws `unexpectedCase`, and so do we (a trap would be a remote crash).
-    func gc(_ store: YStructStore, parentGCd: Bool) throws {
+    ///
+    /// `depth` bounds the descent symmetrically with `YItem.delete`. A delete set
+    /// ordered innermost-clock-first can mark a deep chain deleted with only
+    /// *shallow* per-item delete cascades (each item's children are already
+    /// deleted, so `deleteChildren` never recurses), slipping past the delete-side
+    /// cap — but leaves a fully-deleted deep chain that `tryGcDeleteSet` then
+    /// recurses through here. `gc` is already `throws`, so refuse directly. yjs
+    /// throws its own stack-overflow `RangeError` on the same descent; both reject
+    /// and survive.
+    func gc(_ store: YStructStore, parentGCd: Bool, depth: Int = 0) throws {
         guard deleted else { throw YIntegrationError.unexpectedCase }
-        try content.gc(store)
+        guard depth <= YTransaction.maxTypeNestingDepth else {
+            throw YIntegrationError.recursionLimitExceeded
+        }
+        try content.gc(store, depth: depth)
         if parentGCd {
             try store.replaceStruct(self, with: YGC(id: id, length: length))
         } else {
