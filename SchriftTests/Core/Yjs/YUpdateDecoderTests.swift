@@ -225,6 +225,17 @@ final class YUpdateDecoderTests: XCTestCase {
         }
     }
 
+    func testDeeplyNestedAnyContentThrowsInsteadOfOverflowingTheStack() {
+        // The whole reason `readAny` is depth-capped: this is the shape a hostile
+        // peer would send — a ContentAny struct holding 20k nested single-element
+        // arrays. Unguarded, decoding recurses once per level and the stack
+        // overflows: a fatal fault that would kill the process straight through
+        // `applyReplicaUpdate`'s fail-safe catch.
+        assertThrows(Lib0DecodingError.anyNestingTooDeep) {
+            _ = try YUpdateDecoder.decode(NestedAnyFixtures.contentAnyUpdate(depth: 20_000))
+        }
+    }
+
     func testUnsupportedTypeRefThrowsTheTypedError() {
         // info 0x07 → ContentType; parent "t"; then type ref 99 is out of range.
         do {

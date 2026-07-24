@@ -19,9 +19,10 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   revalidation; a **Work Offline** toggle (`schrift.workOffline`, Profile) forces
   read-only offline mode. Offline *editing* is out of scope. See
   [`offline-and-sync.md`](offline-and-sync.md).
-- **Persistent sessions.** Session cookies persist in the Keychain across app
-  kills, and a real 401 presents an in-place re-login sheet instead of dropping
-  back to the Connect screen.
+- **Persistent sessions.** Session cookies persist in the Keychain (as
+  `…WhenUnlockedThisDeviceOnly`, so a restored backup can't carry a live session
+  onto another device) across app kills, and a real 401 presents an in-place
+  re-login sheet instead of dropping back to the Connect screen.
 - **Rich editor content.** A standalone `![alt](url)` line with an absolute
   http(s) URL is a first-class image block through the whole editor/save
   pipeline, and photos can be inserted from the library (uploaded, then embedded
@@ -740,6 +741,21 @@ would be **stricter than yjs** for input that cannot hurt us. (`Lib0Decoder` acc
 the full 64-bit range because its encoder half must round-trip Swift's `UInt`;
 `decodeStructs` guards the one place that arithmetic can overflow.)
 
+A trap is not the only fatal fault the wire can trigger — **unbounded recursion**
+is another, and the fail-safe `catch` in `DocumentCollaborationManager.applyReplicaUpdate`
+cannot intercept a stack overflow (it is a machine fault, not a Swift error).
+`Lib0Decoder.readAny`'s object/array tags nest, so a few KB of nested-container
+bytes was thousands of stack frames; `Lib0Decoder.maxAnyNestingDepth` (64) now caps
+it and throws `anyNestingTooDeep`. Unlike the clock rule this is a **deliberate
+narrowing** rather than oracle parity — a JS decoder also refuses, but only in the
+thousands — accepted because real `.any` content nests two or three deep and the
+refusal simply fail-safes the update. **Known residual gap:** the delete/gc walk
+(`YItem.delete` → `YContent.delete` → `YType.deleteChildren`, and the gc sibling) is
+still recursive on the replica's type-nesting depth and is wire-reachable — a single
+~20k-deep nested-type update (~140 KB) overflows the stack on delete-set apply, while
+integration itself is iterative and safe far past that. Fixing it edits the
+transliterated store, so it is tracked as a separate, sign-off-gated change.
+
 ### Teardown is the owner's job
 
 The item graph is a mesh of strong cycles — `item.left ⇄ item.right`, and
@@ -836,7 +852,7 @@ Flow:
 2. App presents a `WKWebView` (in a sheet) loading `https://{server}/api/v1.0/authenticate/?next=...`.
 3. `WKNavigationDelegate` watches for navigation back to a recognized "logged in" location (e.g. a successful `GET /api/v1.0/users/me/` no longer returning 401, or landing back on the SPA root) and dismisses the sheet.
 4. The Django session cookie (`docs_sessionid`) is read from `WKWebsiteDataStore.default().httpCookieStore` and synced into `HTTPCookieStorage.shared` so the app's `URLSession` (default configuration) automatically attaches it on subsequent same-host requests.
-5. `SessionStore.signIn` additionally snapshots the server's cookies into the Keychain (`dev.llun.Schrift.sessionCookies`, as Codable `StoredCookie`s) and `SessionStore.init` restores them synchronously on launch, before the API client is built — session-only cookies (nil `expiresDate`, e.g. Django's `sessionid`) are otherwise dropped from `HTTPCookieStorage` when iOS kills the process. Server URL + auth flag are persisted too; sign-out deletes both the snapshot and the live cookies.
+5. `SessionStore.signIn` additionally snapshots the server's cookies into the Keychain (`dev.llun.Schrift.sessionCookies`, as Codable `StoredCookie`s) and `SessionStore.init` restores them synchronously on launch, before the API client is built — session-only cookies (nil `expiresDate`, e.g. Django's `sessionid`) are otherwise dropped from `HTTPCookieStorage` when iOS kills the process. Server URL + auth flag are persisted too; sign-out deletes both the snapshot and the live cookies. Keychain items use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (never synchronizable), so a live session stays on the device that obtained it — the user-visible cost is one re-login after a device migration. `SessionStore.init` runs a best-effort `SecItemUpdate` to migrate items written by builds that predated this class.
 6. On a real `401` from any API call, the shared `DocsAPIClient`'s `onSessionExpired` hook sets `SessionStore.needsReauthentication`, which presents a re-login sheet (the same WKWebView OIDC flow) over the current UI. Cached data keeps showing; dismissing the sheet cancels non-destructively and the next failing request re-presents it. The app never drops back to the Connect screen on 401 — Connect is reached only via explicit sign-out.
 
 Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF token (`X-CSRFToken` header, value read from the `csrftoken` cookie), matching the web frontend's own `fetchApi.ts` behavior.

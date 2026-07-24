@@ -13,6 +13,8 @@ enum Lib0DecodingError: Error, Equatable {
     /// `readAny` met a byte outside lib0 `writeAny`'s tag range (116–127) — i.e.
     /// malformed input, since lib0 never emits anything else.
     case unsupportedAnyTag(UInt8)
+    /// A `readAny` value nested deeper than `Lib0Decoder.maxAnyNestingDepth`.
+    case anyNestingTooDeep
 }
 
 /// Cursor over a byte buffer implementing the subset of lib0's binary *decoding*
@@ -145,10 +147,32 @@ struct Lib0Decoder {
         return try readBytes(Int(exactly: length) ?? Int.max)
     }
 
+    /// How deeply `readAny` will follow nested object/array tags before throwing.
+    ///
+    /// Object (118) and array (117) values nest, so a few bytes of `75 01 75 01 …`
+    /// describe arbitrarily deep nesting — and every level is one more Swift stack
+    /// frame. That input is attacker-controlled (it arrives from a peer through
+    /// `YUpdateDecoder.decodeContent`'s any/doc refs), and a stack overflow is a
+    /// fatal machine fault, not a Swift error: it would kill the process straight
+    /// through `DocumentCollaborationManager.applyReplicaUpdate`'s fail-safe
+    /// `catch`, which exists precisely so malformed wire data can never take the
+    /// app down. Throwing keeps that guarantee — and matches the oracle, since a
+    /// JS decoder hitting its own stack limit raises a *catchable* RangeError.
+    ///
+    /// The cap is far above real content: BlockNote block props are flat objects
+    /// of primitives, nesting two or three levels at most.
+    static let maxAnyNestingDepth = 64
+
     /// Decodes a lib0 `readAny` value — the full tag set (116–127), the inverse of
     /// `Lib0Encoder.writeAny`. A byte outside that range is malformed input and
-    /// throws `unsupportedAnyTag`.
+    /// throws `unsupportedAnyTag`; nesting past `maxAnyNestingDepth` throws
+    /// `anyNestingTooDeep`.
     mutating func readAny() throws -> YAnyValue {
+        try readAny(depth: 0)
+    }
+
+    private mutating func readAny(depth: Int) throws -> YAnyValue {
+        guard depth <= Self.maxAnyNestingDepth else { throw Lib0DecodingError.anyNestingTooDeep }
         let tag = try readUInt8()
         switch tag {
         case 119: return .string(try readVarString())
@@ -174,14 +198,14 @@ struct Lib0Decoder {
             entries.reserveCapacity(min(Int(exactly: count) ?? 0, remainingCount))
             for _ in 0..<count {
                 let key = try readVarString()
-                entries.append(YAnyObjectEntry(key: key, value: try readAny()))
+                entries.append(YAnyObjectEntry(key: key, value: try readAny(depth: depth + 1)))
             }
             return .object(entries)
         case 117:  // array: varUint(count) then count × any value
             let count = try readVarUInt()
             var values: [YAnyValue] = []
             values.reserveCapacity(min(Int(exactly: count) ?? 0, remainingCount))
-            for _ in 0..<count { values.append(try readAny()) }
+            for _ in 0..<count { values.append(try readAny(depth: depth + 1)) }
             return .array(values)
         case 116: return .uint8Array(try readVarUint8Array())
         default: throw Lib0DecodingError.unsupportedAnyTag(tag)

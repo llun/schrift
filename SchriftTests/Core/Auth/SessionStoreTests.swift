@@ -64,6 +64,29 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(second.isAuthenticated)
     }
 
+    func testAuthenticatedInitMigratesBothKeychainKeysAccessibility() throws {
+        // On launch an already-signed-in user's items (written by a build
+        // predating the ThisDeviceOnly class) must be migrated — for the auth
+        // flag AND the cookie snapshot. Guards against dropping or misplacing
+        // either upgrade call, or moving it outside the `isAuthenticated` gate.
+        let keychain = FakeKeychainStore()
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain)
+        try first.signIn(serverURL: serverURL)
+
+        _ = SessionStore(userDefaults: userDefaults, keychain: keychain)
+
+        XCTAssertEqual(
+            Set(keychain.upgradedKeys),
+            Set(["dev.llun.Schrift.isAuthenticated", "dev.llun.Schrift.sessionCookies"]))
+    }
+
+    func testUnauthenticatedInitMigratesNothing() {
+        // Nothing to migrate when signed out — don't touch the Keychain.
+        let keychain = FakeKeychainStore()
+        _ = SessionStore(userDefaults: userDefaults, keychain: keychain)
+        XCTAssertTrue(keychain.upgradedKeys.isEmpty)
+    }
+
     // MARK: - Session cookie persistence
 
     func testSignInSnapshotsServerCookiesIntoKeychain() throws {

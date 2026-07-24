@@ -121,6 +121,86 @@ final class Lib0DecoderTests: XCTestCase {
         assertThrows(Lib0DecodingError.unsupportedAnyTag(115)) { _ = try decoder.readAny() }
     }
 
+    // MARK: - readAny nesting depth
+
+    func testReadAnyDecodesArrayNestingUpToTheCap() throws {
+        // The cap counts container levels; a value nested exactly
+        // `maxAnyNestingDepth` deep (the leaf gets one more frame) still decodes.
+        var decoder = Lib0Decoder(NestedAnyFixtures.nestedArray(depth: Lib0Decoder.maxAnyNestingDepth))
+        var value = try decoder.readAny()
+        for _ in 0..<Lib0Decoder.maxAnyNestingDepth {
+            guard case .array(let inner) = value, inner.count == 1 else {
+                return XCTFail("expected a single-element array at every level, got \(value)")
+            }
+            value = inner[0]
+        }
+        XCTAssertEqual(value, .null)
+    }
+
+    func testReadAnyRejectsArrayNestingPastTheCap() {
+        // Without the depth guard this recurses once per level and a large enough
+        // input overflows the stack — a fatal fault no `catch` can intercept, on
+        // bytes that arrive from a peer. One level past the cap must throw.
+        var decoder = Lib0Decoder(NestedAnyFixtures.nestedArray(depth: Lib0Decoder.maxAnyNestingDepth + 1))
+        assertThrows(Lib0DecodingError.anyNestingTooDeep) { _ = try decoder.readAny() }
+    }
+
+    func testReadAnyDecodesObjectNestingUpToTheCap() throws {
+        // The object tag (118) nests through a different branch than the array
+        // tag, so pin its boundary too — exactly at the cap must decode.
+        var decoder = Lib0Decoder(NestedAnyFixtures.nestedObject(depth: Lib0Decoder.maxAnyNestingDepth))
+        var value = try decoder.readAny()
+        for _ in 0..<Lib0Decoder.maxAnyNestingDepth {
+            guard case .object(let entries) = value, entries.count == 1 else {
+                return XCTFail("expected a single-entry object at every level, got \(value)")
+            }
+            value = entries[0].value
+        }
+        XCTAssertEqual(value, .null)
+    }
+
+    func testReadAnyRejectsObjectNestingPastTheCap() {
+        // The object-branch twin of the array test — a `depth + 1` boundary so a
+        // regression here fails cleanly instead of crashing the process.
+        var decoder = Lib0Decoder(NestedAnyFixtures.nestedObject(depth: Lib0Decoder.maxAnyNestingDepth + 1))
+        assertThrows(Lib0DecodingError.anyNestingTooDeep) { _ = try decoder.readAny() }
+    }
+
+    func testReadAnyDepthBudgetIsPerCallNotCumulative() {
+        // The budget is a per-value parameter, so siblings each start fresh and a
+        // WIDE document is fine. A *broken* stored-property refactor (increment on
+        // entry, no decrement) would climb once per sibling and throw — a silent
+        // live-collab breakage on real content. Width is tied to the cap so this
+        // stays a regression test even if the cap is raised. Array of N nulls,
+        // then an object with N primitive entries.
+        let width = Lib0Decoder.maxAnyNestingDepth * 4
+
+        var wideArray = Lib0Encoder()
+        wideArray.writeAny(.array(Array(repeating: .null, count: width)))
+        var arrayDecoder = Lib0Decoder(wideArray.data)
+        XCTAssertNoThrow(try arrayDecoder.readAny())
+
+        var wideObject = Lib0Encoder()
+        wideObject.writeAny(
+            .object((0..<width).map { YAnyObjectEntry(key: "k\($0)", value: .int($0)) }))
+        var objectDecoder = Lib0Decoder(wideObject.data)
+        XCTAssertNoThrow(try objectDecoder.readAny())
+    }
+
+    func testReadAnyDecodesAMixedTypePropsObject() {
+        // A realistic BlockNote props shape: a shallow object mixing string and
+        // int values must round-trip (the specific mixed shape the wide-object
+        // test above doesn't pin).
+        var encoder = Lib0Encoder()
+        let props = YAnyValue.object([
+            YAnyObjectEntry(key: "textAlignment", value: .string("left")),
+            YAnyObjectEntry(key: "level", value: .int(1)),
+        ])
+        encoder.writeAny(props)
+        var decoder = Lib0Decoder(encoder.data)
+        XCTAssertEqual(try? decoder.readAny(), props)
+    }
+
     // MARK: - round-trips against Lib0Encoder
 
     func testVarUIntRoundTrips() throws {
