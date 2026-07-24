@@ -924,12 +924,23 @@ that are easy to violate and expensive to discover:
   fail-safe `catch` in `DocumentCollaborationManager.applyReplicaUpdate` — the
   thing that exists so malformed wire data can never take the app down — cannot
   intercept. `Lib0Decoder.maxAnyNestingDepth` (64) bounds it, throwing
-  `anyNestingTooDeep` instead; a JS decoder hitting its own stack limit raises a
-  *catchable* RangeError, so this matches the oracle rather than deviating from
-  it, and 64 is far above real content (BlockNote props nest two or three deep).
-  A regression test in `DocumentCollaborationManagerTests` delivers such a frame
-  end-to-end — it crashed the whole test process before the cap. **Any new
-  recursive decode path needs the same treatment**; depth is input, not structure.
+  `anyNestingTooDeep` instead. A regression test in
+  `DocumentCollaborationManagerTests` delivers such a frame end-to-end — before
+  the cap it crashed the whole test process, and a regression will read as
+  `Restarting after unexpected exit` rather than a normal failure, so don't
+  misfile it as the concurrent-worktree flake. The cap is a **deliberate,
+  documented narrowing**, not oracle parity: a JS decoder also refuses eventually
+  (a catchable `RangeError`), but only in the thousands, so between 65 and that
+  point Schrift is stricter than yjs. Accepted because real content nests two or
+  three deep (BlockNote props are flat objects of primitives) and the refusal is
+  contained — the update fail-safes rather than corrupting anything.
+  **Any recursive path that walks attacker-shaped data needs the same
+  treatment**; depth is input, not structure. **Known gap (not yet fixed):**
+  `YItem.delete` → `YContent.delete` → `YType.deleteChildren` → `YItem.delete`
+  is still unbounded and wire-reachable — a single update building a ~20k-deep
+  nested-type chain (~140 KB) crashes the process on the delete-set apply. gc has
+  the same shape. Integration itself is iterative and safe to 200k. Fixing it
+  touches the transliterated store, so it is a separate, sign-off-gated change.
 - **The encode side (`YStateEncoder`, B3) derives the wire info byte — it never
   replays a stored one.** `encodeStateAsUpdate(doc, since:)` (full snapshot / diff
   against a state vector) and `encodeStateVector(doc)` transliterate yjs's
