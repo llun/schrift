@@ -33,6 +33,8 @@ build/
 *.p12
 *.mobileprovision
 *.cer
+*.pem
+*.key
 
 # Local, machine-specific signing config (holds your DEVELOPMENT_TEAM).
 # Signing.xcconfig (committed) optionally includes this; see it for details.
