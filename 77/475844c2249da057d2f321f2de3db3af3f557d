@@ -1,0 +1,21 @@
+Schrift/Core/Yjs/YTransaction.swift
+  s_5d624218c1a684::t_a43645077bde38 79-98
+Schrift/Core/Yjs/YStruct.swift
+  s_5d624218c1a684::t_a1ae87034fedfb 506-512
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "77475844c2249da057d2f321f2de3db3af3f557d",
+  "prompts": {},
+  "sessions": {
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
