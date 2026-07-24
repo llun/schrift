@@ -1,0 +1,24 @@
+.github/workflows/testflight.yml
+  s_5d624218c1a684::t_dc80eee15e1859 90,97
+  s_5d624218c1a684::t_76bfba81cf8b13 58-63
+  s_5d624218c1a684::t_3a0ebfbc197764 143
+.github/workflows/pr-checks.yml
+  s_5d624218c1a684::t_be228f92ca95ac 125
+  s_5d624218c1a684::t_a6b6d22d53c116 43-47,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "48beb4795d436160af44d4da61be0fb624876124",
+  "prompts": {},
+  "sessions": {
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
