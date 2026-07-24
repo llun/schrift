@@ -918,6 +918,18 @@ that are easy to violate and expensive to discover:
   would *trap*: a clock past `Number.MAX_SAFE_INTEGER` is harmless and yjs merely
   stashes it, so rejecting one would be **stricter than yjs** — the store must be
   neither more permissive nor more strict than the oracle.
+  **A trap is not the only fatal fault — unbounded recursion is one too.**
+  `Lib0Decoder.readAny`'s object/array tags nest, so a few KB of `75 01 75 01 …`
+  is thousands of stack frames; the overflow is a machine fault that the
+  fail-safe `catch` in `DocumentCollaborationManager.applyReplicaUpdate` — the
+  thing that exists so malformed wire data can never take the app down — cannot
+  intercept. `Lib0Decoder.maxAnyNestingDepth` (64) bounds it, throwing
+  `anyNestingTooDeep` instead; a JS decoder hitting its own stack limit raises a
+  *catchable* RangeError, so this matches the oracle rather than deviating from
+  it, and 64 is far above real content (BlockNote props nest two or three deep).
+  A regression test in `DocumentCollaborationManagerTests` delivers such a frame
+  end-to-end — it crashed the whole test process before the cap. **Any new
+  recursive decode path needs the same treatment**; depth is input, not structure.
 - **The encode side (`YStateEncoder`, B3) derives the wire info byte — it never
   replays a stored one.** `encodeStateAsUpdate(doc, since:)` (full snapshot / diff
   against a state vector) and `encodeStateVector(doc)` transliterate yjs's
@@ -1903,7 +1915,14 @@ Do **not** do any of the following without explicit human sign-off:
   sensitive values).
 - **Keep session/auth state in the Keychain** (`KeychainStore`). Never move it to
   UserDefaults, a plist, or a plaintext file. Don't add `kSecAttrSynchronizable`
-  (iCloud sync) or weaken `kSecAttrAccessible` without sign-off.
+  (iCloud sync) or weaken `kSecAttrAccessible` without sign-off. The current
+  baseline is **`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`**, applied on every
+  `save` — the `ThisDeviceOnly` half keeps a live session out of encrypted backups
+  and device transfers (a restored backup must not carry someone's session onto
+  another device; the cost is one re-login after a migration), and because `save`
+  is delete-then-add, the attribute must be re-applied on **every** write or an
+  overwrite silently downgrades to the default. `KeychainStoreTests` reads the
+  stored attributes back rather than trusting the save query.
 - **Never loosen server-URL or login-host validation.** Keep `normalizedServerURL`
   restricted to `http`/`https` (rejecting `javascript:`/`file:`/`data:`) and keep
   `isLoginNavigationComplete` bound to the exact `serverHost`, so a captured
