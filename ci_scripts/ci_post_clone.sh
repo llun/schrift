@@ -15,7 +15,7 @@
 # the fastlane / GitHub Actions pipeline runs (see fastlane/Fastfile and
 # .github/workflows/testflight.yml).
 
-set -eu
+set -euo pipefail
 
 # Xcode Cloud runs ci_scripts/* with the working directory set to ci_scripts.
 # Prefer Apple's documented path to the primary repository checkout, but fall

@@ -74,6 +74,26 @@ Xcode Cloud (optional, via [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post
 is an alternative build/test runner and is unaffected by this workflow; if
 enabled, keep it build/test-only per `docs/testflight-setup.md`.
 
+### Action pinning
+
+Every `uses:` in both workflows is pinned to a **full commit SHA**, not a
+mutable tag, with the human-readable version in a trailing comment
+(`actions/checkout@<sha> # v7.0.1`). A tag can be moved to point at new code; a
+SHA cannot, so a compromised or retargeted upstream tag can't silently change
+what runs — this matters most in `testflight.yml`, which holds the signing
+secrets, so its third-party actions (`maxim-lobanov/setup-xcode`,
+`ruby/setup-ruby`) are the highest-value pins.
+
+[`.github/dependabot.yml`](../.github/dependabot.yml) opens a monthly PR when a
+pinned action has a newer release, updating both the SHA and the comment; the
+PR still has to pass **`Build & Test`** before it can land, so a bump is never
+unverified. To bump a pin by hand, resolve the tag to its commit SHA
+(`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, dereferencing an annotated
+tag to `.object.sha`) and update the `# vX.Y.Z` comment to match. Dependabot is
+**actions-only**: the app keeps its zero-third-party-runtime-dependency posture,
+and Ruby/fastlane are bumped intentionally with `bundle update`, never
+automatically.
+
 ## Making the check required (the guard)
 
 Enforcement is repository configuration, not code — a repo **admin** must turn
