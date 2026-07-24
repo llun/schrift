@@ -98,7 +98,7 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 │   ├── Search/ Shared/ Profile/ — the other three tabs (all real features)
 │   ├── Editor/           — read rendering + edit + save, drafts, content cache
 │   ├── Share/            — Share sheet (members, invite, link reach)
-│   └── Options/          — Options sheet (pin, copy link, duplicate, delete, etc.)
+│   └── Options/          — Options sheet (pin, copy link, share, version history, delete)
 └── Assets.xcassets/
 SchriftTests/             — XCTest suite mirroring the source tree by directory
                             (sibling of Schrift/ at the repo root)
