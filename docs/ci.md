@@ -87,9 +87,13 @@ secrets, so its third-party actions (`maxim-lobanov/setup-xcode`,
 [`.github/dependabot.yml`](../.github/dependabot.yml) opens a monthly PR when a
 pinned action has a newer release, updating both the SHA and the comment; the
 PR still has to pass **`Build & Test`** before it can land, so a bump is never
-unverified. To bump a pin by hand, resolve the tag to its commit SHA
-(`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, dereferencing an annotated
-tag to `.object.sha`) and update the `# vX.Y.Z` comment to match. Dependabot is
+unverified. To bump a pin by hand, resolve the tag to its **commit** SHA and
+update the `# vX.Y.Z` comment to match:
+`gh api repos/<owner>/<repo>/git/ref/tags/<tag>` — if `.object.type` is
+`"commit"` (a lightweight tag, as all four current pins are), `.object.sha` is
+the commit; if it is `"tag"` (annotated), follow `.object.url` (or
+`git/tags/<that-sha>`) and read *that* response's `.object.sha`, since the
+tag object's own SHA is not a commit `uses:` can resolve. Dependabot is
 **actions-only**: the app keeps its zero-third-party-runtime-dependency posture,
 and Ruby/fastlane are bumped intentionally with `bundle update`, never
 automatically.
