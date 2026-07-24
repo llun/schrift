@@ -1,0 +1,19 @@
+Gemfile.lock
+  s_5d624218c1a684::t_8624e88eff93d6 11-12,20-21,23-24,45-46,76,79,91,129,143,151,162,176,223,226,230,251-254,271,286,289,293,296,299,304,340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "083e112cd7a15c578646810c2bde46ecba65cde2",
+  "prompts": {},
+  "sessions": {
+    "s_5d624218c1a684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0cbaa2d-a7b4-4d60-86b6-53fc16c5190a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
