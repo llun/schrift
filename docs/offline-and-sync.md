@@ -8,9 +8,11 @@
 > [`CLAUDE.md`](../CLAUDE.md) for the operational conventions.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
-> Subpages section and Pages tree, and the Shared tab) now follow this same
+> Subpages section, and the Shared tab) now follow this same
 > seed-synchronously / revalidate-silently pattern via `DocumentCacheStore`
-> and the new `DocumentChildrenCacheStore`.
+> and the new `DocumentChildrenCacheStore`. (The separate in-editor "Pages"
+> document-tree panel that once shared this cache was since removed — see the
+> `DocTreePanel` note below; subpages are reached through the reading canvas.)
 > This supersedes the "No caching of the subpage list" non-goal and the
 > §Subpages deferral below: sub-page lists are cached in
 > `DocumentChildrenCacheStore` (restored synchronously in `load()`, written
