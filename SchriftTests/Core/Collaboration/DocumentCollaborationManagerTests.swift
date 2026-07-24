@@ -448,10 +448,10 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         // fault, not an error, so `applyReplicaUpdate`'s fail-safe `catch` could
         // not contain it and the whole app would die on a peer's say-so. Reaching
         // the assertions below at all is the regression test; fail-safe latching
-        // proves the throw lands where every other malformed frame lands.
-        let header = Data(hex: "01012a000801017401")
-        let nested = Data(Array(repeating: [0x75, 0x01] as [UInt8], count: 20_000).flatMap { $0 } + [0x7E])
-        spy.sockets[0].deliver(message: syncUpdateFrame(data: header + nested))
+        // proves the throw lands where every other malformed frame lands. A
+        // regression reads as "Restarting after unexpected exit" (a process
+        // crash), NOT a normal failure — don't misfile it as the worktree flake.
+        spy.sockets[0].deliver(message: syncUpdateFrame(data: NestedAnyFixtures.contentAnyUpdate(depth: 20_000)))
 
         await waitUntil { manager.remoteChangeToken(for: docID) == 1 }
         await waitUntil { manager.replicaIsFailSafe(for: docID) }

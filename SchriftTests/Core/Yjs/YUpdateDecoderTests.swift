@@ -227,20 +227,12 @@ final class YUpdateDecoderTests: XCTestCase {
 
     func testDeeplyNestedAnyContentThrowsInsteadOfOverflowingTheStack() {
         // The whole reason `readAny` is depth-capped: this is the shape a hostile
-        // peer would send. info 0x08 → ContentAny; parent "t"; one value, which is
-        // 20k nested single-element arrays. Unguarded, decoding recurses once per
-        // level and the stack overflows — a fatal fault that would kill the process
-        // straight through `applyReplicaUpdate`'s fail-safe catch.
-        // 1 client, 1 struct, client 42, clock 0, info 0x08, parent key "t", 1 value.
-        let header = Data(hex: "01012a000801017401")
-        let nested = Data(Array(repeating: [0x75, 0x01] as [UInt8], count: 20_000).flatMap { $0 } + [0x7E])
-        do {
-            _ = try YUpdateDecoder.decode(header + nested)
-            XCTFail("expected anyNestingTooDeep")
-        } catch let error as Lib0DecodingError {
-            XCTAssertEqual(error, .anyNestingTooDeep)
-        } catch {
-            XCTFail("expected Lib0DecodingError, got \(error)")
+        // peer would send — a ContentAny struct holding 20k nested single-element
+        // arrays. Unguarded, decoding recurses once per level and the stack
+        // overflows: a fatal fault that would kill the process straight through
+        // `applyReplicaUpdate`'s fail-safe catch.
+        assertThrows(Lib0DecodingError.anyNestingTooDeep) {
+            _ = try YUpdateDecoder.decode(NestedAnyFixtures.contentAnyUpdate(depth: 20_000))
         }
     }
 
