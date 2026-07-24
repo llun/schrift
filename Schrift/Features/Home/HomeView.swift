@@ -10,6 +10,8 @@ func documentRowDate(_ document: Document, locale: Locale) -> String {
 struct HomeView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
+    /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
+    let serverOrigin: String
     var onSignOut: () -> Void = {}
 
     @State private var selectedTab = "docs"
@@ -22,9 +24,12 @@ struct HomeView: View {
     @State private var sharedViewModel: SharedViewModel
     @State private var profileViewModel: ProfileViewModel
 
-    init(viewModel: HomeViewModel, serverHost: String, onSignOut: @escaping () -> Void = {}) {
+    init(
+        viewModel: HomeViewModel, serverHost: String, serverOrigin: String, onSignOut: @escaping () -> Void = {}
+    ) {
         self.viewModel = viewModel
         self.serverHost = serverHost
+        self.serverOrigin = serverOrigin
         self.onSignOut = onSignOut
         _searchViewModel = State(initialValue: SearchViewModel(client: viewModel.client))
         _sharedViewModel = State(initialValue: SharedViewModel(client: viewModel.client))
@@ -57,6 +62,7 @@ struct HomeView: View {
                     diagnostics: viewModel.diagnostics,
                     reach: document.linkReach,
                     serverHost: serverHost,
+                    serverOrigin: serverOrigin,
                     linkRole: document.linkRole,
                     initialIsFavorite: document.isFavorite,
                     isOffline: viewModel.isOffline,
@@ -112,7 +118,8 @@ struct HomeView: View {
 #Preview {
     HomeView(
         viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
-        serverHost: "docs.llun.dev"
+        serverHost: "docs.llun.dev",
+        serverOrigin: "https://docs.llun.dev"
     )
     .environment(LocalizationStore())
     .environment(AppearanceStore())

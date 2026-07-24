@@ -4,6 +4,9 @@ import SwiftUI
 /// Notion-style keyboard behavior (Return splits, backspace at start merges).
 struct BlockEditorView: View {
     @Bindable var viewModel: EditorViewModel
+    /// Threaded solely to reach the image leaf's off-origin load gate
+    /// (`imageLoadPolicy`); every other row kind ignores it.
+    let serverOrigin: String
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -23,8 +26,10 @@ struct BlockEditorView: View {
                     .padding(.bottom, DocsSpacing.spaceSM)
 
                     ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
-                        BlockEditorRow(viewModel: viewModel, block: block, index: index)
-                            .id(block.id)
+                        BlockEditorRow(
+                            viewModel: viewModel, block: block, index: index, serverOrigin: serverOrigin
+                        )
+                        .id(block.id)
                     }
 
                     // Tapping the empty canvas below the last block starts a
@@ -56,6 +61,7 @@ private struct BlockEditorRow: View {
     @Bindable var viewModel: EditorViewModel
     let block: EditorBlock
     let index: Int
+    let serverOrigin: String
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -151,7 +157,7 @@ private struct BlockEditorRow: View {
     @ViewBuilder
     private func imageLeaf(alt: String, url: String) -> some View {
         if let imageURL = URL(string: url) {
-            MarkdownImageView(alt: alt, url: imageURL)
+            MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         } else {

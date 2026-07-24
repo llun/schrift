@@ -3,6 +3,8 @@ import SwiftUI
 struct HomeSplitView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
+    /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
+    let serverOrigin: String
 
     @State private var selectedDocument: Document?
 
@@ -21,6 +23,7 @@ struct HomeSplitView: View {
                     diagnostics: viewModel.diagnostics,
                     reach: selectedDocument.linkReach,
                     serverHost: serverHost,
+                    serverOrigin: serverOrigin,
                     linkRole: selectedDocument.linkRole,
                     initialIsFavorite: selectedDocument.isFavorite,
                     isOffline: viewModel.isOffline,
@@ -48,7 +51,8 @@ struct HomeSplitView: View {
 #Preview {
     HomeSplitView(
         viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
-        serverHost: "docs.llun.dev"
+        serverHost: "docs.llun.dev",
+        serverOrigin: "https://docs.llun.dev"
     )
     .environment(LocalizationStore())
 }

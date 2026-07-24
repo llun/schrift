@@ -7,6 +7,8 @@ import SwiftUI
 struct EditorScreen: View {
     let reach: LinkReach
     let serverHost: String
+    /// Server origin for the off-origin image gate (`imageLoadPolicy`).
+    let serverOrigin: String
     var linkRole: LinkRole? = nil
     var initialIsFavorite: Bool = false
     var isOffline: Bool = false
@@ -26,6 +28,7 @@ struct EditorScreen: View {
         diagnostics: APIDiagnosticsLog? = nil,
         reach: LinkReach,
         serverHost: String,
+        serverOrigin: String,
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
@@ -45,6 +48,7 @@ struct EditorScreen: View {
             ))
         self.reach = reach
         self.serverHost = serverHost
+        self.serverOrigin = serverOrigin
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
         self.isOffline = isOffline
@@ -58,6 +62,7 @@ struct EditorScreen: View {
             viewModel: viewModel,
             reach: reach,
             serverHost: serverHost,
+            serverOrigin: serverOrigin,
             linkRole: linkRole,
             initialIsFavorite: initialIsFavorite,
             isOffline: isOffline,
