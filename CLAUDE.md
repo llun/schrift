@@ -244,8 +244,6 @@ session:
 Schrift/
 ├── App/                 app entry (SchriftApp), root navigation (RootView),
 │                        the tab shell lives in Features/Home/MainTabView,
-│                        swipe-back restorer (InteractivePopGesture, for the
-│                        editor's hidden bar only),
 │                        AppAppearance + AppearanceStore (dark-mode preference)
 ├── Core/
 │   ├── Auth/            SessionStore (persists session cookies in the Keychain and
@@ -324,7 +322,7 @@ Schrift/
 │   │                    MaterialIcon (the app's icon set — Material Symbols)
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
 │                        IconButton, LinkReachPill, ListRow, ListSection,
-│                        MaterialSymbol, NavBar, OfflineBanner, SearchField,
+│                        MaterialSymbol, OfflineBanner, SearchField,
 │                        ShareMemberRow, Switch, TextField
 │                        (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
@@ -459,12 +457,13 @@ new code reads like the surrounding code.
   - The three stacks that can open a document share **one** `editorScreen(for:
     path:)` builder, so the editor is configured identically however it was
     reached. Don't duplicate that call.
-  - The **editor** is the one screen still hiding the system bar
-    (`.toolbar(.hidden, for: .navigationBar)` + its own `NavBar`), which makes
-    UIKit disable the edge-swipe back gesture — so every stack that pushes it
-    applies `.restoresInteractivePopGesture()`
-    (`Schrift/App/InteractivePopGesture.swift`) once to its root content. Both
-    go away when the editor moves to a native toolbar; nothing else needs them.
+  - The **editor** uses the same system bar, `.inline` and title-less: the
+    document title is a large in-canvas header, not bar chrome. One toolbar
+    serves both modes — `editorToolbarActions` swaps **Edit** for **Done** in
+    the same slot — so nothing hides the navigation bar anywhere in the app
+    any more, and swipe-back is the system's own. (`NavBar`, `EditorSaveBar`
+    and the `InteractivePopGesture` restorer existed only for the hidden-bar
+    arrangement and are gone.)
 - Async VM methods **catch errors internally** and set a user-facing
   `var errorKey: L10nKey?` — a friendly copy key of the form
   `"Couldn't <do X>. Please try again."` (`Strings+en.swift`), resolved by the
@@ -812,8 +811,9 @@ new code reads like the surrounding code.
   a hard-bounded box that would crop it instead — `IconButton`, whose row of
   nine in the formatting bar shares a fixed width budget, and `DocIcon`, which
   scales its glyph and box together from one value.
-  `IconButton(icon:)` and `NavBarAction(icon:)` take a `MaterialIcon`; UIKit call
-  sites (a `UIMenu` action) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
+  `IconButton(icon:)` takes a `MaterialIcon`; a `ToolbarItem`'s label is a
+  `MaterialSymbol` directly, and UIKit call sites (a `UIMenu` action, a tab-bar
+  label) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
   the app doesn't yet bundle means re-subsetting the font (see
   [`docs/design-system.md`](docs/design-system.md)) — you can't just name any
   Material glyph. `MaterialSymbol` is `accessibilityHidden` (the glyph is a
@@ -855,14 +855,6 @@ new code reads like the surrounding code.
   it is offered on the narrowest supported devices, so a tenth button fails a
   test rather than a screen. Measure a row of fixed-minimum controls against the
   narrowest device before adding to it.
-- **`NavBar`'s large-title top row collapses when there's nothing to put in
-  it.** The pure helper `navBarShowsTopRow(largeTitle:hasBack:hasLeading:)`
-  returns `false` (no 44pt row at all) exactly when `largeTitle && !hasBack &&
-  !hasLeading` — the four tab roots (Home/Search/Shared/Profile). Trailing
-  actions (Home's "+") render **inline with the large title itself** in that
-  case, not in the row above it. A screen with a back button or a leading view
-  keeps the standard 44pt row unchanged. Get this wrong and either dead space
-  reappears above the title, or a back-button screen loses its bar.
 - **Inter-row hairlines are opt-in per call site, not a `ListSection`
   parameter.** There is no `divided:` flag in the Swift code (that's the React
   handoff's prop) — a section draws separators only where its own body
@@ -1449,9 +1441,10 @@ markdown write endpoint**. Understand this before touching the save path:
   `DocumentSaveCoordinator.lastConfirmedPush(documentID:)` — **not** from the stored draft,
   which is nil right after a save lands and would make our own just-pushed body read as a
   diverged server and raise a false conflict against the user.
-- **A held save must never read as a saved save — in the editing header either.** Detection
+- **A held save must never read as a saved save — while editing either.** Detection
   on the dirty branch means a push can now be held *mid-session*, so the surface the user is
-  actually looking at while typing is `EditorSaveBar`, not the reading caption. Its pure
+  actually looking at while typing is the editing surface's save-status row
+  (`SaveStatusIndicator`), not the reading caption. Its pure
   resolver `saveStatusDisplay` therefore applies the same precedence rule 0 as `syncCaption`:
   a recorded conflict outranks the save state, because nothing is being sent and **no
   affordance here can send it** (`saveNow` re-enqueues straight back into the hold). It shows

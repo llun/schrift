@@ -129,6 +129,33 @@
 >   sidebar, which it also lacked. The split view itself, including its
 >   `.id(document.id)` detail identity, is unchanged.
 
+> **Revised: 2026-07-31 (native editor toolbar; the last custom chrome
+> retired).** The editor was the one screen still drawing its own bars. It now
+> uses the same system toolbar as everything else — `.inline` and title-less,
+> because the document title is a large in-canvas header, not bar chrome.
+>
+> - **One toolbar in both modes.** `editorToolbarActions` gained `.done` and
+>   swaps it into **Edit**'s slot while editing, keeping Share and Options
+>   either way. The editing session no longer needs a bar of its own.
+> - **The save status moved into the editing surface** as a slim row above the
+>   canvas. `saveStatusDisplay` and its precedence rules are untouched — a
+>   recorded conflict still refuses to claim a sync or offer a retry that would
+>   only re-park — which is the part that matters; only where it renders changed.
+>   `EditorSaveBar` is gone and `SaveStatusIndicator.swift` holds the resolver
+>   and the view.
+> - **Presence while editing is a count badge** on the Options button
+>   (`presenceBadgeCount`, suppressed offline since peer state is only as fresh
+>   as the last socket message). Reading mode keeps the `PresenceBar` avatar
+>   stack, which has room for one.
+> - **Back is the system's**, in both modes. Leaving mid-edit is safe because
+>   `onDisappear` already flushes; the old `onBack` closure existed only to
+>   drive a drawn button and is deleted.
+> - **Deleted:** `NavBar` (+`NavBarAction`), `EditorSaveBar`,
+>   `InteractivePopGesture` and its restorer modifier, `DocsSpacing.navBarHeight`
+>   / `largeTitleBarHeight`, and the catalog's Nav Bar card. Nothing in the app
+>   hides a navigation bar any more, which is what made the pop-gesture
+>   workaround necessary in the first place.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match
@@ -493,7 +520,13 @@ fix.
 
 ### 8.1 Header / nav-bar spacing (all four tabs)
 
-The current `NavBar` always renders a fixed **44pt top row**, even in large-title
+**Superseded 2026-07-31** — the drawn `NavBar` is gone. Every screen uses the
+system navigation bar (`.navigationTitle` / `.navigationSubtitle` / `.toolbar`),
+which handles the large-title collapse, spacing and scroll-edge behavior this
+section was specifying by hand. Kept below as the record of what the handoff
+asked for. See the amendments at the top of this document.
+
+The (former) `NavBar` always rendered a fixed **44pt top row**, even in large-title
 mode with no back button and no leading view. Result: Search/Shared/Profile carry
 ~44pt of dead space above the large title, and Home's "+" sits in that empty bar
 instead of beside the title. The handoff collapses that row and lays the large
@@ -595,9 +628,10 @@ amendment at the top of this document.
 
 Layout is verified primarily via the component `#Preview` catalogs (light **and**
 dark) and a manual run. Pure helpers are unit-tested where they exist:
-`navBarShowsTopRow(largeTitle:hasBack:hasLeading:)`, the divider leading-inset
-rule (`52` with a leading icon, else `16`), and the sheet detent/`maxHeight`
-constants.
+the divider leading-inset rule (`52` with a leading icon, else `16`), the
+editor's toolbar-action table (`editorToolbarActions`) and presence-badge rule
+(`presenceBadgeCount`), and the sheet detent/`maxHeight` constants.
+(`navBarShowsTopRow` went with `NavBar`; the system bar owns that behavior now.)
 
 ## 9. Part 6 — Version history
 

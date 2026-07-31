@@ -18,8 +18,6 @@ enum DocsSpacing {
 
     // iOS layout constants
     static let statusBarHeight: CGFloat = 54
-    static let navBarHeight: CGFloat = 44
-    static let largeTitleBarHeight: CGFloat = 96
     static let tabBarHeight: CGFloat = 49
     static let homeIndicatorHeight: CGFloat = 34
     static let rowMinHeight: CGFloat = 44

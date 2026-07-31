@@ -21,8 +21,6 @@ final class DocsSpacingTests: XCTestCase {
 
     func testIOSLayoutConstantsMatchSpec() {
         XCTAssertEqual(DocsSpacing.statusBarHeight, 54)
-        XCTAssertEqual(DocsSpacing.navBarHeight, 44)
-        XCTAssertEqual(DocsSpacing.largeTitleBarHeight, 96)
         XCTAssertEqual(DocsSpacing.tabBarHeight, 49)
         XCTAssertEqual(DocsSpacing.homeIndicatorHeight, 34)
         XCTAssertEqual(DocsSpacing.rowMinHeight, 44)
