@@ -33,15 +33,31 @@ struct SharedScreen: View {
                     // local copy; never claim "0 documents" for a list that is
                     // simply not yet known (the banner/error above conveys that).
                     if viewModel.showsLoadingPlaceholder {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, DocsSpacing.spaceBase)
+                        // Skeleton rows rather than a spinner: the handoff's
+                        // loading rule for lists, and it says "rows are coming"
+                        // where a spinner only says "wait".
+                        SkeletonList()
+                            .padding(.horizontal, DocsSpacing.gutter)
                     } else if viewModel.showsDocumentList {
-                        ListSection(
-                            header: loc.plural(
-                                viewModel.documents.count, one: .shared_count_one, other: .shared_count_other,
-                                two: .shared_count_two, few: .shared_count_few)
-                        ) {
+                        // Flat, per the handoff: an uppercase count eyebrow over
+                        // rows drawn straight on the page, with no grouped card
+                        // around them — matching Home's sections rather than the
+                        // boxed list this used to be.
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(
+                                loc.plural(
+                                    viewModel.documents.count, one: .shared_count_one,
+                                    other: .shared_count_other,
+                                    two: .shared_count_two, few: .shared_count_few
+                                )
+                                .uppercased()
+                            )
+                            .font(DocsFont.footnote.weight(.semibold))
+                            .foregroundStyle(DocsColor.textTertiary)
+                            .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
+                            .padding(.horizontal, DocsSpacing.spaceXS)
+                            .padding(.bottom, DocsSpacing.space3xs)
+
                             ForEach(viewModel.documents) { document in
                                 SharedRow(
                                     title: document.title ?? loc[.common_untitled],
@@ -51,6 +67,8 @@ struct SharedScreen: View {
                                 )
                             }
                         }
+                        // Matches Home's section rhythm before the footer.
+                        .padding(.bottom, DocsSpacing.spaceSM)
                         .padding(.horizontal, DocsSpacing.gutter)
                     }
 

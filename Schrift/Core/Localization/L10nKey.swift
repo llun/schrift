@@ -12,6 +12,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case common_profile = "common.profile"  // "Profile"
     case common_clear_search = "common.clear_search"  // "Clear search"
     case common_you = "common.you"  // "(you)" — suffix after the current user's name
+    case common_loading = "common.loading"  // "Loading" — placeholder-list accessibility label
     // Search results plural
     case search_results_one = "search.results.one"  // "%d result"
     case search_results_other = "search.results.other"  // "%d results"
@@ -310,5 +311,18 @@ enum L10nKey: String, CaseIterable, Sendable {
     case appearance_system = "appearance.system"  // "System"
     case appearance_light = "appearance.light"  // "Light"
     case appearance_dark = "appearance.dark"  // "Dark"
+    // Account screen (pushed from Profile's user row)
+    case account_title = "account.title"  // "Account"
+    case account_section_profile = "account.section_profile"  // "Profile"
+    case account_full_name = "account.full_name"  // "Full name"
+    case account_section_signin = "account.section_signin"  // "Sign-in"
+    case account_signin_footer = "account.signin_footer"
+    case account_email = "account.email"  // "Email"
+    case account_manage_on_web = "account.manage_on_web"  // "Manage account on the web"
+    case account_unavailable_title = "account.unavailable_title"  // "Account unavailable"
+    case account_unavailable_body = "account.unavailable_body"
+    case account_language_footer = "account.language_footer"
+    // Transient confirmation toast
+    case toast_link_copied = "toast.link_copied"  // "Link copied"
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }

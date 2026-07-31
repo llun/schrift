@@ -757,6 +757,18 @@ new code reads like the surrounding code.
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
   `SearchScreen` — still use `DocsRadius.pill` directly).
+- **Four feedback registers, and they don't overlap.** An **alert** confirms a
+  destructive verb (delete, disconnect, discard) — a `.confirmationDialog` is
+  for *choosing among options*, so it is the wrong control for a yes/no
+  destruction. A **toast** (`.toast(_:)`) confirms something transient that
+  already happened ("Link copied") and carries no button, because a message you
+  must dismiss is not transient — and it belongs to the **presenting** screen,
+  never to a sheet that dismisses itself as it fires one. A **skeleton**
+  (`SkeletonList`) stands in for a list on its *first* load with nothing cached
+  — never over existing rows, which `shouldShowLoadingPlaceholder` already
+  gates; the handoff's rule is no spinners on lists. An **empty state** is
+  `ContentUnavailableView`. (A *callout* — a persistent in-context note — is
+  specified by the handoff but has no call site yet; don't invent one.)
 - **Glass is for surfaces that float over content, never for content itself.**
   A transient/floating surface — the editor's formatting bar and its slash menu —
   uses **`.glassEffect(.regular, in:)`**, and sibling glass surfaces share a

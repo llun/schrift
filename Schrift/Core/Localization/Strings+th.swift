@@ -10,6 +10,7 @@ enum Strings_th {
         .common_profile: "โปรไฟล์",
         .common_clear_search: "ล้างการค้นหา",
         .common_you: "(คุณ)",
+        .common_loading: "กำลังโหลด",
         .search_results_one: "%d ผลลัพธ์",
         .search_results_other: "%d ผลลัพธ์",
 
@@ -274,5 +275,20 @@ enum Strings_th {
         .appearance_system: "ระบบ",
         .appearance_light: "สว่าง",
         .appearance_dark: "มืด",
+        // Account screen
+        .account_title: "บัญชี",
+        .account_section_profile: "โปรไฟล์",
+        .account_full_name: "ชื่อเต็ม",
+        .account_section_signin: "การลงชื่อเข้าใช้",
+        .account_signin_footer:
+            "คุณลงชื่อเข้าใช้ด้วยเซสชันเว็บของคุณ Schrift เชื่อมต่อโดยใช้คุกกี้เบราว์เซอร์ของคุณ และไม่เก็บรหัสผ่านของคุณ",
+        .account_email: "อีเมล",
+        .account_manage_on_web: "จัดการบัญชีบนเว็บ",
+        .account_unavailable_title: "บัญชีไม่พร้อมใช้งาน",
+        .account_unavailable_body: "โหลดรายละเอียดบัญชีของคุณไม่ได้ ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง",
+        .account_language_footer:
+            "ภาษาที่เซิร์ฟเวอร์ของคุณใช้สำหรับอีเมลและเนื้อหาที่แชร์ ภาษาของแอปเองอยู่ในการตั้งค่า",
+        // Toast
+        .toast_link_copied: "คัดลอกลิงก์แล้ว",
     ]
 }

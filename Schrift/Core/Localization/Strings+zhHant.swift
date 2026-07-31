@@ -8,6 +8,7 @@ enum Strings_zhHant {
         .common_profile: "個人檔案",
         .common_clear_search: "清除搜尋",
         .common_you: "(你)",
+        .common_loading: "正在載入",
         .search_results_one: "%d 個結果",
         .search_results_other: "%d 個結果",
 
@@ -271,5 +272,18 @@ enum Strings_zhHant {
         .appearance_system: "系統",
         .appearance_light: "淺色",
         .appearance_dark: "深色",
+        // Account screen
+        .account_title: "帳號",
+        .account_section_profile: "個人檔案",
+        .account_full_name: "全名",
+        .account_section_signin: "登入",
+        .account_signin_footer: "您已使用網頁工作階段登入。Schrift 會透過您瀏覽器的 Cookie 連線，且絕不會儲存您的密碼。",
+        .account_email: "電子郵件",
+        .account_manage_on_web: "在網頁上管理帳號",
+        .account_unavailable_title: "帳號無法使用",
+        .account_unavailable_body: "無法載入您的帳號詳細資料。請檢查您的連線並再試一次。",
+        .account_language_footer: "您的伺服器用於電子郵件和共享內容的語言。應用程式本身的語言在偏好設定中。",
+        // Toast
+        .toast_link_copied: "連結已複製",
     ]
 }

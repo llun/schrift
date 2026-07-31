@@ -8,6 +8,7 @@ enum Strings_zhHans {
         .common_profile: "个人资料",
         .common_clear_search: "清除搜索",
         .common_you: "(你)",
+        .common_loading: "正在加载",
         .search_results_one: "%d 条结果",
         .search_results_other: "%d 条结果",
 
@@ -271,5 +272,18 @@ enum Strings_zhHans {
         .appearance_system: "系统",
         .appearance_light: "浅色",
         .appearance_dark: "深色",
+        // Account screen
+        .account_title: "账号",
+        .account_section_profile: "个人资料",
+        .account_full_name: "全名",
+        .account_section_signin: "登录",
+        .account_signin_footer: "您已使用网页会话登录。Schrift 通过您浏览器的 Cookie 连接，且绝不会存储您的密码。",
+        .account_email: "电子邮件",
+        .account_manage_on_web: "在网页上管理账号",
+        .account_unavailable_title: "账号不可用",
+        .account_unavailable_body: "无法加载您的账号详情。请检查网络连接后重试。",
+        .account_language_footer: "您的服务器用于电子邮件和共享内容的语言。应用自身的语言在偏好设置中。",
+        // Toast
+        .toast_link_copied: "链接已复制",
     ]
 }

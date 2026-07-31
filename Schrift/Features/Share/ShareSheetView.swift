@@ -31,6 +31,9 @@ enum ShareSheetLayout {
 struct ShareSheetView: View {
     @Bindable var viewModel: ShareViewModel
     var shareURL: URL? = nil
+    /// Called when the link reached the pasteboard — the presenter confirms it,
+    /// since this sheet dismisses itself.
+    var onLinkCopied: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(LocalizationStore.self) private var loc
 
@@ -160,6 +163,7 @@ struct ShareSheetView: View {
         ) {
             guard let shareURL else { return }
             UIPasteboard.general.string = shareURL.absoluteString
+            onLinkCopied?()
             dismiss()
         }
         .padding(.bottom, DocsSpacing.spaceBase)

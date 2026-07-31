@@ -143,9 +143,8 @@ struct MainTabView: View {
         }
     }
 
-    /// Profile pushes nothing today, so it needs no path of its own — but it is
-    /// still wrapped in a stack so it gets the same large-title chrome as the
-    /// other roots.
+    /// Profile pushes its account detail. No explicit path binding: there is one
+    /// destination and nothing needs to drive it programmatically.
     private var profileTab: some View {
         NavigationStack {
             ProfileScreen(
@@ -154,6 +153,18 @@ struct MainTabView: View {
                 isOffline: viewModel.isOffline,
                 onSignOut: onSignOut
             )
+            .navigationDestination(for: ProfileRoute.self) { route in
+                switch route {
+                case .account:
+                    AccountScreen(
+                        user: profileViewModel.user,
+                        serverHost: serverHost,
+                        // The origin the app already derived for the image gate
+                        // — no second source of truth for where the server is.
+                        serverURL: URL(string: serverOrigin)
+                    )
+                }
+            }
         }
     }
 
