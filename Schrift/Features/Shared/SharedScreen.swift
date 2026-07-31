@@ -59,6 +59,7 @@ struct SharedScreen: View {
                         .foregroundStyle(DocsColor.textTertiary)
                         .padding(.horizontal, DocsSpacing.gutterGrouped)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, DocsSpacing.spaceBase)
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
@@ -66,6 +67,9 @@ struct SharedScreen: View {
                 await viewModel.refresh()
             }
         }
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)

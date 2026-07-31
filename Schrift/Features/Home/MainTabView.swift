@@ -102,12 +102,9 @@ struct MainTabView: View {
     @ViewBuilder
     private var docsTab: some View {
         if horizontalSizeClass == .regular {
-            HomeSplitView(
-                viewModel: viewModel,
-                serverHost: serverHost,
-                serverOrigin: serverOrigin,
-                onNewDocument: createDocument
-            )
+            // The split view owns its own create action: it opens a document by
+            // selecting it, not by pushing onto this shell's path.
+            HomeSplitView(viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin)
         } else {
             NavigationStack(path: $docsPath) {
                 DocumentListView(

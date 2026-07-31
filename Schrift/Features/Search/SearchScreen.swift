@@ -33,6 +33,9 @@ struct SearchScreen: View {
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
         .navigationTitle(loc[.search_title])
         .navigationSubtitle(serverHost)

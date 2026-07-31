@@ -10,9 +10,6 @@ struct HomeSplitView: View {
     let serverHost: String
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
     let serverOrigin: String
-    /// Creates and opens a document. Previously absent here, which left iPad
-    /// with no way to make one at all.
-    var onNewDocument: (() -> Void)? = nil
 
     @State private var selectedDocument: Document?
 
@@ -24,7 +21,18 @@ struct HomeSplitView: View {
                 viewModel: viewModel,
                 serverHost: serverHost,
                 onSelect: { selectedDocument = $0 },
-                onNewDocument: onNewDocument
+                // Creation is owned here, not passed in: a split view opens a
+                // document by *selecting* it. Handing this to the tab shell's
+                // push-a-path version would create the document on the server
+                // and then appear to do nothing, because this idiom never
+                // renders that stack. (iPad had no create action at all before.)
+                onNewDocument: {
+                    Task {
+                        if let document = await viewModel.createDocument() {
+                            selectedDocument = document
+                        }
+                    }
+                }
             )
         } detail: {
             if let selectedDocument {

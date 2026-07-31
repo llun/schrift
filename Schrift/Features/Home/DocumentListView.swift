@@ -61,6 +61,9 @@ struct DocumentListView: View {
                 await viewModel.refresh()
             }
         }
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
         // System chrome, not a drawn bar: the large title collapses on scroll,
         // the server host rides along as the subtitle, and on iOS 26 the bar
