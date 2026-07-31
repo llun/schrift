@@ -1,0 +1,102 @@
+Schrift/Features/Connect/ConnectView.swift
+  s_7b8db48b6506c1::t_245a0eed8e1562 87
+SchriftTests/Features/Editor/BlockTextRenderingTests.swift
+  s_7b8db48b6506c1::t_e7e89d6f265363 130-134
+Schrift/DesignSystem/Components/ShareMemberRow.swift
+  s_7b8db48b6506c1::t_8e21626327f60f 27,50
+Schrift/Features/Editor/LinkEditorSheet.swift
+  s_7b8db48b6506c1::t_3ec889273aa869 46-50,52-65,67-77,79,82,84
+  s_7b8db48b6506c1::t_89f7fa360ca172 40-45
+Schrift/DesignSystem/Components/DocRow.swift
+  s_7b8db48b6506c1::t_c7923576498de1 41-51,62-64,67,70-76,78-83
+  s_7b8db48b6506c1::t_ea999c708c4b95 105-140
+Schrift/DesignSystem/Components/TextField.swift
+  s_7b8db48b6506c1::t_9ee7286c41a19f 82-84
+  s_7b8db48b6506c1::t_8e21626327f60f 67
+CLAUDE.md
+  s_7b8db48b6506c1::t_d25621611d20ae 16-19
+  s_7b8db48b6506c1::t_4c6891d752c483 740-762
+  s_7b8db48b6506c1::t_e210649d9eb403 717
+  s_7b8db48b6506c1::t_f9ca8c0641eea9 92
+Schrift/Features/Share/ShareSheetView.swift
+  s_7b8db48b6506c1::t_f8ac8147002120 23-26
+  s_7b8db48b6506c1::t_ac08c52e973087 39
+  s_7b8db48b6506c1::t_f644bab48626bd 208
+  s_7b8db48b6506c1::t_245a0eed8e1562 123
+README.md
+  s_7b8db48b6506c1::t_08fbcc58a39c4e 44
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_7b8db48b6506c1::t_1dba7176a897de 25-28
+  s_7b8db48b6506c1::t_d9be4ba26df626 71
+SchriftTests/DesignSystem/Components/DocRowTests.swift
+  s_7b8db48b6506c1::t_7b81f9120fb7da 1
+  s_7b8db48b6506c1::t_0292aeed89421d 68-84
+Schrift/DesignSystem/Components/MaterialSymbol.swift
+  s_7b8db48b6506c1::t_406dcb7255a561 46-51,56-66,69-71,76
+Schrift/DesignSystem/Components/SearchField.swift
+  s_7b8db48b6506c1::t_2ce47e37ce5171 33
+Schrift/Features/Editor/BlockTextView.swift
+  s_7b8db48b6506c1::t_0f66dbb6319037 33-36,47-48,56-57,65-67,77
+docs/architecture.md
+  s_7b8db48b6506c1::t_23dfd687f4bd8a 83
+Schrift/DesignSystem/Components/IconButton.swift
+  s_7b8db48b6506c1::t_a9b0e92060aaf3 119-125
+Schrift/Features/Profile/ProfileScreen.swift
+  s_7b8db48b6506c1::t_e5ae345b0c7d84 57
+  s_7b8db48b6506c1::t_3475db37d2bd3a 20-23
+Schrift/Features/Editor/SlashMenuView.swift
+  s_7b8db48b6506c1::t_60ae92a46c7873 10-12
+  s_7b8db48b6506c1::t_865db2db62a8f3 40
+project.yml
+  s_7b8db48b6506c1::t_2a17aa146968c0 4-7,9
+Schrift/Features/Search/SearchScreen.swift
+  s_7b8db48b6506c1::t_245a0eed8e1562 150
+Schrift/DesignSystem/Components/Button.swift
+  s_7b8db48b6506c1::t_ba4b046381afe3 177
+  s_7b8db48b6506c1::t_a95fbe6ea6c394 174
+  s_7b8db48b6506c1::t_3f4ae5e5816dea 124-135
+Schrift/DesignSystem/Components/OfflineBanner.swift
+  s_7b8db48b6506c1::t_245a0eed8e1562 21
+Schrift/DesignSystem/Components/TabBar.swift
+  s_7b8db48b6506c1::t_8e21626327f60f 26
+Schrift/Features/Editor/EditorView.swift
+  s_7b8db48b6506c1::t_245a0eed8e1562 575,630
+  s_7b8db48b6506c1::t_8e21626327f60f 666
+Schrift/DesignSystem/Components/NavBar.swift
+  s_7b8db48b6506c1::t_e658f11601929f 105-108
+  s_7b8db48b6506c1::t_245a0eed8e1562 117
+Schrift/DesignSystem/Components/ListSection.swift
+  s_7b8db48b6506c1::t_245a0eed8e1562 19
+Schrift/Features/Home/DocumentListView.swift
+  s_7b8db48b6506c1::t_245a0eed8e1562 174
+docs/design-system.md
+  s_7b8db48b6506c1::t_c847a77e2185a3 54-88
+SchriftTests/DesignSystem/Tokens/DocsTypographySpecTests.swift
+  s_7b8db48b6506c1::t_82b601934d3bc8 97
+  s_7b8db48b6506c1::t_f9e1c7ea71a2c3 2,9,13,17,21,25,29,33,37,41,45-96,98-100
+Schrift/DesignSystem/Tokens/DocsTypography.swift
+  s_7b8db48b6506c1::t_454310d9d66ff7 2,4-13,17-18,22-31,35-36,47-98,109-119,134
+  s_7b8db48b6506c1::t_0441454eedcec4 99-108,120-133
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_7b8db48b6506c1::t_8e21626327f60f 56
+Schrift/Features/Editor/ConflictSheetView.swift
+  s_7b8db48b6506c1::t_087954a9af66b5 57-78,80-86,88-92,94-101
+Schrift/DesignSystem/Components/DocIcon.swift
+  s_7b8db48b6506c1::t_65aef4b1031169 14-20,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "8db08a8a6bd913a93dade97195e4db3092010ef3",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
