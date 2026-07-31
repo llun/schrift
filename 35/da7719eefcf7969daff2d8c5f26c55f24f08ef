@@ -1,0 +1,50 @@
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_7b8db48b6506c1::t_707d4114d3610c 13,30-31,35,47-67,69-70,72-77,83,91,97,103,108,117-122,125,127,131,135-136,138-143,145,148,158,161,163-166,171,178,180-185,191-192,201,204-206,209-211,215,220,229,231-233,241
+  s_7b8db48b6506c1::t_6c1034116be742 46,68
+  s_7b8db48b6506c1::t_c8f184b73f0ef0 1-12,14-29,32-34,36-45,71,78-82,84-90,92-96,98-102,104-107,109-116,123-124,126,128-130,132-134,144,146-147,149-157,159-160,162,167-170,172-177,179,186-190,193-200,202-203,207-208,212-214,216-219,221-228,230,234-240,242-243
+  s_7b8db48b6506c1::t_3af9202b07f4df 137
+SchriftTests/Features/Editor/PagesTreeRowsTests.swift
+  s_7b8db48b6506c1::t_c232646fbf7f53 83-98
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_7b8db48b6506c1::t_c8026efc4c6391 176-178,180,188
+  s_7b8db48b6506c1::t_b773fbbbaa1ea6 223-277
+  s_7b8db48b6506c1::t_762e248ab86426 11-13
+  s_7b8db48b6506c1::t_e532394ca2a3c2 145-148
+  s_7b8db48b6506c1::t_3aa7c8493fbf6a 42-43,46
+docs/design-system.md
+  s_7b8db48b6506c1::t_719f3e4cc67381 233-248
+  s_7b8db48b6506c1::t_760c956422e199 255-268
+docs/architecture.md
+  s_7b8db48b6506c1::t_f79e01ebd4c640 932
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_7b8db48b6506c1::t_143b9a7023bfd6 145,155,158,190-194
+  s_7b8db48b6506c1::t_39f31d15ff45c5 142-144,150,153-154,163-168,175,177,179,182-189,195-196
+  s_7b8db48b6506c1::t_6ceda48afe20eb 7-13,20-25
+  s_7b8db48b6506c1::t_899597ee2f5e50 53
+  s_7b8db48b6506c1::t_a271960a4fd5bf 81-92,97-101,103-108,112
+Schrift/Features/Editor/EditorView.swift
+  s_7b8db48b6506c1::t_ed81e9a849f452 183
+  s_7b8db48b6506c1::t_94d62197f544e9 205-207,209-210
+  s_7b8db48b6506c1::t_c996454ad79ff8 220-225
+  s_7b8db48b6506c1::t_e756e837d93536 351-372,374-379
+Schrift/Features/Editor/EditorScreen.swift
+  s_7b8db48b6506c1::t_067da551a4a50a 19-21
+  s_7b8db48b6506c1::t_5fb5d18878e0c8 67
+  s_7b8db48b6506c1::t_87f9c6adc7902f 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "35da7719eefcf7969daff2d8c5f26c55f24f08ef",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
