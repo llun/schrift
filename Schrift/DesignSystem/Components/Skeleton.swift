@@ -26,7 +26,10 @@ struct Skeleton: View {
                 reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
                 value: isPulsing
             )
-            .onAppear { isPulsing = true }
+            // Gate the state, not just the animation: suppressing only the
+            // animation would snap it to the dimmed end value and leave it
+            // there, which is dimmer than the static placeholder intended.
+            .onAppear { if !reduceMotion { isPulsing = true } }
             .accessibilityHidden(true)
     }
 }

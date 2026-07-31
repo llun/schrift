@@ -288,6 +288,9 @@ enum Strings_pt {
             "Você está conectado com sua sessão web. O Schrift se conecta usando o cookie do navegador e nunca armazena sua senha.",
         .account_email: "E-mail",
         .account_manage_on_web: "Gerenciar conta na web",
+        .account_unavailable_title: "Conta indisponível",
+        .account_unavailable_body:
+            "Não foi possível carregar os detalhes da sua conta. Verifique a sua ligação e tente novamente.",
         .account_language_footer:
             "O idioma que seu servidor usa para e-mails e conteúdo compartilhado. O idioma do aplicativo está em Preferências.",
         // Toast

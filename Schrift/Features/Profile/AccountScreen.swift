@@ -6,6 +6,22 @@ enum ProfileRoute: Hashable {
     case account
 }
 
+/// The name to show for an account, or `nil` when there is no user to describe.
+///
+/// Deliberately **not** falling back to `common_untitled`: that is the empty
+/// *document* title, and using it here renders a person called "Untitled" —
+/// indistinguishable, to the reader, from real data. `nil` means "we have
+/// nothing", and the screen says so instead of inventing an identity.
+func accountDisplayName(_ user: CurrentUser?) -> String? {
+    guard let user else { return nil }
+    for candidate in [user.fullName, user.shortName, user.email] {
+        if let candidate, !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return candidate
+        }
+    }
+    return nil
+}
+
 /// The account detail, pushed from Profile's user row.
 ///
 /// Scoped to what `GET /users/me/` actually returns — id, email, full name,
@@ -24,7 +40,7 @@ struct AccountScreen: View {
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.openURL) private var openURL
 
-    private var displayName: String { user?.displayName ?? loc[.common_untitled] }
+    private var displayName: String? { accountDisplayName(user) }
     private var email: String? {
         guard let email = user?.email, !email.isEmpty else { return nil }
         return email
@@ -32,15 +48,31 @@ struct AccountScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
-                identityHeader
-                profileSection
-                signInSection
-                manageOnWebSection
+            // Nothing loaded (offline, or a failed `/users/me/`) means there is
+            // no account to show. Say that, rather than rendering a hero and a
+            // "Full name" row filled with placeholder text that reads as real.
+            if let displayName {
+                VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
+                    identityHeader(displayName)
+                    profileSection(displayName)
+                    signInSection
+                    manageOnWebSection
+                }
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .padding(.bottom, DocsSpacing.spaceMD)
+            } else {
+                ContentUnavailableView {
+                    Label {
+                        Text(loc[.account_unavailable_title])
+                    } icon: {
+                        MaterialSymbol(.account_circle, size: 52)
+                    }
+                } description: {
+                    Text(loc[.account_unavailable_body])
+                }
+                .padding(.top, DocsSpacing.spaceLG)
             }
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.top, DocsSpacing.spaceXS)
-            .padding(.bottom, DocsSpacing.spaceMD)
         }
         .frame(maxWidth: .infinity)
         // The handoff puts this screen on the sunken surface, unlike the four
@@ -51,7 +83,7 @@ struct AccountScreen: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var identityHeader: some View {
+    private func identityHeader(_ displayName: String) -> some View {
         VStack(spacing: DocsSpacing.space3xs) {
             Avatar(name: displayName, size: 88)
             Text(displayName)
@@ -68,7 +100,7 @@ struct AccountScreen: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var profileSection: some View {
+    private func profileSection(_ displayName: String) -> some View {
         ListSection(header: loc[.account_section_profile], footer: loc[.account_language_footer]) {
             ListRow(icon: .badge, title: loc[.account_full_name], value: displayName)
             // The *server* profile's language — distinct from the app's own UI

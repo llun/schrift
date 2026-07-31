@@ -289,6 +289,9 @@ enum Strings_nl {
             "Je bent aangemeld met je websessie. Schrift maakt verbinding via het cookie van je browser en slaat je wachtwoord nooit op.",
         .account_email: "E-mail",
         .account_manage_on_web: "Account beheren op het web",
+        .account_unavailable_title: "Account niet beschikbaar",
+        .account_unavailable_body:
+            "Kan je accountgegevens niet laden. Controleer je verbinding en probeer het opnieuw.",
         .account_language_footer:
             "De taal die je server gebruikt voor e-mails en gedeelde inhoud. De taal van de app vind je bij Voorkeuren.",
         // Toast

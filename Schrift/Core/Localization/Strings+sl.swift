@@ -299,6 +299,8 @@ enum Strings_sl {
             "Prijavljeni ste z vašo spletno sejo. Schrift se poveže z uporabo piškotka vašega brskalnika in nikoli ne shrani vašega gesla.",
         .account_email: "E-pošta",
         .account_manage_on_web: "Upravljajte račun v spletu",
+        .account_unavailable_title: "Račun ni na voljo",
+        .account_unavailable_body: "Podatkov o računu ni bilo mogoče naložiti. Preverite povezavo in poskusite znova.",
         .account_language_footer:
             "Jezik, ki ga uporablja vaš strežnik za e-pošto in deljeno vsebino. Jezik aplikacije najdete v Nastavitvah.",
         // Toast

@@ -44,13 +44,18 @@ extension View {
     ///
     /// The binding is cleared by the timer, so a caller only ever *sets* it —
     /// no dismissal bookkeeping at the call site.
-    func toast(_ message: Binding<ToastMessage?>) -> some View {
-        modifier(ToastPresenter(message: message))
+    /// - Parameter bottomInset: extra clearance above the bottom edge, for a
+    ///   screen that already floats something there. The editor's formatting bar
+    ///   lives in a `safeAreaInset` *inside* its canvas, which this overlay sits
+    ///   outside of, so without this the toast lands on top of it mid-edit.
+    func toast(_ message: Binding<ToastMessage?>, bottomInset: CGFloat = 0) -> some View {
+        modifier(ToastPresenter(message: message, bottomInset: bottomInset))
     }
 }
 
 private struct ToastPresenter: ViewModifier {
     @Binding var message: ToastMessage?
+    let bottomInset: CGFloat
 
     /// Long enough to read four or five words, short enough not to sit in the
     /// way. The handoff specifies ~2s.
@@ -61,29 +66,53 @@ private struct ToastPresenter: ViewModifier {
             .overlay(alignment: .bottom) {
                 if let message {
                     Toast(message: message.text)
-                        .padding(.bottom, DocsSpacing.spaceLG)
+                        .padding(.bottom, DocsSpacing.spaceLG + bottomInset)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                        // Re-announced per message id, so a repeated copy is
-                        // spoken again rather than silently ignored.
                         .id(message.id)
+                        .animation(.snappy, value: message.id)
                         .task(id: message.id) {
+                            // Spoken, not just labelled: the toast dismisses
+                            // itself in two seconds and never takes focus, so a
+                            // VoiceOver user would otherwise never learn the
+                            // copy happened at all. Re-posted per message id, so
+                            // a repeated copy is announced again.
+                            AccessibilityNotification.Announcement(message.text).post()
                             try? await Task.sleep(for: Self.duration)
                             guard !Task.isCancelled else { return }
                             self.message = nil
                         }
                 }
             }
-            .animation(.snappy, value: message?.id)
     }
 }
 
 #Preview {
-    @Previewable @State var message: ToastMessage? = ToastMessage("Link copied")
+    toastPreview
+}
 
-    VStack {
-        Button("Show toast") { message = ToastMessage("Link copied") }
+#Preview("Dark") {
+    toastPreview
+        .preferredColorScheme(.dark)
+}
+
+@MainActor @ViewBuilder
+private var toastPreview: some View {
+    // Over content, since the pill is glass and only reads properly against
+    // something.
+    ZStack {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            ForEach(0..<14, id: \.self) { _ in
+                Text("Document text the toast floats over.")
+                    .font(DocsFont.body)
+                    .foregroundStyle(DocsColor.textPrimary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+
+        Toast(message: "Link copied")
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .padding(.bottom, DocsSpacing.spaceLG)
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(DocsColor.surfacePage)
-    .toast($message)
 }

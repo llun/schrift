@@ -155,6 +155,10 @@ struct EditorView: View {
     /// that raise them — those dismiss themselves in the same breath, and a
     /// toast inside one would be torn down before it could be read.
     @State private var toastMessage: ToastMessage?
+
+    /// Height the formatting bar reserves at the bottom of the editing canvas:
+    /// its 44pt tap target plus the inset's own padding.
+    private var editingToastInset: CGFloat { DocsSpacing.rowMinHeight + DocsSpacing.spaceBase }
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
@@ -200,7 +204,10 @@ struct EditorView: View {
     var body: some View {
         mainContent
             .background(DocsColor.surfacePage)
-            .toast($toastMessage)
+            // While editing, clear the formatting bar the canvas floats at the
+            // same edge — Copy Link is reachable from the toolbar mid-edit, so
+            // the two genuinely collide.
+            .toast($toastMessage, bottomInset: viewModel.isEditing ? editingToastInset : 0)
             // One system toolbar in both modes. The document title stays in the
             // canvas as a large content header (`headerBlock`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions

@@ -290,6 +290,9 @@ enum Strings_fr {
             "Vous êtes connecté avec votre session Web. Schrift se connecte à l’aide du cookie de votre navigateur et ne stocke jamais votre mot de passe.",
         .account_email: "E-mail",
         .account_manage_on_web: "Gérer le compte sur le web",
+        .account_unavailable_title: "Compte indisponible",
+        .account_unavailable_body:
+            "Impossible de charger les détails de votre compte. Vérifiez votre connexion et réessayez.",
         .account_language_footer:
             "La langue utilisée par votre serveur pour les e-mails et le contenu partagé. La langue de l’application se trouve dans Préférences.",
         // Toast

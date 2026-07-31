@@ -287,6 +287,9 @@ enum Strings_en {
             "You're signed in with your web session. Schrift connects using your browser cookie and never stores your password.",
         .account_email: "Email",
         .account_manage_on_web: "Manage account on the web",
+        .account_unavailable_title: "Account unavailable",
+        .account_unavailable_body:
+            "Your account details couldn't be loaded. Check your connection and try again.",
         .account_language_footer:
             "The language your server uses for emails and shared content. The app's own language is in Preferences.",
         // Toast

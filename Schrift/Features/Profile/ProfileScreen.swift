@@ -85,6 +85,10 @@ struct ProfileScreen: View {
                 }
             }
             .buttonStyle(.plain)
+            // Nothing to push into until the user has loaded — offline, that is
+            // the permanent state, and the detail screen would have nothing to
+            // show but its own unavailable message.
+            .disabled(viewModel.user == nil)
         }
     }
 

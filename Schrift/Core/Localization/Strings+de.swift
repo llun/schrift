@@ -291,6 +291,9 @@ enum Strings_de {
             "Sie sind mit Ihrer Web-Sitzung angemeldet. Schrift verbindet sich über das Cookie Ihres Browsers und speichert niemals Ihr Passwort.",
         .account_email: "E-Mail",
         .account_manage_on_web: "Konto im Web verwalten",
+        .account_unavailable_title: "Konto nicht verfügbar",
+        .account_unavailable_body:
+            "Deine Kontodetails konnten nicht geladen werden. Überprüfe deine Verbindung und versuche es erneut.",
         .account_language_footer:
             "Die Sprache, die Ihr Server für E-Mails und geteilte Inhalte verwendet. Die Sprache der App finden Sie unter Einstellungen.",
         // Toast

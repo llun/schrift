@@ -67,6 +67,8 @@ struct SharedScreen: View {
                                 )
                             }
                         }
+                        // Matches Home's section rhythm before the footer.
+                        .padding(.bottom, DocsSpacing.spaceSM)
                         .padding(.horizontal, DocsSpacing.gutter)
                     }
 

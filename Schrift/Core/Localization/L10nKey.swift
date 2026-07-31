@@ -319,6 +319,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case account_signin_footer = "account.signin_footer"
     case account_email = "account.email"  // "Email"
     case account_manage_on_web = "account.manage_on_web"  // "Manage account on the web"
+    case account_unavailable_title = "account.unavailable_title"  // "Account unavailable"
+    case account_unavailable_body = "account.unavailable_body"
     case account_language_footer = "account.language_footer"
     // Transient confirmation toast
     case toast_link_copied = "toast.link_copied"  // "Link copied"
