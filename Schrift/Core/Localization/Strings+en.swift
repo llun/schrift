@@ -11,6 +11,7 @@ enum Strings_en {
         .common_profile: "Profile",
         .common_clear_search: "Clear search",
         .common_you: "(you)",
+        .common_loading: "Loading",
         .search_results_one: "%d result",
         .search_results_other: "%d results",
 
@@ -277,5 +278,18 @@ enum Strings_en {
         .appearance_system: "System",
         .appearance_light: "Light",
         .appearance_dark: "Dark",
+        // Account screen
+        .account_title: "Account",
+        .account_section_profile: "Profile",
+        .account_full_name: "Full name",
+        .account_section_signin: "Sign-in",
+        .account_signin_footer:
+            "You're signed in with your web session. Schrift connects using your browser cookie and never stores your password.",
+        .account_email: "Email",
+        .account_manage_on_web: "Manage account on the web",
+        .account_language_footer:
+            "The language your server uses for emails and shared content. The app's own language is in Preferences.",
+        // Toast
+        .toast_link_copied: "Link copied",
     ]
 }

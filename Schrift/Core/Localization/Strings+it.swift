@@ -10,6 +10,7 @@ enum Strings_it {
         .common_profile: "Profilo",
         .common_clear_search: "Cancella ricerca",
         .common_you: "(tu)",
+        .common_loading: "Caricamento",
         .search_results_one: "%d risultato",
         .search_results_other: "%d risultati",
 
@@ -277,5 +278,18 @@ enum Strings_it {
         .appearance_system: "Sistema",
         .appearance_light: "Chiaro",
         .appearance_dark: "Scuro",
+        // Account screen
+        .account_title: "Account",
+        .account_section_profile: "Profilo",
+        .account_full_name: "Nome completo",
+        .account_section_signin: "Accesso",
+        .account_signin_footer:
+            "Hai eseguito l'accesso con la tua sessione web. Schrift si connette utilizzando il cookie del tuo browser e non memorizza mai la tua password.",
+        .account_email: "Email",
+        .account_manage_on_web: "Gestisci l'account sul web",
+        .account_language_footer:
+            "La lingua che il tuo server utilizza per le e-mail e i contenuti condivisi. La lingua dell'app si trova in Preferenze.",
+        // Toast
+        .toast_link_copied: "Link copiato",
     ]
 }

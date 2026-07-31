@@ -188,6 +188,34 @@
 >   away for mock fidelity would remove information from a feature that is not
 >   finished yet.
 
+> **Revised: 2026-07-31 (Account screen, flat Shared list, and the feedback
+> registers).** The last of the screen-level handoff work.
+>
+> - **`AccountScreen`** is pushed from Profile's user row, which used to be a
+>   static email line with nowhere to go. It is scoped to what `GET /users/me/`
+>   actually returns (id, email, full name, short name, language): identity
+>   hero, a display-only Profile section, a Sign-in section, and one link out to
+>   the web app. The handoff's role badge, organization, "member since",
+>   photo-change control and editable name are **not** implemented — the API has
+>   none of them, and rows that cannot be filled or controls that cannot save
+>   would be worse than a shorter screen. Note the Language row here is the
+>   *server* profile's language, distinct from the app's own UI language in
+>   Preferences (which is never written back to the server).
+> - **Shared is flat** — an uppercase count eyebrow over rows drawn straight on
+>   the page, matching Home's sections. The grouped `ListSection` card it used
+>   to sit in is gone.
+> - **The four feedback registers now exist as the handoff defines them.**
+>   *Alert* for destructive confirms (delete document, disconnect, keep-server)
+>   — these moved off `.confirmationDialog`, which is for choosing among
+>   options, not for confirming one destructive verb. *Toast* for transient
+>   confirmations ("Link copied", ~2s, glass, no button — a message you must
+>   dismiss is not transient). *Skeleton* rows replace the spinner on a
+>   first-load list, per the handoff's "no spinners on lists". *Callout* is
+>   still unused and unbuilt: no screen calls for one.
+> - The toast is owned by the **presenting** screen, not the sheets that raise
+>   it — Options and Share both dismiss themselves in the same breath, and a
+>   toast inside one would be torn down before it could be read.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match

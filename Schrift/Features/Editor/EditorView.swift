@@ -151,6 +151,10 @@ struct EditorView: View {
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
     @State private var conflictToResolve: IdentifiedSyncConflict?
+    /// Transient confirmations ("Link copied"). Owned here, not in the sheets
+    /// that raise them — those dismiss themselves in the same breath, and a
+    /// toast inside one would be torn down before it could be read.
+    @State private var toastMessage: ToastMessage?
     @State private var pendingShareAfterOptions = false
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
@@ -194,6 +198,126 @@ struct EditorView: View {
     }
 
     var body: some View {
+        mainContent
+            .background(DocsColor.surfacePage)
+            .toast($toastMessage)
+            // One system toolbar in both modes. The document title stays in the
+            // canvas as a large content header (`headerBlock`) rather than in the
+            // bar, so the bar carries only the back button and the trailing actions
+            // — hence `.inline` with no `.navigationTitle`.
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
+                        action in
+                        toolbarButton(for: action)
+                    }
+                }
+            }
+            .task {
+                await viewModel.load()
+            }
+            // Presence: request a live session while this document is on screen, so
+            // our avatar shows to peers and theirs to us. Reference-counted + balanced
+            // with `release` on disappear; the manager owns the socket lifecycle
+            // (linger, suspend, reconnect), so a background/foreground cycle is handled
+            // there.
+            .onAppear { requestCollaborationSessionIfNeeded() }
+            // Availability can resolve *after* the editor is already on screen — the
+            // `/config/` fetch that decides server support runs concurrently with
+            // navigation — so re-request when it flips to available; the one-shot hold
+            // keeps this from double-counting.
+            .onChange(of: collaboration.availability) { _, _ in
+                requestCollaborationSessionIfNeeded()
+            }
+            // C1: a replica update integrated cleanly — hand it to the bridge, which
+            // diffs the projection against the editor's blocks and applies it in place
+            // (when engagement allows) so live edits land under the user's own cursor.
+            .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
+                liveEditingBridge?.replicaDidChange()
+            }
+            // Live refresh: a peer touched the document (a change signal on the socket
+            // bumps this token), so debounce a silent revalidation. Suppressed while the
+            // bridge is actively applying live content — the stream is already newer than
+            // a REST re-fetch would be, and installing a REST body over it would reset the
+            // caret the bridge just preserved.
+            .onChange(of: collaboration.remoteChangeToken(for: viewModel.documentID)) { _, _ in
+                if liveEditingBridge?.isApplyingLiveContent != true {
+                    viewModel.noteRemoteChange()
+                }
+            }
+            .onDisappear {
+                viewModel.flushPendingChanges()
+                if holdsCollaborationSession {
+                    collaboration.release(viewModel.documentID)
+                    holdsCollaborationSession = false
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background || phase == .inactive {
+                    viewModel.flushPendingChanges()
+                }
+            }
+            .sheet(isPresented: $isPresentingShareSheet) { shareSheet }
+            .sheet(
+                isPresented: $isPresentingOptionsSheet,
+                onDismiss: {
+                    if pendingShareAfterOptions {
+                        pendingShareAfterOptions = false
+                        isPresentingShareSheet = true
+                    }
+                }
+            ) {
+                optionsSheet
+            }
+            // `.sheet(item:)`, not `isPresented`: the sheet renders the conflict's server
+            // timestamp, so it must never be presented without one. Both choices dismiss
+            // the sheet themselves before handing off to the view model.
+            .sheet(item: $conflictToResolve) { conflict in
+                ConflictSheetView(
+                    conflict: conflict.value,
+                    onKeepMine: { viewModel.resolveConflictKeepingMine() },
+                    onKeepServer: { Task { await viewModel.resolveConflictKeepingServer() } }
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
+    }
+
+    /// Extracted from the `.sheet` closure: `body`'s modifier chain is long
+    /// enough that inlining these two tips the type-checker over.
+    private var shareSheet: some View {
+        ShareSheetView(
+            viewModel: shareViewModel,
+            shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+            onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) }
+        )
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var optionsSheet: some View {
+        OptionsSheetView(
+            viewModel: optionsViewModel,
+            client: viewModel.client,
+            documentID: viewModel.documentID,
+            serverHost: serverHost,
+            shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+            onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
+            onShare: { pendingShareAfterOptions = true },
+            onDeleted: {
+                viewModel.handleDidDelete()
+                onDeleted?()
+            }
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    /// The screen's content column, lifted out of `body` so the long
+    /// modifier chain that follows stays type-checkable on its own — with
+    /// both in one expression the compiler gives up.
+    private var mainContent: some View {
         VStack(spacing: 0) {
 
             if isOffline, viewModel.hasLocalCopy {
@@ -271,108 +395,6 @@ struct EditorView: View {
             } else {
                 readingSurface
             }
-        }
-        .background(DocsColor.surfacePage)
-        // One system toolbar in both modes. The document title stays in the
-        // canvas as a large content header (`headerBlock`) rather than in the
-        // bar, so the bar carries only the back button and the trailing actions
-        // — hence `.inline` with no `.navigationTitle`.
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
-                    action in
-                    toolbarButton(for: action)
-                }
-            }
-        }
-        .task {
-            await viewModel.load()
-        }
-        // Presence: request a live session while this document is on screen, so
-        // our avatar shows to peers and theirs to us. Reference-counted + balanced
-        // with `release` on disappear; the manager owns the socket lifecycle
-        // (linger, suspend, reconnect), so a background/foreground cycle is handled
-        // there.
-        .onAppear { requestCollaborationSessionIfNeeded() }
-        // Availability can resolve *after* the editor is already on screen — the
-        // `/config/` fetch that decides server support runs concurrently with
-        // navigation — so re-request when it flips to available; the one-shot hold
-        // keeps this from double-counting.
-        .onChange(of: collaboration.availability) { _, _ in
-            requestCollaborationSessionIfNeeded()
-        }
-        // C1: a replica update integrated cleanly — hand it to the bridge, which
-        // diffs the projection against the editor's blocks and applies it in place
-        // (when engagement allows) so live edits land under the user's own cursor.
-        .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
-            liveEditingBridge?.replicaDidChange()
-        }
-        // Live refresh: a peer touched the document (a change signal on the socket
-        // bumps this token), so debounce a silent revalidation. Suppressed while the
-        // bridge is actively applying live content — the stream is already newer than
-        // a REST re-fetch would be, and installing a REST body over it would reset the
-        // caret the bridge just preserved.
-        .onChange(of: collaboration.remoteChangeToken(for: viewModel.documentID)) { _, _ in
-            if liveEditingBridge?.isApplyingLiveContent != true {
-                viewModel.noteRemoteChange()
-            }
-        }
-        .onDisappear {
-            viewModel.flushPendingChanges()
-            if holdsCollaborationSession {
-                collaboration.release(viewModel.documentID)
-                holdsCollaborationSession = false
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background || phase == .inactive {
-                viewModel.flushPendingChanges()
-            }
-        }
-        .sheet(isPresented: $isPresentingShareSheet) {
-            ShareSheetView(
-                viewModel: shareViewModel,
-                shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID)
-            )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(
-            isPresented: $isPresentingOptionsSheet,
-            onDismiss: {
-                if pendingShareAfterOptions {
-                    pendingShareAfterOptions = false
-                    isPresentingShareSheet = true
-                }
-            }
-        ) {
-            OptionsSheetView(
-                viewModel: optionsViewModel,
-                client: viewModel.client,
-                documentID: viewModel.documentID,
-                serverHost: serverHost,
-                shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
-                onShare: { pendingShareAfterOptions = true },
-                onDeleted: {
-                    viewModel.handleDidDelete()
-                    onDeleted?()
-                }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
-        // `.sheet(item:)`, not `isPresented`: the sheet renders the conflict's server
-        // timestamp, so it must never be presented without one. Both choices dismiss
-        // the sheet themselves before handing off to the view model.
-        .sheet(item: $conflictToResolve) { conflict in
-            ConflictSheetView(
-                conflict: conflict.value,
-                onKeepMine: { viewModel.resolveConflictKeepingMine() },
-                onKeepServer: { Task { await viewModel.resolveConflictKeepingServer() } }
-            )
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
         }
     }
 

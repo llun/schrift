@@ -14,6 +14,7 @@ enum Strings_sl {
         .common_profile: "Profil",
         .common_clear_search: "Počisti iskanje",
         .common_you: "(vi)",
+        .common_loading: "Nalaganje",
         .search_results_one: "%d rezultat",
         .search_results_other: "%d rezultatov",
         .search_results_two: "%d rezultata",
@@ -289,5 +290,18 @@ enum Strings_sl {
         .appearance_system: "Sistem",
         .appearance_light: "Svetlo",
         .appearance_dark: "Temno",
+        // Account screen
+        .account_title: "Račun",
+        .account_section_profile: "Profil",
+        .account_full_name: "Polno ime",
+        .account_section_signin: "Prijava",
+        .account_signin_footer:
+            "Prijavljeni ste z vašo spletno sejo. Schrift se poveže z uporabo piškotka vašega brskalnika in nikoli ne shrani vašega gesla.",
+        .account_email: "E-pošta",
+        .account_manage_on_web: "Upravljajte račun v spletu",
+        .account_language_footer:
+            "Jezik, ki ga uporablja vaš strežnik za e-pošto in deljeno vsebino. Jezik aplikacije najdete v Nastavitvah.",
+        // Toast
+        .toast_link_copied: "Povezava kopirana",
     ]
 }

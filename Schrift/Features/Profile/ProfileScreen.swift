@@ -64,11 +64,8 @@ struct ProfileScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .confirmationDialog(
-            loc.format(.profile_disconnect_title, serverHost),
-            isPresented: $isConfirmingDisconnect,
-            titleVisibility: .visible
-        ) {
+        .alert(loc.format(.profile_disconnect_title, serverHost), isPresented: $isConfirmingDisconnect) {
+            Button(loc[.common_cancel], role: .cancel) {}
             Button(loc[.profile_disconnect], role: .destructive) { onSignOut() }
         } message: {
             Text(loc[.profile_disconnect_body])
@@ -77,9 +74,17 @@ struct ProfileScreen: View {
 
     // MARK: - 1) User
 
+    /// The handoff makes this row the way into the account detail; it used to be
+    /// a static email line with nowhere to go.
     private var userSection: some View {
         ListSection(header: loc[.profile_user]) {
-            ListRow(icon: .account_circle, title: viewModel.user?.email ?? "—")
+            NavigationLink(value: ProfileRoute.account) {
+                ProfileTrailingRow(icon: .account_circle, title: viewModel.user?.email ?? "—") {
+                    MaterialSymbol(.chevron_right, size: 18)
+                        .foregroundStyle(DocsColor.gray300)
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 

@@ -104,15 +104,12 @@ struct ConflictSheetView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DocsColor.surfacePage)
-        .confirmationDialog(
-            loc[.editor_conflict_keep_server], isPresented: $isConfirmingKeepServer,
-            titleVisibility: .visible
-        ) {
+        .alert(loc[.editor_conflict_keep_server], isPresented: $isConfirmingKeepServer) {
+            Button(loc[.common_cancel], role: .cancel) {}
             Button(loc[.editor_conflict_keep_server], role: .destructive) {
                 dismiss()
                 onKeepServer()
             }
-            Button(loc[.common_cancel], role: .cancel) {}
         } message: {
             Text(loc[.editor_conflict_keep_server_detail])
         }

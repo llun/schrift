@@ -154,6 +154,18 @@ struct MainTabView: View {
                 isOffline: viewModel.isOffline,
                 onSignOut: onSignOut
             )
+            .navigationDestination(for: ProfileRoute.self) { route in
+                switch route {
+                case .account:
+                    AccountScreen(
+                        user: profileViewModel.user,
+                        serverHost: serverHost,
+                        // The origin the app already derived for the image gate
+                        // — no second source of truth for where the server is.
+                        serverURL: URL(string: serverOrigin)
+                    )
+                }
+            }
         }
     }
 

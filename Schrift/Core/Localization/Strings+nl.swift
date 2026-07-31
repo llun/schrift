@@ -10,6 +10,7 @@ enum Strings_nl {
         .common_profile: "Profiel",
         .common_clear_search: "Zoekopdracht wissen",
         .common_you: "(jij)",
+        .common_loading: "Laden",
         .search_results_one: "%d resultaat",
         .search_results_other: "%d resultaten",
 
@@ -279,5 +280,18 @@ enum Strings_nl {
         .appearance_system: "Systeem",
         .appearance_light: "Licht",
         .appearance_dark: "Donker",
+        // Account screen
+        .account_title: "Account",
+        .account_section_profile: "Profiel",
+        .account_full_name: "Volledige naam",
+        .account_section_signin: "Aanmelden",
+        .account_signin_footer:
+            "Je bent aangemeld met je websessie. Schrift maakt verbinding via het cookie van je browser en slaat je wachtwoord nooit op.",
+        .account_email: "E-mail",
+        .account_manage_on_web: "Account beheren op het web",
+        .account_language_footer:
+            "De taal die je server gebruikt voor e-mails en gedeelde inhoud. De taal van de app vind je bij Voorkeuren.",
+        // Toast
+        .toast_link_copied: "Link gekopieerd",
     ]
 }

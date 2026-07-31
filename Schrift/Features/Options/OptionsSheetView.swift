@@ -5,6 +5,9 @@ struct OptionsSheetView: View {
     let shareURL: URL?
     var onShare: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
+    /// Called when the link reached the pasteboard, so the presenter can
+    /// confirm it after this sheet closes.
+    var onLinkCopied: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(LocalizationStore.self) private var loc
@@ -19,11 +22,13 @@ struct OptionsSheetView: View {
         documentID: UUID,
         serverHost: String,
         shareURL: URL?,
+        onLinkCopied: (() -> Void)? = nil,
         onShare: (() -> Void)? = nil,
         onDeleted: (() -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.shareURL = shareURL
+        self.onLinkCopied = onLinkCopied
         self.onShare = onShare
         self.onDeleted = onDeleted
         self.restoreURL = documentShareURL(serverHost: serverHost, documentID: documentID)
@@ -78,9 +83,10 @@ struct OptionsSheetView: View {
             }
         }
         .background(DocsColor.surfacePage)
-        .confirmationDialog(
-            loc[.options_delete_confirm_title], isPresented: $isConfirmingDelete, titleVisibility: .visible
-        ) {
+        // A system alert, not an action sheet: this is a destructive confirm
+        // with one verb, which is exactly what the handoff reserves alerts for.
+        .alert(loc[.options_delete_confirm_title], isPresented: $isConfirmingDelete) {
+            Button(loc[.common_cancel], role: .cancel) {}
             Button(loc[.options_delete], role: .destructive) {
                 Task {
                     await viewModel.delete()
@@ -101,6 +107,9 @@ struct OptionsSheetView: View {
     private func copyLink() {
         if let shareURL {
             UIPasteboard.general.string = shareURL.absoluteString
+            // Reported to the presenter rather than shown here: this sheet is
+            // about to dismiss, and a toast inside it would go with it.
+            onLinkCopied?()
         }
         dismiss()
     }

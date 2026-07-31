@@ -10,6 +10,7 @@ enum Strings_de {
         .common_profile: "Profil",
         .common_clear_search: "Suche löschen",
         .common_you: "(du)",
+        .common_loading: "Wird geladen",
         .search_results_one: "%d Ergebnis",
         .search_results_other: "%d Ergebnisse",
 
@@ -281,5 +282,18 @@ enum Strings_de {
         .appearance_system: "System",
         .appearance_light: "Hell",
         .appearance_dark: "Dunkel",
+        // Account screen
+        .account_title: "Konto",
+        .account_section_profile: "Profil",
+        .account_full_name: "Vollständiger Name",
+        .account_section_signin: "Anmeldung",
+        .account_signin_footer:
+            "Sie sind mit Ihrer Web-Sitzung angemeldet. Schrift verbindet sich über das Cookie Ihres Browsers und speichert niemals Ihr Passwort.",
+        .account_email: "E-Mail",
+        .account_manage_on_web: "Konto im Web verwalten",
+        .account_language_footer:
+            "Die Sprache, die Ihr Server für E-Mails und geteilte Inhalte verwendet. Die Sprache der App finden Sie unter Einstellungen.",
+        // Toast
+        .toast_link_copied: "Link kopiert",
     ]
 }
