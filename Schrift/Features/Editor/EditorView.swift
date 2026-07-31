@@ -389,14 +389,20 @@ struct EditorView: View {
 
             BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin)
                 .safeAreaInset(edge: .bottom) {
-                    VStack(spacing: DocsSpacing.spaceXS) {
-                        if viewModel.isUploadingPhoto {
-                            uploadingPhotoBanner
+                    // A container so the glass surfaces stacked here (the bar,
+                    // and the slash menu when it is up) are rendered as one
+                    // system pass and blend where they meet, rather than as
+                    // separate panes sitting on top of each other.
+                    GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
+                        VStack(spacing: DocsSpacing.spaceXS) {
+                            if viewModel.isUploadingPhoto {
+                                uploadingPhotoBanner
+                            }
+                            if let query = viewModel.slashQueryText {
+                                SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
+                            }
+                            EditorFormattingBar(viewModel: viewModel)
                         }
-                        if let query = viewModel.slashQueryText {
-                            SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
-                        }
-                        EditorFormattingBar(viewModel: viewModel)
                     }
                     .padding(.horizontal, DocsSpacing.gutter)
                     .padding(.bottom, DocsSpacing.spaceXS)
@@ -460,7 +466,10 @@ struct EditorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DocsSpacing.spaceSM)
         .padding(.vertical, DocsSpacing.spaceXS)
-        .background(DocsColor.surfaceSunken, in: Capsule())
+        // Glass like its siblings: this floats in the same container, directly
+        // above the formatting bar, so a flat capsule here would read as a
+        // material seam on the one surface stack the app renders as glass.
+        .glassEffect(.regular, in: Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(loc[.editor_uploading_photo_a11y])
     }

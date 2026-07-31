@@ -11,17 +11,32 @@ struct SubpageRow: View {
         return trimmed.isEmpty ? loc[.common_untitled] : trimmed
     }
 
+    /// The handoff's subpage rows carry a one-line summary under the title.
+    /// Blank excerpts are dropped rather than rendered as an empty second line.
+    private var summary: String? {
+        let trimmed = document.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     var body: some View {
         Button(action: { onOpen?() }) {
             HStack(spacing: DocsSpacing.spaceSM) {
                 DocIcon(size: 22)
                     .frame(width: 24)
 
-                // Title only — the handoff's subpage rows carry no excerpt subtext.
-                Text(displayTitle)
-                    .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                    Text(displayTitle)
+                        .font(DocsFont.body)
+                        .foregroundStyle(DocsColor.textPrimary)
+                        .lineLimit(1)
+
+                    if let summary {
+                        Text(summary)
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(DocsColor.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
 
                 Spacer(minLength: DocsSpacing.spaceXS)
 

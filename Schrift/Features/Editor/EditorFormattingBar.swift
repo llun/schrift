@@ -59,13 +59,12 @@ struct EditorFormattingBar: View {
         }
         .padding(.horizontal, DocsSpacing.space2xs)
         .padding(.vertical, DocsSpacing.space3xs)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-        )
-        .clipShape(Capsule())
-        .shadow(color: DocsColor.textPrimary.opacity(0.12), radius: 12, x: 0, y: 4)
+        // Real Liquid Glass rather than the `.ultraThinMaterial` approximation
+        // this used to fake it with: the system supplies the refraction, the
+        // shadow and the edge, so the hand-drawn border and shadow go with it.
+        // The bar floats over the canvas, which is exactly the functional layer
+        // glass is meant for.
+        .glassEffect(.regular, in: Capsule())
     }
 
     @ViewBuilder

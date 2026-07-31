@@ -39,24 +39,46 @@ struct SlashMenuView: View {
             }
             .frame(maxHeight: maxHeight)
             .fixedSize(horizontal: false, vertical: true)
-            .background(DocsColor.surfacePage)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .overlay(
-                RoundedRectangle(cornerRadius: DocsRadius.lg)
-                    .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-            )
-            .shadow(color: DocsColor.textPrimary.opacity(0.12), radius: 12, x: 0, y: 4)
+            // Glass like the formatting bar it sits directly above — the two
+            // share a `GlassEffectContainer` in the editor, so they read as one
+            // floating surface instead of a card stacked on a capsule.
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
             .accessibilityLabel(loc[.editor_slash_menu_a11y])
         }
     }
 }
 
 #Preview {
-    VStack {
-        SlashMenuView(query: "", onSelect: { _ in })
-        SlashMenuView(query: "head", onSelect: { _ in })
+    slashMenuPreview
+}
+
+/// The menu is glass, so it is only really legible *over something*. Both
+/// previews put it over document-like text rather than a flat swatch, which is
+/// the case that decides whether the translucency works.
+#Preview("Dark") {
+    slashMenuPreview
+        .preferredColorScheme(.dark)
+}
+
+@MainActor @ViewBuilder
+private var slashMenuPreview: some View {
+    ZStack(alignment: .bottom) {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            ForEach(0..<12, id: \.self) { _ in
+                Text("Body text the menu floats over, to check legibility.")
+                    .font(DocsFont.body)
+                    .foregroundStyle(DocsColor.textPrimary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+
+        VStack {
+            SlashMenuView(query: "", onSelect: { _ in })
+            SlashMenuView(query: "head", onSelect: { _ in })
+        }
+        .padding()
     }
-    .padding()
-    .background(DocsColor.surfaceSunken)
+    .background(DocsColor.surfacePage)
     .environment(LocalizationStore())
 }

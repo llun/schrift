@@ -757,6 +757,16 @@ new code reads like the surrounding code.
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
   `SearchScreen` — still use `DocsRadius.pill` directly).
+- **Glass is for surfaces that float over content, never for content itself.**
+  A transient/floating surface — the editor's formatting bar and its slash menu —
+  uses **`.glassEffect(.regular, in:)`**, and sibling glass surfaces share a
+  **`GlassEffectContainer`** so the system renders them in one pass and blends
+  where they meet. Never hand-roll it: `.ultraThinMaterial` plus a drawn border
+  and shadow was the old approximation, and it neither refracts nor matches the
+  system chrome beside it. Content surfaces stay **opaque** `DocsColor` fills
+  (the handoff is explicit: transparency and blur are reserved for chrome), and
+  system chrome — bars, tab bar, sheets — is glass already because it is the
+  system's; do not re-skin it.
 - **All text scales with Dynamic Type, and the token table is what makes that
   safe.** Every `DocsFont.*` is a *text-style-relative* font
   (`Font.system(spec.textStyle, weight:)`), never `Font.system(size:)` — the
