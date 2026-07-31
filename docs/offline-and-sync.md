@@ -870,8 +870,8 @@ server is about to hold.
   `hasConflict` and degrades to a passive "Saved on this device": while the push is held,
   `.pendingSync`'s "syncs when online · tap to retry" would promise a sync that cannot
   happen and offer a retry that re-enqueues straight back into the hold.
-  **The editing header applies the identical precedence** — `saveStatusDisplay`
-  (`EditorSaveBar.swift`), the pure resolver behind `SaveStatusIndicator`: it is the surface
+  **The editing surface applies the identical precedence** — `saveStatusDisplay`
+  (`SaveStatusIndicator.swift`), the pure resolver behind its save-status row: it is the surface
   the user is actually looking at while typing, and detection on the dirty branch means a
   save can now be held *mid-session*, where the raw state would render as "Saving…"/"Saved"
   (a sync that is not happening) or offer a `.failed` "tap to retry" that only re-parks. Under

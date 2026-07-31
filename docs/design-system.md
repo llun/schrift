@@ -520,7 +520,13 @@ fix.
 
 ### 8.1 Header / nav-bar spacing (all four tabs)
 
-The current `NavBar` always renders a fixed **44pt top row**, even in large-title
+**Superseded 2026-07-31** — the drawn `NavBar` is gone. Every screen uses the
+system navigation bar (`.navigationTitle` / `.navigationSubtitle` / `.toolbar`),
+which handles the large-title collapse, spacing and scroll-edge behavior this
+section was specifying by hand. Kept below as the record of what the handoff
+asked for. See the amendments at the top of this document.
+
+The (former) `NavBar` always rendered a fixed **44pt top row**, even in large-title
 mode with no back button and no leading view. Result: Search/Shared/Profile carry
 ~44pt of dead space above the large title, and Home's "+" sits in that empty bar
 instead of beside the title. The handoff collapses that row and lays the large
@@ -622,9 +628,10 @@ amendment at the top of this document.
 
 Layout is verified primarily via the component `#Preview` catalogs (light **and**
 dark) and a manual run. Pure helpers are unit-tested where they exist:
-`navBarShowsTopRow(largeTitle:hasBack:hasLeading:)`, the divider leading-inset
-rule (`52` with a leading icon, else `16`), and the sheet detent/`maxHeight`
-constants.
+the divider leading-inset rule (`52` with a leading icon, else `16`), the
+editor's toolbar-action table (`editorToolbarActions`) and presence-badge rule
+(`presenceBadgeCount`), and the sheet detent/`maxHeight` constants.
+(`navBarShowsTopRow` went with `NavBar`; the system bar owns that behavior now.)
 
 ## 9. Part 6 — Version history
 
