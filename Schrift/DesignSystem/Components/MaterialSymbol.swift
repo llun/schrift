@@ -43,20 +43,37 @@ extension MaterialIcon {
 /// any glyph. Marked `accessibilityHidden` because the glyph is a Private-Use-Area
 /// character with no spoken text: meaning is always carried by the enclosing
 /// control's `.accessibilityLabel` (icon-only buttons) or adjacent text.
+///
+/// The glyph **scales with Dynamic Type** by default, relative to `.body`, so an
+/// icon stays proportionate to the text it sits beside. Pass `scales: false` for
+/// the few glyphs that live in a hard-bounded box and would overflow it — the
+/// formatting bar's row of nine, where the width budget is fixed by the narrowest
+/// device (see `EditorFormattingBar`).
 struct MaterialSymbol: View {
     let icon: MaterialIcon
-    var size: CGFloat = 24
     var fill: Bool = false
 
-    init(_ icon: MaterialIcon, size: CGFloat = 24, fill: Bool = false) {
+    private let referenceSize: CGFloat
+    private let scales: Bool
+    @ScaledMetric private var scaledSize: CGFloat
+
+    init(
+        _ icon: MaterialIcon,
+        size: CGFloat = 24,
+        fill: Bool = false,
+        scales: Bool = true,
+        relativeTo textStyle: Font.TextStyle = .body
+    ) {
         self.icon = icon
-        self.size = size
         self.fill = fill
+        self.referenceSize = size
+        self.scales = scales
+        _scaledSize = ScaledMetric(wrappedValue: size, relativeTo: textStyle)
     }
 
     var body: some View {
         Text(String(icon.character))
-            .font(Font(MaterialSymbolFont.uiFont(size: size, fill: fill) as CTFont))
+            .font(Font(MaterialSymbolFont.uiFont(size: scales ? scaledSize : referenceSize, fill: fill) as CTFont))
             .accessibilityHidden(true)
     }
 }

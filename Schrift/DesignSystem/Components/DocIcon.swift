@@ -11,16 +11,26 @@ struct DocIcon: View {
     var tinted: Bool = false
     var pinned: Bool = false
 
-    private var box: CGFloat { tinted ? size + 14 : size }
+    /// The icon and its box scale together, so a document row stays
+    /// proportionate to the title beside it at every text size. Scaling only
+    /// the glyph would crop it against the fixed box.
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+
+    private var glyphSize: CGFloat { size * scale }
+    private var box: CGFloat { tinted ? glyphSize + 14 : glyphSize }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Group {
                 if let displayEmoji = docIconDisplayText(emoji: emoji) {
                     Text(displayEmoji)
-                        .font(.system(size: size * 0.9))
+                        .font(.system(size: glyphSize * 0.9))
                 } else {
-                    MaterialSymbol(.description, size: size)
+                    // Sized from this view's own scaled value with the symbol's
+                    // scaling off: two independent `ScaledMetric`s need not agree
+                    // at every category (scaling is not a flat multiple at
+                    // accessibility sizes), and the box is sized from ours.
+                    MaterialSymbol(.description, size: glyphSize, scales: false)
                         .foregroundStyle(DocsColor.brandFill)
                 }
             }

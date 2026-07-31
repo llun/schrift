@@ -51,6 +51,49 @@
 > cards are reserved for the **tab screens** (Profile, Shared). See
 > [`CLAUDE.md`](../CLAUDE.md).
 
+> **Revised: 2026-07-31 (iOS 26 minimum + Dynamic Type).** This is the first
+> change of the **native-first / Liquid Glass** refresh, following a revised
+> handoff whose governing rule is: *use the system component and its built-in
+> behavior wherever one exists, themed with these tokens — custom chrome is a
+> last resort, reserved for the editor canvas, live-collaboration presence, and
+> document icons.* Two things landed here, both prerequisites for the rest:
+>
+> 1. **The deployment target moved 18.0 → 26.0** (`project.yml`). Standard
+>    system components render Liquid Glass when built against that SDK, so the
+>    floor buys the new look for native chrome with no `#available` fallbacks to
+>    keep visually in sync. Nothing else in this change depends on 26.
+> 2. **All text now scales with Dynamic Type**, which the handoff lists among
+>    the platform behaviors you get free by staying native. The enabling
+>    observation: the handoff's iOS sizes (34/28/22/17/16/15/13/12) *are* the HIG
+>    defaults at the Large content size, so every token maps 1:1 onto a system
+>    text style. `TypographySpec` gained a `textStyle`, `DocsFont.*` became
+>    text-style-relative, and the app is unchanged at the default text size —
+>    pinned by
+>    `DocsTypographySpecTests.testEveryTokenSizeEqualsItsTextStyleDefaultAtTheLargeContentSize`.
+>    Supporting pieces: `.docsTracking(spec, ratio)` scales letter-spacing (a
+>    fixed `.tracking` in points drifts once text grows);
+>    `scaledUIFont(_:for:dynamicTypeSize:)` (`UIFontMetrics`) scales the block
+>    editor's UIKit fonts — rendered size only, so every `NSRange` stays a source
+>    offset, and the size is an **argument** so the calling row can read
+>    `@Environment(\.dynamicTypeSize)` and re-render when the setting changes
+>    mid-document (a baked-in `UIFont` otherwise goes stale);
+>    `docsScaledFont` covers the few component sizes off the HIG ramp (the 14pt
+>    button label); `MaterialSymbol` scales by default (`scales: false` for
+>    glyphs in hard-bounded boxes — `IconButton`, whose row of nine shares a
+>    fixed width budget); `DocIcon` scales glyph and box together from one
+>    value; fixed `height:` around text became `minHeight:` (`DocsTextField`,
+>    `SearchField`, `DocsButton`, `NavBar` — whose standard-mode title, drawn in
+>    an overlay that cannot grow the row, also gained the large title's
+>    single-line truncation); the Appearance detent and the
+>    Share/Version-history/slash-menu height caps scale; the two text-heavy
+>    fixed-detent sheets (Conflict, Link editor) gained scroll views so their
+>    actions can't fall below the fold; and **`DocRow` stacks its title above its
+>    metadata at accessibility sizes** (`rowUsesStackedLayout`) — its date holds
+>    the layout priority, so sharing one line collapsed the title to `"A…"`.
+>
+> Still to come in this refresh: the native tab shell and toolbars, iPad tab
+> parity, the native editor toolbar, the Account screen and the Pages tree.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match

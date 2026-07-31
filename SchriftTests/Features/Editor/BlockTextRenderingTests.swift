@@ -127,7 +127,11 @@ final class BlockTextRenderingTests: XCTestCase {
     func testBoldInsideAHeadingStaysHeadingSized() throws {
         let view = makeView("A **big** title", kind: .heading(level: 1))
         let font = try XCTUnwrap(view.textStorage.attribute(.font, at: 4, effectiveRange: nil) as? UIFont)
-        XCTAssertEqual(font.pointSize, DocsTypographySpec.title1.size)
+        // Compared against the block's own resolved font, not a literal: heading
+        // fonts scale with Dynamic Type, and what this pins is that the bold run
+        // keeps the heading's size rather than dropping to body.
+        XCTAssertEqual(font.pointSize, blockTextStyling(for: .heading(level: 1)).font.pointSize)
+        XCTAssertGreaterThan(font.pointSize, blockTextStyling(for: .paragraph).font.pointSize)
         XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.traitBold))
     }
 

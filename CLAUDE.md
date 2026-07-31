@@ -13,7 +13,10 @@ This file is the shorter, operational "how we write code here" companion.
 - A native **SwiftUI iOS/iPadOS client** for
   [La Suite Numérique Docs](https://github.com/suitenumerique/docs), talking to a
   self-hosted instance (`docs.llun.dev`).
-- **Swift 6**, minimum deployment **iOS 18.0**, universal (iPhone + iPad).
+- **Swift 6**, minimum deployment **iOS 26.0**, universal (iPhone + iPad). The
+  floor is 26 so the app can use the current system components unconditionally
+  — they render Liquid Glass when built against that SDK — with no
+  `#available` fallbacks to keep visually in sync.
 - **Zero third-party runtime dependencies.** Everything — including the Yjs CRDT
   encoder used to save documents — is hand-written on Apple frameworks. Keep it
   that way (see [Safety](#safety--never-add-anything-dangerous)).
@@ -86,7 +89,7 @@ names the section with the details.
   build — targets, settings, sources, Info.plist keys — edit `project.yml` and
   re-run `xcodegen generate`. Never open Xcode and edit the `.xcodeproj`
   directly (it is overwritten) and never commit it.
-- Requires a recent Xcode with an **iOS 18 simulator** and the Swift 6 toolchain.
+- Requires a recent Xcode with an **iOS 26 simulator** and the Swift 6 toolchain.
 - Run the tests:
   ```sh
   xcodebuild test -project Schrift.xcodeproj -scheme Schrift \
@@ -711,7 +714,7 @@ new code reads like the surrounding code.
 
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
-  (letter-spacing, applied as `.tracking(size * DocsTracking.tight)`),
+  (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),
   `DocsSpacing`, `DocsRadius`). Adding a color means adding it to
   `DocsColorHex` (raw `UInt32`) **and** its dark counterpart in
   `DocsColorHexDark` (same name, one entry per light token — see the adaptive-
@@ -734,6 +737,47 @@ new code reads like the surrounding code.
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
   `SearchScreen` — still use `DocsRadius.pill` directly).
+- **All text scales with Dynamic Type, and the token table is what makes that
+  safe.** Every `DocsFont.*` is a *text-style-relative* font
+  (`Font.system(spec.textStyle, weight:)`), never `Font.system(size:)` — the
+  handoff's iOS sizes are exactly the HIG defaults at the Large content size, so
+  each token maps 1:1 onto a system style (34→`.largeTitle`, 28→`.title`,
+  22→`.title2`, 17→`.headline`/`.body`, 16→`.callout`, 15→`.subheadline`,
+  13→`.footnote`, 12→`.caption`) and the app is byte-identical to the handoff at
+  the default size while still scaling.
+  `DocsTypographySpecTests.testEveryTokenSizeEqualsItsTextStyleDefaultAtTheLargeContentSize`
+  is what keeps that 1:1 honest — if a token's size and its style's default ever
+  disagree, the app has silently stopped matching the handoff at the size most
+  people run. `spec.size` survives as the **reference** value: it is what
+  tracking is derived from and what the UIKit editor scales up from. So:
+  - letter-spacing goes through **`.docsTracking(spec, DocsTracking.x)`**, never
+    a bare `.tracking(size * ratio)` — `.tracking` takes *points*, so a fixed
+    value drifts visibly once the text grows;
+  - a size the handoff specifies that is **not** on the HIG ramp (the 14pt
+    medium button label is the only one) has no token, so it goes through
+    **`.docsScaledFont(size:weight:relativeTo:)`**, which keeps the exact
+    reference size and still scales. Everything else uses `DocsFont.*` — a bare
+    `Font.system(size:)` is the thing both helpers exist to avoid;
+  - the block editor's UIKit fonts (`blockTextStyling`, the one place the app
+    builds `UIFont`s) go through **`scaledUIFont(_:for:dynamicTypeSize:)`**
+    (`UIFontMetrics`). Scaling changes only the rendered size, never the buffer,
+    so every `NSRange` stays the source offset it always was — see the
+    zero-width-syntax rule under [Editor](#editor--the-on-device-save-coreyjs).
+    The size is an **argument, not ambient state**: a `UIFont` is baked in when
+    the body runs, so the calling row reads `@Environment(\.dynamicTypeSize)`
+    and passes it down. Without that dependency SwiftUI has no reason to re-run
+    the row, and the editor keeps rendering at a stale size until an unrelated
+    edit happens to invalidate it;
+  - a fixed **`height:`** on anything containing text is a bug (it clips at
+    larger sizes); use `minHeight:` so the row can grow. A fixed **detent** or
+    **`maxHeight`** cap sized in rows (the Appearance sheet, Share's members
+    list, version history, the slash menu) needs `@ScaledMetric`, or it shows
+    one row where it used to show five;
+  - **a row whose title shares a line with trailing metadata reflows at
+    accessibility sizes rather than truncating.** `DocRow` is the worked
+    example: its date holds `layoutPriority(1)` so the date never truncates,
+    which meant the *title* collapsed to `"A…"`. `rowUsesStackedLayout(_:)` is
+    the shared predicate — stack the metadata under the title instead.
 - **Icons are Google Material Symbols, never SF Symbols.** The app's entire icon
   set is the handoff's Material Symbols Outlined, bundled as a ~18KB subset
   (`Schrift/Resources/Fonts/MaterialSymbolsOutlined-Icons.ttf`, Apache-2.0,
@@ -742,6 +786,11 @@ new code reads like the surrounding code.
   glyph by the typed `enum MaterialIcon` (raw value = the Material glyph name from
   `brand-iconography.html`; the FILL axis renders filled via `fill: true`) and
   render it with `MaterialSymbol(_:size:fill:)` — **never** `Image(systemName:)`.
+  It **scales with Dynamic Type by default** (relative to `.body`), so a glyph
+  stays proportionate to the text beside it; pass `scales: false` for a glyph in
+  a hard-bounded box that would crop it instead — `IconButton`, whose row of
+  nine in the formatting bar shares a fixed width budget, and `DocIcon`, which
+  scales its glyph and box together from one value.
   `IconButton(icon:)` and `NavBarAction(icon:)` take a `MaterialIcon`; UIKit call
   sites (a `UIMenu` action) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
   the app doesn't yet bundle means re-subsetting the font (see

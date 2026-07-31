@@ -30,7 +30,7 @@ struct SearchField: View {
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
-        .frame(height: 40)
+        .frame(minHeight: 40)
         .background(DocsColor.surfaceSunken)
         .clipShape(Capsule())
         .onAppear {

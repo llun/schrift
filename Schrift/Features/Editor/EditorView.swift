@@ -572,7 +572,7 @@ struct EditorView: View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
             Text(viewModel.title)
                 .font(DocsFont.title1)
-                .tracking(DocsTypographySpec.title1.size * DocsTracking.tight)
+                .docsTracking(DocsTypographySpec.title1, DocsTracking.tight)
                 .foregroundStyle(DocsColor.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
@@ -627,7 +627,7 @@ struct EditorView: View {
                             : loc.format(.editor_subpages_title_count, viewModel.subpages?.count ?? 0)
                     )
                     .font(DocsFont.footnote.weight(.semibold))
-                    .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
+                    .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
                 }
                 .textCase(.uppercase)
                 .foregroundStyle(DocsColor.textTertiary)
@@ -663,7 +663,7 @@ struct EditorView: View {
                         HStack(spacing: DocsSpacing.spaceXS) {
                             MaterialSymbol(.add, size: 22)
                             Text(loc[.editor_add_subpage])
-                                .font(.system(size: 15, weight: .semibold))
+                                .docsScaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
                         }
                         .foregroundStyle(DocsColor.textBrand)
                         .padding(.horizontal, DocsSpacing.spaceXS)

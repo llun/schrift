@@ -937,9 +937,13 @@ final class DocumentSaveCoordinatorTests: XCTestCase {
         coordinator.clearResolvedConflict(documentID: documentID)
 
         await waitUntil { self.savesInFlight(log) >= 1 }
-        XCTAssertNil(
-            coordinator.pendingSave(documentID: documentID),
-            "the work the hold was parking must actually be sent, not stranded forever")
+        // Polled, not asserted outright: `pendingSave` reports the in-flight save
+        // too, so it only empties once the save *finishes* — which is strictly
+        // after the request this test just watched reach the network. Asserting
+        // it instantly raced that window and failed on a loaded CI runner. The
+        // property under test is unchanged: the parked work must actually be
+        // sent, not stranded forever.
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
         await waitUntil { draftStore.draft(for: self.documentID) == nil }
     }
 

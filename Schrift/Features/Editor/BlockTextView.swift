@@ -30,7 +30,11 @@ struct BlockTextStyling: Equatable {
     let rendersInlineMarkdown: Bool
 }
 
-func blockTextStyling(for kind: BlockKind) -> BlockTextStyling {
+/// Fonts are built at the token's reference size and then scaled through
+/// `UIFontMetrics`, so the editor tracks Dynamic Type like the SwiftUI labels
+/// around it. Scaling changes only the rendered size — never the buffer — so
+/// every `NSRange` in the editor stays the source offset it always was.
+func blockTextStyling(for kind: BlockKind, dynamicTypeSize: DynamicTypeSize = .large) -> BlockTextStyling {
     switch kind {
     case .heading(let level):
         let spec: TypographySpec
@@ -40,7 +44,9 @@ func blockTextStyling(for kind: BlockKind) -> BlockTextStyling {
         default: spec = DocsTypographySpec.headline
         }
         return BlockTextStyling(
-            font: .systemFont(ofSize: spec.size, weight: spec.weight == .bold ? .bold : .semibold),
+            font: scaledUIFont(
+                .systemFont(ofSize: spec.size, weight: spec.weight == .bold ? .bold : .semibold), for: spec,
+                dynamicTypeSize: dynamicTypeSize),
             textColor: UIColor(DocsColor.textPrimary),
             isCodeLike: false,
             allowsNewlines: false,
@@ -48,7 +54,9 @@ func blockTextStyling(for kind: BlockKind) -> BlockTextStyling {
         )
     case .quote:
         return BlockTextStyling(
-            font: .italicSystemFont(ofSize: DocsTypographySpec.body.size),
+            font: scaledUIFont(
+                .italicSystemFont(ofSize: DocsTypographySpec.body.size), for: DocsTypographySpec.body,
+                dynamicTypeSize: dynamicTypeSize),
             textColor: UIColor(DocsColor.textSecondary),
             isCodeLike: false,
             allowsNewlines: false,
@@ -56,7 +64,9 @@ func blockTextStyling(for kind: BlockKind) -> BlockTextStyling {
         )
     case .codeBlock, .unknown:
         return BlockTextStyling(
-            font: .monospacedSystemFont(ofSize: DocsTypographySpec.code.size, weight: .regular),
+            font: scaledUIFont(
+                .monospacedSystemFont(ofSize: DocsTypographySpec.code.size, weight: .regular),
+                for: DocsTypographySpec.code, dynamicTypeSize: dynamicTypeSize),
             textColor: UIColor(DocsColor.textPrimary),
             isCodeLike: true,
             allowsNewlines: true,
@@ -66,7 +76,9 @@ func blockTextStyling(for kind: BlockKind) -> BlockTextStyling {
         // `.divider`/`.image` never host a text view (they render as leaves);
         // grouped here only to keep the switch exhaustive with a sane default.
         return BlockTextStyling(
-            font: .systemFont(ofSize: DocsTypographySpec.body.size),
+            font: scaledUIFont(
+                .systemFont(ofSize: DocsTypographySpec.body.size), for: DocsTypographySpec.body,
+                dynamicTypeSize: dynamicTypeSize),
             textColor: UIColor(DocsColor.textPrimary),
             isCodeLike: false,
             allowsNewlines: false,

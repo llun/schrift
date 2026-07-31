@@ -17,6 +17,10 @@ struct ProfileScreen: View {
     @State private var isConfirmingDisconnect = false
     @State private var showAppearanceSheet = false
     @State private var showLanguageSheet = false
+    /// The Appearance sheet is a fitted detent sized to its three rows. It has to
+    /// grow with the text inside it, or the last option falls below the fold at
+    /// larger sizes with no way to reach it.
+    @ScaledMetric(relativeTo: .body) private var appearanceSheetHeight: CGFloat = 280
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(AppearanceStore.self) private var appearance
@@ -50,7 +54,7 @@ struct ProfileScreen: View {
         .task { await viewModel.load() }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
-                .presentationDetents([.height(280)])
+                .presentationDetents([.height(appearanceSheetHeight)])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showLanguageSheet) {

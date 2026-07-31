@@ -64,7 +64,7 @@ struct DocsTextField: View {
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             if let label, !label.isEmpty {
                 Text(label)
-                    .font(.system(size: 14, weight: .medium))
+                    .docsScaledFont(size: 14, weight: .medium, relativeTo: .subheadline)
                     .foregroundStyle(Color(lightHex: style.labelLightHex, darkHex: style.labelDarkHex))
             }
 
@@ -79,7 +79,9 @@ struct DocsTextField: View {
                     .disabled(isDisabled)
             }
             .padding(.horizontal, DocsSpacing.spaceSM)
-            .frame(height: 40)
+            // minHeight, not height: the field has to grow with Dynamic Type
+            // rather than clip the text it exists to show.
+            .frame(minHeight: 40)
             // Disabled fields sink to the sunken surface (reference); enabled stay white.
             .background(isDisabled ? DocsColor.surfaceSunken : DocsColor.surfacePage)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))

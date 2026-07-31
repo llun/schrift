@@ -116,7 +116,13 @@ struct IconButton: View {
     var body: some View {
         let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
         Button(action: action) {
-            MaterialSymbol(icon, size: size.glyph, fill: filled)
+            // Fixed glyph: the box below is a hard frame and clips, and a row of
+            // these shares a fixed width budget (`minimumTapWidth: 0`), so a
+            // growing glyph would be cropped rather than readable. Icon-only
+            // controls carry their meaning in `.accessibilityLabel`, which
+            // VoiceOver and larger text sizes both reach without the glyph
+            // growing.
+            MaterialSymbol(icon, size: size.glyph, fill: filled, scales: false)
                 .frame(width: size.box, height: size.box)
                 .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
                 .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)

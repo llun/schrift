@@ -23,7 +23,7 @@ struct TabBar: View {
                         // worry about the way SF Symbols required.
                         MaterialSymbol(item.icon, size: 25, fill: isSelected)
                         Text(item.label)
-                            .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                            .docsScaledFont(size: 10, weight: isSelected ? .semibold : .medium, relativeTo: .caption2)
                     }
                     .padding(.vertical, DocsSpacing.space4xs)
                     .foregroundStyle(isSelected ? DocsColor.brandFill : DocsColor.gray450)

@@ -1,8 +1,12 @@
 name: Schrift
 options:
   bundleIdPrefix: dev.llun
+  # iOS 26 is the floor so the app can use the current system components
+  # unconditionally — the Liquid Glass tab bar, toolbars and sheets style
+  # themselves when built against this SDK, with no `#available` fallbacks to
+  # keep in visual sync. See docs/design-system.md ("Native first").
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:

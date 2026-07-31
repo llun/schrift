@@ -121,6 +121,18 @@ enum ButtonSize {
         }
     }
 
+    /// The Dynamic Type ramp each label scales on. The reference sizes are the
+    /// handoff's own (13/14/16), which do not all sit on the HIG ramp — `medium`
+    /// at 14pt has no matching text style — so the label keeps its exact size
+    /// and rides the nearest style for scaling.
+    var textStyle: Font.TextStyle {
+        switch self {
+        case .small: return .footnote
+        case .medium: return .subheadline
+        case .large: return .callout
+        }
+    }
+
     /// Leading-glyph point size — distinct from (and larger than) the label,
     /// matching the reference `iconSize` per size at weight 500.
     var iconSize: CGFloat {
@@ -159,10 +171,10 @@ struct DocsButton: View {
                     MaterialSymbol(icon, size: size.iconSize)
                 }
                 Text(title)
-                    .font(.system(size: size.fontSize, weight: .semibold))
+                    .docsScaledFont(size: size.fontSize, weight: .semibold, relativeTo: size.textStyle)
             }
             .padding(.horizontal, size.horizontalPadding)
-            .frame(height: size.height)
+            .frame(minHeight: size.height)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
             .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)

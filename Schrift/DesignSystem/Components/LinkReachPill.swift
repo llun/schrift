@@ -53,7 +53,7 @@ struct LinkReachPill: View {
             MaterialSymbol(style.icon, size: 18)
             VStack(alignment: .leading, spacing: 0) {
                 Text(loc[style.labelKey])
-                    .font(.system(size: 14, weight: .semibold))
+                    .docsScaledFont(size: 14, weight: .semibold, relativeTo: .subheadline)
                 if showsHint {
                     Text(loc[style.hintKey])
                         .font(DocsFont.caption)

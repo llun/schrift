@@ -41,7 +41,7 @@ repo safety rules (written for AI agents and human contributors alike).
 
 ## Setup
 
-Requires a recent Xcode with an **iOS 18 simulator** and the Swift 6 toolchain.
+Requires a recent Xcode with an **iOS 26 simulator** and the Swift 6 toolchain.
 
 1. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
 2. Generate the Xcode project: `xcodegen generate`
