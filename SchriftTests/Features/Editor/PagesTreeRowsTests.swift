@@ -80,6 +80,22 @@ final class PagesTreeRowsTests: XCTestCase {
         XCTAssertEqual(rows.map(\.document.id), [a, root])
     }
 
+    /// The tree is drawn from a session-local dictionary of levels, so a
+    /// document the server has re-parented can sit in a stale level while its
+    /// new parent lists it too. Keyed on the document id alone the two rows
+    /// collide in `ForEach` — undefined view identity, and a runtime complaint.
+    func testTheSameDocumentUnderTwoParentsProducesDistinctRowIdentities() {
+        let moved = document(a1, title: "Moved page")
+        let children = [
+            root: [document(a, title: "A", numchild: 1), document(b, title: "B", numchild: 1)],
+            a: [moved],
+            b: [moved],
+        ]
+        let rows = pagesTreeRows(parentID: root, children: children, expanded: [a, b])
+        XCTAssertEqual(rows.map(\.document.id), [a, a1, b, a1], "both placements render")
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count, "and each row is its own view")
+    }
+
     func testDeepNestingKeepsIncrementingDepth() {
         let c = UUID()
         let children = [

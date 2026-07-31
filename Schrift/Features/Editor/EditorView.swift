@@ -180,6 +180,7 @@ struct EditorView: View {
         reach: LinkReach,
         serverHost: String,
         serverOrigin: String,
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
@@ -201,8 +202,12 @@ struct EditorView: View {
         _shareViewModel = State(
             initialValue: ShareViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
+        // The same store the editor's own Subpages list fills, so a level either
+        // side has fetched is available to the other — and so a test can hand
+        // both an isolated one.
         _pagesTreeViewModel = State(
-            initialValue: PagesTreeViewModel(rootID: viewModel.documentID, client: viewModel.client))
+            initialValue: PagesTreeViewModel(
+                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache))
     }
 
     var body: some View {
@@ -212,8 +217,13 @@ struct EditorView: View {
             // same edge — Copy Link is reachable from the toolbar mid-edit, so
             // the two genuinely collide.
             .toast($toastMessage, bottomInset: viewModel.isEditing ? editingToastInset : 0)
+            // The drawer is an overlay rather than a sheet, so it gets none of a
+            // sheet's VoiceOver scoping for free: without this the editor behind
+            // it stays in the accessibility tree and a swipe walks straight into
+            // toolbar buttons the drawer is covering. Ordered before `.overlay`,
+            // which adds the drawer on top of the hidden content.
+            .accessibilityHidden(isPresentingPagesTree)
             .overlay { pagesTreeOverlay }
-            .animation(.snappy, value: isPresentingPagesTree)
             // One system toolbar in both modes. The document title stays in the
             // canvas as a large content header (`headerBlock`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions
@@ -337,21 +347,36 @@ struct EditorView: View {
         .presentationDragIndicator(.visible)
     }
 
-    @ViewBuilder
     private var pagesTreeOverlay: some View {
-        if isPresentingPagesTree {
-            PagesTreeDrawer(
-                viewModel: pagesTreeViewModel,
-                rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
-                isOffline: isOffline,
-                onOpen: { document in
-                    isPresentingPagesTree = false
-                    onOpenDocument?(document)
-                },
-                onClose: { isPresentingPagesTree = false }
-            )
-            .task { await pagesTreeViewModel.loadRoot() }
+        // The `.animation` belongs here, on the container the drawer comes and
+        // goes inside — on the body it would also animate whatever else changed
+        // in the same transaction (the save status, a conflict pill).
+        ZStack {
+            if isPresentingPagesTree {
+                PagesTreeDrawer(
+                    viewModel: pagesTreeViewModel,
+                    rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
+                    isOffline: isOffline,
+                    onOpen: { document in
+                        isPresentingPagesTree = false
+                        onOpenDocument?(document)
+                    },
+                    onClose: { dismissPagesTree() }
+                )
+                .task {
+                    // Nothing announces an overlay the way it would a sheet, so
+                    // say the screen changed and let VoiceOver land in the drawer.
+                    AccessibilityNotification.ScreenChanged().post()
+                    await pagesTreeViewModel.loadRoot()
+                }
+            }
         }
+        .animation(.snappy, value: isPresentingPagesTree)
+    }
+
+    private func dismissPagesTree() {
+        isPresentingPagesTree = false
+        AccessibilityNotification.ScreenChanged().post()
     }
 
     /// The screen's content column, lifted out of `body` so the long

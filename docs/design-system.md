@@ -230,13 +230,42 @@
 >   has its level available offline. A failed fetch keeps whatever the cache
 >   gave and says so; it never empties a level the user can see, and never
 >   tears the editor down (it concerns a *different* document's children).
+>   **"Work offline" is honoured the same way the document lists honour it** —
+>   read through the view model's injected `UserDefaults`, and the network is
+>   never reached at all, not attempted-and-caught.
+> - **A level that failed with nothing cached collapses again**, and its error
+>   is recorded per node rather than in one shared flag. Left expanded it would
+>   render as a node with no children — indistinguishable from a leaf, with no
+>   way back — and one shared flag would let a success elsewhere in the tree
+>   silently clear a message about a level the user is still looking at.
+>   Collapsed, the arrow returns, and tapping it is the retry.
+> - **"New page" only slots into a level that is actually known.** Appending to
+>   an unloaded one would show, and durably cache, a fabricated one-item level
+>   that hides the document's real children — and the cache is shared with the
+>   editor's Subpages list, so the lie outlives the drawer. This is the same
+>   rule, for the same reason, as `EditorViewModel.addSubpage`. A per-level
+>   mutation stamp additionally drops a list fetch that started *before* the
+>   create, whose snapshot would otherwise take the new page back off screen.
 > - **The disclosure arrow comes from `numchild`**, so it appears before a level
 >   has ever been fetched. `pagesTreeRows` is the pure flattening rule and
 >   carries the whole layout decision — including that an expanded-but-unloaded
 >   node contributes nothing yet, so a slow level never collapses the ones above
 >   it, and a cycle in server data terminates instead of overrunning the stack.
 > - The arrow and the title are **separate controls**: collapsing a branch
->   should not navigate away from what you are reading.
+>   should not navigate away from what you are reading. Both are floored at the
+>   44pt tap target (`PagesTreeLayout.disclosureWidth`; the title's label fills
+>   the row's height before taking its tap shape, or a 44pt-*looking* row would
+>   only open from the middle strip of text). The chevron itself stays small —
+>   this is `IconButton`'s pattern, tap target around glyph.
+> - A row's identity is **the (parent, document) pair**, not the document id.
+>   The tree is drawn from a session-local dictionary of levels, so a document
+>   the server has re-parented can still sit in a stale level while its new
+>   parent lists it too; keyed on the id alone those two rows collide in
+>   `ForEach`.
+> - Because it is an overlay rather than a sheet it gets **none of a sheet's
+>   VoiceOver scoping for free**: the editor behind it is explicitly
+>   `.accessibilityHidden` while it is open, and opening/closing posts a
+>   screen-changed notification. A new modal-ish overlay owes the same.
 >
 > **Deviation:** the drawer sits below the navigation bar rather than covering
 > the full height as the mock does, so the toolbar (and its back button) stays

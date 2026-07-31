@@ -8,6 +8,9 @@ enum PagesTreeLayout {
     static let maxWidthFraction: CGFloat = 0.85
     /// Indent per level, from the handoff.
     static let indentPerLevel: CGFloat = 18
+    /// The disclosure column. A tap target, not a glyph size — the chevron stays
+    /// small. Leaves reserve the same width so titles line up down the level.
+    static let disclosureWidth: CGFloat = DocsSpacing.rowMinHeight
 
     static func width(availableWidth: CGFloat) -> CGFloat {
         min(panelWidth, availableWidth * maxWidthFraction)
@@ -36,9 +39,11 @@ struct PagesTreeDrawer: View {
 
                 // The scrim: tapping anywhere outside the panel closes it, which
                 // is the gesture people reach for before the close button.
-                Color.black.opacity(0.001)
+                // `.contentShape` is what makes a clear view tappable.
+                Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { onClose() }
+                    .accessibilityElement()
                     .accessibilityLabel(loc[.pages_close])
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { onClose() }
@@ -137,6 +142,10 @@ struct PagesTreeDrawer: View {
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
+                // Fill the row's height before taking the tap shape: a label is
+                // only as tall as its text, so without this the row *looks* 44pt
+                // but only its middle strip opens the page.
+                .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -164,7 +173,11 @@ struct PagesTreeDrawer: View {
                             .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
                     }
                 }
+                // The glyph keeps its small visual box; the tap target around it
+                // is the full 44pt, per `IconButton` — a chevron this size is
+                // otherwise a quarter of the area iOS asks for.
                 .frame(width: 22, height: 22)
+                .frame(width: PagesTreeLayout.disclosureWidth, height: DocsSpacing.rowMinHeight)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -172,7 +185,7 @@ struct PagesTreeDrawer: View {
         } else {
             // Keeps titles on one vertical line whether or not a node has
             // children.
-            Color.clear.frame(width: 22, height: 22)
+            Color.clear.frame(width: PagesTreeLayout.disclosureWidth, height: 22)
         }
     }
 
@@ -206,4 +219,59 @@ struct PagesTreeDrawer: View {
         let trimmed = document.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? loc[.common_untitled] : trimmed
     }
+}
+
+// MARK: - Preview
+
+/// Seeds the children cache and turns "work offline" on, so the catalog renders
+/// a real tree through the real code path without a network or a stub client.
+@MainActor
+private func previewViewModel(expandingFirstChild: Bool) -> PagesTreeViewModel {
+    let suiteName = "PagesTreeDrawerPreview.\(expandingFirstChild)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    defaults.set(true, forKey: "schrift.workOffline")
+
+    func document(_ title: String, numchild: Int = 0) -> Document {
+        Document(
+            id: UUID(), title: title, excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false,
+            depth: 1, numchild: numchild, path: "0001",
+            createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+    }
+
+    let rootID = UUID()
+    let guide = document("Onboarding guide", numchild: 2)
+    let cache = DocumentChildrenCacheStore(userDefaults: defaults)
+    cache.save([guide, document("Release notes"), document("")], for: rootID)
+    cache.save([document("Week one"), document("Week two", numchild: 1)], for: guide.id)
+
+    let viewModel = PagesTreeViewModel(
+        rootID: rootID,
+        client: DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!),
+        cache: cache,
+        userDefaults: defaults)
+    return viewModel
+}
+
+#Preview("Pages tree") {
+    let viewModel = previewViewModel(expandingFirstChild: true)
+    PagesTreeDrawer(viewModel: viewModel, rootTitle: "Team handbook", onOpen: { _ in }, onClose: {})
+        .task {
+            await viewModel.loadRoot()
+            if let first = viewModel.rows.first(where: \.hasChildren) {
+                await viewModel.toggle(first.document)
+            }
+        }
+        .environment(LocalizationStore())
+}
+
+#Preview("Pages tree — dark, offline") {
+    let viewModel = previewViewModel(expandingFirstChild: false)
+    PagesTreeDrawer(
+        viewModel: viewModel, rootTitle: "Team handbook", isOffline: true, onOpen: { _ in }, onClose: {}
+    )
+    .task { await viewModel.loadRoot() }
+    .environment(LocalizationStore())
+    .preferredColorScheme(.dark)
 }

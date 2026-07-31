@@ -4,13 +4,25 @@ import Foundation
 /// whether it can and does show its children.
 struct PagesTreeRow: Equatable, Identifiable {
     let document: Document
+    /// The level this row was reached through. Part of the row's identity, not
+    /// decoration: the tree is drawn from a session-local dictionary of levels,
+    /// so a document the server has since re-parented can still be cached under
+    /// its old parent while the new one lists it too. Keyed on the document id
+    /// alone those two rows collide in `ForEach`, which is undefined behaviour;
+    /// keyed on the pair they are simply two rows, as they appear.
+    let parentID: UUID
     let depth: Int
     /// From the server's `numchild`, so a disclosure arrow appears without
     /// having to fetch a level first.
     let hasChildren: Bool
     let isExpanded: Bool
 
-    var id: UUID { document.id }
+    var id: TreePath { TreePath(parentID: parentID, documentID: document.id) }
+
+    struct TreePath: Hashable {
+        let parentID: UUID
+        let documentID: UUID
+    }
 }
 
 /// Flattens the loaded tree into the rows to draw, depth-first.
@@ -38,6 +50,7 @@ func pagesTreeRows(
         let isExpanded = expanded.contains(document.id)
         let row = PagesTreeRow(
             document: document,
+            parentID: parentID,
             depth: depth,
             hasChildren: document.numchild > 0,
             isExpanded: isExpanded
@@ -65,16 +78,38 @@ final class PagesTreeViewModel {
     /// Parents with a fetch in flight, so a row can show progress and a second
     /// tap can't start a duplicate request.
     private(set) var loading: Set<UUID> = []
-    var errorKey: L10nKey?
+    /// Levels whose fetch failed with nothing cached to fall back on. Per node,
+    /// not one shared flag: a success anywhere else in the tree must not clear a
+    /// message about a level the user is still looking at.
+    private(set) var failedLoads: Set<UUID> = []
+    /// A failed *create*, which is about the action rather than any one level.
+    private(set) var createErrorKey: L10nKey?
+
+    /// The one message the drawer shows. A failed create is the more recent and
+    /// more explicit of the two, so it wins.
+    var errorKey: L10nKey? {
+        createErrorKey ?? (failedLoads.isEmpty ? nil : .pages_error_load)
+    }
 
     let rootID: UUID
     private let client: DocsAPIClient
     private let cache: DocumentChildrenCacheStore
+    private let userDefaults: UserDefaults
+    /// Per level, bumped by anything that edits it locally. A fetch captures it
+    /// before awaiting and drops its result if it changed, so a snapshot taken
+    /// before a create can't overwrite the level the create just added to.
+    private var mutations: [UUID: Int] = [:]
 
-    init(rootID: UUID, client: DocsAPIClient, cache: DocumentChildrenCacheStore = DocumentChildrenCacheStore()) {
+    init(
+        rootID: UUID,
+        client: DocsAPIClient,
+        cache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
+        userDefaults: UserDefaults = .standard
+    ) {
         self.rootID = rootID
         self.client = client
         self.cache = cache
+        self.userDefaults = userDefaults
     }
 
     var rows: [PagesTreeRow] {
@@ -104,36 +139,60 @@ final class PagesTreeViewModel {
         if children[parentID] == nil, let cached = cache.children(for: parentID) {
             children[parentID] = cached
         }
+        // "Work offline" (Profile > Preferences): serve the cached tree and
+        // never hit the network, the same contract the document lists honour.
+        // Read through the injected defaults, never the singleton.
+        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return }
         guard !loading.contains(parentID) else { return }
         loading.insert(parentID)
         defer { loading.remove(parentID) }
 
+        let mutation = mutations[parentID] ?? 0
         do {
             let fetched = try await client.listChildren(documentID: parentID).results
+            // A create landed while this was in flight, so this snapshot
+            // predates the new child: dropping it keeps the child on screen.
+            guard mutation == mutations[parentID] ?? 0 else { return }
             children[parentID] = fetched
             cache.save(fetched, for: parentID)
-            errorKey = nil
+            failedLoads.remove(parentID)
         } catch {
             // Never treat a failure here as the document being gone: this is a
             // *different* document's children, and the editor behind the drawer
             // must not be torn down over it.
-            if children[parentID] == nil { errorKey = .pages_error_load }
+            guard children[parentID] == nil else { return }
+            failedLoads.insert(parentID)
+            // Collapse it again. Left expanded it would render as a node with no
+            // children — indistinguishable from a leaf, and with no way back —
+            // whereas collapsed it keeps its arrow, and tapping that is the retry.
+            expanded.remove(parentID)
         }
     }
 
     /// Creates a child of `parent` and slots it into the open tree, so the new
     /// page appears where it belongs instead of only after a reload.
     func addPage(under parent: UUID) async -> Document? {
+        let child: Document
         do {
-            let child = try await client.createChild(documentID: parent, title: "Untitled subpage")
-            expanded.insert(parent)
-            children[parent, default: []].append(child)
-            cache.save(children[parent] ?? [], for: parent)
-            errorKey = nil
-            return child
+            child = try await client.createChild(documentID: parent, title: "Untitled subpage")
         } catch {
-            errorKey = .pages_error_create
+            createErrorKey = .pages_error_create
             return nil
         }
+        // Any fetch already in flight for this level predates the child.
+        mutations[parent, default: 0] += 1
+        expanded.insert(parent)
+        // Only when the level is actually known (fetched or cached). Appending
+        // to an unknown one would show — and durably cache — a fabricated
+        // one-item level that hides the document's real children; the cache is
+        // shared with the editor's own Subpages list, so that lie outlives the
+        // drawer. Same rule, and the same reason, as `EditorViewModel.addSubpage`.
+        if var updated = children[parent] {
+            updated.append(child)
+            children[parent] = updated
+            cache.save(updated, for: parent)
+        }
+        createErrorKey = nil
+        return child
     }
 }
