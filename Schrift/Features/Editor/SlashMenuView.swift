@@ -39,13 +39,10 @@ struct SlashMenuView: View {
             }
             .frame(maxHeight: maxHeight)
             .fixedSize(horizontal: false, vertical: true)
-            .background(DocsColor.surfacePage)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .overlay(
-                RoundedRectangle(cornerRadius: DocsRadius.lg)
-                    .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-            )
-            .shadow(color: DocsColor.textPrimary.opacity(0.12), radius: 12, x: 0, y: 4)
+            // Glass like the formatting bar it sits directly above — the two
+            // share a `GlassEffectContainer` in the editor, so they read as one
+            // floating surface instead of a card stacked on a capsule.
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
             .accessibilityLabel(loc[.editor_slash_menu_a11y])
         }
     }

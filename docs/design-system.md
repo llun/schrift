@@ -156,6 +156,38 @@
 >   hides a navigation bar any more, which is what made the pop-gesture
 >   workaround necessary in the first place.
 
+> **Revised: 2026-07-31 (editor polish — real glass, subpage summaries).**
+> Follows the native-toolbar change above.
+>
+> - **The editor's floating surfaces are real Liquid Glass.** The formatting bar
+>   and the slash menu used `.ultraThinMaterial` plus a hand-drawn border and
+>   shadow to approximate it; they now use `.glassEffect(.regular, in:)` and
+>   share a `GlassEffectContainer`, so the system supplies the refraction, edge
+>   and shadow and renders both in one pass. This is the standing rule now:
+>   *glass is for surfaces that float over content, never for content itself* —
+>   see [`CLAUDE.md`](../CLAUDE.md).
+> - **Subpage rows carry the handoff's one-line summary** under the title
+>   (`Document.excerpt`, dropped when blank). The child-count chip
+>   (`account_tree` + `numchild`) was already there.
+>
+> **Two kit items deliberately not implemented, with reasons:**
+>
+> - **Breadcrumbs** (the handoff's ancestor trail above the document title). The
+>   trail is *document hierarchy*, not navigation history — the handoff computes
+>   it by walking the tree — and the API exposes no ancestors route. `Document`
+>   carries a treebeard `path`/`depth`, but resolving those to titles needs an
+>   endpoint we can't verify against a server from here, and using the navigation
+>   stack instead would be wrong the moment a document is reached from search or
+>   an in-document link rather than from its parent. Deferred rather than shipped
+>   with the wrong semantics.
+> - **Dropping the reading-mode presence avatars.** The handoff's editor shows
+>   presence *only* as the count badge on the options button. The app keeps the
+>   `PresenceBar` avatar stack while reading (where there is room for it) and
+>   uses the badge only while editing. Avatars carry *who* is present, which a
+>   count cannot, and live collaboration is still being built out — trading that
+>   away for mock fidelity would remove information from a feature that is not
+>   finished yet.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match
