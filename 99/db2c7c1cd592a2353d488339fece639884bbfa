@@ -1,0 +1,30 @@
+Schrift/Features/Profile/ProfileScreen.swift
+  s_7b8db48b6506c1::t_2ac3748b02da49 51-53
+Schrift/Features/Home/DocumentListView.swift
+  s_7b8db48b6506c1::t_2ac3748b02da49 64-66
+Schrift/Features/Home/MainTabView.swift
+  s_7b8db48b6506c1::t_b5579e8acc2ee1 105-107
+Schrift/Features/Home/HomeSplitView.swift
+  s_7b8db48b6506c1::t_0b5395c7a6b47d 24-35
+Schrift/Features/Search/SearchScreen.swift
+  s_7b8db48b6506c1::t_2ac3748b02da49 36-38
+Schrift/Features/Shared/SharedScreen.swift
+  s_7b8db48b6506c1::t_2ac3748b02da49 70-72
+  s_7b8db48b6506c1::t_7a9fcab0a35c37 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "99db2c7c1cd592a2353d488339fece639884bbfa",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
