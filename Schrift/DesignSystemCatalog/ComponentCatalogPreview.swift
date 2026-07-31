@@ -4,7 +4,6 @@ struct ComponentCatalogPreview: View {
     @State private var isSwitchOn = true
     @State private var searchText = ""
     @State private var textFieldValue = ""
-    @State private var catalogTab = "docs"
 
     var body: some View {
         ScrollView {
@@ -91,14 +90,9 @@ struct ComponentCatalogPreview: View {
                     }
                 }
 
-                catalogSection("Tab Bar") {
-                    TabBar(
-                        items: [
-                            TabBarItem(value: "docs", label: "Docs", icon: .description),
-                            TabBarItem(value: "search", label: "Search", icon: .search),
-                            TabBarItem(value: "shared", label: "Shared", icon: .group),
-                        ], selection: $catalogTab, showsSafeArea: false)
-                }
+                // No tab-bar entry: top-level navigation is the system `TabView`
+                // (see `MainTabView`), which cannot be previewed as a component
+                // and needs no catalog card.
 
                 catalogSection("List Row / List Section") {
                     ListSection(header: "Document", footer: "These actions apply to the current document.") {

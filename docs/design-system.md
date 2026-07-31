@@ -94,6 +94,41 @@
 > Still to come in this refresh: the native tab shell and toolbars, iPad tab
 > parity, the native editor toolbar, the Account screen and the Pages tree.
 
+> **Revised: 2026-07-31 (native tab shell, toolbars, system search, iPad
+> parity).** The app's chrome is now the platform's, which is what actually
+> delivers the handoff's Liquid Glass look — the system draws it when built
+> against the iOS 26 SDK.
+>
+> - **`MainTabView` replaces `HomeView`** as the one shell for both idioms: a
+>   system `TabView` with `Tab(value:)` for Schrift/Shared/Profile and
+>   **`Tab(value:role: .search)` last**. The search role is why the bar matches
+>   `guidelines/tab-bars.html` without drawing anything: the system renders the
+>   floating glass capsule, puts search in the separated circle at the trailing
+>   edge, and — when search is selected — morphs the whole bar into the search
+>   field. `.tabBarMinimizeBehavior(.onScrollDown)` gives the minimize-on-scroll
+>   the guideline calls for. Tab glyphs stay Material Symbols, rendered to
+>   template images.
+> - **One `NavigationStack` per tab**, each with its own path, and one shared
+>   `editorScreen(for:path:)` builder for the three tabs that open documents.
+>   Per-tab stacks are required, not stylistic: `.toolbar(.hidden, for:
+>   .tabBar)` (which the editor uses) only reaches the bar from inside a tab's
+>   own stack, and per-tab paths are what preserve each tab's navigation state.
+> - **The four tab roots dropped `NavBar`** for `.navigationTitle` +
+>   `.navigationSubtitle(serverHost)` + `.toolbar`; Home's "+" is a
+>   `ToolbarItem`. The drawn `TabBar` component and its catalog entry are
+>   deleted. `NavBar` itself survives only for the editor, which converts next.
+> - **Search uses the system field** (`.searchable` bound to the search role,
+>   `.onSubmit(of: .search)` recording the term). `SearchViewModel` is untouched
+>   — its 250 ms debounce still runs through `.task(id:)`. The recents chips and
+>   Quick-access list stay as page content rather than `.searchSuggestions`,
+>   which would have replaced the designed empty state with a plain system list.
+> - **iPad reaches everything for the first time.** The size-class branch moved
+>   out of `RootView` and into the documents tab, so iPad now has the tab bar
+>   (as the top strip) and with it Search, Shared, Profile and sign-out — none of
+>   which it could reach before — plus a create button in the split view's
+>   sidebar, which it also lacked. The split view itself, including its
+>   `.id(document.id)` detail identity, is unchanged.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match
@@ -551,8 +586,10 @@ Target:
 
 ### 8.5 Tab bar
 
-`TabBar` height 49pt + home-indicator safe area already matches the handoff and is
-unchanged; it inherits the adaptive dark tokens automatically.
+**Superseded 2026-07-31** — the drawn `TabBar` component is gone. Top-level
+navigation is the system `TabView` (`MainTabView`), which renders the handoff's
+floating Liquid Glass capsule and separated search button itself. See the
+amendment at the top of this document.
 
 ### 8.6 Layout tests
 

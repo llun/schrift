@@ -1,10 +1,18 @@
 import SwiftUI
 
+/// The documents tab on a regular width: the list beside the open document.
+///
+/// The search field here searches inline rather than jumping to the Search tab
+/// (`onSearchTap` stays nil), because the list is permanently on screen next to
+/// the editor — there is nothing to navigate away from.
 struct HomeSplitView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
     let serverOrigin: String
+    /// Creates and opens a document. Previously absent here, which left iPad
+    /// with no way to make one at all.
+    var onNewDocument: (() -> Void)? = nil
 
     @State private var selectedDocument: Document?
 
@@ -12,7 +20,12 @@ struct HomeSplitView: View {
 
     var body: some View {
         NavigationSplitView {
-            DocumentListView(viewModel: viewModel, serverHost: serverHost, onSelect: { selectedDocument = $0 })
+            DocumentListView(
+                viewModel: viewModel,
+                serverHost: serverHost,
+                onSelect: { selectedDocument = $0 },
+                onNewDocument: onNewDocument
+            )
         } detail: {
             if let selectedDocument {
                 EditorScreen(

@@ -18,8 +18,6 @@ struct SharedScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.shared_title], subtitle: serverHost, largeTitle: true, showsBorder: false)
-
             if workOffline || viewModel.isOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
@@ -69,6 +67,8 @@ struct SharedScreen: View {
             }
         }
         .background(DocsColor.surfacePage)
+        .navigationTitle(loc[.shared_title])
+        .navigationSubtitle(serverHost)
         .task {
             await viewModel.load()
         }

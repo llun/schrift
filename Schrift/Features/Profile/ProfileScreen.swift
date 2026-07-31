@@ -31,8 +31,6 @@ struct ProfileScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.profile_title], largeTitle: true, showsBorder: false)
-
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
                     userSection
@@ -51,6 +49,7 @@ struct ProfileScreen: View {
         // hairline border, not by a sunken grey backdrop. (The old iOS-grouped
         // grey came from the pre-redesign Profile/Account screens.)
         .background(DocsColor.surfacePage)
+        .navigationTitle(loc[.profile_title])
         .task { await viewModel.load() }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()

@@ -84,14 +84,13 @@ private struct AuthenticatedHomeContainer: View {
     }
 
     var body: some View {
-        Group {
-            if horizontalSizeClass == .regular {
-                HomeSplitView(viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin)
-            } else {
-                HomeView(
-                    viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin, onSignOut: onSignOut)
-            }
-        }
+        // One shell for both idioms. The size-class split now lives inside the
+        // documents tab (list-and-detail on a regular width, push on a compact
+        // one), so iPad keeps the tab bar it used to have no way to show — and
+        // with it Search, Shared, Profile and sign-out.
+        MainTabView(
+            viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin, onSignOut: onSignOut
+        )
         .sheet(
             isPresented: Binding(
                 get: { sessionStore.needsReauthentication },
