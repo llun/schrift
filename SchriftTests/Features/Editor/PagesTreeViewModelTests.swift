@@ -73,10 +73,6 @@ final class PagesTreeViewModelTests: XCTestCase {
             """.utf8)
     }
 
-    private func isChildrenRequest(_ request: URLRequest, of parent: UUID) -> Bool {
-        request.url?.path.contains(parent.uuidString.lowercased()) == true
-    }
-
     // MARK: - Offline
 
     /// "Work offline" means never touch the network, not "try anyway and fall

@@ -226,8 +226,8 @@ struct PagesTreeDrawer: View {
 /// Seeds the children cache and turns "work offline" on, so the catalog renders
 /// a real tree through the real code path without a network or a stub client.
 @MainActor
-private func previewViewModel(expandingFirstChild: Bool) -> PagesTreeViewModel {
-    let suiteName = "PagesTreeDrawerPreview.\(expandingFirstChild)"
+private func previewViewModel(variant: String) -> PagesTreeViewModel {
+    let suiteName = "PagesTreeDrawerPreview.\(variant)"
     let defaults = UserDefaults(suiteName: suiteName)!
     defaults.removePersistentDomain(forName: suiteName)
     defaults.set(true, forKey: "schrift.workOffline")
@@ -255,7 +255,7 @@ private func previewViewModel(expandingFirstChild: Bool) -> PagesTreeViewModel {
 }
 
 #Preview("Pages tree") {
-    let viewModel = previewViewModel(expandingFirstChild: true)
+    let viewModel = previewViewModel(variant: "expanded")
     PagesTreeDrawer(viewModel: viewModel, rootTitle: "Team handbook", onOpen: { _ in }, onClose: {})
         .task {
             await viewModel.loadRoot()
@@ -267,7 +267,7 @@ private func previewViewModel(expandingFirstChild: Bool) -> PagesTreeViewModel {
 }
 
 #Preview("Pages tree — dark, offline") {
-    let viewModel = previewViewModel(expandingFirstChild: false)
+    let viewModel = previewViewModel(variant: "offline")
     PagesTreeDrawer(
         viewModel: viewModel, rootTitle: "Team handbook", isOffline: true, onOpen: { _ in }, onClose: {}
     )
