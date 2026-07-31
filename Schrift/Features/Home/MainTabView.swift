@@ -13,7 +13,7 @@ func documentRowDate(_ document: Document, locale: Locale) -> String {
 /// system's *search role* — on iOS 26 that renders as the separated circular
 /// button at the trailing edge of the floating tab bar rather than as a fourth
 /// tab in the capsule, which is what the handoff asks for.
-enum AppTab: Hashable, CaseIterable {
+enum AppTab: Hashable {
     case docs
     case shared
     case profile
