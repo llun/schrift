@@ -239,11 +239,18 @@ struct EditorView: View {
                         MaterialSymbol(.account_tree, size: 22)
                     }
                     .accessibilityLabel(loc[.pages_open])
+                    // Hidden here as well as on `mainContent`: toolbar content is
+                    // hosted by the navigation bar as its own accessibility
+                    // subtree, so hiding the screen's body never reached it, and
+                    // a VoiceOver swipe could still land on a bar button the
+                    // drawer is covering.
+                    .accessibilityHidden(isPresentingPagesTree)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
                         action in
                         toolbarButton(for: action)
+                            .accessibilityHidden(isPresentingPagesTree)
                     }
                 }
             }

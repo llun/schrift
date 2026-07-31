@@ -119,6 +119,13 @@ final class PagesTreeViewModel {
     /// Loads the root level. Safe to call on every appearance — a level already
     /// loaded is refreshed silently rather than cleared and re-fetched.
     func loadRoot() async {
+        // A reopened drawer is a fresh start for a failed *action*: the view
+        // model outlives the drawer (it is `@State` on the editor), so a create
+        // that failed once would otherwise keep saying so over every later
+        // opening, including ones that never tried to create anything. Cleared
+        // here rather than on any successful load, which would let an unrelated
+        // level's fetch erase a message the user is still reading.
+        createErrorKey = nil
         await load(parentID: rootID)
     }
 
@@ -179,8 +186,6 @@ final class PagesTreeViewModel {
             createErrorKey = .pages_error_create
             return nil
         }
-        // Any fetch already in flight for this level predates the child.
-        mutations[parent, default: 0] += 1
         expanded.insert(parent)
         // Only when the level is actually known (fetched or cached). Appending
         // to an unknown one would show — and durably cache — a fabricated
@@ -191,6 +196,12 @@ final class PagesTreeViewModel {
             updated.append(child)
             children[parent] = updated
             cache.save(updated, for: parent)
+            // Bumped *here*, not on every create: the stamp exists to defend an
+            // append we actually made. Bumping it when we declined to append
+            // would block the in-flight fetch as well, and then neither writer
+            // fills the level — it stays unknown, and the drawer says "no
+            // subpages" about a document that just got one.
+            mutations[parent, default: 0] += 1
         }
         createErrorKey = nil
         return child

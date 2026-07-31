@@ -217,6 +217,58 @@ final class PagesTreeViewModelTests: XCTestCase {
             "the stale snapshot must not overwrite the level the create added to")
     }
 
+    /// The mutation stamp defends an append we actually made. Bumping it on a
+    /// create that *declined* to append (unknown level) would block the in-flight
+    /// fetch too — and then neither writer fills the level, so a document that
+    /// just got its first child reads as "No subpages yet".
+    func testACreateIntoAnUnknownLevelStillLetsTheFetchLand() async {
+        let (viewModel, cache) = makeViewModel()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { [childID, createdID] request in
+            log.record(request)
+            if request.httpMethod == "POST" {
+                return .init(
+                    statusCode: 201, headers: [:],
+                    body: Data(Self.documentFixture(id: createdID, title: "Untitled subpage").utf8), error: nil)
+            }
+            return .init(
+                statusCode: 200, headers: [:], body: Self.listFixture([(childID, "From the server")]), error: nil,
+                delay: 0.3)
+        }
+
+        // Nothing cached: this fetch is the only thing that can populate the level.
+        async let coldLoad: Void = viewModel.loadRoot()
+        await waitUntil { log.count(ofMethod: "GET") == 1 }
+        _ = await viewModel.addPage(under: rootID)
+        await coldLoad
+
+        XCTAssertEqual(
+            viewModel.rows.map(\.document.id), [childID],
+            "the level is populated from the server rather than left unknown")
+        XCTAssertNotNil(cache.children(for: rootID))
+    }
+
+    /// The view model outlives the drawer (it is `@State` on the editor), so a
+    /// failed create must not keep reporting itself over later openings that
+    /// never tried to create anything.
+    func testReopeningTheDrawerClearsAStaleCreateError() async {
+        let (viewModel, _) = makeViewModel()
+        MockURLProtocol.stubHandler = { [childID] request in
+            request.httpMethod == "POST"
+                ? .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+                : .init(
+                    statusCode: 200, headers: [:],
+                    body: Self.listFixture([(childID, "Child")]), error: nil)
+        }
+        _ = await viewModel.addPage(under: rootID)
+        XCTAssertEqual(viewModel.errorKey, .pages_error_create)
+
+        // The drawer is opened again, which re-runs `loadRoot`.
+        await viewModel.loadRoot()
+
+        XCTAssertNil(viewModel.errorKey)
+    }
+
     // MARK: - Duplicate work
 
     func testASecondExpandWhileOneIsInFlightDoesNotRefetch() async {

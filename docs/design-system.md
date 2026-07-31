@@ -245,7 +245,16 @@
 >   editor's Subpages list, so the lie outlives the drawer. This is the same
 >   rule, for the same reason, as `EditorViewModel.addSubpage`. A per-level
 >   mutation stamp additionally drops a list fetch that started *before* the
->   create, whose snapshot would otherwise take the new page back off screen.
+>   create, whose snapshot would otherwise take the new page back off screen —
+>   and the stamp is bumped **only when the create actually appended**. Bumping
+>   it on a create that declined to append blocks the in-flight fetch as well,
+>   and then *neither* writer fills the level: it stays unknown, and the drawer
+>   reports "no subpages" about a document that just got its first one.
+> - A failed **create** is cleared when the drawer is reopened, not by the next
+>   successful load. The view model is `@State` on the editor and outlives the
+>   drawer, so without that a single failed "New page" would keep reporting
+>   itself over every later opening; clearing it on any load instead would let
+>   an unrelated level erase a message the user is still reading.
 > - **The disclosure arrow comes from `numchild`**, so it appears before a level
 >   has ever been fetched. `pagesTreeRows` is the pure flattening rule and
 >   carries the whole layout decision — including that an expanded-but-unloaded
@@ -265,7 +274,11 @@
 > - Because it is an overlay rather than a sheet it gets **none of a sheet's
 >   VoiceOver scoping for free**: the editor behind it is explicitly
 >   `.accessibilityHidden` while it is open, and opening/closing posts a
->   screen-changed notification. A new modal-ish overlay owes the same.
+>   screen-changed notification. A new modal-ish overlay owes the same — and
+>   note that hiding the screen's body is **not** enough on its own: toolbar
+>   content is hosted by the navigation bar as its own accessibility subtree,
+>   so the bar buttons must be hidden with it or a swipe still reaches them
+>   through the covering surface.
 >
 > **Deviation:** the drawer sits below the navigation bar rather than covering
 > the full height as the mock does, so the toolbar (and its back button) stays
