@@ -282,6 +282,16 @@ enum Strings_zhHant {
         .account_manage_on_web: "在網頁上管理帳號",
         .account_unavailable_title: "帳號無法使用",
         .account_unavailable_body: "無法載入您的帳號詳細資料。請檢查您的連線並再試一次。",
+        // Pages tree drawer
+        .pages_title: "頁面",
+        .pages_open: "顯示頁面",
+        .pages_close: "關閉頁面",
+        .pages_expand: "展開",
+        .pages_collapse: "收合",
+        .pages_new: "新頁面",
+        .pages_empty: "還沒有子頁面。新增一個來整理此文件。",
+        .pages_error_load: "無法載入頁面。請再試一次。",
+        .pages_error_create: "無法新增頁面。請再試一次。",
         .account_language_footer: "您的伺服器用於電子郵件和共享內容的語言。應用程式本身的語言在偏好設定中。",
         // Toast
         .toast_link_copied: "連結已複製",

@@ -289,6 +289,16 @@ enum Strings_it {
         .account_manage_on_web: "Gestisci l'account sul web",
         .account_unavailable_title: "Account non disponibile",
         .account_unavailable_body: "Impossibile caricare i dettagli dell'account. Controlla la connessione e riprova.",
+        // Pages tree drawer
+        .pages_title: "Pagine",
+        .pages_open: "Mostra pagine",
+        .pages_close: "Chiudi pagine",
+        .pages_expand: "Espandi",
+        .pages_collapse: "Comprimi",
+        .pages_new: "Nuova pagina",
+        .pages_empty: "Ancora nessuna sottopagina. Aggiungine una per organizzare questo documento.",
+        .pages_error_load: "Impossibile caricare le pagine. Riprova.",
+        .pages_error_create: "Impossibile aggiungere la pagina. Riprova.",
         .account_language_footer:
             "La lingua che il tuo server utilizza per le e-mail e i contenuti condivisi. La lingua dell'app si trova in Preferenze.",
         // Toast

@@ -216,6 +216,34 @@
 >   it — Options and Share both dismiss themselves in the same breath, and a
 >   toast inside one would be torn down before it could be read.
 
+> **Revised: 2026-07-31 (Pages tree drawer — the refresh complete).** The
+> handoff's `DocTreePanel`, which it designed but never wired to an opener.
+>
+> - A **leading slide-in drawer** in the editor, opened from a toolbar button
+>   beside back (it is a *left* panel, and the trailing group already has
+>   three items). Root row = the open document, then its subpages, expandable
+>   to any depth; the scrim closes it.
+> - **Levels load lazily and cache-first.** Opening fetches the root's children;
+>   each expand fetches that node's. Every level is read from
+>   `DocumentChildrenCacheStore` before the network — the same store the
+>   editor's own Subpages list fills — so a document you have already opened
+>   has its level available offline. A failed fetch keeps whatever the cache
+>   gave and says so; it never empties a level the user can see, and never
+>   tears the editor down (it concerns a *different* document's children).
+> - **The disclosure arrow comes from `numchild`**, so it appears before a level
+>   has ever been fetched. `pagesTreeRows` is the pure flattening rule and
+>   carries the whole layout decision — including that an expanded-but-unloaded
+>   node contributes nothing yet, so a slow level never collapses the ones above
+>   it, and a cycle in server data terminates instead of overrunning the stack.
+> - The arrow and the title are **separate controls**: collapsing a branch
+>   should not navigate away from what you are reading.
+>
+> **Deviation:** the drawer sits below the navigation bar rather than covering
+> the full height as the mock does, so the toolbar (and its back button) stays
+> reachable while the tree is open. **Still deferred:** breadcrumbs, for the
+> reason recorded in the previous amendment — the API exposes no ancestors
+> route, and the tree drawer does not change that.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match

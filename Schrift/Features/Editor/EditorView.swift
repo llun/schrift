@@ -155,6 +155,8 @@ struct EditorView: View {
     /// that raise them — those dismiss themselves in the same breath, and a
     /// toast inside one would be torn down before it could be read.
     @State private var toastMessage: ToastMessage?
+    @State private var isPresentingPagesTree = false
+    @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
     /// its 44pt tap target plus the inset's own padding.
@@ -199,6 +201,8 @@ struct EditorView: View {
         _shareViewModel = State(
             initialValue: ShareViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
+        _pagesTreeViewModel = State(
+            initialValue: PagesTreeViewModel(rootID: viewModel.documentID, client: viewModel.client))
     }
 
     var body: some View {
@@ -208,12 +212,24 @@ struct EditorView: View {
             // same edge — Copy Link is reachable from the toolbar mid-edit, so
             // the two genuinely collide.
             .toast($toastMessage, bottomInset: viewModel.isEditing ? editingToastInset : 0)
+            .overlay { pagesTreeOverlay }
+            .animation(.snappy, value: isPresentingPagesTree)
             // One system toolbar in both modes. The document title stays in the
             // canvas as a large content header (`headerBlock`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions
             // — hence `.inline` with no `.navigationTitle`.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Leading, beside back: this is a *left* panel, and the trailing
+                // group is already three items.
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isPresentingPagesTree = true
+                    } label: {
+                        MaterialSymbol(.account_tree, size: 22)
+                    }
+                    .accessibilityLabel(loc[.pages_open])
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
                         action in
@@ -319,6 +335,23 @@ struct EditorView: View {
         )
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private var pagesTreeOverlay: some View {
+        if isPresentingPagesTree {
+            PagesTreeDrawer(
+                viewModel: pagesTreeViewModel,
+                rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
+                isOffline: isOffline,
+                onOpen: { document in
+                    isPresentingPagesTree = false
+                    onOpenDocument?(document)
+                },
+                onClose: { isPresentingPagesTree = false }
+            )
+            .task { await pagesTreeViewModel.loadRoot() }
+        }
     }
 
     /// The screen's content column, lifted out of `body` so the long

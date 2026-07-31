@@ -286,6 +286,16 @@ enum Strings_th {
         .account_manage_on_web: "จัดการบัญชีบนเว็บ",
         .account_unavailable_title: "บัญชีไม่พร้อมใช้งาน",
         .account_unavailable_body: "โหลดรายละเอียดบัญชีของคุณไม่ได้ ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง",
+        // Pages tree drawer
+        .pages_title: "หน้า",
+        .pages_open: "แสดงหน้า",
+        .pages_close: "ปิดหน้า",
+        .pages_expand: "ขยาย",
+        .pages_collapse: "ย่อ",
+        .pages_new: "หน้าใหม่",
+        .pages_empty: "ยังไม่มีหน้าย่อย เพิ่มหน้าย่อยเพื่อจัดระเบียบเอกสารนี้",
+        .pages_error_load: "โหลดหน้าไม่ได้ โปรดลองอีกครั้ง",
+        .pages_error_create: "เพิ่มหน้าไม่ได้ โปรดลองอีกครั้ง",
         .account_language_footer:
             "ภาษาที่เซิร์ฟเวอร์ของคุณใช้สำหรับอีเมลและเนื้อหาที่แชร์ ภาษาของแอปเองอยู่ในการตั้งค่า",
         // Toast

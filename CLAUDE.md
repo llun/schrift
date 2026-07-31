@@ -336,6 +336,8 @@ Schrift/
 │   │                    and the server-version row (ServerConfig)
 │   ├── Options/ Share/
 │   └── Editor/          block editor, save coordinator, drafts, content cache,
+│                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
+│                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
 │                        ConflictSheetView), photo insert (ImagePreparation),
 │                        in-app document links (DocumentLink),

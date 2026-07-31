@@ -295,6 +295,16 @@ enum Strings_es {
         .account_unavailable_title: "Cuenta no disponible",
         .account_unavailable_body:
             "No se pudieron cargar los detalles de tu cuenta. Comprueba tu conexión e inténtalo de nuevo.",
+        // Pages tree drawer
+        .pages_title: "Páginas",
+        .pages_open: "Mostrar páginas",
+        .pages_close: "Cerrar páginas",
+        .pages_expand: "Expandir",
+        .pages_collapse: "Contraer",
+        .pages_new: "Nueva página",
+        .pages_empty: "Aún no hay subpáginas. Añade una para organizar este documento.",
+        .pages_error_load: "No se pudieron cargar las páginas. Inténtalo de nuevo.",
+        .pages_error_create: "No se pudo añadir la página. Inténtalo de nuevo.",
         .account_language_footer:
             "El idioma que usa tu servidor para los correos electrónicos y el contenido compartido. El idioma de la aplicación está en Preferencias.",
         // Toast
