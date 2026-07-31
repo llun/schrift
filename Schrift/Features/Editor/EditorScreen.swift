@@ -12,7 +12,6 @@ struct EditorScreen: View {
     var linkRole: LinkRole? = nil
     var initialIsFavorite: Bool = false
     var isOffline: Bool = false
-    var onBack: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
 
@@ -32,7 +31,6 @@ struct EditorScreen: View {
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
-        onBack: (() -> Void)? = nil,
         onDeleted: (() -> Void)? = nil,
         onOpenDocument: ((Document) -> Void)? = nil
     ) {
@@ -52,7 +50,6 @@ struct EditorScreen: View {
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
         self.isOffline = isOffline
-        self.onBack = onBack
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
     }
@@ -66,7 +63,6 @@ struct EditorScreen: View {
             linkRole: linkRole,
             initialIsFavorite: initialIsFavorite,
             isOffline: isOffline,
-            onBack: onBack,
             onDeleted: onDeleted,
             onOpenDocument: onOpenDocument
         )

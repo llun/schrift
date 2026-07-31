@@ -459,12 +459,13 @@ new code reads like the surrounding code.
   - The three stacks that can open a document share **one** `editorScreen(for:
     path:)` builder, so the editor is configured identically however it was
     reached. Don't duplicate that call.
-  - The **editor** is the one screen still hiding the system bar
-    (`.toolbar(.hidden, for: .navigationBar)` + its own `NavBar`), which makes
-    UIKit disable the edge-swipe back gesture — so every stack that pushes it
-    applies `.restoresInteractivePopGesture()`
-    (`Schrift/App/InteractivePopGesture.swift`) once to its root content. Both
-    go away when the editor moves to a native toolbar; nothing else needs them.
+  - The **editor** uses the same system bar, `.inline` and title-less: the
+    document title is a large in-canvas header, not bar chrome. One toolbar
+    serves both modes — `editorToolbarActions` swaps **Edit** for **Done** in
+    the same slot — so nothing hides the navigation bar anywhere in the app
+    any more, and swipe-back is the system's own. (`NavBar`, `EditorSaveBar`
+    and the `InteractivePopGesture` restorer existed only for the hidden-bar
+    arrangement and are gone.)
 - Async VM methods **catch errors internally** and set a user-facing
   `var errorKey: L10nKey?` — a friendly copy key of the form
   `"Couldn't <do X>. Please try again."` (`Strings+en.swift`), resolved by the

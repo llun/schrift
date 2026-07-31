@@ -89,28 +89,47 @@ func syncCaption(
     return SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false)
 }
 
-/// The editor nav bar's trailing actions, as an ordered list of intents. Pure
-/// so the offline/edit gating is unit-testable without SwiftUI — the view maps
-/// each case to a `NavBarAction`. Reading mode exposes **Edit only when
-/// online**: offline is read-only, matching the reading surface's other editing
-/// gates (the block tap, "Start writing", and "Add a subpage" all guard on
-/// `!isOffline`). Editing mode hides the whole nav bar (its back button popped
-/// the document to the list, and its border stacked with the save bar's into a
-/// double hairline), so it exposes **no** trailing actions — Done lives in the
-/// editing header (`EditorSaveBar`) instead.
+/// The editor toolbar's trailing actions, as an ordered list of intents. Pure so
+/// the offline/edit gating is unit-testable without SwiftUI — the view maps each
+/// case to a `ToolbarItem`.
+///
+/// Reading mode exposes **Edit only when online**: offline is read-only,
+/// matching the reading surface's other editing gates (the block tap, "Start
+/// writing", and "Add a subpage" all guard on `!isOffline`).
+///
+/// Editing mode swaps Edit for **Done** in the same slot and keeps the rest.
+/// There is one system toolbar in both modes now, so Done no longer needs a bar
+/// of its own; the save status it used to sit beside moved into the editing
+/// surface, where there is room for it.
 enum EditorToolbarAction: Equatable {
     case edit
+    case done
     case share
     case options
 }
 
 func editorToolbarActions(isEditing: Bool, isOffline: Bool) -> [EditorToolbarAction] {
-    if isEditing { return [] }
     var actions: [EditorToolbarAction] = []
-    if !isOffline { actions.append(.edit) }
+    if isEditing {
+        actions.append(.done)
+    } else if !isOffline {
+        actions.append(.edit)
+    }
     actions.append(.share)
     actions.append(.options)
     return actions
+}
+
+/// The count shown on the options button while others are in the document, or
+/// `nil` when the badge should be hidden.
+///
+/// Presence is an avatar stack on the reading surface, where there is room for
+/// one; while editing, the toolbar carries a count instead. Offline suppresses
+/// it: peer state is whatever the socket last said, and presenting a stale count
+/// as live would be a small lie.
+func presenceBadgeCount(peerCount: Int, isOffline: Bool) -> Int? {
+    guard !isOffline, peerCount > 0 else { return nil }
+    return peerCount
 }
 
 struct EditorView: View {
@@ -123,7 +142,6 @@ struct EditorView: View {
     var linkRole: LinkRole? = nil
     var initialIsFavorite: Bool = false
     var isOffline: Bool = false
-    var onBack: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
 
@@ -155,7 +173,6 @@ struct EditorView: View {
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
-        onBack: (() -> Void)? = nil,
         onDeleted: (() -> Void)? = nil,
         onOpenDocument: ((Document) -> Void)? = nil
     ) {
@@ -166,7 +183,6 @@ struct EditorView: View {
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
         self.isOffline = isOffline
-        self.onBack = onBack
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
         _optionsViewModel = State(
@@ -179,29 +195,6 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Reading mode draws the compact nav bar (back button + trailing
-            // actions); the document title lives in the reading canvas as a large
-            // content header (see `headerBlock`), not in the bar. Editing mode
-            // replaces the nav bar with the editing header (`EditorSaveBar`): the
-            // nav bar's back button popped the document to the list instead of
-            // ending the edit, and its border stacked with the save bar's into a
-            // double hairline. The editing header carries Done instead.
-            if viewModel.isEditing {
-                EditorSaveBar(
-                    saveState: viewModel.saveState,
-                    hasConflict: viewModel.syncConflict != nil,
-                    hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
-                    peers: collaborationPeers,
-                    onSaveTap: { viewModel.saveNow() },
-                    onDone: { viewModel.finishEditing() }
-                )
-            } else {
-                NavBar(
-                    backTitle: loc[.home_title],
-                    onBack: onBack,
-                    trailingActions: trailingActions
-                )
-            }
 
             if isOffline, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
@@ -280,6 +273,19 @@ struct EditorView: View {
             }
         }
         .background(DocsColor.surfacePage)
+        // One system toolbar in both modes. The document title stays in the
+        // canvas as a large content header (`headerBlock`) rather than in the
+        // bar, so the bar carries only the back button and the trailing actions
+        // — hence `.inline` with no `.navigationTitle`.
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
+                    action in
+                    toolbarButton(for: action)
+                }
+            }
+        }
         .task {
             await viewModel.load()
         }
@@ -374,9 +380,13 @@ struct EditorView: View {
 
     private var editingSurface: some View {
         VStack(spacing: 0) {
-            // The save status and Done button live in the editing header
-            // (`EditorSaveBar`, rendered above in `body`), so the surface is
-            // just the block canvas.
+            // Done moved to the toolbar; the save status stays with the canvas,
+            // where it has room for its full copy. `saveStatusDisplay` decides
+            // what it says — including holding back any claim of a sync while a
+            // conflict parks the push, which is the rule this row exists to
+            // honour. `.none` renders nothing, so a clean session shows no strip.
+            saveStatusRow
+
             BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin)
                 .safeAreaInset(edge: .bottom) {
                     VStack(spacing: DocsSpacing.spaceXS) {
@@ -419,6 +429,24 @@ struct EditorView: View {
                 },
                 onCancel: { viewModel.cancelLinkEditing() }
             )
+        }
+    }
+
+    /// The editing session's save status, as a slim strip above the canvas.
+    /// Collapses to nothing when there is nothing to say.
+    @ViewBuilder
+    private var saveStatusRow: some View {
+        let display = saveStatusDisplay(
+            saveState: viewModel.saveState,
+            hasConflict: viewModel.syncConflict != nil,
+            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent)
+        if display != .none {
+            HStack(spacing: 0) {
+                SaveStatusIndicator(display: display, onTap: { viewModel.saveNow() })
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.bottom, DocsSpacing.spaceXS)
         }
     }
 
@@ -701,23 +729,84 @@ struct EditorView: View {
         }
     }
 
-    private var trailingActions: [NavBarAction] {
-        editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline).map { action in
-            switch action {
-            case .edit:
-                return NavBarAction(
-                    icon: .edit, label: loc[.editor_action_edit],
-                    action: { viewModel.startEditing() })
-            case .share:
-                return NavBarAction(
-                    icon: .share, label: loc[.editor_action_share],
-                    action: { isPresentingShareSheet = true })
-            case .options:
-                return NavBarAction(
-                    icon: .more_horiz, label: loc[.editor_action_options],
-                    action: { isPresentingOptionsSheet = true })
+    /// `MaterialSymbol` renders fine inside a toolbar button (unlike a tab-bar
+    /// label, which needs a `UIImage`), so the app's icon set carries over
+    /// unchanged. Each button states its own label: the glyph is a
+    /// Private-Use-Area character with no spoken text.
+    @ViewBuilder
+    private func toolbarButton(for action: EditorToolbarAction) -> some View {
+        switch action {
+        case .edit:
+            Button {
+                viewModel.startEditing()
+            } label: {
+                MaterialSymbol(.edit, size: 22)
             }
+            .accessibilityLabel(loc[.editor_action_edit])
+
+        case .done:
+            Button {
+                viewModel.finishEditing()
+            } label: {
+                MaterialSymbol(.check, size: 22, fill: true)
+            }
+            .accessibilityLabel(loc[.editor_action_done])
+
+        case .share:
+            Button {
+                isPresentingShareSheet = true
+            } label: {
+                MaterialSymbol(.share, size: 22)
+            }
+            .accessibilityLabel(loc[.editor_action_share])
+
+        case .options:
+            Button {
+                isPresentingOptionsSheet = true
+            } label: {
+                MaterialSymbol(.more_horiz, size: 22)
+                    .overlay(alignment: .topTrailing) { presenceBadge }
+            }
+            .accessibilityLabel(optionsAccessibilityLabel)
         }
+    }
+
+    /// While editing there is no room for the reading surface's avatar stack, so
+    /// presence becomes a count on the options button — the same information, in
+    /// the space a toolbar has.
+    ///
+    /// Brand-filled rather than the handoff's green presence hue: the app has no
+    /// presence palette in `DocsColor` (avatars derive their colours from the
+    /// accent ramp instead), and importing one token of five for a single badge
+    /// would leave a half-ported palette behind. Brand already reads as "active"
+    /// here — it is what marks the selected tab.
+    @ViewBuilder
+    private var presenceBadge: some View {
+        if let count = editingPresenceCount {
+            Text("\(count)")
+                .docsScaledFont(size: 10, weight: .bold, relativeTo: .caption2)
+                .foregroundStyle(DocsColor.textOnBrand)
+                .padding(.horizontal, 4)
+                .frame(minWidth: 16, minHeight: 16)
+                .background(Capsule().fill(DocsColor.brandFill))
+                .offset(x: 8, y: -6)
+        }
+    }
+
+    private var editingPresenceCount: Int? {
+        guard viewModel.isEditing else { return nil }
+        return presenceBadgeCount(peerCount: collaborationPeers.count, isOffline: isOffline)
+    }
+
+    /// The glyph and the badge are both decorative, so the peer count has to
+    /// reach VoiceOver through the button's own label — phrased exactly as
+    /// `PresenceBar` phrases it on the reading surface.
+    private var optionsAccessibilityLabel: String {
+        guard let count = editingPresenceCount else { return loc[.editor_action_options] }
+        let presence = loc.plural(
+            count, one: .editor_presence_count_one, other: .editor_presence_count_other,
+            two: .editor_presence_count_two, few: .editor_presence_count_few)
+        return "\(loc[.editor_action_options]), \(presence)"
     }
 }
 

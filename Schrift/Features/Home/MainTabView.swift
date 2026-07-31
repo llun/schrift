@@ -117,7 +117,6 @@ struct MainTabView: View {
                 .navigationDestination(for: Document.self) { document in
                     editorScreen(for: document, path: $docsPath)
                 }
-                .restoresInteractivePopGesture()
             }
         }
     }
@@ -130,7 +129,6 @@ struct MainTabView: View {
             .navigationDestination(for: Document.self) { document in
                 editorScreen(for: document, path: $sharedPath)
             }
-            .restoresInteractivePopGesture()
         }
     }
 
@@ -142,7 +140,6 @@ struct MainTabView: View {
             .navigationDestination(for: Document.self) { document in
                 editorScreen(for: document, path: $searchPath)
             }
-            .restoresInteractivePopGesture()
         }
     }
 
@@ -189,7 +186,6 @@ struct MainTabView: View {
             linkRole: document.linkRole,
             initialIsFavorite: document.isFavorite,
             isOffline: viewModel.isOffline,
-            onBack: { pop(path) },
             onDeleted: {
                 pop(path)
                 Task { await viewModel.load() }
@@ -197,9 +193,10 @@ struct MainTabView: View {
             onOpenDocument: { path.wrappedValue.append($0) }
         )
         // The editor is a full-screen surface: the tab bar steps aside for it,
-        // and returns when the stack pops.
+        // and returns when the stack pops. Its navigation bar is the system's
+        // now, so nothing here hides it — and with no hidden bar there is no
+        // disabled edge-swipe to restore.
         .toolbar(.hidden, for: .tabBar)
-        .toolbar(.hidden, for: .navigationBar)
     }
 
     private func createDocument() {

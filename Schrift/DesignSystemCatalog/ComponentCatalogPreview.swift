@@ -75,24 +75,9 @@ struct ComponentCatalogPreview: View {
                         helper: "The app signs in with your existing session.")
                 }
 
-                catalogSection("Nav Bar") {
-                    VStack(spacing: DocsSpacing.spaceXS) {
-                        NavBar(
-                            title: "Docs", subtitle: "docs.example.org", largeTitle: true,
-                            trailingActions: [
-                                NavBarAction(icon: .search, label: "Search", action: {})
-                            ])
-                        NavBar(
-                            title: "Docs", backTitle: "Docs", onBack: {},
-                            trailingActions: [
-                                NavBarAction(icon: .share, label: "Share", action: {})
-                            ])
-                    }
-                }
-
-                // No tab-bar entry: top-level navigation is the system `TabView`
-                // (see `MainTabView`), which cannot be previewed as a component
-                // and needs no catalog card.
+                // No nav-bar or tab-bar entries: both are the system's own
+                // (see `MainTabView` and each screen's `.navigationTitle` /
+                // `.toolbar`), so there is no component to preview.
 
                 catalogSection("List Row / List Section") {
                     ListSection(header: "Document", footer: "These actions apply to the current document.") {

@@ -2,10 +2,10 @@ import XCTest
 
 @testable import Schrift
 
-/// The editing header's status slot. Its one non-obvious rule is precedence: a recorded
-/// conflict **holds** the push, so the header must not claim a sync or offer a retry that
+/// The editing session's status slot. Its one non-obvious rule is precedence: a recorded
+/// conflict **holds** the push, so the status must not claim a sync or offer a retry that
 /// only re-parks the save — the same rule `syncCaption` applies on the reading surface.
-final class EditorSaveBarTests: XCTestCase {
+final class SaveStatusDisplayTests: XCTestCase {
 
     // MARK: - Without a conflict: the raw save state
 

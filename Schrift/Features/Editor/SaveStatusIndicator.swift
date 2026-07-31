@@ -1,57 +1,13 @@
 import SwiftUI
 
-/// Editing-session header. Editing hides the reading-mode nav bar (its back
-/// button left the whole document, and its border stacked with this bar's into a
-/// double hairline), so this is the *only* bar while editing: the live save
-/// status on the left (Save / Saving… / Saved / Retry) and a **Done** button on
-/// the right that ends the session. Its background fills the top safe area white
-/// like `NavBar`, since it now sits directly under the status bar.
-struct EditorSaveBar: View {
-    let saveState: EditorViewModel.SaveState
-    /// A conflict is recorded, so the push is **held** — see `saveStatusDisplay`.
-    var hasConflict: Bool = false
-    var hasUnsavedLocalContent: Bool = false
-    /// Peers currently in the document — presence avatars, empty when alone.
-    var peers: [CollaborationPeer] = []
-    var onSaveTap: () -> Void
-    var onDone: () -> Void
+/// The editing session's save status: the resolved display value and the small
+/// view that renders it.
+///
+/// This used to live in a bar of its own above the canvas. There is one system
+/// toolbar now, so the status moved into the editing surface — the resolver and
+/// its precedence rules are unchanged, which is the part that matters.
 
-    @Environment(LocalizationStore.self) private var loc
-
-    var body: some View {
-        HStack(spacing: DocsSpacing.spaceSM) {
-            SaveStatusIndicator(
-                display: saveStatusDisplay(
-                    saveState: saveState,
-                    hasConflict: hasConflict,
-                    hasUnsavedLocalContent: hasUnsavedLocalContent),
-                onTap: onSaveTap)
-
-            Spacer(minLength: DocsSpacing.spaceXS)
-
-            PresenceBar(peers: peers)
-
-            IconButton(
-                icon: .check,
-                label: loc[.editor_action_done],
-                color: .brand,
-                action: onDone
-            )
-        }
-        .padding(.horizontal, DocsSpacing.gutter)
-        .frame(minHeight: DocsSpacing.navBarHeight)
-        // Solid, opaque fill extended up through the status-bar strip — the same
-        // treatment `NavBar` uses — so there is no gray/white seam above the bar.
-        .background(DocsColor.surfacePage.ignoresSafeArea(edges: .top))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(DocsColor.borderDefault)
-                .frame(height: 0.5)
-        }
-    }
-}
-
-/// What the editing header's status slot shows. A resolved value, not a raw save state:
+/// What the editing session's status slot shows. A resolved value, not a raw save state:
 /// a recorded conflict outranks the save state (see `saveStatusDisplay`).
 enum SaveStatusDisplay: Equatable {
     case none
@@ -65,9 +21,9 @@ enum SaveStatusDisplay: Equatable {
     case retry
 }
 
-/// The editing header's counterpart to `syncCaption`'s precedence, and the same rule 0: a
+/// The editing session's counterpart to `syncCaption`'s precedence, and the same rule 0: a
 /// **recorded conflict holds the push**. Nothing is being sent, and no affordance here can
-/// send it — `saveNow` re-enqueues straight back into the enqueue-hold — so the header must
+/// send it — `saveNow` re-enqueues straight back into the enqueue-hold — so the status must
 /// neither claim a sync ("Saving…" / "Saved") nor offer a retry that silently re-parks. The
 /// work *is* on the device (the flush's write-ahead draft), so say only that, and leave the
 /// conflict pill — which the editing session shows too — as the sole affordance.
@@ -132,7 +88,7 @@ struct SaveStatusIndicator: View {
             .foregroundStyle(DocsColor.textTertiary)
 
         case .savedOnDevice:
-            // The width-constrained editing header uses the compact "Saved on this
+            // The width-constrained editing status uses the compact "Saved on this
             // device" (the `cloud_off` icon conveys the pending sync); the reading
             // surface's caption carries the full "· syncs when online" promise once
             // editing ends — and, under a conflict, drops that promise exactly as this
@@ -160,21 +116,13 @@ struct SaveStatusIndicator: View {
 }
 
 #Preview {
-    VStack(spacing: DocsSpacing.spaceBase) {
-        EditorSaveBar(saveState: .idle, onSaveTap: {}, onDone: {})
-        EditorSaveBar(saveState: .dirty, onSaveTap: {}, onDone: {})
-        EditorSaveBar(saveState: .saving, onSaveTap: {}, onDone: {})
-        EditorSaveBar(saveState: .saved, onSaveTap: {}, onDone: {})
-        EditorSaveBar(saveState: .pendingSync, onSaveTap: {}, onDone: {})
-        EditorSaveBar(saveState: .failed("nope"), onSaveTap: {}, onDone: {})
-        // Held by a conflict: a save that would otherwise read "Saved" (or offer a retry
-        // that only re-parks) states only the true part. The pill below carries the action.
-        EditorSaveBar(
-            saveState: .saved, hasConflict: true, hasUnsavedLocalContent: true, onSaveTap: {}, onDone: {})
-        EditorSaveBar(
-            saveState: .failed("nope"), hasConflict: true, hasUnsavedLocalContent: true, onSaveTap: {},
-            onDone: {})
+    VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
+        SaveStatusIndicator(display: .save, onTap: {})
+        SaveStatusIndicator(display: .saving, onTap: {})
+        SaveStatusIndicator(display: .saved, onTap: {})
+        SaveStatusIndicator(display: .savedOnDevice, onTap: {})
+        SaveStatusIndicator(display: .retry, onTap: {})
     }
-    .background(DocsColor.surfaceSunken)
+    .padding()
     .environment(LocalizationStore())
 }
