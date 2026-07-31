@@ -49,11 +49,36 @@ struct SlashMenuView: View {
 }
 
 #Preview {
-    VStack {
-        SlashMenuView(query: "", onSelect: { _ in })
-        SlashMenuView(query: "head", onSelect: { _ in })
+    slashMenuPreview
+}
+
+/// The menu is glass, so it is only really legible *over something*. Both
+/// previews put it over document-like text rather than a flat swatch, which is
+/// the case that decides whether the translucency works.
+#Preview("Dark") {
+    slashMenuPreview
+        .preferredColorScheme(.dark)
+}
+
+@MainActor @ViewBuilder
+private var slashMenuPreview: some View {
+    ZStack(alignment: .bottom) {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            ForEach(0..<12, id: \.self) { _ in
+                Text("Body text the menu floats over, to check legibility.")
+                    .font(DocsFont.body)
+                    .foregroundStyle(DocsColor.textPrimary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding()
+
+        VStack {
+            SlashMenuView(query: "", onSelect: { _ in })
+            SlashMenuView(query: "head", onSelect: { _ in })
+        }
+        .padding()
     }
-    .padding()
-    .background(DocsColor.surfaceSunken)
+    .background(DocsColor.surfacePage)
     .environment(LocalizationStore())
 }

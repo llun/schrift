@@ -466,7 +466,10 @@ struct EditorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DocsSpacing.spaceSM)
         .padding(.vertical, DocsSpacing.spaceXS)
-        .background(DocsColor.surfaceSunken, in: Capsule())
+        // Glass like its siblings: this floats in the same container, directly
+        // above the formatting bar, so a flat capsule here would read as a
+        // material seam on the one surface stack the app renders as glass.
+        .glassEffect(.regular, in: Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(loc[.editor_uploading_photo_a11y])
     }
