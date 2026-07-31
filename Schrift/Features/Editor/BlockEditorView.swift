@@ -64,6 +64,16 @@ private struct BlockEditorRow: View {
     let serverOrigin: String
 
     @Environment(LocalizationStore.self) private var loc
+    /// Passed into `blockTextStyling` rather than left to the ambient trait
+    /// collection.
+    ///
+    /// A SwiftUI `Text` resolves its scaling lazily at draw time, but
+    /// `blockTextStyling` bakes a concrete `UIFont` into the `UITextView` when
+    /// the body runs. Reading the size here is what makes this row depend on it:
+    /// without that, changing the text size while a document was open left the
+    /// block text at its old size until some unrelated edit happened to re-run
+    /// the body — on the one screen users spend the most time reading.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         if case .divider = block.kind {
@@ -173,7 +183,7 @@ private struct BlockEditorRow: View {
                 get: { block.text },
                 set: { viewModel.updateText(blockID: block.id, text: $0) }
             ),
-            styling: blockTextStyling(for: block.kind),
+            styling: blockTextStyling(for: block.kind, dynamicTypeSize: dynamicTypeSize),
             isFocused: viewModel.focusedBlockID == block.id,
             cursorRequest: viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil,
             onEvent: { event in

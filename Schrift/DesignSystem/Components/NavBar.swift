@@ -88,14 +88,21 @@ struct NavBar: View {
                 // centered regardless of the leading/trailing control widths.
                 .overlay {
                     if !largeTitle, !title.isEmpty {
+                        // Single-line like the large title: an overlay does not
+                        // grow the row it sits over, so a wrapped title would
+                        // spill outside the bar rather than push it taller.
                         VStack(spacing: 0) {
                             Text(title)
                                 .font(DocsFont.headline)
                                 .foregroundStyle(DocsColor.textPrimary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                             if let subtitle {
                                 Text(subtitle)
                                     .font(DocsFont.caption)
                                     .foregroundStyle(DocsColor.textTertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                             }
                         }
                         .allowsHitTesting(false)

@@ -80,11 +80,43 @@ func uiFontTextStyle(for textStyle: Font.TextStyle) -> UIFont.TextStyle {
     }
 }
 
-/// Scales a UIKit font built at a token's reference size to the current content
-/// size category, so text in the block editor tracks Dynamic Type like every
-/// SwiftUI label does.
-func scaledUIFont(_ font: UIFont, for spec: TypographySpec) -> UIFont {
-    UIFontMetrics(forTextStyle: uiFontTextStyle(for: spec.textStyle)).scaledFont(for: font)
+/// The UIKit twin of a SwiftUI `DynamicTypeSize`.
+///
+/// Needed because the block editor's fonts are scaled through `UIFontMetrics`,
+/// which speaks `UIContentSizeCategory`, while the size itself arrives from the
+/// SwiftUI environment.
+func uiContentSizeCategory(for dynamicTypeSize: DynamicTypeSize) -> UIContentSizeCategory {
+    switch dynamicTypeSize {
+    case .xSmall: .extraSmall
+    case .small: .small
+    case .medium: .medium
+    case .large: .large
+    case .xLarge: .extraLarge
+    case .xxLarge: .extraExtraLarge
+    case .xxxLarge: .extraExtraExtraLarge
+    case .accessibility1: .accessibilityMedium
+    case .accessibility2: .accessibilityLarge
+    case .accessibility3: .accessibilityExtraLarge
+    case .accessibility4: .accessibilityExtraExtraLarge
+    case .accessibility5: .accessibilityExtraExtraExtraLarge
+    @unknown default: .large
+    }
+}
+
+/// Scales a UIKit font built at a token's reference size to the given text size,
+/// so text in the block editor tracks Dynamic Type like every SwiftUI label does.
+///
+/// The size is an explicit argument rather than read from the ambient trait
+/// collection: the caller is a SwiftUI view, and passing the environment value
+/// in is both what makes this a pure function of its inputs and what tells
+/// SwiftUI the view depends on it — a `UIFont` is baked in when the body runs,
+/// so without that dependency the editor would keep rendering at a stale size.
+func scaledUIFont(_ font: UIFont, for spec: TypographySpec, dynamicTypeSize: DynamicTypeSize = .large) -> UIFont {
+    UIFontMetrics(forTextStyle: uiFontTextStyle(for: spec.textStyle))
+        .scaledFont(
+            for: font,
+            compatibleWith: UITraitCollection(
+                preferredContentSizeCategory: uiContentSizeCategory(for: dynamicTypeSize)))
 }
 
 extension View {

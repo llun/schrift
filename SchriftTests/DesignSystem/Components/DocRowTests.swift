@@ -67,7 +67,7 @@ final class DocRowTests: XCTestCase {
     }
 
     func testRowKeepsTheSingleLineLayoutAtEveryNonAccessibilitySize() {
-        for size in [DynamicTypeSize.xSmall, .medium, .large, .xLarge, .xxLarge, .xxxLarge] {
+        for size in [DynamicTypeSize.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge] {
             XCTAssertFalse(rowUsesStackedLayout(size), "\(size) should keep the handoff's single-line row")
         }
     }

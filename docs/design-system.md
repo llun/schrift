@@ -71,17 +71,25 @@
 >    pinned by
 >    `DocsTypographySpecTests.testEveryTokenSizeEqualsItsTextStyleDefaultAtTheLargeContentSize`.
 >    Supporting pieces: `.docsTracking(spec, ratio)` scales letter-spacing (a
->    fixed `.tracking` in points drifts once text grows); `scaledUIFont(_:for:)`
->    (`UIFontMetrics`) scales the block editor's UIKit fonts — rendered size
->    only, so every `NSRange` stays a source offset; `docsScaledFont` covers the
->    few component sizes off the HIG ramp (the 14pt button label); `MaterialSymbol`
->    scales by default (`scales: false` for glyphs in hard-bounded boxes —
->    `IconButton`, whose row of nine shares a fixed width budget); `DocIcon`
->    scales glyph and box together; fixed `height:` around text became
->    `minHeight:` (`DocsTextField`, `SearchField`, `DocsButton`, `NavBar`); the
->    Appearance detent and the Share/Version-history/slash-menu height caps
->    scale; and the two text-heavy fixed-detent sheets (Conflict, Link editor)
->    gained scroll views so their actions can't fall below the fold.
+>    fixed `.tracking` in points drifts once text grows);
+>    `scaledUIFont(_:for:dynamicTypeSize:)` (`UIFontMetrics`) scales the block
+>    editor's UIKit fonts — rendered size only, so every `NSRange` stays a source
+>    offset, and the size is an **argument** so the calling row can read
+>    `@Environment(\.dynamicTypeSize)` and re-render when the setting changes
+>    mid-document (a baked-in `UIFont` otherwise goes stale);
+>    `docsScaledFont` covers the few component sizes off the HIG ramp (the 14pt
+>    button label); `MaterialSymbol` scales by default (`scales: false` for
+>    glyphs in hard-bounded boxes — `IconButton`, whose row of nine shares a
+>    fixed width budget); `DocIcon` scales glyph and box together from one
+>    value; fixed `height:` around text became `minHeight:` (`DocsTextField`,
+>    `SearchField`, `DocsButton`, `NavBar` — whose standard-mode title, drawn in
+>    an overlay that cannot grow the row, also gained the large title's
+>    single-line truncation); the Appearance detent and the
+>    Share/Version-history/slash-menu height caps scale; the two text-heavy
+>    fixed-detent sheets (Conflict, Link editor) gained scroll views so their
+>    actions can't fall below the fold; and **`DocRow` stacks its title above its
+>    metadata at accessibility sizes** (`rowUsesStackedLayout`) — its date holds
+>    the layout priority, so sharing one line collapsed the title to `"A…"`.
 >
 > Still to come in this refresh: the native tab shell and toolbars, iPad tab
 > parity, the native editor toolbar, the Account screen and the Pages tree.

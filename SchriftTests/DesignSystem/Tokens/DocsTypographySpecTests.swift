@@ -87,16 +87,55 @@ final class DocsTypographySpecTests: XCTestCase {
 
     /// The editor's UIKit fonts must grow with the user's text-size setting;
     /// at the default size they must still be exactly the handoff's size.
-    func testScaledUIFontGrowsWithTheContentSizeCategoryAndIsNeutralAtLarge() {
+    func testScaledUIFontGrowsWithTheTextSizeAndIsNeutralAtLarge() {
         let spec = DocsTypographySpec.body
         let base = UIFont.systemFont(ofSize: spec.size)
-        let atLarge = UIFontMetrics(forTextStyle: uiFontTextStyle(for: spec.textStyle))
-            .scaledFont(for: base, compatibleWith: UITraitCollection(preferredContentSizeCategory: .large))
-        let atAccessibility = UIFontMetrics(forTextStyle: uiFontTextStyle(for: spec.textStyle))
-            .scaledFont(
-                for: base, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge))
+
+        let atLarge = scaledUIFont(base, for: spec, dynamicTypeSize: .large)
+        let atAccessibility = scaledUIFont(base, for: spec, dynamicTypeSize: .accessibility3)
 
         XCTAssertEqual(atLarge.pointSize, spec.size)
         XCTAssertGreaterThan(atAccessibility.pointSize, atLarge.pointSize)
+    }
+
+    /// The size the editor renders at is an argument, not ambient state — which
+    /// is what lets the SwiftUI row that calls it depend on the environment and
+    /// re-run when the user changes their text size mid-document.
+    func testScaledUIFontIsDrivenOnlyByItsArgument() {
+        let spec = DocsTypographySpec.body
+        let base = UIFont.systemFont(ofSize: spec.size)
+        let sizes = DynamicTypeSize.allCases.map { scaledUIFont(base, for: spec, dynamicTypeSize: $0).pointSize }
+
+        XCTAssertEqual(sizes, sizes.sorted(), "a larger text size must never render smaller text")
+        XCTAssertGreaterThan(try XCTUnwrap(sizes.last), try XCTUnwrap(sizes.first))
+    }
+
+    func testUIContentSizeCategoryMapsEveryDynamicTypeSize() {
+        XCTAssertEqual(uiContentSizeCategory(for: .xSmall), .extraSmall)
+        XCTAssertEqual(uiContentSizeCategory(for: .small), .small)
+        XCTAssertEqual(uiContentSizeCategory(for: .medium), .medium)
+        XCTAssertEqual(uiContentSizeCategory(for: .large), .large)
+        XCTAssertEqual(uiContentSizeCategory(for: .xLarge), .extraLarge)
+        XCTAssertEqual(uiContentSizeCategory(for: .xxLarge), .extraExtraLarge)
+        XCTAssertEqual(uiContentSizeCategory(for: .xxxLarge), .extraExtraExtraLarge)
+        XCTAssertEqual(uiContentSizeCategory(for: .accessibility1), .accessibilityMedium)
+        XCTAssertEqual(uiContentSizeCategory(for: .accessibility2), .accessibilityLarge)
+        XCTAssertEqual(uiContentSizeCategory(for: .accessibility3), .accessibilityExtraLarge)
+        XCTAssertEqual(uiContentSizeCategory(for: .accessibility4), .accessibilityExtraExtraLarge)
+        XCTAssertEqual(uiContentSizeCategory(for: .accessibility5), .accessibilityExtraExtraExtraLarge)
+    }
+
+    /// Every block kind the editor renders has to scale, not just the one the
+    /// spot-check happens to use.
+    func testEveryBlockKindsEditorFontScalesWithTheTextSize() {
+        let kinds: [BlockKind] = [
+            .paragraph, .heading(level: 1), .heading(level: 2), .heading(level: 3),
+            .quote, .codeBlock(language: ""), .bulletItem, .checklistItem(checked: false),
+        ]
+        for kind in kinds {
+            let atLarge = blockTextStyling(for: kind, dynamicTypeSize: .large).font.pointSize
+            let atAccessibility = blockTextStyling(for: kind, dynamicTypeSize: .accessibility3).font.pointSize
+            XCTAssertGreaterThan(atAccessibility, atLarge, "\(kind) does not scale with Dynamic Type")
+        }
     }
 }

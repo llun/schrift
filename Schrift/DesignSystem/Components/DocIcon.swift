@@ -26,7 +26,11 @@ struct DocIcon: View {
                     Text(displayEmoji)
                         .font(.system(size: glyphSize * 0.9))
                 } else {
-                    MaterialSymbol(.description, size: size)
+                    // Sized from this view's own scaled value with the symbol's
+                    // scaling off: two independent `ScaledMetric`s need not agree
+                    // at every category (scaling is not a flat multiple at
+                    // accessibility sizes), and the box is sized from ours.
+                    MaterialSymbol(.description, size: glyphSize, scales: false)
                         .foregroundStyle(DocsColor.brandFill)
                 }
             }

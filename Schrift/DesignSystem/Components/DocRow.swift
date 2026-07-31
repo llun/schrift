@@ -148,3 +148,15 @@ struct DocRow: View {
     }
     .environment(LocalizationStore())
 }
+
+/// The stacked layout, which only appears at accessibility text sizes — the
+/// branch a title would otherwise truncate to "Q…" in.
+#Preview("Accessibility size") {
+    VStack(spacing: 0) {
+        DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
+        DocRow(emoji: "📊", title: "Roadmap", reach: .authenticated, date: "Yesterday")
+        DocRow(title: "Public notes", reach: .public, date: "Last week")
+    }
+    .environment(LocalizationStore())
+    .dynamicTypeSize(.accessibility3)
+}
