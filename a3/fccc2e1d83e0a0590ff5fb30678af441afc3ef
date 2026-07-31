@@ -1,0 +1,86 @@
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_7b8db48b6506c1::t_ae251560b4415f 283
+  s_7b8db48b6506c1::t_daf89ee73642dc 11
+  s_7b8db48b6506c1::t_565f132d10820b 275-282,284-285
+Schrift/Features/Profile/AccountScreen.swift
+  s_7b8db48b6506c1::t_a92e95e1edf321 3-8
+  s_7b8db48b6506c1::t_8a0b8edfd77e03 1-2,9-120
+Schrift/Features/Profile/ProfileScreen.swift
+  s_7b8db48b6506c1::t_28fb6bade99a4d 67-68
+  s_7b8db48b6506c1::t_e7bd4e9251a751 77-78,81-87
+Schrift/DesignSystem/Components/Toast.swift
+  s_7b8db48b6506c1::t_aefaec16d216c0 1-56,58-89
+  s_7b8db48b6506c1::t_d389860fa8259b 57
+Schrift/DesignSystem/Components/Skeleton.swift
+  s_7b8db48b6506c1::t_7ed89f408ad6e0 1-100
+Schrift/Features/Shared/SharedScreen.swift
+  s_7b8db48b6506c1::t_8c6c54ce50f9c8 36-40,42-60
+Schrift/Core/Localization/Strings+es.swift
+  s_7b8db48b6506c1::t_563da5e8a47401 13
+  s_7b8db48b6506c1::t_8b9ebf67d9f1fa 286-298
+Schrift/Core/Localization/Strings+nl.swift
+  s_7b8db48b6506c1::t_542f58d7f83a7c 283-295
+  s_7b8db48b6506c1::t_13ee5804948804 13
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_7b8db48b6506c1::t_b53d6592a744e7 11
+  s_7b8db48b6506c1::t_90c3ae8994c18d 275-285
+CLAUDE.md
+  s_7b8db48b6506c1::t_67aa0c8a5507c1 760-771
+Schrift/Features/Editor/EditorView.swift
+  s_7b8db48b6506c1::t_c3ce8c7416378e 292-294
+  s_7b8db48b6506c1::t_9abbaf899ef65c 201-260,262-291,295-296,300-305,308-320
+  s_7b8db48b6506c1::t_7a015a2f82833b 154-157,261,297-299,306-307
+docs/design-system.md
+  s_7b8db48b6506c1::t_67aa0c8a5507c1 191-218
+Schrift/Core/Localization/Strings+it.swift
+  s_7b8db48b6506c1::t_a619572a8455aa 281-293
+  s_7b8db48b6506c1::t_1dc2c0bf6e9737 13
+Schrift/Core/Localization/L10nKey.swift
+  s_7b8db48b6506c1::t_7169fd10381fc3 314-324
+  s_7b8db48b6506c1::t_c9c4e154535d42 15
+Schrift/Core/Localization/Strings+pt.swift
+  s_7b8db48b6506c1::t_fa70db1d415c3b 282-294
+  s_7b8db48b6506c1::t_1468b14b0fec18 13
+Schrift/Core/Localization/Strings+de.swift
+  s_7b8db48b6506c1::t_fd5fe12f43be4d 285-297
+  s_7b8db48b6506c1::t_366527d86c2292 13
+Schrift/Features/Home/MainTabView.swift
+  s_7b8db48b6506c1::t_1eb053fa5e7388 157-168
+Schrift/Features/Editor/ConflictSheetView.swift
+  s_7b8db48b6506c1::t_28fb6bade99a4d 107-108
+Schrift/Features/Share/ShareSheetView.swift
+  s_7b8db48b6506c1::t_0013f943c3b575 34-36,166
+Schrift/Features/Options/OptionsSheetView.swift
+  s_7b8db48b6506c1::t_28fb6bade99a4d 86-89
+  s_7b8db48b6506c1::t_0013f943c3b575 8-10,110-112
+  s_7b8db48b6506c1::t_3ca4ce4a9a88af 25,31
+Schrift/Core/Localization/Strings+fr.swift
+  s_7b8db48b6506c1::t_17e901fa6c7f10 13
+  s_7b8db48b6506c1::t_58c01b11b0ea4a 284-296
+Schrift/Core/Localization/Strings+sl.swift
+  s_7b8db48b6506c1::t_10492728fc914a 17
+  s_7b8db48b6506c1::t_81dfe9ae53fac8 293-305
+Schrift/Core/Localization/Strings+en.swift
+  s_7b8db48b6506c1::t_7169fd10381fc3 281-289,292-293
+  s_7b8db48b6506c1::t_c9c4e154535d42 14
+  s_7b8db48b6506c1::t_05915acbdc2f90 290-291
+Schrift/Core/Localization/Strings+th.swift
+  s_7b8db48b6506c1::t_9d4984e2ace5bb 278-290
+  s_7b8db48b6506c1::t_9c1e802e3409ec 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "a3fccc2e1d83e0a0590ff5fb30678af441afc3ef",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
