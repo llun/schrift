@@ -1,0 +1,28 @@
+Schrift/Features/Editor/EditorView.swift
+  s_7b8db48b6506c1::t_11aef75b601f72 242-247,253
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_7b8db48b6506c1::t_a53fa23195cbe6 220-271
+docs/design-system.md
+  s_7b8db48b6506c1::t_1d2ed82c535fe9 277-281
+  s_7b8db48b6506c1::t_d4475047378a88 248-257
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_7b8db48b6506c1::t_792f0ce338931c 122-127
+  s_7b8db48b6506c1::t_e0d883b6dc60a5 128,204
+  s_7b8db48b6506c1::t_329aee8d99a5dc 199-203
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "8c457c0af40cd126722c683121f2a6ca1bebead9",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
