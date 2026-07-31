@@ -1,0 +1,57 @@
+Schrift/Core/Localization/Strings+fr.swift
+  s_7b8db48b6506c1::t_af46c336b7bc77 293-295
+Schrift/Core/Localization/Strings+pt.swift
+  s_7b8db48b6506c1::t_db169d18bfa388 291-293
+Schrift/Core/Localization/Strings+nl.swift
+  s_7b8db48b6506c1::t_00e984ed8ebebc 292-294
+Schrift/DesignSystem/Components/Skeleton.swift
+  s_7b8db48b6506c1::t_81aa3425d4c4d6 29-32
+Schrift/Core/Localization/Strings+sl.swift
+  s_7b8db48b6506c1::t_1698b8c9ed6e5b 302-303
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_7b8db48b6506c1::t_0a82f9626318c2 283-284
+Schrift/Features/Editor/EditorView.swift
+  s_7b8db48b6506c1::t_7e6f7ce8ecd99f 158-161,207-210
+Schrift/Features/Profile/ProfileScreen.swift
+  s_7b8db48b6506c1::t_7e6f7ce8ecd99f 88-91
+Schrift/Core/Localization/Strings+es.swift
+  s_7b8db48b6506c1::t_d1d382beb3175e 295-297
+Schrift/Features/Profile/AccountScreen.swift
+  s_7b8db48b6506c1::t_87bc5c47fb878b 9-24,43,51-74,86,103
+Schrift/Core/Localization/L10nKey.swift
+  s_7b8db48b6506c1::t_e615d9ae8ff35f 322-323
+Schrift/Features/Home/MainTabView.swift
+  s_7b8db48b6506c1::t_7e6f7ce8ecd99f 146-147
+Schrift/Core/Localization/Strings+de.swift
+  s_7b8db48b6506c1::t_82ef14a130c243 294-296
+Schrift/Core/Localization/Strings+it.swift
+  s_7b8db48b6506c1::t_2c9a5dc624ba0d 290-291
+Schrift/Core/Localization/Strings+en.swift
+  s_7b8db48b6506c1::t_e615d9ae8ff35f 290-292
+SchriftTests/Features/Profile/AccountDisplayNameTests.swift
+  s_7b8db48b6506c1::t_ede932c8c3a60b 1-50
+Schrift/DesignSystem/Components/Toast.swift
+  s_7b8db48b6506c1::t_81aa3425d4c4d6 47-52,58,69,72,74-79,90-111,113-115
+Schrift/Core/Localization/Strings+th.swift
+  s_7b8db48b6506c1::t_721ff16d22a29a 287-288
+Schrift/Features/Shared/SharedScreen.swift
+  s_7b8db48b6506c1::t_7e6f7ce8ecd99f 70-71
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_7b8db48b6506c1::t_5a2c8a06505768 283-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "f2e21e2a0897dc63ee1860145dd2eccd253a4cc4",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
