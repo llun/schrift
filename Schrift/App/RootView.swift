@@ -39,7 +39,6 @@ private struct AuthenticatedHomeContainer: View {
     let sessionStore: SessionStore
     let onSignOut: () -> Void
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(ConnectivityMonitor.self) private var connectivity
     @Environment(\.scenePhase) private var scenePhase
 
