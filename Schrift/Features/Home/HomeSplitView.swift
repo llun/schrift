@@ -1,5 +1,10 @@
 import SwiftUI
 
+/// The documents tab on a regular width: the list beside the open document.
+///
+/// The search field here searches inline rather than jumping to the Search tab
+/// (`onSearchTap` stays nil), because the list is permanently on screen next to
+/// the editor — there is nothing to navigate away from.
 struct HomeSplitView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
@@ -12,7 +17,23 @@ struct HomeSplitView: View {
 
     var body: some View {
         NavigationSplitView {
-            DocumentListView(viewModel: viewModel, serverHost: serverHost, onSelect: { selectedDocument = $0 })
+            DocumentListView(
+                viewModel: viewModel,
+                serverHost: serverHost,
+                onSelect: { selectedDocument = $0 },
+                // Creation is owned here, not passed in: a split view opens a
+                // document by *selecting* it. Handing this to the tab shell's
+                // push-a-path version would create the document on the server
+                // and then appear to do nothing, because this idiom never
+                // renders that stack. (iPad had no create action at all before.)
+                onNewDocument: {
+                    Task {
+                        if let document = await viewModel.createDocument() {
+                            selectedDocument = document
+                        }
+                    }
+                }
+            )
         } detail: {
             if let selectedDocument {
                 EditorScreen(

@@ -18,8 +18,6 @@ struct SharedScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.shared_title], subtitle: serverHost, largeTitle: true, showsBorder: false)
-
             if workOffline || viewModel.isOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
@@ -61,6 +59,7 @@ struct SharedScreen: View {
                         .foregroundStyle(DocsColor.textTertiary)
                         .padding(.horizontal, DocsSpacing.gutterGrouped)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, DocsSpacing.spaceBase)
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
@@ -68,7 +67,12 @@ struct SharedScreen: View {
                 await viewModel.refresh()
             }
         }
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        .navigationTitle(loc[.shared_title])
+        .navigationSubtitle(serverHost)
         .task {
             await viewModel.load()
         }

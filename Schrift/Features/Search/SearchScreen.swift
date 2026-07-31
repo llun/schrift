@@ -14,29 +14,39 @@ struct SearchScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.search_title], subtitle: serverHost, largeTitle: true, showsBorder: false)
-
             if workOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    SearchField(text: $viewModel.query, placeholder: loc[.search_placeholder], autoFocus: true)
-                        .onSubmit {
-                            viewModel.recordSearch()
-                        }
-
                     if trimmedQuery.isEmpty {
                         emptyQueryContent
                     } else {
                         resultsContent
                     }
                 }
+                // The search field used to be the widest child and set the
+                // column width; now that it belongs to the system, the content
+                // has to claim the full width itself or it centres.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.top, DocsSpacing.space3xs)
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        .navigationTitle(loc[.search_title])
+        .navigationSubtitle(serverHost)
+        // The system field, bound to the tab's search role: tapping the tab
+        // activates it. The recents and quick-access lists stay as page content
+        // rather than becoming `.searchSuggestions`, which would replace the
+        // designed empty state with a plain system list.
+        .searchable(text: $viewModel.query, prompt: loc[.search_placeholder])
+        .onSubmit(of: .search) {
+            viewModel.recordSearch()
+        }
         .task {
             await viewModel.loadQuickAccess()
         }

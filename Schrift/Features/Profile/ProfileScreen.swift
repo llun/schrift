@@ -31,8 +31,6 @@ struct ProfileScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(title: loc[.profile_title], largeTitle: true, showsBorder: false)
-
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
                     userSection
@@ -50,7 +48,11 @@ struct ProfileScreen: View {
         // like the other three tabs — with the grouped cards defined by their
         // hairline border, not by a sunken grey backdrop. (The old iOS-grouped
         // grey came from the pre-redesign Profile/Account screens.)
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        .navigationTitle(loc[.profile_title])
         .task { await viewModel.load() }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()

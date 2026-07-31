@@ -15,28 +15,8 @@ struct DocumentListView: View {
 
     private var isOffline: Bool { viewModel.isOffline || workOffline }
 
-    private var trailingActions: [NavBarAction] {
-        var actions: [NavBarAction] = []
-        // The nav bar no longer carries a search action — search is reached via
-        // the in-page search field (which `onSearchTap` still drives on phone)
-        // and the Search tab.
-        if let onNewDocument {
-            actions.append(
-                NavBarAction(icon: .add, label: loc[.home_newdoc], color: .brand, action: onNewDocument))
-        }
-        return actions
-    }
-
     var body: some View {
         VStack(spacing: 0) {
-            NavBar(
-                title: loc[.home_title],
-                subtitle: serverHost,
-                largeTitle: true,
-                trailingActions: trailingActions,
-                showsBorder: false
-            )
-
             if isOffline {
                 OfflineBanner(note: loc[.offline_note])
             }
@@ -81,7 +61,25 @@ struct DocumentListView: View {
                 await viewModel.refresh()
             }
         }
+        // Claim the full width the removed NavBar used to define, or the
+        // screen sizes to its widest child and starves the title.
+        .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        // System chrome, not a drawn bar: the large title collapses on scroll,
+        // the server host rides along as the subtitle, and on iOS 26 the bar
+        // picks up Liquid Glass and its scroll-edge effect for free.
+        .navigationTitle(loc[.home_title])
+        .navigationSubtitle(serverHost)
+        .toolbar {
+            if let onNewDocument {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: onNewDocument) {
+                        MaterialSymbol(.add, size: 24)
+                    }
+                    .accessibilityLabel(loc[.home_newdoc])
+                }
+            }
+        }
         .task {
             await viewModel.load()
         }

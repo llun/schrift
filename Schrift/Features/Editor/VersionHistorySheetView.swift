@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Localized "last modified" caption for a version row, mirroring
-/// `documentRowDate` (`Home/HomeView.swift`).
+/// `documentRowDate` (`Home/MainTabView.swift`).
 func versionRowDate(_ version: DocumentVersion, locale: Locale) -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated

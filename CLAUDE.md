@@ -243,7 +243,9 @@ session:
 ```
 Schrift/
 ├── App/                 app entry (SchriftApp), root navigation (RootView),
-│                        swipe-back restorer (InteractivePopGesture),
+│                        the tab shell lives in Features/Home/MainTabView,
+│                        swipe-back restorer (InteractivePopGesture, for the
+│                        editor's hidden bar only),
 │                        AppAppearance + AppearanceStore (dark-mode preference)
 ├── Core/
 │   ├── Auth/            SessionStore (persists session cookies in the Keychain and
@@ -323,7 +325,7 @@ Schrift/
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
 │                        IconButton, LinkReachPill, ListRow, ListSection,
 │                        MaterialSymbol, NavBar, OfflineBanner, SearchField,
-│                        ShareMemberRow, Switch, TabBar, TextField
+│                        ShareMemberRow, Switch, TextField
 │                        (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
@@ -432,18 +434,37 @@ new code reads like the surrounding code.
   forwards events into them and never mutates model arrays/state directly.
   Binding setters and intent methods early-return on unchanged input
   (`guard old != new`) to avoid spurious dirty/save churn.
-- **Navigation lives in the view**, not the VM: `NavigationStack(path:)` over a
-  heterogeneous `NavigationPath` — push `Document` values for document screens
-  and a small `Hashable` route enum (`HomeRoute`) for auxiliary screens, with one
-  `navigationDestination(for:)` per pushed type — plus closure callbacks
+- **Navigation lives in the view**, not the VM: a `NavigationStack(path:)` per
+  tab over a `NavigationPath` — push `Document` values for document screens
+  (add a small `Hashable` route enum alongside them if an auxiliary screen ever
+  needs one), with one `navigationDestination(for:)` per pushed type — plus
+  closure callbacks
   (`onOpenDocument`, `onSignOut`, …). VMs signal outcomes via state flags
   (`didDelete`), they don't navigate.
-- Screens hide the system navigation bar (`.toolbar(.hidden, for: .navigationBar)`)
-  and draw their own `NavBar` — which makes UIKit disable the edge-swipe back
-  gesture. Any `NavigationStack` that pushes such screens must apply
-  `.restoresInteractivePopGesture()` (`Schrift/App/InteractivePopGesture.swift`)
-  once to its root content to bring swipe-back back; the swapped delegate keeps
-  the gesture disabled at the stack root and during transitions.
+- **Top-level navigation is the system `TabView`, and the tab roots use system
+  navigation bars.** `MainTabView` (`Schrift/Features/Home/MainTabView.swift`)
+  is the one shell for both idioms: `Tab(value:)` for Schrift/Shared/Profile and
+  **`Tab(value:role: .search)` last**, which the system renders as the separated
+  circular button on the trailing edge of the floating Liquid Glass capsule (and
+  which, when selected, morphs the bar into the search field). Screens set
+  `.navigationTitle` / `.navigationSubtitle` and put actions in `.toolbar` —
+  they do **not** draw a `NavBar`. That is what buys Liquid Glass,
+  minimize-on-scroll (`.tabBarMinimizeBehavior(.onScrollDown)`), scroll-edge
+  effects, and correct safe areas for free; see the handoff's `native-first`
+  and `tab-bars` guidelines.
+  - **One `NavigationStack` per tab**, each owning its own `NavigationPath`.
+    `.toolbar(.hidden, for: .tabBar)` — which the editor uses so it gets the
+    full screen — only reaches the bar from *inside* a tab's own stack; per-tab
+    paths are also what keeps each tab's navigation state across switches.
+  - The three stacks that can open a document share **one** `editorScreen(for:
+    path:)` builder, so the editor is configured identically however it was
+    reached. Don't duplicate that call.
+  - The **editor** is the one screen still hiding the system bar
+    (`.toolbar(.hidden, for: .navigationBar)` + its own `NavBar`), which makes
+    UIKit disable the edge-swipe back gesture — so every stack that pushes it
+    applies `.restoresInteractivePopGesture()`
+    (`Schrift/App/InteractivePopGesture.swift`) once to its root content. Both
+    go away when the editor moves to a native toolbar; nothing else needs them.
 - Async VM methods **catch errors internally** and set a user-facing
   `var errorKey: L10nKey?` — a friendly copy key of the form
   `"Couldn't <do X>. Please try again."` (`Strings+en.swift`), resolved by the
