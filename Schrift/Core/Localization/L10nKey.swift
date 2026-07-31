@@ -7,7 +7,6 @@ enum L10nKey: String, CaseIterable, Sendable {
     // Common
     case common_cancel = "common.cancel"
     case common_close = "common.close"  // "Close" — sheet close-button accessibility label
-    case common_retry = "common.retry"
     case common_untitled = "common.untitled_document"
     case common_profile = "common.profile"  // "Profile"
     case common_clear_search = "common.clear_search"  // "Clear search"

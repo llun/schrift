@@ -112,9 +112,10 @@ struct DocumentListView: View {
         // a background revalidation is in flight. The view trusts the VM's
         // single, unit-tested gate rather than re-deriving it here.
         if viewModel.isLoading {
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.top, DocsSpacing.spaceBase)
+            // Skeleton rows rather than a spinner, the same register the Shared
+            // tab uses off the same gate — the handoff's rule is no spinners on
+            // lists. No gutter here: the enclosing stack already applies it.
+            SkeletonList()
         } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if viewModel.searchResults.isEmpty {
                 if viewModel.errorKey == nil {

@@ -16,12 +16,11 @@ enum DocsSpacing {
     static let space4XL: CGFloat = 64
     static let space5XL: CGFloat = 72
 
-    // iOS layout constants
-    static let statusBarHeight: CGFloat = 54
-    static let tabBarHeight: CGFloat = 49
-    static let homeIndicatorHeight: CGFloat = 34
+    // iOS layout constants. The bar heights that used to live here went with the
+    // chrome that needed them: the app draws no bars of its own now, and the
+    // system's own metrics are not ours to hardcode — `tabBarHeight = 49` was
+    // the opaque pre-iOS-26 bar, nothing like the floating capsule shipped today.
     static let rowMinHeight: CGFloat = 44
-    static let toolbarHeight: CGFloat = 44
     static let gutter: CGFloat = 16
     static let gutterGrouped: CGFloat = 20
 }

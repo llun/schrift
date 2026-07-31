@@ -3,7 +3,6 @@ enum Strings_zhHant {
     static let table: [L10nKey: String] = [
         .common_cancel: "取消",
         .common_close: "關閉",
-        .common_retry: "再試一次",
         .common_untitled: "未命名文件",
         .common_profile: "個人檔案",
         .common_clear_search: "清除搜尋",

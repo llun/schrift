@@ -5,7 +5,6 @@ enum Strings_pt {
     static let table: [L10nKey: String] = [
         .common_cancel: "Cancelar",
         .common_close: "Fechar",
-        .common_retry: "Tentar novamente",
         .common_untitled: "Documento sem título",
         .common_profile: "Perfil",
         .common_clear_search: "Limpar pesquisa",

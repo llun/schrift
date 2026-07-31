@@ -597,6 +597,12 @@ Final Profile structure (matches the screenshot exactly):
   case was `.account`), the `.navigationDestination(for: HomeRoute.self)`, and
   the `onOpenAccount` param/closure on `ProfileScreen`/`HomeView`.
   `ProfileViewModel` is retained (supplies the email).
+  > **Superseded 2026-07-31.** The revised handoff specifies an Account screen,
+  > so it is back — `Features/Profile/AccountScreen.swift`, pushed from the
+  > Profile user row via `NavigationLink(value: ProfileRoute.account)` with the
+  > destination registered in `MainTabView`. It is trimmed to what `/users/me/`
+  > actually returns (see the 2026-07-31 amendment near the top of this file).
+  > `HomeView` no longer exists either; its shell is `MainTabView`.
 - The **Support** section (Help & feedback, Privacy policy) → replaced by the
   ABOUT → Version row.
 

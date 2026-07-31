@@ -322,8 +322,8 @@ Schrift/
 │   │                    MaterialIcon (the app's icon set — Material Symbols)
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
 │                        IconButton, LinkReachPill, ListRow, ListSection,
-│                        MaterialSymbol, OfflineBanner, SearchField,
-│                        ShareMemberRow, Switch, TextField
+│                        MaterialSymbol, OfflineBanner, SearchField, SheetHeader,
+│                        ShareMemberRow, Skeleton, Switch, TextField, Toast
 │                        (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
@@ -496,8 +496,8 @@ new code reads like the surrounding code.
   **Any `#Preview` of a view that reads either environment must inject it**
   (`.environment(LocalizationStore())`, `.environment(AppearanceStore())`) or the
   preview canvas fatal-errors; this is transitive to every parent view that
-  embeds it (`HomeView`/`HomeSplitView` embed the tab screens, `RootView` embeds
-  `HomeView`) — `grep -rn "<ViewName>(" Schrift` to find embedders after adding
+  embeds it (`MainTabView` embeds the tab screens and `RootView` embeds
+  `MainTabView`; `HomeSplitView` embeds the list and the editor) — `grep -rn "<ViewName>(" Schrift` to find embedders after adding
   the environment read to a view.
 - **The localization catalog is in-code, not `.lproj`/String Catalog**: an
   `enum L10nKey: String, CaseIterable` of dot-separated keys, one

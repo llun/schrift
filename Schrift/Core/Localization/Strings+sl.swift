@@ -9,7 +9,6 @@ enum Strings_sl {
     static let table: [L10nKey: String] = [
         .common_cancel: "Prekliči",
         .common_close: "Zapri",
-        .common_retry: "Poskusi znova",
         .common_untitled: "Neimenovan dokument",
         .common_profile: "Profil",
         .common_clear_search: "Počisti iskanje",

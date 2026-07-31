@@ -3,7 +3,6 @@ enum Strings_zhHans {
     static let table: [L10nKey: String] = [
         .common_cancel: "取消",
         .common_close: "关闭",
-        .common_retry: "重试",
         .common_untitled: "无标题文档",
         .common_profile: "个人资料",
         .common_clear_search: "清除搜索",
