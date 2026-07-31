@@ -24,7 +24,7 @@ struct ShareMemberRow: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space2xs) {
                     Text(name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .docsScaledFont(size: 16, weight: .semibold, relativeTo: .callout)
                         .foregroundStyle(DocsColor.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -47,7 +47,7 @@ struct ShareMemberRow: View {
             Button(action: { onTapRole?() }) {
                 HStack(spacing: DocsSpacing.space4xs) {
                     Text(role)
-                        .font(.system(size: 14, weight: .medium))
+                        .docsScaledFont(size: 14, weight: .medium, relativeTo: .subheadline)
                         .foregroundStyle(DocsColor.textSecondary)
                     MaterialSymbol(.expand_more, size: 18)
                         .foregroundStyle(DocsColor.textSecondary)

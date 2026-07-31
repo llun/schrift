@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import Schrift
@@ -63,5 +64,22 @@ final class DocRowTests: XCTestCase {
                 publicLabel: "Public"),
             "Untitled document"
         )
+    }
+
+    func testRowKeepsTheSingleLineLayoutAtEveryNonAccessibilitySize() {
+        for size in [DynamicTypeSize.xSmall, .medium, .large, .xLarge, .xxLarge, .xxxLarge] {
+            XCTAssertFalse(rowUsesStackedLayout(size), "\(size) should keep the handoff's single-line row")
+        }
+    }
+
+    /// At accessibility sizes the title and the trailing date cannot share a
+    /// line: the date wins on layout priority and the title collapses to an
+    /// ellipsis, which is what stacking exists to prevent.
+    func testRowStacksAtAccessibilitySizes() {
+        for size in [
+            DynamicTypeSize.accessibility1, .accessibility2, .accessibility3, .accessibility4, .accessibility5,
+        ] {
+            XCTAssertTrue(rowUsesStackedLayout(size), "\(size) should stack the row's title above its metadata")
+        }
     }
 }

@@ -80,7 +80,7 @@ Full detail lives in this conversation's research; key facts that drove the desi
 
 ## Architecture
 
-Native SwiftUI app, iOS 18+ minimum deployment target, universal (iPhone + iPad). MVVM-ish: SwiftUI views + `@Observable` view models + an async/await networking layer. No third-party dependencies planned for v1 beyond what's needed for Markdown parsing/rendering (evaluate Apple's `AttributedString(markdown:)` first before reaching for a package).
+Native SwiftUI app, iOS 26+ minimum deployment target, universal (iPhone + iPad). MVVM-ish: SwiftUI views + `@Observable` view models + an async/await networking layer. No third-party dependencies planned for v1 beyond what's needed for Markdown parsing/rendering (evaluate Apple's `AttributedString(markdown:)` first before reaching for a package).
 
 ```
 Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)

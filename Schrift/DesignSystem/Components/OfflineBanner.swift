@@ -18,7 +18,7 @@ struct OfflineBanner: View {
                 .foregroundStyle(DocsColor.gray450)
             Text(loc[.offline_status])
                 .font(DocsFont.caption.weight(.semibold))
-                .tracking(DocsTypographySpec.caption.size * DocsTracking.wide)
+                .docsTracking(DocsTypographySpec.caption, DocsTracking.wide)
                 .foregroundStyle(DocsColor.textSecondary)
             Circle()
                 .fill(DocsColor.gray300)

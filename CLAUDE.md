@@ -13,7 +13,10 @@ This file is the shorter, operational "how we write code here" companion.
 - A native **SwiftUI iOS/iPadOS client** for
   [La Suite Numérique Docs](https://github.com/suitenumerique/docs), talking to a
   self-hosted instance (`docs.llun.dev`).
-- **Swift 6**, minimum deployment **iOS 18.0**, universal (iPhone + iPad).
+- **Swift 6**, minimum deployment **iOS 26.0**, universal (iPhone + iPad). The
+  floor is 26 so the app can use the current system components unconditionally
+  — they render Liquid Glass when built against that SDK — with no
+  `#available` fallbacks to keep visually in sync.
 - **Zero third-party runtime dependencies.** Everything — including the Yjs CRDT
   encoder used to save documents — is hand-written on Apple frameworks. Keep it
   that way (see [Safety](#safety--never-add-anything-dangerous)).
@@ -86,7 +89,7 @@ names the section with the details.
   build — targets, settings, sources, Info.plist keys — edit `project.yml` and
   re-run `xcodegen generate`. Never open Xcode and edit the `.xcodeproj`
   directly (it is overwritten) and never commit it.
-- Requires a recent Xcode with an **iOS 18 simulator** and the Swift 6 toolchain.
+- Requires a recent Xcode with an **iOS 26 simulator** and the Swift 6 toolchain.
 - Run the tests:
   ```sh
   xcodebuild test -project Schrift.xcodeproj -scheme Schrift \
@@ -711,7 +714,7 @@ new code reads like the surrounding code.
 
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
-  (letter-spacing, applied as `.tracking(size * DocsTracking.tight)`),
+  (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),
   `DocsSpacing`, `DocsRadius`). Adding a color means adding it to
   `DocsColorHex` (raw `UInt32`) **and** its dark counterpart in
   `DocsColorHexDark` (same name, one entry per light token — see the adaptive-
@@ -734,6 +737,29 @@ new code reads like the surrounding code.
   numeric sizes may be inline; colors are always tokenized.) Prefer `Capsule()` /
   `Circle()` for full-round shapes (a few components — `DocsButton`,
   `SearchScreen` — still use `DocsRadius.pill` directly).
+- **All text scales with Dynamic Type, and the token table is what makes that
+  safe.** Every `DocsFont.*` is a *text-style-relative* font
+  (`Font.system(spec.textStyle, weight:)`), never `Font.system(size:)` — the
+  handoff's iOS sizes are exactly the HIG defaults at the Large content size, so
+  each token maps 1:1 onto a system style (34→`.largeTitle`, 28→`.title`,
+  22→`.title2`, 17→`.headline`/`.body`, 16→`.callout`, 15→`.subheadline`,
+  13→`.footnote`, 12→`.caption`) and the app is byte-identical to the handoff at
+  the default size while still scaling.
+  `DocsTypographySpecTests.testEveryTokenSizeEqualsItsTextStyleDefaultAtTheLargeContentSize`
+  is what keeps that 1:1 honest — if a token's size and its style's default ever
+  disagree, the app has silently stopped matching the handoff at the size most
+  people run. `spec.size` survives as the **reference** value: it is what
+  tracking is derived from and what the UIKit editor scales up from. So:
+  - letter-spacing goes through **`.docsTracking(spec, DocsTracking.x)`**, never
+    a bare `.tracking(size * ratio)` — `.tracking` takes *points*, so a fixed
+    value drifts visibly once the text grows;
+  - the block editor's UIKit fonts (`blockTextStyling`, the one place the app
+    builds `UIFont`s) go through **`scaledUIFont(_:for:)`**
+    (`UIFontMetrics`). Scaling changes only the rendered size, never the buffer,
+    so every `NSRange` stays the source offset it always was — see the
+    zero-width-syntax rule under [Editor](#editor--the-on-device-save-coreyjs);
+  - a fixed **`height:`** on anything containing text is a bug (it clips at
+    larger sizes); use `minHeight:` so the row can grow.
 - **Icons are Google Material Symbols, never SF Symbols.** The app's entire icon
   set is the handoff's Material Symbols Outlined, bundled as a ~18KB subset
   (`Schrift/Resources/Fonts/MaterialSymbolsOutlined-Icons.ttf`, Apache-2.0,

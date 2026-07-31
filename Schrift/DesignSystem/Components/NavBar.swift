@@ -102,7 +102,10 @@ struct NavBar: View {
                     }
                 }
                 .padding(.horizontal, DocsSpacing.gutter)
-                .frame(height: DocsSpacing.navBarHeight)
+                // minHeight: the overlaid title+subtitle stack is not compressed
+                // by a fixed row height — it would overlap the content below
+                // instead of clipping — so the row has to grow with the text.
+                .frame(minHeight: DocsSpacing.navBarHeight)
             }
 
             if largeTitle {
@@ -111,7 +114,7 @@ struct NavBar: View {
                         HStack(spacing: DocsSpacing.spaceXS) {
                             Text(title)
                                 .font(DocsFont.largeTitle)
-                                .tracking(DocsTypographySpec.largeTitle.size * DocsTracking.tight)
+                                .docsTracking(DocsTypographySpec.largeTitle, DocsTracking.tight)
                                 .foregroundStyle(DocsColor.textPrimary)
                                 // Handoff large title is single-line with ellipsis
                                 // (nowrap/overflow-hidden/text-overflow-ellipsis) —

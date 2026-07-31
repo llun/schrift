@@ -7,6 +7,9 @@ struct SlashMenuView: View {
     var onSelect: (SlashMenuItem) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    /// Four rows at the default text size, scaled so the menu still shows about
+    /// four once the rows themselves grow.
+    @ScaledMetric(relativeTo: .body) private var maxHeight: CGFloat = 4 * DocsSpacing.rowMinHeight
 
     var body: some View {
         let items = filteredSlashItems(query: query)
@@ -34,7 +37,7 @@ struct SlashMenuView: View {
                     }
                 }
             }
-            .frame(maxHeight: 4 * DocsSpacing.rowMinHeight)
+            .frame(maxHeight: maxHeight)
             .fixedSize(horizontal: false, vertical: true)
             .background(DocsColor.surfacePage)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))

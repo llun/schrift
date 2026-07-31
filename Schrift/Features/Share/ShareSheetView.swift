@@ -20,6 +20,10 @@ func shareRoleDisplayTitle(_ role: DocumentRole, isPending: Bool, loc: Localizat
 
 /// Bounds the Share sheet's members list so a long list scrolls internally
 /// instead of pushing the link section and Copy link button off screen.
+///
+/// The value is the reference height at the default text size (roughly five
+/// rows); the view scales it with Dynamic Type so the list keeps showing about
+/// as many members rather than collapsing to one at larger sizes.
 enum ShareSheetLayout {
     static let membersMaxHeight: CGFloat = 208
 }
@@ -32,6 +36,7 @@ struct ShareSheetView: View {
 
     @State private var memberPendingRoleChange: ShareMember?
     @State private var isChoosingLinkReach = false
+    @ScaledMetric(relativeTo: .body) private var membersMaxHeight: CGFloat = ShareSheetLayout.membersMaxHeight
 
     var body: some View {
         // A flat, boxless sheet (handoff `Sheet`): a pinned `SheetHeader` over the
@@ -115,7 +120,7 @@ struct ShareSheetView: View {
     private func sectionLabel(_ text: String) -> some View {
         Text(text.uppercased())
             .font(DocsFont.footnote)
-            .tracking(DocsTypographySpec.footnote.size * DocsTracking.eyebrow)
+            .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
             .foregroundStyle(DocsColor.textTertiary)
     }
 
@@ -200,7 +205,7 @@ struct ShareSheetView: View {
                     )
                 }
             }
-            .frame(maxHeight: ShareSheetLayout.membersMaxHeight)
+            .frame(maxHeight: membersMaxHeight)
         }
     }
 }

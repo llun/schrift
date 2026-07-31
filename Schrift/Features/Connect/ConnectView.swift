@@ -84,7 +84,7 @@ struct ConnectView: View {
             Text(loc[.connect_recent_servers])
                 .font(DocsFont.caption)
                 .textCase(.uppercase)
-                .tracking(DocsTypographySpec.caption.size * DocsTracking.eyebrow)
+                .docsTracking(DocsTypographySpec.caption, DocsTracking.eyebrow)
                 .foregroundStyle(DocsColor.textTertiary)
                 .padding(.leading, DocsSpacing.space3xs)
 

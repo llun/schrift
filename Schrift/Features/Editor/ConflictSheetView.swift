@@ -54,43 +54,51 @@ struct ConflictSheetView: View {
                 title: loc[.editor_conflict_title], closeLabel: loc[.common_close],
                 onClose: { dismiss() })
 
-            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                Text(loc[.editor_conflict_body])
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textSecondary)
-                Text(
-                    loc.format(
-                        .editor_conflict_server_changed,
-                        conflictServerChangedDate(conflict.serverUpdatedAt, now: Date(), locale: locale))
-                )
-                .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textTertiary)
+            // The body scrolls under the pinned header: this sheet is all
+            // explanatory prose and it is fixed at the `.medium` detent, so at
+            // larger text sizes the two choices would otherwise sit below the
+            // fold with no way to reach them.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                        Text(loc[.editor_conflict_body])
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(DocsColor.textSecondary)
+                        Text(
+                            loc.format(
+                                .editor_conflict_server_changed,
+                                conflictServerChangedDate(conflict.serverUpdatedAt, now: Date(), locale: locale))
+                        )
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.bottom, DocsSpacing.spaceXS)
+
+                    ListRow(
+                        icon: .cloud, title: loc[.editor_conflict_keep_mine],
+                        subtitle: loc[.editor_conflict_keep_mine_detail],
+                        action: {
+                            dismiss()
+                            onKeepMine()
+                        })
+
+                    ListRow(
+                        icon: .download, title: loc[.editor_conflict_keep_server],
+                        subtitle: loc[.editor_conflict_keep_server_detail],
+                        isDestructive: true,
+                        action: { isConfirmingKeepServer = true })
+
+                    Text(loc[.editor_conflict_restore_hint])
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, DocsSpacing.gutter)
+                        .padding(.top, DocsSpacing.spaceXS)
+                }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.bottom, DocsSpacing.spaceXS)
-
-            ListRow(
-                icon: .cloud, title: loc[.editor_conflict_keep_mine],
-                subtitle: loc[.editor_conflict_keep_mine_detail],
-                action: {
-                    dismiss()
-                    onKeepMine()
-                })
-
-            ListRow(
-                icon: .download, title: loc[.editor_conflict_keep_server],
-                subtitle: loc[.editor_conflict_keep_server_detail],
-                isDestructive: true,
-                action: { isConfirmingKeepServer = true })
-
-            Text(loc[.editor_conflict_restore_hint])
-                .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
 
             Spacer(minLength: 0)
         }

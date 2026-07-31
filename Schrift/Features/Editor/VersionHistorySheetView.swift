@@ -22,6 +22,10 @@ struct VersionHistorySheetView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(LocalizationStore.self) private var loc
+    /// Reference height of the scrolling version list at the default text size;
+    /// scaled so the list keeps showing a comparable number of versions rather
+    /// than shrinking to one row at larger sizes.
+    @ScaledMetric(relativeTo: .body) private var listMaxHeight: CGFloat = 340
 
     var body: some View {
         // A flat, boxless sheet (handoff `Sheet`): a pinned `SheetHeader` over the
@@ -64,7 +68,7 @@ struct VersionHistorySheetView: View {
                     }
                 }
             }
-            .frame(maxHeight: 340)
+            .frame(maxHeight: listMaxHeight)
 
             if let restoreURL {
                 // Sits directly below the scrolling list, not pinned to the sheet

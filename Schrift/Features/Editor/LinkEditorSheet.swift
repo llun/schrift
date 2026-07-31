@@ -37,47 +37,51 @@ struct LinkEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
-                DocsTextField(
-                    label: loc[.editor_link_text_label],
-                    text: $label,
-                    placeholder: loc[.editor_link_text_placeholder],
-                    helper: loc[.editor_link_text_helper]
-                )
+            // Scrollable: two labelled fields with helper/error text plus the
+            // keyboard already fill the fixed `.medium` detent, and at larger
+            // text sizes the address field would drop below the fold.
+            ScrollView {
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
+                    DocsTextField(
+                        label: loc[.editor_link_text_label],
+                        text: $label,
+                        placeholder: loc[.editor_link_text_placeholder],
+                        helper: loc[.editor_link_text_helper]
+                    )
 
-                DocsTextField(
-                    label: loc[.editor_link_address_label],
-                    text: Binding(
-                        get: { url },
-                        set: {
-                            url = $0
-                            showsURLError = false
-                        }),
-                    placeholder: loc[.editor_link_address_placeholder],
-                    error: showsURLError ? loc[.editor_link_address_error] : nil
-                )
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
+                    DocsTextField(
+                        label: loc[.editor_link_address_label],
+                        text: Binding(
+                            get: { url },
+                            set: {
+                                url = $0
+                                showsURLError = false
+                            }),
+                        placeholder: loc[.editor_link_address_placeholder],
+                        error: showsURLError ? loc[.editor_link_address_error] : nil
+                    )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
 
-                if let onRemove, isEditingExistingLink {
-                    Button(role: .destructive) {
-                        onRemove()
-                    } label: {
-                        Label {
-                            Text(loc[.editor_link_remove])
-                        } icon: {
-                            MaterialSymbol(.link_off, size: 20)
+                    if let onRemove, isEditingExistingLink {
+                        Button(role: .destructive) {
+                            onRemove()
+                        } label: {
+                            Label {
+                                Text(loc[.editor_link_remove])
+                            } icon: {
+                                MaterialSymbol(.link_off, size: 20)
+                            }
+                            .font(DocsFont.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .font(DocsFont.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, DocsSpacing.space2xs)
                     }
-                    .padding(.top, DocsSpacing.space2xs)
                 }
-
-                Spacer()
+                .padding(DocsSpacing.gutter)
             }
-            .padding(DocsSpacing.gutter)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(DocsColor.surfacePage)
             .navigationTitle(isEditingExistingLink ? loc[.editor_link_edit_title] : loc[.editor_link_add_title])
             .navigationBarTitleDisplayMode(.inline)

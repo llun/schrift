@@ -38,6 +38,17 @@ func docRowAccessibilityLabel(
     return parts.joined(separator: ", ")
 }
 
+/// Whether a document row stacks its title above its metadata instead of sharing
+/// one line with it.
+///
+/// The trailing date holds `layoutPriority(1)` so it is never the thing that
+/// truncates — which is right until the text is large enough that the title has
+/// no room left and collapses to "A…". At accessibility sizes the two get their
+/// own lines instead, per the HIG's guidance to reflow rather than truncate.
+func rowUsesStackedLayout(_ dynamicTypeSize: DynamicTypeSize) -> Bool {
+    dynamicTypeSize.isAccessibilitySize
+}
+
 struct DocRow: View {
     var emoji: String? = nil
     var title: String = "Untitled document"
@@ -48,39 +59,28 @@ struct DocRow: View {
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var isStacked: Bool { rowUsesStackedLayout(dynamicTypeSize) }
 
     var body: some View {
-        HStack(spacing: DocsSpacing.spaceSM) {
+        HStack(alignment: isStacked ? .top : .center, spacing: DocsSpacing.spaceSM) {
             DocIcon(emoji: emoji, tinted: true, pinned: pinned)
 
-            // Title and its inline reach glyph sit 6pt apart (reference), while
-            // the DocIcon keeps the outer 12pt gap.
-            HStack(spacing: DocsSpacing.space2xs) {
-                Text(title)
-                    .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
-                    .lineLimit(1)
-
-                if let indicatorIcon = docRowReachIndicatorIcon(reach: reach) {
-                    MaterialSymbol(indicatorIcon, size: 16)
-                        .foregroundStyle(DocsColor.textTertiary)
+            if isStacked {
+                VStack(alignment: .leading, spacing: DocsSpacing.space3xs) {
+                    titleLine
+                    HStack(spacing: DocsSpacing.space2xs) {
+                        offlineIndicator
+                        dateLabel
+                    }
                 }
-            }
-
-            Spacer(minLength: DocsSpacing.spaceXS)
-
-            if offlineAvailable {
-                MaterialSymbol(.cloud_done, size: 16)
-                    .foregroundStyle(DocsColor.gray350)
-                    .accessibilityLabel(loc[.docrow_available_offline])
-            }
-
-            if !date.isEmpty {
-                Text(date)
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .lineLimit(1)
-                    .layoutPriority(1)
+                Spacer(minLength: 0)
+            } else {
+                titleLine
+                Spacer(minLength: DocsSpacing.spaceXS)
+                offlineIndicator
+                dateLabel
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
@@ -101,6 +101,42 @@ struct DocRow: View {
             )
         )
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// Title and its inline reach glyph sit 6pt apart (reference), while the
+    /// DocIcon keeps the outer 12pt gap.
+    private var titleLine: some View {
+        HStack(spacing: DocsSpacing.space2xs) {
+            Text(title)
+                .font(DocsFont.body)
+                .foregroundStyle(DocsColor.textPrimary)
+                .lineLimit(isStacked ? 3 : 1)
+
+            if let indicatorIcon = docRowReachIndicatorIcon(reach: reach) {
+                MaterialSymbol(indicatorIcon, size: 16)
+                    .foregroundStyle(DocsColor.textTertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var offlineIndicator: some View {
+        if offlineAvailable {
+            MaterialSymbol(.cloud_done, size: 16)
+                .foregroundStyle(DocsColor.gray350)
+                .accessibilityLabel(loc[.docrow_available_offline])
+        }
+    }
+
+    @ViewBuilder
+    private var dateLabel: some View {
+        if !date.isEmpty {
+            Text(date)
+                .font(DocsFont.footnote)
+                .foregroundStyle(DocsColor.textTertiary)
+                .lineLimit(1)
+                .layoutPriority(isStacked ? 0 : 1)
+        }
     }
 }
 
