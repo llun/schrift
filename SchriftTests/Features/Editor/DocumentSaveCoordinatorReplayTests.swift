@@ -70,7 +70,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         log: RequestRecorder,
         serverUpdatedAt: String = "2026-03-01T12:00:00Z",
         createStatus: Int = 201,
-        title: String = "Untitled document"
+        title: String = "Untitled document",
+        postDelay: TimeInterval = 0
     ) {
         let userBody = Data(
             """
@@ -100,7 +101,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             case "GET":
                 return .init(statusCode: 200, headers: [:], body: createdBody, error: nil)
             case "POST":
-                return .init(statusCode: createStatus, headers: [:], body: createdBody, error: nil)
+                return .init(
+                    statusCode: createStatus, headers: [:], body: createdBody, error: nil, delay: postDelay)
             default:
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -188,10 +190,11 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "and its timestamp is the create response's, not the client clock")
     }
 
-    func testTheCreatedDocumentIsListedUnderItsServerIDBeforeAnyFetch() async {
+    func testTheCreatedDocumentJoinsAnAlreadyFetchedRecentsList() async {
         let log = RequestRecorder()
         stubReplayPipeline(log: log)
         let env = makeEnvironment()
+        env.lists.saveRecentDocuments([])  // a list that *has* been fetched, and is empty
         env.coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         await env.coordinator.syncPendingDrafts()
@@ -216,6 +219,44 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         XCTAssertEqual(env.children.children(for: knownParent)?.map(\.id), [serverID])
         XCTAssertNil(env.children.children(for: unknownParent))
+    }
+
+    /// Every interruption point in the migration has to leave the body on disk somewhere.
+    /// The dangerous one is between removing the local draft and enqueueing under the server
+    /// id: in between, the content lives only in a local binding. Writing the replacement
+    /// first means a death anywhere in the sequence still finds it — here, by inspecting the
+    /// store immediately after a migration whose save could not land.
+    func testTheBodyIsOnDiskUnderTheServerIDEvenIfTheSaveNeverLands() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        MockURLProtocol.stubHandler = { [serverID] request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            let created = Data(
+                """
+                {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+                 "abilities": {}, "content": "", "created_at": "2026-03-01T12:00:00Z",
+                 "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+                 "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
+                """.utf8)
+            return .init(statusCode: 200, headers: [:], body: created, error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+
+        await waitUntil { env.drafts.draft(for: self.serverID)?.markdown == "# Written offline" }
+        XCTAssertNil(env.drafts.draft(for: local.id), "and nothing is left behind under the local id")
     }
 
     // MARK: - Idempotency
@@ -307,6 +348,168 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await env.coordinator.syncPendingDrafts()
 
         XCTAssertEqual(creates(log), 0, "one holder remains")
+    }
+
+    // MARK: - What can change while the POST is in flight
+
+    /// The deferral is only a guarantee if it is re-checked *after* the await. An editor
+    /// opening during the POST used to be migrated out from under: the screen's id is a
+    /// `let`, so it kept enqueueing under an id the holds no longer covered, the save 404ed
+    /// to `.failed`, and the next launch's sync pass deleted that draft — the user's only
+    /// copy.
+    func testAnEditorOpeningDuringThePostDefersTheMigration() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        stubReplayPipeline(log: log, postDelay: 0.2)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        // Open the screen while the POST is on the wire.
+        await waitUntil { self.creates(log) == 1 }
+        coordinator.retainOpenEditor(documentID: local.id)
+        await pass.value
+
+        XCTAssertTrue(coordinator.isPendingCreate(documentID: local.id), "migration deferred")
+        XCTAssertEqual(
+            env.drafts.draft(for: local.id)?.markdown, "# Written offline",
+            "and the content is still under the id the open screen is writing to")
+        XCTAssertNotNil(env.creates.create(for: local.id)?.syncedServerID, "but the checkpoint stands")
+    }
+
+    /// Deleting the document while its POST is in flight must not re-materialise it. The
+    /// record snapshot is stale by then, and writing it back would resurrect the very record
+    /// the delete removed — with a checkpoint attached.
+    func testDeletingDuringThePostNeitherResurrectsTheRecordNorMigrates() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        stubReplayPipeline(log: log, postDelay: 0.2)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { self.creates(log) == 1 }
+        coordinator.discardPendingWork(documentID: local.id)
+        await pass.value
+
+        XCTAssertNil(env.creates.create(for: local.id), "the record stays deleted")
+        XCTAssertNil(env.drafts.draft(for: self.serverID), "and no draft is materialised under the server id")
+    }
+
+    /// A checkpointed document deleted server-side can never be resumed. Retrying that GET
+    /// forever left it in no list (a checkpointed record is withheld) and never pushed —
+    /// unreachable by every route the app offers. Dropping the checkpoint lets it start over.
+    func testAResumeWhoseDocumentIsGoneStartsOverInsteadOfLoopingForever() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.creates.create(for: local.id)?.syncedServerID,
+            "the dead checkpoint is dropped so the next pass can create it afresh")
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "and the document is still ours to send")
+    }
+
+    /// A rename made between the checkpoint and the resume must survive. The server's title
+    /// is the pre-death one, and since the baseline is stamped from it, `draftTitleOutcome`
+    /// would see draft == baseline and silently keep the old name.
+    func testAResumeKeepsARenameMadeAfterTheCheckpoint() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log, title: "Untitled document")
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The rename lands in the draft during the intervening launch.
+        env.coordinator.enqueue(documentID: local.id, title: "Renamed after the crash", markdown: "# Body")
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        // The draft written under the server id is what the save PATCHes, so the rename has
+        // to be there. (`knownServerTitle` correctly keeps the server's stale title — that
+        // map records what the server *holds*, not what we are about to send it.)
+        await waitUntil { relaunched.drafts.draft(for: self.serverID) != nil }
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: self.serverID)?.title, "Renamed after the crash",
+            "the local rename is not reverted to the server's stale title")
+    }
+
+    /// `nil` (never fetched) and `[]` (fetched, empty) are deliberately different for the
+    /// recents cache — `HomeViewModel` reads exactly that to decide whether to show the
+    /// first-run skeleton. Fabricating one would make a failed first fetch render a single
+    /// row as though the server held one document.
+    func testTheRecentsCacheIsNeverFabricatedByAReplay() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        env.coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+        XCTAssertNil(env.lists.loadRecentDocuments(), "no list has ever been fetched")
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(env.lists.loadRecentDocuments(), "and the replay must not invent one")
+    }
+
+    /// A CSRF-shaped 403 (the documented capitalised-host bug) must not silently promote
+    /// every sub-page to a root: the promotion is irreversible, so it needs evidence about
+    /// the parent specifically.
+    func testAForbiddenThatIsNotAboutTheParentDoesNotPromote() async {
+        let log = RequestRecorder()
+        let parent = UUID()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
+        MockURLProtocol.stubHandler = { [parent] request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            // The parent is perfectly healthy; only the POST is rejected.
+            if request.httpMethod == "GET", url.contains(parent.uuidString.lowercased()) {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(parent.uuidString.lowercased())", "title": "Parent", "abilities": {},
+                         "content": "", "created_at": "2026-03-01T12:00:00Z",
+                         "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+                         "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            env.creates.create(for: local.id)?.parentID, parent,
+            "the sub-page keeps its parent when the 403 was not about the parent")
     }
 
     // MARK: - Failures
