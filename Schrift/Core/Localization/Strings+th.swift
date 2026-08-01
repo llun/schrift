@@ -250,7 +250,8 @@ enum Strings_th {
         .profile_title: "โปรไฟล์",
         .profile_user: "ผู้ใช้",
         .profile_prefs: "การตั้งค่า",
-        .profile_prefs_footer: "เมื่อเปิดใช้งาน เอกสารที่คุณเปิดไว้จะยังอ่านได้บนอุปกรณ์นี้แม้ไม่มีการเชื่อมต่อ",
+        .profile_prefs_footer:
+            "เมื่อเปิดใช้งาน เอกสารที่คุณเปิดไว้จะยังอ่านและแก้ไขได้บนอุปกรณ์นี้แม้ไม่มีการเชื่อมต่อ",
         .profile_appearance: "รูปลักษณ์",
         .profile_language: "ภาษา",
         .profile_notifications: "การแจ้งเตือน",

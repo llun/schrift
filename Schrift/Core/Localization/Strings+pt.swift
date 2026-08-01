@@ -254,7 +254,7 @@ enum Strings_pt {
         .profile_user: "Usuário",
         .profile_prefs: "Preferências",
         .profile_prefs_footer:
-            "Quando ativado, os documentos que você abriu continuam legíveis neste dispositivo sem conexão.",
+            "Quando ativado, os documentos que você abriu podem ser lidos e editados neste dispositivo sem conexão.",
         .profile_appearance: "Aparência",
         .profile_language: "Idioma",
         .profile_notifications: "Notificações",

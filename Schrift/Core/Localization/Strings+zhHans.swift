@@ -248,7 +248,8 @@ enum Strings_zhHans {
         .profile_title: "个人资料",
         .profile_user: "用户",
         .profile_prefs: "偏好设置",
-        .profile_prefs_footer: "开启后，您打开过的文档即使离线也可以在此设备上阅读。",
+        .profile_prefs_footer:
+            "开启后，您打开过的文档即使离线也可以在此设备上阅读和编辑。",
         .profile_appearance: "外观",
         .profile_language: "语言",
         .profile_notifications: "通知",

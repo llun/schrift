@@ -257,7 +257,7 @@ enum Strings_de {
         .profile_user: "Benutzer",
         .profile_prefs: "Einstellungen",
         .profile_prefs_footer:
-            "Wenn aktiviert, bleiben von Ihnen geöffnete Dokumente auf diesem Gerät auch ohne Verbindung lesbar.",
+            "Wenn aktiviert, bleiben von Ihnen geöffnete Dokumente auf diesem Gerät auch ohne Verbindung les- und bearbeitbar.",
         .profile_appearance: "Erscheinungsbild",
         .profile_language: "Sprache",
         .profile_notifications: "Benachrichtigungen",

@@ -255,7 +255,7 @@ enum Strings_fr {
         .profile_user: "Utilisateur",
         .profile_prefs: "Préférences",
         .profile_prefs_footer:
-            "Lorsque cette option est activée, les documents que vous avez ouverts restent lisibles sur cet appareil sans connexion.",
+            "Lorsque cette option est activée, les documents que vous avez ouverts restent consultables et modifiables sur cet appareil sans connexion.",
         .profile_appearance: "Apparence",
         .profile_language: "Langue",
         .profile_notifications: "Notifications",

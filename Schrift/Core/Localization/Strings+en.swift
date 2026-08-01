@@ -253,7 +253,8 @@ enum Strings_en {
         .profile_title: "Profile",
         .profile_user: "User",
         .profile_prefs: "Preferences",
-        .profile_prefs_footer: "When on, documents you've opened stay readable on this device without a connection.",
+        .profile_prefs_footer:
+            "When on, documents you've opened stay available to read and edit on this device without a connection.",
         .profile_appearance: "Appearance",
         .profile_language: "Language",
         .profile_notifications: "Notifications",

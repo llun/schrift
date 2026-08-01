@@ -255,7 +255,7 @@ enum Strings_nl {
         .profile_user: "Gebruiker",
         .profile_prefs: "Voorkeuren",
         .profile_prefs_footer:
-            "Indien ingeschakeld, blijven geopende documenten op dit apparaat leesbaar zonder verbinding.",
+            "Indien ingeschakeld, blijven geopende documenten op dit apparaat leesbaar en bewerkbaar zonder verbinding.",
         .profile_appearance: "Weergave",
         .profile_language: "Taal",
         .profile_notifications: "Meldingen",

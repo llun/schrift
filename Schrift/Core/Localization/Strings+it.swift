@@ -253,7 +253,7 @@ enum Strings_it {
         .profile_user: "Utente",
         .profile_prefs: "Preferenze",
         .profile_prefs_footer:
-            "Se attivo, i documenti aperti restano leggibili su questo dispositivo anche senza connessione.",
+            "Se attivo, i documenti aperti restano leggibili e modificabili su questo dispositivo anche senza connessione.",
         .profile_appearance: "Aspetto",
         .profile_language: "Lingua",
         .profile_notifications: "Notifiche",
