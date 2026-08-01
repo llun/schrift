@@ -1018,8 +1018,8 @@ to what the Home list passes (still a `Document` / id).
 
 ## Documents created on this device (2026-08-01, storage + gates + replay)
 
-Offline *creation* is still a non-goal above, but its **storage and its safety
-gates have landed, dormant** — nothing mints a record yet. They land first and
+Offline *creation* is still a non-goal above, but its **storage, its safety gates
+and its replay have landed, dormant** — nothing mints a record yet. They land first and
 separately because without them the existing pipeline does not merely fail to
 create a local document, it **destroys** one.
 
@@ -1031,9 +1031,10 @@ until a replay POSTs it and migrates everything keyed by that id.
 
 **`PendingDocumentCreateStore`** holds one `PendingDocumentCreate` per such
 document: `localID`, `title`, `parentID` (a *server* id, or nil for a root),
-`createdAt` (replay order), `serverOrigin`, `ownerUserID`, and `syncedServerID` (the two-phase
-checkpoint the replay will set the instant its POST lands, so a relaunch resumes
-instead of POSTing a duplicate). It follows the UserDefaults-store conventions and
+`createdAt` (replay order), `serverOrigin`, `ownerUserID`, `syncedServerID` (the two-phase
+checkpoint the replay sets the instant its POST lands, so a relaunch resumes
+instead of POSTing a duplicate), and `replayBlockedAt`/`replayBlockedBuild` (an
+unreadable create response, scoped to the build that met it — see below). It follows the UserDefaults-store conventions and
 is **backup-included**, like `PendingDraftStore`: for a document that exists
 nowhere else, this record and the draft beside it are the only copies.
 
@@ -1329,7 +1330,9 @@ draft, and a later trigger migrates.
 nothing on this device and content on the server, the local side has nothing to
 contribute and arming the pill would offer a "Keep my version" that PATCHes `""`
 and wipes the document. It adopts the server instead — drop the draft, enqueue
-nothing. The state is reachable: the body chain falls back to `""` when the queued
+nothing, and **release any conflict record on the way out**, since with every local
+trace for that id gone a rehydrated record would park every future save behind a pill
+with nothing left to ask. The state is reachable: the body chain falls back to `""` when the queued
 slot, the local draft and the partially-migrated draft are all absent, which a
 death inside the migration plus an intervening `runSyncPass` produces. But the
 ordinary route there is a source that is **present and empty**, not absent:
@@ -1376,10 +1379,14 @@ pass skips and a relaunch retries once — note that is *not* the reading surfac
 "tap to retry", which cannot reach a local document whose content is parked in
 `queued`; a create-specific affordance belongs with the UI.
 
-**One rejection is the exception, and it is persisted.** A `.decoding` failure on
-the create arrives *after* a 201: the server built the document and we merely could
-not read the response, so no checkpoint could be written either (the id was in the
-body that failed to decode). The in-memory `.failed` rule is exactly wrong there,
+**One rejection is the exception, and it is persisted.** A `.decoding` failure on the
+create arrives *after* a 2xx, so the server very likely built the document and we
+merely could not read the response — and no checkpoint could be written either (the
+id was in the body that failed to decode). "Very likely", not certainly: `.decoding`
+proves the response was 2xx and unreadable, and a gateway answering `200` with an
+HTML body created nothing. Blocking is still the right default, because a duplicate
+is unrecoverable where a delayed retry is not — which is exactly why the block is
+scoped to a build rather than made permanent. The in-memory `.failed` rule is exactly wrong there,
 because `init` re-seeds every record to `.pendingSync` — a free retry for a
 validation 400, but for this one, a fresh POST on every launch that abandons the
 document the last one built. This is not hypothetical: `CLAUDE.md` records

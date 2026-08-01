@@ -434,7 +434,7 @@ final class DocumentSaveCoordinator {
             // document under its real id, which is exactly the editor `finishMigration`'s
             // `serverID` guards now defer to. Without this the deferred migration would wait
             // for an unrelated foreground or reconnect.
-            if isPendingCreate(documentID: documentID) || isCheckpointedServerID(documentID) {
+            if isPendingCreate(documentID: documentID) || checkpointedRecord(forServerID: documentID) != nil {
                 Task { await syncPendingDrafts() }
             }
         } else {
@@ -446,10 +446,11 @@ final class DocumentSaveCoordinator {
         (openEditors[documentID] ?? 0) > 0
     }
 
-    /// Whether this is the **server** id a checkpointed record is waiting to migrate onto —
-    /// the id the user actually meets that document under while it sits checkpointed.
-    private func isCheckpointedServerID(_ documentID: UUID) -> Bool {
-        pendingCreates.values.contains { $0.syncedServerID == documentID }
+    /// The record waiting to migrate onto this **server** id, if any — i.e. the id the user
+    /// actually meets that document under while it sits checkpointed, since
+    /// `pendingLocalDocuments` withholds the local row from that moment on.
+    private func checkpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
+        pendingCreates.values.first { $0.syncedServerID == documentID }
     }
 
     // MARK: - Create replay
@@ -1476,14 +1477,25 @@ final class DocumentSaveCoordinator {
         // A locally-created document's record must go with its draft, or the create replay
         // would resurrect a document the user threw away.
         //
-        // **This is not the whole of a delete once the record is checkpointed.** Then the POST
-        // has landed and a real server object exists, while `isPendingCreate` is still true
-        // (the migration only clears it at `removePendingCreate`), so this branch runs for
-        // exactly the case where "purely local" is false. It stays right as far as it goes —
-        // the local traces must be removed either way — but the caller owes the server
-        // `DELETE` when `syncedServerID` is set, or the document survives and reappears in
-        // Home on the next list fetch with nothing on the device that knows about it. See the
-        // delete-branch obligation in `docs/offline-and-sync.md`.
+        // **A checkpointed record breaks that in both directions, and each needs its own
+        // answer.** Once `syncedServerID` is set the POST has landed and a real server object
+        // exists, while `isPendingCreate` is still true (the migration only clears it at
+        // `removePendingCreate`) — and `pendingLocalDocuments` withholds the local row, so the
+        // user meets the document under its **server** id.
+        //
+        //  - Deleted by its *local* id: the local traces must go either way, but the caller
+        //    owes the server `DELETE` too, or the document survives and reappears in Home with
+        //    nothing on the device that knows about it. That half is the create UI's, and it
+        //    is recorded in `docs/offline-and-sync.md`.
+        //  - Deleted by its *server* id — reachable **today**, through the unmodified Options
+        //    sheet, since that is the only id the user is offered. `isPendingCreate` is keyed
+        //    on the local id and answers false, so without the branch below the record and the
+        //    local draft both survive a successful DELETE. The next pass resumes, the resume
+        //    GET 404s, `.notFound` clears the checkpoint, and the pass after that **re-POSTs
+        //    the document from that draft** — the deleted document comes back, first as a
+        //    local row and then as a new server document with the old body. The 404 there is
+        //    indistinguishable from a co-author's delete, which is exactly why the record has
+        //    to be cleared here, where the intent is still known.
         //
         // Its `.pendingSync` goes with it:
         // nothing is on the device to sync any more, and unlike a server document there is
@@ -1498,6 +1510,12 @@ final class DocumentSaveCoordinator {
         if isPendingCreate(documentID: documentID) {
             removePendingCreate(documentID: documentID)
             states[documentID] = .idle
+        } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
+            // Clear it under the id it is actually keyed by, and take the local draft with it
+            // — that draft is what a later pass would rebuild the document from.
+            removePendingCreate(documentID: checkpointed.localID)
+            states[checkpointed.localID] = .idle
+            draftStore.remove(documentID: checkpointed.localID)
         }
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {

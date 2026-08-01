@@ -1036,13 +1036,14 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
-        // Prove it deferred at the *guards* rather than never getting there: a resume that
-        // failed its fetch would also leave the record, and would satisfy the assertion above
-        // for the wrong reason. (`syncedServerID` cannot do this job — the test sets it, and
-        // only the `.notFound` branch clears it, which this stub never returns.)
+        // Exclude the never-got-there false pass: the record would also survive a resume that
+        // never issued its fetch. (`syncedServerID` cannot do this job — the test sets it, and
+        // only the `.notFound` branch clears it, which this stub never returns.) Note the
+        // recorder logs before the response is chosen, so this proves the fetch was *issued*,
+        // not that it succeeded; the stub always answers it with a valid body.
         XCTAssertEqual(
             log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1,
-            "the resume read the server copy, so the migration really ran its guards")
+            "the resume issued its fetch, so the pass reached the migration")
     }
 
     /// A death *between* the migration's two draft writes leaves **both** drafts present. The
@@ -1203,6 +1204,38 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await waitAndConfirmNever(timeout: 2) {
             log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0
         }
+    }
+
+    /// **A delete arriving under the server id must clear the record too.** Once checkpointed,
+    /// that is the only id the user is offered — the local row is withheld — so this is the
+    /// ordinary way such a document gets deleted. `isPendingCreate` is keyed on the *local* id
+    /// and answers false, so without the branch the record and the local draft both survive a
+    /// successful DELETE, the resume 404s, the checkpoint clears, and the next pass re-POSTs
+    /// the document from that draft.
+    func testDeletingUnderTheServerIDDoesNotResurrectTheDocument() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // What `EditorViewModel.handleDidDelete` does after the server DELETE succeeds — and
+        // the id it has is the server one.
+        relaunched.coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the record went with the delete")
+        XCTAssertNil(relaunched.drafts.draft(for: local.id), "and so did the body it would rebuild from")
+
+        // The server now 404s it, as it would after a real delete.
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 0, "nothing re-POSTs a document the user deleted")
     }
 
     /// Adopting the server removes every trace of local work for that id, so a conflict record

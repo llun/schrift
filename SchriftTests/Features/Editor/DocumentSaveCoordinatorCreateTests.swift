@@ -524,9 +524,10 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
     // MARK: - Deleting a local document
 
-    /// Deleting a local document is purely local — there is no server object to DELETE —
-    /// so the record has to go with the draft, or the replay would resurrect a document
-    /// the user threw away.
+    /// The record has to go with the draft, or the replay would resurrect a document the user
+    /// threw away. Deleting is purely local only while the record is **un-checkpointed**,
+    /// which is this test's case: once `syncedServerID` is set the POST has landed and a real
+    /// server object exists — see the replay suite's delete tests.
     func testDiscardingPendingWorkRemovesTheCreateRecordToo() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
         let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)

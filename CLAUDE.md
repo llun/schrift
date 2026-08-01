@@ -1485,9 +1485,11 @@ markdown write endpoint**. Understand this before touching the save path:
   by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
   non-nil, which a local document with content always has), so a relaunch is the
   escape until the UI offers a create-specific one. **The one rejection that is
-  persisted is `.decoding`**, which arrives *after* a 201: the server built the
-  document and no checkpoint could be written (the id was in the body that failed
-  to decode), so the in-memory rule would POST and abandon another every launch —
+  persisted is `.decoding`**, which arrives *after* a 2xx: the server very likely
+  built the document (`.decoding` proves 2xx-and-unreadable, not 201-created — a
+  gateway answering `200` with HTML created nothing) and no checkpoint could be
+  written, the id having been in the body that failed to decode. So the in-memory
+  rule would POST and abandon another every launch —
   the `is_favorite`-as-required-`Bool` incident, on a loop. It stamps
   `replayBlockedAt` **scoped to the app build** (`isReplayBlocked(forBuild:)`);
   a blanket block would make that same incident unrecoverable by *shipping the
@@ -1500,8 +1502,11 @@ markdown write endpoint**. Understand this before touching the save path:
   checked; `""` is provable only on the fresh-POST path. And because a resume can
   find a body that arrived while the document sat checkpointed — live and editable
   on the web — the migration **records a conflict** when the server's body differs
-  from ours (compared canonically) instead of pushing: the enqueue there goes
-  straight to `start`, since the record is already gone and nothing holds it.
+  from ours (compared canonically) instead of pushing. Recording it *first* is what
+  makes that work: the record is already gone by then, so an unrecorded conflict
+  would let the enqueue go straight to `start` and full-overwrite the server's body,
+  whereas with one recorded the same enqueue takes the ordinary hold and the pill
+  asks the user.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
@@ -1659,8 +1664,9 @@ markdown write endpoint**. Understand this before touching the save path:
   forever); `resolveConflictKeepingServer` is the one sanctioned discard and **fetches
   before it discards** (a failed fetch must not cost the user the only copy of their
   work). Every purge path (`discardPendingWork`, `suppressLocalWriteThrough`,
-  `handleDidDelete`) clears the record, or the enqueue-hold wedges the document's save
-  pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
+  `handleDidDelete`, and the create migration's **adopt-the-server** branch, which
+  deletes every local trace for that id) clears the record, or the enqueue-hold
+  wedges the document's save pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
   flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
   unreachable during a save; `syncPendingDrafts` guards on both; the **create
   migration** holds by an explicit check, *not* by the tempting argument that the
