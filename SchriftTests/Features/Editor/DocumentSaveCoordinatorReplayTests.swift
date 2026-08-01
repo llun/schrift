@@ -136,9 +136,12 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await waitUntil { env.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Written offline" }
     }
 
-    /// The body has to survive the id change. It lives in the *queued* slot at that moment
-    /// (the enqueue hold parked it there), so a migration that only moved the draft would
-    /// strand the user's newest keystrokes under an id nothing will ever push.
+    /// The body has to survive the id change. Note what this does **not** prove: for a pending
+    /// create the draft and the queued slot always agree, because `enqueue` write-ahead-saves
+    /// the draft from the same `save` it then parks — no save is ever in flight to make them
+    /// diverge. So this pins that the body arrives under the server id, not that the *queued
+    /// slot* is the source it came from. Clearing `queued[localID]` at the migration is
+    /// hygiene, not a rescue.
     func testTheQueuedBodyIsCarriedOntoTheServerID() async {
         let log = RequestRecorder()
         stubReplayPipeline(log: log)
@@ -368,7 +371,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// carries no body, so the baseline claimed the server was empty. With a real body on the
     /// server the baseline must reflect it — **and** the push must not go through unasked,
     /// since between the checkpoint and the resume the document is live and editable on the
-    /// web. Every other resume test runs against an empty server body, so nothing else here
+    /// web. The other resume tests that do supply a body answer both GETs from one stub, so
+    /// this is the only one where the two calls are distinguishable — nothing else here
     /// distinguishes the two calls.
     func testAResumeWhoseServerCopyHasABodyRecordsAConflictInsteadOfOverwriting() async {
         let log = RequestRecorder()
@@ -767,7 +771,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     }
 
     /// The one rejection where "the POST failed" is the wrong inference: a decode failure
-    /// arrives *after* a 201, so the server built the document. Retrying on the next launch
+    /// arrives *after a 2xx*, so the server very likely built the document. Retrying on the next launch
     /// would abandon it and build another — one orphan per launch, forever.
     func testAnUnreadableCreateResponseIsNotRetriedOnTheNextLaunch() async {
         let log = RequestRecorder()
@@ -1206,6 +1210,37 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// A death inside the migration can leave the only copy of the body under `serverID`.
+    /// Dropping the checkpoint severs the last thing tying it to the record — and then
+    /// `runSyncPass`, which no longer sees a pending-create id, GETs that draft, takes the same
+    /// 404 and deletes it, so the re-POST creates an *empty* document in place of the text.
+    func testAStartOverTakesTheOrphanedBodyBackToTheLocalID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Exactly the partial-migration window: server-id draft written, local one removed.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Only copy", updatedAt: Date(),
+                baseline: nil))
+        // The checkpointed document is gone, and so the draft's own GET would 404 too.
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id)?.syncedServerID, "the checkpoint dropped")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: local.id)?.markdown, "# Only copy",
+            "and the body came back to the id a fresh create will look for")
+        XCTAssertNil(relaunched.drafts.draft(for: serverID), "nothing left under the dead server id")
+    }
+
     /// **A delete arriving under the server id must clear the record too.** Once checkpointed,
     /// that is the only id the user is offered — the local row is withheld — so this is the
     /// ordinary way such a document gets deleted. `isPendingCreate` is keyed on the *local* id
@@ -1231,8 +1266,11 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(relaunched.creates.create(for: local.id), "the record went with the delete")
         XCTAssertNil(relaunched.drafts.draft(for: local.id), "and so did the body it would rebuild from")
 
-        // The server now 404s it, as it would after a real delete.
+        // The server now 404s it, as it would after a real delete. Two passes, because one is
+        // not enough to distinguish the fix from its absence: without the branch the first
+        // pass only clears the checkpoint, and it is the *second* that re-POSTs.
         stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        await relaunched.coordinator.syncPendingDrafts()
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertEqual(creates(log), 0, "nothing re-POSTs a document the user deleted")
@@ -1337,6 +1375,60 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         XCTAssertEqual(creates(log), 1)
         XCTAssertNil(relaunched.creates.create(for: mine.id), "the replayable one behind it still went")
+    }
+
+    /// The loop re-reads each record from the mirror rather than trusting the snapshot it took
+    /// before `/users/me/`. Without that, deleting a *later* record while an earlier one's POST
+    /// is in flight still POSTs it — creating a document the user threw away, orphaned on the
+    /// server with nothing on the device referencing it. (The record itself is safe either way:
+    /// every `updatePendingCreate` on this path is guarded on it still existing.)
+    func testARecordDeletedDuringAnEarlierPostIsNeverCreated() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log, postDelay: 0.3)
+        let env = makeEnvironment()
+        let first = env.coordinator.createLocalDocument(
+            title: "First", parentID: nil, ownerUserID: user)
+        let second = env.coordinator.createLocalDocument(
+            title: "Second", parentID: nil, ownerUserID: user)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        // Delete the second while the first is still on the wire.
+        await waitUntil { self.creates(log) == 1 }
+        coordinator.discardPendingWork(documentID: second.id)
+        await pass.value
+
+        XCTAssertEqual(creates(log), 1, "only the first — the deleted one is never POSTed")
+        XCTAssertNil(env.creates.create(for: second.id), "the delete stands")
+        XCTAssertNil(env.creates.create(for: first.id), "and the first still migrated")
+    }
+
+    /// The per-record block skip, isolated from the two guards that would otherwise mask it:
+    /// a *replayable sibling* keeps the pre-flight gate open, and a **relaunch** re-seeds
+    /// `states` to `.pendingSync` so the in-memory `.failed` skip is spent. Only
+    /// `replayBlockedAt` is left to hold the blocked record back.
+    func testABlockedRecordIsSkippedWhileItsSiblingReplays() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment(appBuild: "100")
+        let blocked = env.coordinator.createLocalDocument(
+            title: "Unreadable", parentID: nil, ownerUserID: user)
+        stubUsersMeThen(log: log) { _ in
+            .init(statusCode: 201, headers: [:], body: Data("{\"unexpected\": true}".utf8), error: nil)
+        }
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.creates.create(for: blocked.id)?.replayBlockedAt)
+
+        // Relaunch on the same build, and add a healthy record so the gate lets the pass run.
+        stubReplayPipeline(log: log)
+        let relaunched = makeEnvironment(sharing: env.defaults, appBuild: "100")
+        let healthy = relaunched.coordinator.createLocalDocument(
+            title: "Fine", parentID: nil, ownerUserID: user)
+        let before = creates(log)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), before + 1, "exactly one POST — the healthy record's")
+        XCTAssertNil(relaunched.creates.create(for: healthy.id), "which migrated")
+        XCTAssertNotNil(relaunched.creates.create(for: blocked.id), "while the blocked one stayed put")
     }
 
     // MARK: - Helpers

@@ -2,11 +2,12 @@ import XCTest
 
 @testable import Schrift
 
-/// The coordinator's half of offline creation: minting a local document, and the two
-/// **holds** that keep a document the server has never seen from being addressed as if
-/// it had. Both holds are the safety net for the replay that PR 3 adds — they land first,
-/// and dormant, because without them the existing pipeline actively destroys a local
-/// document the moment it runs.
+/// The coordinator's half of offline creation: minting a local document, and the **gates**
+/// that keep a document the server has never seen from being addressed as if it had. They
+/// are the safety net for the replay, and landed first and dormant because without them the
+/// existing pipeline actively destroys a local document the moment it runs. (The replay
+/// itself, and the gates that key off the *server* id once a record is checkpointed, are
+/// exercised by `DocumentSaveCoordinatorReplayTests`.)
 @MainActor
 final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
@@ -285,8 +286,9 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     }
 
     /// `clearResolvedConflict` releases whatever the hold was parking by calling `start`
-    /// **directly** — the one path that reaches the network without passing through
-    /// `enqueue`'s hold, and the editor clears conflicts from five places. For a document
+    /// **directly** — one of the two paths that reach the network without passing through
+    /// `enqueue`'s hold (the other is `finish`'s queued restart), and the editor clears
+    /// conflicts from five places. For a document
     /// the server has never seen that would PATCH a nonexistent id, take a 404, and land on
     /// `.failed`, which `runSyncPass` skips: wedged out of the replay meant to create it.
     /// The held save must stay parked *and* stay held — dropping it would lose the content.

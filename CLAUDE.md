@@ -1366,9 +1366,19 @@ markdown write endpoint**. Understand this before touching the save path:
   what the user threw away. **But "a local delete is purely local" holds only while
   the record is un-checkpointed** — once `syncedServerID` is set the POST has landed
   and a real server object exists, while `isPendingCreate` is still true, so the
-  delete branch runs for exactly the case where it is false. The create UI owes the
+  local-id branch runs for exactly the case where it is false. The create UI owes the
   server `DELETE` there; without it the document survives and reappears in Home on
-  the next list fetch with nothing on the device that knows about it.
+  the next list fetch with nothing on the device that knows about it. (That needs an
+  accessor the coordinator does not expose yet — land it *with* the delete branch.)
+  **The other direction is handled here, and must stay so**: once checkpointed,
+  `pendingLocalDocuments` withholds the local row, so the **server** id is the only
+  one the user is offered — and `isPendingCreate`, keyed on the local id, answers
+  false for it. So `discardPendingWork` also matches a record by its
+  `syncedServerID` and clears the record *and the local draft*. Without that a
+  successful DELETE left both in place, the resume 404'd, the checkpoint cleared, and
+  the next pass **re-POSTed the document from that draft** — a deleted document
+  coming back with its old body. The 404 is indistinguishable from a co-author's
+  delete, so the record has to go here, where the user's intent is still known.
   **Synthetic `Document`s (`localDocument(from:)`) must never enter a persisted
   metadata cache** — lists merge them at read time via
   `mergedWithLocalDocuments(fetched:local:)`, because a list load replaces its
@@ -1425,7 +1435,10 @@ markdown write endpoint**. Understand this before touching the save path:
   exists, so this write landing before anything else is the only thing between a
   process death and a duplicate — a checkpointed record resumes at migration
   instead of re-POSTing); stamp the baseline; move every id-keyed thing including
-  **`queued`**, which holds the newest keystrokes (and write the draft under the
+  **`queued`** (a copy of the newest keystrokes — hygiene rather than a rescue, since
+  for a pending create it always agrees with the draft: `enqueue` write-ahead-saves
+  from the same `save` it parks, and no save is ever in flight to make them diverge)
+  (and write the draft under the
   new id *before* removing the old one — in between, the body exists only in
   memory); insert into the list caches so
   the document doesn't vanish from Home before the next fetch; **remove the record

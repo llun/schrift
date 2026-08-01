@@ -709,7 +709,12 @@ choosing one whole version.
   conflicted draft entirely. Together these give the **invariant both resolvers rely
   on: while a conflict is recorded, no save for that document is in flight** (nothing
   can record one *during* a save either — `apply` diverts to `cacheServerCopy`
-  whenever `pendingSave != nil`, so `reconcileDraft` is unreachable then). No save can
+  whenever `pendingSave != nil`, so `reconcileDraft` is unreachable then). The create
+  migration is a **third** recording site, and it holds by an explicit check rather
+  than by that argument: it records only on the *resume* path, where the id can be
+  hours old and may already carry a save this process started, so what holds the
+  invariant there is `finishMigration`'s `guard inFlight[serverID] == nil,
+  queued[serverID] == nil` with no await before `recordConflict`. No save can
   land underneath a resolver and resurrect the losing body.
 - **Keep mine** (`resolveConflictKeepingLocal`): clear the record and release the
   held push — an unchecked, last-writer-wins overwrite the user chose (the
@@ -1252,9 +1257,11 @@ for a sub-page, `createDocument` for a root.
    create response on a fresh POST, where the empty body is provable, and a
    `formattedContent` fetch on a resume, where it is not (see below). Stamping one
    is mandatory, not tidy: see the seed-draft paragraph above.
-3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (which
-   holds the user's newest keystrokes — leaving it behind strands them under an id
-   nothing will ever push), `settledSaves`, `lastConfirmedPushMarkdown`,
+3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (a copy of
+   the user's newest keystrokes; hygiene rather than a rescue, since for a pending
+   create it always agrees with the draft — `enqueue` write-ahead-saves from the same
+   `save` it parks, and no save is ever in flight to make them diverge),
+   `settledSaves`, `lastConfirmedPushMarkdown`,
    `knownServerTitles`, and a defensive content-cache purge. The draft is
    **written under the new id before it is removed from the old one**: these are
    synchronous statements, but in between the body lives only in a local binding,

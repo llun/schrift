@@ -484,9 +484,11 @@ final class DocumentSaveCoordinator {
         for snapshot in records {
             // Re-read rather than trusting the snapshot: the loop awaits, and a delete
             // (`discardPendingWork`) or a previous iteration can have removed or rewritten
-            // this record since. Acting on the stale copy would POST a document the user
-            // threw away — and `updatePendingCreate` would then write the snapshot back,
-            // *resurrecting* the record the delete removed.
+            // this record since. Acting on the stale copy would POST a document the user threw
+            // away, leaving an orphan on the server that nothing here will ever reference.
+            // (It would not *resurrect* the record — every `updatePendingCreate` on this path
+            // is already guarded on the record still existing — so this guard is about the
+            // wasted create, not the write-back.)
             guard let record = pendingCreates[snapshot.localID] else { continue }
             guard isReplayable(record, currentUserID: currentUserID) else { continue }
             // A create *this build* could not read the response of. Retrying it POSTs a
@@ -591,6 +593,27 @@ final class DocumentSaveCoordinator {
             // dischargeable is owed with the create UI.
             record.syncedServerID = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
+            // **Take the body back to the local id before starting over.** A process death
+            // inside the migration can leave the only copy under `serverID` — that draft is
+            // written before the local one is removed, precisely so no instant exists with the
+            // content nowhere. Dropping the checkpoint severs the last thing associating it
+            // with this record, and then two rules that are each individually right combine
+            // into content loss: `runSyncPass` no longer sees a pending-create id, so it GETs
+            // that draft, takes the same 404, and deletes it — after which the re-POST finds
+            // an all-nil body chain and creates an *empty* document in place of the user's
+            // text. Moving it back keeps it under the id the fresh create will look for, and
+            // under the pending-create hold that stops the 404 branch reaching it at all.
+            //
+            // Guarded on the local draft being absent, the same discriminator `finishMigration`
+            // uses: with one present this is not the partial-migration window, so a draft under
+            // `serverID` is the user's own work against a real document and must not be moved.
+            if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID) {
+                draftStore.save(
+                    PendingDraft(
+                        documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
+                        updatedAt: orphan.updatedAt, baseline: nil))
+                draftStore.remove(documentID: serverID)
+            }
             return
         } catch {
             // Transient — leave it for the next pass.
@@ -717,7 +740,10 @@ final class DocumentSaveCoordinator {
                 documentID: serverID, title: title, markdown: body, updatedAt: Date(), baseline: baseline))
         draftStore.remove(documentID: localID)
         // Every per-document map the coordinator keys by id. `queued` matters most: it holds
-        // the user's newest keystrokes, and leaving it behind would strand them under an id
+        // a copy of the user's newest keystrokes. (Hygiene rather than a rescue: for a pending
+        // create it always agrees with the draft, since `enqueue` write-ahead-saves from the
+        // same `save` it parks and no save is ever in flight to make them diverge — the body
+        // chain would find it in the draft either way.) Leaving it behind would strand it under an id
         // nothing will ever push.
         states[localID] = nil
         queued[localID] = nil
@@ -900,7 +926,7 @@ final class DocumentSaveCoordinator {
             return
         }
         // A `.decoding` failure is the one rejection where "the POST failed" is provably the
-        // wrong inference: it arrives *after* a 201, so the server built the document and we
+        // wrong inference: it arrives *after* a 2xx, so the server very likely built the document and we
         // merely couldn't read the response — and no checkpoint could be written, because the
         // id was in the body we failed to decode. Left to the in-memory rule below it would
         // POST a fresh document on every launch, forever, abandoning each one. So this

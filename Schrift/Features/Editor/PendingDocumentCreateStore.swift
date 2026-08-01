@@ -49,8 +49,10 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     var syncedServerID: UUID?
     /// Set when a create POST failed in a way that leaves us **unable to tell whether the
     /// server created the document** — in practice a `.decoding` failure, which arrives
-    /// *after* a 201. Retrying then is not a free retry: it POSTs a second document and
-    /// abandons the first.
+    /// *after a 2xx* — so the server very likely built the document, though not certainly:
+    /// `performRequest` accepts any `200..<300`, and a gateway answering `200` with an HTML
+    /// body created nothing. Retrying is therefore not a free retry: it very likely POSTs a
+    /// second document and abandons the first.
     ///
     /// This is the one failure that has to survive the process. Every other merits
     /// rejection (a validation 400) proves nothing was created, so it stays the in-memory
