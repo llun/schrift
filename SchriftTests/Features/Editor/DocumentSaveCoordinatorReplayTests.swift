@@ -382,7 +382,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// web. The other resume tests that do supply a body answer both GETs from one stub, so
     /// this is the only one where the two calls are distinguishable — nothing else here
     /// distinguishes the two calls.
-    func testAResumeWhoseServerCopyHasABodyRecordsAConflictInsteadOfOverwriting() async {
+    func testAResumeWhoseServerCopyHasABodyRecordsAConflictInsteadOfOverwriting() async throws {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
@@ -423,12 +423,28 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
-        XCTAssertEqual(
-            relaunched.drafts.draft(for: serverID)?.baseline?.markdown, "# Typed on the web",
-            "the baseline is what the server actually holds, not an assumed empty document")
         XCTAssertNotNil(
             relaunched.coordinator.conflict(for: serverID),
-            "and the co-author's body is not silently full-overwritten")
+            "the co-author's body is not silently full-overwritten")
+        // **And the baseline must not prove the push the conflict is holding.** Stamping the
+        // observed server state here is self-defeating: `draftSyncBodyDecision` rule 2 finds
+        // `serverUpdatedAt <= baselineDate` trivially true of the state it was copied from, so
+        // the next revalidation answers `.push(.descendsFromBaseline)`,
+        // `releaseConflictIfProven` clears the conflict, and the held save goes out over the
+        // co-author. Re-running the decision is the property; the two structural assertions
+        // below say *why* it holds.
+        let draft = try XCTUnwrap(relaunched.drafts.draft(for: serverID))
+        XCTAssertNil(draft.baseline?.serverUpdatedAt, "no claim about the server clock")
+        XCTAssertEqual(draft.baseline?.markdown, "", "our body descends from the empty document we made")
+        let decision = draftSyncDecision(
+            baseline: draft.baseline, lastPushedMarkdown: draft.lastPushedMarkdown,
+            localMarkdown: draft.markdown, draftTitle: draft.title, draftUpdatedAt: draft.updatedAt,
+            serverTitle: "Untitled document",
+            serverUpdatedAt: ISO8601DateFormatter().date(from: "2026-03-02T09:00:00Z")!,
+            serverMarkdown: "# Typed on the web")
+        guard case .conflict = decision else {
+            return XCTFail("a re-evaluation must still answer .conflict, not release it — got \(decision)")
+        }
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# Written offline",

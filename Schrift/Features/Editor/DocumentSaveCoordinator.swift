@@ -496,8 +496,10 @@ final class DocumentSaveCoordinator {
             // `replayBlockedAt`. A stamp from another build is spent, so a shipped fix
             // recovers the record on its first launch.
             guard !record.isReplayBlocked(forBuild: appBuild) else { continue }
-            // A save the *server* rejected on the merits is a retry candidate the user can
-            // see; leave it to them, exactly as `runSyncPass` does.
+            // A save the *server* rejected on the merits is left to the user, exactly as
+            // `runSyncPass` does. Note the caption is visible but the affordance is inert here:
+            // `saveNow` no-ops while `pendingSave` is non-nil, which a local document with
+            // content always has — so a relaunch is the escape until the create UI offers one.
             if case .failed = state(for: record.localID) { continue }
             // Never migrate under a live screen — see `openEditors`.
             guard !hasOpenEditor(documentID: record.localID) else { continue }
@@ -673,8 +675,10 @@ final class DocumentSaveCoordinator {
         // stamp), replace its `queued` keystrokes, and record a conflict against a save that
         // is in flight — which is also the one thing the conflict invariant forbids.
         //
-        // Bailing is free here too, and usually self-clearing: this same pass's `runSyncPass`
-        // pushes that draft and `finish` removes it, so the obstruction is gone. The migration
+        // Bailing is free here too. The **both-drafts** guard is the one this same pass
+        // clears: `runSyncPass` pushes that draft and `finish` removes it. The `inFlight`/
+        // `queued` guard is not — `runSyncPass` skips a document with either set, so it is
+        // `finish` alone that drains them. Either way the migration
         // itself waits for the *next* trigger though — `finish` does not kick the funnel and
         // the `repeat` loop only re-runs when `needsAnotherSyncPass` is set — i.e. a
         // foreground, a reconnect, or the editor release below.
@@ -714,14 +718,6 @@ final class DocumentSaveCoordinator {
         serverMarkdown: String, document: Document?
     ) {
         let localID = record.localID
-        // The server state the caller actually observed — the create response on a fresh POST
-        // (where the empty body is provable), a `formattedContent` fetch on a resume (where it
-        // is not). Stamping a baseline is mandatory either way: a baseline-less draft routes
-        // to `draftSyncDecision` rule 3's 120 s clock tolerance, and a document created hours
-        // ago offline is far outside it — the replay would answer `.discardServerWins` and the
-        // launch pass would delete the body, leaving the empty document this POST just made.
-        let baseline = DraftBaseline(
-            serverUpdatedAt: serverUpdatedAt, markdown: serverMarkdown, title: serverTitle)
         let draft = draftStore.draft(for: localID)
         // The partially-migrated draft: a previous attempt died **after** removing the local
         // draft and before removing the record. (Not the window between the two draft writes —
@@ -749,10 +745,38 @@ final class DocumentSaveCoordinator {
         let title =
             queued[localID]?.title ?? draft?.title ?? migrated?.title ?? serverTitle ?? record.title
 
+        // **The baseline says what this body descends from — and on the conflict path that is
+        // not what we just observed.** Stamping one is mandatory either way: a baseline-less
+        // draft routes to `draftSyncDecision` rule 3's 120 s clock tolerance, and a document
+        // created hours ago offline is far outside it, so the replay would answer
+        // `.discardServerWins` and the launch pass would delete the body.
+        //
+        // But the two paths descend from different things, and stamping the observed state on
+        // both is self-defeating. When the server has moved to a body we have never seen, ours
+        // descends from the **empty document this device created**, not from theirs. Claiming
+        // otherwise hands `draftSyncBodyDecision` rule 2 a proof — `serverUpdatedAt <=
+        // baselineDate` is trivially true of the state it was copied from — so the very next
+        // revalidation answers `.push(.descendsFromBaseline)`, `releaseConflictIfProven` clears
+        // the conflict this function is about to record, and `releaseHeldSave` starts the held
+        // save: a silent full overwrite of the co-author's body, by way of the conflict meant
+        // to prevent it. That is also the baseline advance `resolveConflictKeepingLocal`
+        // performs as the user's *answer*; doing it here answers the question destructively
+        // before asking it.
+        //
+        // So: `nil` clock and `""` body when diverged — both honest, and together they fall
+        // through rule 2 to `.conflict` on every re-evaluation while staying non-nil, so
+        // rule 3 can never discard. `serverTitle` rides along on both paths; with a nil clock
+        // `draftTitleOutcome` reaches `serverTitle == baselineTitle` and keeps the draft's.
+        let diverged = !serverMarkdown.isEmpty && canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body)
+        let baseline =
+            diverged
+            ? DraftBaseline(serverUpdatedAt: nil, markdown: "", title: serverTitle)
+            : DraftBaseline(serverUpdatedAt: serverUpdatedAt, markdown: serverMarkdown, title: serverTitle)
+
         // **Write the content under the new id before taking it off the old one.** These are
-        // synchronous, but the body between them lives only in the local `body` binding, and
-        // a process death in that window would leave the draft removed, the replacement
-        // unwritten, and the server holding the empty document this POST just created. The
+        // synchronous, and in the window between them the body is on disk **twice** — which is
+        // the point. The reverse order is what would leave a death with the draft removed,
+        // the replacement unwritten, and the server holding the empty document this POST just created. The
         // final `enqueue` rewrites this same draft; the point is that no instant exists where
         // the content is on disk nowhere.
         draftStore.save(
@@ -851,12 +875,15 @@ final class DocumentSaveCoordinator {
             // this branch does not have — see the create UI's owed work.
             return
         }
-        if !serverMarkdown.isEmpty, canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body) {
+        if diverged {
             recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
         }
 
-        // Otherwise an ordinary document with an ordinary queued edit: rule 2 sees a server no
-        // newer than the baseline we just stamped and answers `.push`.
+        // Undiverged, this is an ordinary document with an ordinary queued edit: rule 2 sees a
+        // server no newer than the baseline we just stamped and answers `.push`. Diverged, the
+        // baseline deliberately proves nothing, so the same enqueue is parked by the hold the
+        // `recordConflict` above just engaged, and every later re-evaluation reaches
+        // `.conflict` again rather than releasing it.
         enqueue(documentID: serverID, title: title, markdown: body, baseline: baseline)
     }
 
@@ -1358,8 +1385,11 @@ final class DocumentSaveCoordinator {
     /// baseline, or its current body is one we pushed), so the hold must be released. The
     /// record is otherwise only ever cleared by a user resolution or a purge — and the
     /// enqueue-hold would then park every save for this document *indefinitely*, waiting on
-    /// a question that no longer has anything to ask about. Only the detection sites call
-    /// this, and only on a non-`.conflict` decision, so it can never discard a live one.
+    /// a question that no longer has anything to ask about. The detection sites call this
+    /// only on a non-`.conflict` decision, so they cannot discard a live one. The create
+    /// migration's adopt-the-server branch is the exception, and discards deliberately: it
+    /// has just removed every local trace for that id, so any rehydrated record is moot by
+    /// construction.
     func clearResolvedConflict(documentID: UUID) {
         conflicts[documentID] = nil
         persistConflictOnDraft(documentID: documentID)

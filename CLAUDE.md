@@ -1439,8 +1439,8 @@ markdown write endpoint**. Understand this before touching the save path:
   for a pending create it always agrees with the draft: `enqueue` write-ahead-saves
   from the same `save` it parks, and no save is ever in flight to make them diverge)
   (and write the draft under the
-  new id *before* removing the old one — in between, the body exists only in
-  memory); insert into the list caches so
+  new id *before* removing the old one — in between it is on disk twice, which is
+  the point; the reverse order is what leaves a window with it nowhere); insert into the list caches so
   the document doesn't vanish from Home before the next fetch — **roots only, and
   never fabricating a level**, since `nil` (never fetched) and `[]` (fetched, empty)
   are read as different by the lists' "is this known" logic, and Home's feed is
@@ -1481,8 +1481,10 @@ markdown write endpoint**. Understand this before touching the save path:
   draft under `serverID` that is provably the user's (**a server-id draft is *ours*
   only once the local one is gone** — that is what defines the partial-migration
   window — note a death *between* the two draft writes leaves **both** present, so
-  that window defers rather than migrating). Deferring normally clears itself: the
-  same pass's `runSyncPass` pushes that draft and `finish` removes it. The migration
+  that window defers rather than migrating). Deferring clears itself only for the
+  **both-drafts** guard, where the same pass's `runSyncPass` pushes that draft and
+  `finish` removes it; `runSyncPass` skips a document with `inFlight`/`queued` set, so
+  `finish` alone drains those. The migration
   waits for the **next** trigger though — `finish` does not kick the funnel and the
   `repeat` loop only re-runs on `needsAnotherSyncPass` — so a foreground, a
   reconnect, or the editor release completes it; releasing an editor on the
@@ -1543,8 +1545,17 @@ markdown write endpoint**. Understand this before touching the save path:
   the moment a create POST lands, the new document's `updated_at` is *now* while
   the draft's is hours old, which is the point of creating offline. Rule 3 would
   answer `.discardServerWins` and the launch pass would delete the body, leaving
-  the empty document the POST just made. Migration must stamp one before the draft
-  is replayed, from the server state it actually **observed** — the create response
+  the empty document the POST just made. **But it must say what the body *descends
+  from*, not what was observed** — where those differ, stamping the observation is
+  self-defeating: a diverged resume would hand `draftSyncBodyDecision` rule 2 a proof
+  (`serverUpdatedAt <= baselineDate`, trivially true of the state it was copied
+  from), so the next revalidation answers `.push(.descendsFromBaseline)`,
+  `releaseConflictIfProven` clears the conflict the migration just recorded, and the
+  held save full-overwrites the co-author **by way of** the conflict meant to stop
+  it. Diverged, the baseline is therefore a `nil` clock and an empty body — what an
+  offline body actually descends from — which re-reaches `.conflict` forever while
+  staying non-nil so rule 3 can never discard. Undiverged it is the server state
+  it actually **observed** — the create response
   on a fresh POST, where `markdown: ""` is provable, and a `formattedContent` fetch
   on a resume, where it is not.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**

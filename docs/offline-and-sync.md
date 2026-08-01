@@ -1259,11 +1259,21 @@ for a sub-page, `createDocument` for a root.
    this write landing before anything else. A record found already checkpointed
    skips the POST and resumes at migration — at worst one empty duplicate, never
    duplicated content.
-2. **Stamp the baseline.** `DraftBaseline(serverUpdatedAt:markdown:title:)` from the
-   server state the caller actually **observed** — the
-   create response on a fresh POST, where the empty body is provable, and a
-   `formattedContent` fetch on a resume, where it is not (see below). Stamping one
-   is mandatory, not tidy: see the seed-draft paragraph above.
+2. **Stamp the baseline — for what the body *descends from*, which is not always what
+   was observed.** Stamping one is mandatory, not tidy: see the seed-draft paragraph
+   above. Undiverged, it is the server state the caller actually observed (the create
+   response on a fresh POST, where the empty body is provable; a `formattedContent`
+   fetch on a resume, where it is not). **Diverged — the server has a body we have
+   never seen — it must not be**, because ours descends from the *empty document this
+   device created*, not from theirs. Claiming otherwise hands `draftSyncBodyDecision`
+   rule 2 a proof (`serverUpdatedAt <= baselineDate` is trivially true of the state it
+   was copied from), so the next revalidation answers `.push(.descendsFromBaseline)`,
+   `releaseConflictIfProven` clears the conflict step 6 is about to record, and the
+   held save full-overwrites the co-author — *by way of* the conflict meant to prevent
+   it. It is also the advance `resolveConflictKeepingLocal` performs as the user's
+   **answer**. So the diverged baseline carries a `nil` clock and an empty body: both
+   honest, and together they fall through rule 2 to `.conflict` on every
+   re-evaluation while staying non-nil so rule 3 can never discard.
 3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (a copy of
    the user's newest keystrokes; hygiene rather than a rescue, since for a pending
    create it always agrees with the draft — `enqueue` write-ahead-saves from the same
@@ -1333,8 +1343,10 @@ which the conflict invariant forbids outright. So the migration also defers whil
 the server id has an open editor, an in-flight or queued save, or a draft that is
 provably the user's (a draft under the server id is *ours* only once the local one
 is gone, which is exactly what defines the partial-migration window). Deferring
-normally clears itself: the same pass's `runSyncPass` pushes that draft and `finish`
-removes it, so the obstruction goes away. The migration itself waits for the *next*
+clears itself only for the **both-drafts** guard, where the same pass's `runSyncPass`
+pushes that draft and `finish` removes it. The `inFlight`/`queued` guard is not cleared
+by the pass — `runSyncPass` skips a document with either set, so `finish` alone drains
+them. The migration itself waits for the *next*
 trigger, though — `finish` does not kick the funnel and the `repeat` loop only
 re-runs when `needsAnotherSyncPass` is set — so it is a foreground, a reconnect, or
 an editor release that completes it. Releasing an editor on the **server** id kicks
