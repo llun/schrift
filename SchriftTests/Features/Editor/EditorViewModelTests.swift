@@ -136,6 +136,26 @@ final class EditorViewModelTests: XCTestCase {
         }
     }
 
+    /// The offline stub, recording — the offline-editing tests count the *failed* content
+    /// PATCH as their before-reconnect baseline, so it has to reach the log.
+    private func stubOffline(log: RequestRecorder) {
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(
+                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+    }
+
+    /// A cached copy whose title and `serverUpdatedAt` match `formattedBody`'s fixture, so
+    /// a later replay turns on the *body* rules alone: a differing title would also resolve
+    /// `draftTitleOutcome` to `.adoptServer`, and a nil `serverUpdatedAt` would drop rule 2
+    /// onto its content tiebreak instead of its date check.
+    private func offlineCachedEntry(markdown: String) -> CachedDocumentContent {
+        CachedDocumentContent(
+            documentID: documentID, title: "Doc", markdown: markdown,
+            syncedAt: Date(timeIntervalSince1970: 1_000_000), serverUpdatedAt: fixtureServerUpdatedAt)
+    }
+
     /// A save is a content PATCH (base64 Yjs) followed by a title PATCH; each
     /// save is counted by its single content PATCH.
     private func savesInFlight(_ log: RequestRecorder) -> Int {
@@ -352,12 +372,11 @@ final class EditorViewModelTests: XCTestCase {
     func testOfflineFlushLeavesAPendingSyncDraftThatReplaysOnReconnect() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
-        contentCache.save(cachedEntry(markdown: "# Cached"))
-        MockURLProtocol.stubHandler = { request in
-            log.record(request)
-            return MockURLProtocol.Stub(
-                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
-        }
+        // Title matches `formattedBody`'s fixture deliberately: with a different one the
+        // replay also resolves `draftTitleOutcome` to `.adoptServer`, and this test would
+        // be quietly exercising the remote-rename branch instead of the body push.
+        contentCache.save(offlineCachedEntry(markdown: "# Cached"))
+        stubOffline(log: log)
         await viewModel.load()
 
         viewModel.startEditing()
@@ -369,24 +388,85 @@ final class EditorViewModelTests: XCTestCase {
             "the offline edit is on disk before any network attempt")
 
         // The offline flush already attempted (and failed) a content PATCH, and the stub
-        // records it — so `count > 0` would be true before the replay even runs. Snapshot
-        // the count and assert it *increases*, or this proves nothing.
-        let patchesBeforeReconnect = log.count(ofMethod: "PATCH", urlContaining: "/content/")
+        // records it — so `> 0` would be true before the replay even runs. Snapshot the
+        // count and assert it *increases*, or this proves nothing.
+        let savesBeforeReconnect = savesInFlight(log)
 
         // Network returns: the reconnect/foreground funnel replays the queued draft.
-        // The replay's decision is rule 2's *content* tiebreak — the cached baseline
-        // carries `serverUpdatedAt == nil`, and this fixture's body is the one the
-        // baseline recorded — so a fixture change here could silently move which rule fires.
+        // The replay's decision is rule 2's date check — the cached baseline carries the
+        // fixture's own `updated_at`, so the server has not moved past it.
         stubLoadAndSavePipeline(content: "# Cached", log: log)
         await coordinator.syncPendingDrafts()
 
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") > patchesBeforeReconnect }
+        await waitUntil { self.savesInFlight(log) > savesBeforeReconnect }
+        await waitUntil { viewModel.saveState == .saved }
         await waitUntil { draftStore.draft(for: documentID) == nil }
-        // A draft is also removed when the replay's GET 404s, so the disappearance above
-        // does not by itself distinguish "pushed" from "discarded". This does.
+        // A draft is also removed when the replay's GET 404s and when rule 3 discards it,
+        // so the disappearance above does not by itself distinguish "pushed" from
+        // "dropped". This does.
         XCTAssertEqual(
             coordinator.lastConfirmedPush(documentID: documentID)?.contains("Edited offline"), true,
             "the offline edit is what reached the server, not a discard")
+    }
+
+    /// The destructive twin of the test above, on the baseline shape this change makes
+    /// canonical (cache-derived). A co-author wrote while we were offline, so the replay
+    /// must record a conflict and **push nothing** — the queued draft is held, not sent.
+    /// Every link in this chain is pinned individually; the composition is where a wiring
+    /// mistake would silently full-overwrite someone else's work.
+    func testAnOfflineEditFromTheCacheConflictsWhenTheServerMovedWhileOffline() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: "# Cached"))
+        stubOffline(log: log)
+        await viewModel.load()
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Edited offline")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+        let queuedBody = draftStore.draft(for: documentID)?.markdown
+        let savesBeforeReconnect = savesInFlight(log)
+
+        // Reconnect to a co-author's write: a different body *and* an `updated_at` past
+        // the baseline's, so rule 2 cannot read it as descending from what we edited.
+        stubDivergedServer(content: "# Co-author edit", log: log)
+        await coordinator.syncPendingDrafts()
+
+        await waitUntil { viewModel.syncConflict != nil }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.markdown, queuedBody,
+            "the offline edit is held for the user to resolve, never discarded")
+        XCTAssertEqual(savesInFlight(log), savesBeforeReconnect, "a conflict must not push")
+    }
+
+    /// "Start writing" is the gate whose removal creates a genuinely new kind of draft:
+    /// one whose baseline body is the empty string, because the cached document had no
+    /// content. Empty baseline bodies are a named hazard class here — rule 2's content
+    /// tiebreak matches *any* empty server document — and the existing tests guard only
+    /// against *fabricating* one. This pins the newly-opened legitimate producer.
+    func testOfflineStartWritingOnAnEmptyCachedDocumentConflictsWithACoAuthorsText() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: ""))
+        stubOffline(log: log)
+        await viewModel.load()
+        XCTAssertTrue(viewModel.blocks.isEmpty, "the empty cached body is what makes this the Start-writing path")
+
+        viewModel.startEditing()  // seeds the paragraph "Start writing" would
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Written offline")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+        XCTAssertEqual(
+            draftStore.draft(for: documentID)?.baseline?.markdown, "",
+            "the baseline records the empty document this was authored against")
+        let savesBeforeReconnect = savesInFlight(log)
+
+        stubDivergedServer(content: "# Co-author edit", log: log)
+        await coordinator.syncPendingDrafts()
+
+        await waitUntil { viewModel.syncConflict != nil }
+        XCTAssertEqual(savesInFlight(log), savesBeforeReconnect, "an empty baseline must not push over real text")
     }
 
     func testFirstFetchWritesCacheSoNextOpenIsInstant() async {
