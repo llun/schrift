@@ -1131,9 +1131,23 @@ the next sync pass delete every offline-created document's only copy.
 `holdsUnreadableData` detects that case and suppresses the pass's delete branch
 entirely — cleaning up nothing is recoverable; that is not.
 
-Still to come: the create replay (POST → checkpoint → migrate the draft, caches
-and coordinator maps onto the server id → push the content through the normal
-draft replay), and the UI that calls `createLocalDocument`.
+Still to come, and each is an obligation this change creates rather than a
+nice-to-have:
+
+- **Persisting the signed-in user id.** Listing and minting both require it, and
+  it is only ever learned from `/users/me/` and stored nowhere — so launching
+  offline currently yields no user id at all, which is precisely the case the
+  feature exists for. Failing closed is the right default; supplying the value is
+  the create UI's job.
+- **The create replay**: POST → checkpoint → migrate the draft (stamping the
+  baseline above), the caches and the coordinator's id-keyed maps onto the server
+  id → push the content through the normal draft replay → remove the record last.
+- **A recovery affordance, or a bounded retention policy, for records that can
+  never be replayed here** — another account's, or an unattributable one. Their
+  content is protected, but they are invisible, unsendable, and not deletable
+  through any UI, and they hold a full document body in UserDefaults indefinitely.
+  Note this is a *change*: before the holds, such a draft was eventually reaped by
+  the sync pass's 404/403 branch.
 
 ## Data flow
 

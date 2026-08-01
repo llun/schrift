@@ -119,7 +119,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// documents belonging to a server you are not signed in to.
     func testARecordFromAnotherOriginIsNotListed() {
         let (first, _, createStore) = makeCoordinator()
-        let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil, ownerUserID: user)
+        first.createLocalDocument(title: "Written elsewhere", parentID: nil, ownerUserID: user)
 
         let (elsewhere, _, _) = makeCoordinatorSharing(createStore, serverOrigin: "https://other.example.org")
 
@@ -188,7 +188,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// is" must not resolve to "anyone may send it", which is the disclosure the owner
     /// field exists to prevent.
     func testAnUnattributableRecordIsProtectedButNeitherListedNorReplayable() {
-        let (coordinator, _, createStore) = makeCoordinator()
+        let (_, _, createStore) = makeCoordinator()
         let orphan = PendingDocumentCreate(
             localID: UUID(), title: "No owner", createdAt: Date(timeIntervalSince1970: 1_000),
             serverOrigin: origin)
@@ -205,7 +205,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// the disclosure `ownerUserID` was added to stop — the content is on screen, and any
     /// edit lands in the original author's document when they sign back in.
     func testAnotherUsersLocalDocumentIsNotListedOnTheSameServer() {
-        let (coordinator, _, createStore) = makeCoordinator()
+        let (coordinator, _, _) = makeCoordinator()
         let author = UUID()
         coordinator.createLocalDocument(title: "Author's notes", parentID: nil, ownerUserID: author)
 
@@ -373,7 +373,11 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// 404 branch would delete every offline-created document's only copy at once. Cleaning
     /// up nothing is recoverable; that is not.
     func testAnUnreadableCreateStoreSuppressesTheSyncPassDeleteEntirely() async {
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
         let suiteName = "CoordinatorCreateTests.corrupt.\(UUID().uuidString)"
         suiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -392,9 +396,50 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             serverOrigin: origin, backgroundTasks: .noop)
         await coordinator.recoverDrafts()
 
+        XCTAssertGreaterThan(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0,
+            "the pass must actually reach the 404 branch — otherwise this proves nothing")
         XCTAssertEqual(
             draftStore.draft(for: orphanedByCorruption)?.markdown, "# Written offline",
             "unknown records must not read as 'no local documents exist'")
+    }
+
+    /// The fail-safe only buys one process unless the unreadable bytes are moved aside:
+    /// `save` reads through `loadAll`, which answers empty for a corrupt blob, so the next
+    /// write would overwrite it — and the *following* launch would see a healthy store and
+    /// delete exactly the drafts the fail-safe was protecting.
+    func testAnUnreadableBlobIsQuarantinedRatherThanOverwritten() {
+        let suiteName = "CoordinatorCreateTests.quarantine.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let corrupt = Data("not json".utf8)
+        defaults.set(corrupt, forKey: "dev.llun.Schrift.pendingCreates")
+        let store = PendingDocumentCreateStore(userDefaults: defaults)
+
+        store.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "New", createdAt: Date(timeIntervalSince1970: 1_000),
+                serverOrigin: origin, ownerUserID: user))
+
+        XCTAssertEqual(
+            defaults.data(forKey: "dev.llun.Schrift.pendingCreates.unreadable"), corrupt,
+            "the bytes survive for inspection")
+        XCTAssertFalse(store.holdsUnreadableData, "and the live key is usable again")
+        XCTAssertEqual(store.allCreates().count, 1)
+    }
+
+    /// A blank draft title must not be overlaid: every list renders `title ?? untitled`,
+    /// a nil check, so a whitespace-only overlay produces a blank row where the record's
+    /// mint title would have read "Untitled document".
+    func testABlankDraftTitleDoesNotOverlayTheRecordsTitle() {
+        let (coordinator, _, _) = makeCoordinator()
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+
+        coordinator.enqueue(documentID: document.id, title: "   ", markdown: "# Typed offline")
+
+        XCTAssertEqual(
+            coordinator.pendingLocalDocuments(parentID: nil, currentUserID: user).first?.title,
+            "Untitled document")
     }
 
     /// A real server document is unaffected: its 404 still means "deleted elsewhere",

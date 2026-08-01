@@ -1381,9 +1381,15 @@ markdown write endpoint**. Understand this before touching the save path:
   unsynced document is the worse half of the same disclosure, since B's edits
   would land in A's document when A signs back in. An **unattributable** record
   (nil owner) is kept and protected but neither shown nor sent;
-  `createLocalDocument` takes a non-optional `ownerUserID` so nil can only come
-  from a future or damaged schema, and "I don't know whose this is" must never
-  resolve to "anyone may send it".
+  `createLocalDocument(title:parentID:ownerUserID:)` takes a **non-optional**
+  `ownerUserID` so nil can only come from a future or damaged schema, and "I don't
+  know whose this is" must never resolve to "anyone may send it".
+  **That makes the signed-in user id a prerequisite for the whole feature, and the
+  app does not have one offline yet** — it is only ever learned from
+  `client.currentUser()` and persisted nowhere. So the create UI owes persisting it
+  at sign-in: without that, launching offline (the entire point) yields no user id,
+  local documents are not listed, and none can be minted. Failing closed is right;
+  the gap is that nothing supplies the value yet.
   **The store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.
@@ -2016,8 +2022,8 @@ markdown write endpoint**. Understand this before touching the save path:
   document text, deliberately backup-included so unsaved work survives) nor the
   on-device create records in `PendingDocumentCreateStore` (same reasoning — for
   a document that exists nowhere else, that record and its draft are the only
-  copies; the records carry a `serverOrigin` so surviving sign-out can never mean
-  replaying one into a different account); only
+  copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by
+  `serverOrigin` alone, which identifies the server and not the account); only
   the full bodies in `DocumentContentCacheStore` are. That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it

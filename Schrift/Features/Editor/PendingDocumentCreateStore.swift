@@ -76,6 +76,9 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
 /// only copies of the user's work.
 final class PendingDocumentCreateStore {
     private static let createsKey = "dev.llun.Schrift.pendingCreates"
+    /// Where an undecodable blob is moved before the live key is reused, so a schema slip
+    /// costs the records' *usability* rather than their bytes.
+    private static let quarantineKey = "dev.llun.Schrift.pendingCreates.unreadable"
 
     private let userDefaults: UserDefaults
     private let encoder: JSONEncoder
@@ -92,6 +95,10 @@ final class PendingDocumentCreateStore {
     }
 
     func save(_ create: PendingDocumentCreate) {
+        // Before the first write of a session that found the blob unreadable — otherwise
+        // this `loadAll` reads `[:]` and the `persist` below silently overwrites records we
+        // could not decode but which are still someone's only copy of a document.
+        quarantineUnreadableDataIfNeeded()
         var creates = loadAll()
         creates[create.localID.uuidString] = create
         persist(creates)
@@ -123,9 +130,30 @@ final class PendingDocumentCreateStore {
     /// blob as "no local documents exist" would therefore disarm every hold and let the
     /// next sync pass destroy the content of every offline-created document at once. The
     /// coordinator asks this at init and suppresses that delete entirely.
+    ///
+    /// That suppression only has to cover the 404 branch: every other draft-deleting path
+    /// (`resolveConflictKeepingServer`, `discardStoredDraft`, `finish`'s success and
+    /// discarded branches, the `.discardServerWins` branch) requires a *successful* server
+    /// interaction with that id — a landed PATCH, a 200 `formattedContent`, a successful
+    /// DELETE — and a client-minted id can never get one. Under corruption a local document
+    /// degrades to `.failed` with its draft intact, never to deletion.
     var holdsUnreadableData: Bool {
         guard let data = userDefaults.data(forKey: Self.createsKey) else { return false }
         return (try? decoder.decode([String: PendingDocumentCreate].self, from: data)) == nil
+    }
+
+    /// Move an undecodable blob aside so the next write cannot silently destroy it.
+    ///
+    /// Without this the fail-safe above buys exactly one process: `save` reads through
+    /// `loadAll`, which answers `[:]` for a corrupt blob, and `persist` then **overwrites**
+    /// it — so the first document created after a corrupt read wipes the unknown records,
+    /// and the *next* launch sees a healthy store and deletes precisely the drafts the
+    /// fail-safe was protecting. Quarantining makes the recovery non-destructive: the bytes
+    /// survive under a separate key for inspection, and the live key starts clean.
+    private func quarantineUnreadableDataIfNeeded() {
+        guard holdsUnreadableData, let data = userDefaults.data(forKey: Self.createsKey) else { return }
+        userDefaults.set(data, forKey: Self.quarantineKey)
+        userDefaults.removeObject(forKey: Self.createsKey)
     }
 
     private func loadAll() -> [String: PendingDocumentCreate] {

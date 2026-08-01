@@ -144,11 +144,16 @@ final class DocumentSaveCoordinator {
     /// lookup rather than a UserDefaults decode. **Every** record is mirrored, whatever
     /// origin or user minted it — protection is unconditional; see `isPendingCreate`.
     private var pendingCreates: [UUID: PendingDocumentCreate] = [:]
-    /// True when the create store holds data that would not decode. The records are then
+    /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
     /// 404 branch deletes drafts. Suppresses that branch entirely rather than deleting on
     /// an assumption: a schema slip must degrade to "nothing is cleaned up", never to
     /// "every offline-created document is destroyed".
+    ///
+    /// Read once, which is sound in both directions: nothing can make the blob undecodable
+    /// mid-process (`persist` only ever writes encoder output), and the store quarantines
+    /// an unreadable blob before its first write, so a repair only ever leaves this
+    /// over-suppressing for the rest of the session.
     private let createStoreUnreadable: Bool
 
     init(
@@ -323,11 +328,11 @@ final class DocumentSaveCoordinator {
     /// server has it now, so the fetched list is where it belongs, and surfacing it here
     /// too would duplicate the row under an id nothing can reconcile.
     ///
-    /// The title comes from the **draft** when there is a non-empty one: the record's is
+    /// The title comes from the **draft** when there is a non-blank one: the record's is
     /// the title at creation time, so a document renamed since would otherwise read
-    /// "Untitled document" in every list until the replay landed. Empty falls back to the
+    /// "Untitled document" in every list until the replay landed. Blank falls back to the
     /// record's, because every list renders `title ?? untitled` — a nil check, not an
-    /// emptiness one — so overlaying "" would produce a blank row.
+    /// emptiness one — so overlaying "" (or "   ") would produce a blank row.
     func pendingLocalDocuments(parentID: UUID?, currentUserID: UUID?) -> [Document] {
         let listed = pendingCreates.values
             .filter {
@@ -342,7 +347,9 @@ final class DocumentSaveCoordinator {
             draftStore.allDrafts().map { ($0.documentID, $0.title) }, uniquingKeysWith: { _, latest in latest })
         return listed.map { create in
             var document = localDocument(from: create)
-            if let draftTitle = draftTitles[create.localID], !draftTitle.isEmpty {
+            if let draftTitle = draftTitles[create.localID],
+                !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 document.title = draftTitle
             }
             return document
@@ -1086,9 +1093,10 @@ final class DocumentSaveCoordinator {
             // or by a sync pass) would be pushed straight over the moment the save settled.
             // The pending-create half is unreachable today — `start` is only reached from
             // `enqueue`, `releaseHeldSave` and here, and the first two refuse, so no save can
-            // be in flight for a local id — but this is the fourth path to `start` and the
-            // only one where the invariant would otherwise be asserted asymmetrically. The
-            // id migration is exactly the change that could make it reachable.
+            // be in flight for a local id — but this is the third path to `start` (and the
+            // fourth place the invariant is enforced, counting `runSyncPass`), and the only
+            // one where it would otherwise be asserted asymmetrically. The id migration is
+            // exactly the change that could make it reachable.
             guard conflicts[documentID] == nil, !isPendingCreate(documentID: documentID) else {
                 queued[documentID] = next
                 states[documentID] = .pendingSync
