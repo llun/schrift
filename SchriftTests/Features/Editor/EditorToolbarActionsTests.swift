@@ -6,32 +6,25 @@ final class EditorToolbarActionsTests: XCTestCase {
     func testEditingModeSwapsEditForDone() {
         // There is one system toolbar in both modes now, so Done takes Edit's
         // slot rather than living in a bar of its own — and the rest of the
-        // actions stay put, including offline (where Edit would be withheld but
-        // Done is the way *out* of a session already in progress).
-        XCTAssertEqual(editorToolbarActions(isEditing: true, isOffline: false), [.done, .share, .options])
-        XCTAssertEqual(editorToolbarActions(isEditing: true, isOffline: true), [.done, .share, .options])
+        // actions stay put.
+        XCTAssertEqual(editorToolbarActions(isEditing: true), [.done, .share, .options])
     }
 
     func testEditIsNeverOfferedAlongsideDone() {
         // The two are the same slot in opposite modes; showing both would offer
         // "start editing" during an edit.
-        for isOffline in [false, true] {
-            let editing = editorToolbarActions(isEditing: true, isOffline: isOffline)
-            XCTAssertFalse(editing.contains(.edit), "offline=\(isOffline)")
-            let reading = editorToolbarActions(isEditing: false, isOffline: isOffline)
-            XCTAssertFalse(reading.contains(.done), "offline=\(isOffline)")
-        }
+        XCTAssertFalse(editorToolbarActions(isEditing: true).contains(.edit))
+        XCTAssertFalse(editorToolbarActions(isEditing: false).contains(.done))
     }
 
-    func testReadingOnlineExposesEditShareOptions() {
-        XCTAssertEqual(editorToolbarActions(isEditing: false, isOffline: false), [.edit, .share, .options])
-    }
-
-    func testReadingOfflineDropsEditSoTheDocumentStaysReadOnly() {
-        // Offline is read-only: the Edit entry point is withheld, matching the
-        // reading surface's other editing gates (block tap / Start writing /
-        // Add a subpage). Share and Options remain available offline.
-        XCTAssertEqual(editorToolbarActions(isEditing: false, isOffline: true), [.share, .options])
+    /// The resolver no longer takes connectivity at all: offline editing queues
+    /// through the write-ahead draft pipeline (`.pendingSync` → replay on
+    /// reconnect), so "offline drops Edit" — the old read-only rule — is gone,
+    /// and a dead parameter would only invite the gate's reintroduction. Edit's
+    /// safety on an unloaded document is `startEditing`'s `hasLoadedContent`
+    /// guard, exactly as it is online during a load or an error state.
+    func testReadingExposesEditShareOptions() {
+        XCTAssertEqual(editorToolbarActions(isEditing: false), [.edit, .share, .options])
     }
 
     // MARK: - Presence badge

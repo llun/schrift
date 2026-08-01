@@ -191,6 +191,9 @@ struct PagesTreeDrawer: View {
 
     @ViewBuilder
     private var newPageButton: some View {
+        // Still gated offline, unlike the editing entry points: creating a page POSTs,
+        // and a document that does not exist server-side has nothing for the draft
+        // pipeline to save to. Offline creation is its own change.
         if !isOffline {
             Divider().overlay(DocsColor.borderDefault)
             Button {

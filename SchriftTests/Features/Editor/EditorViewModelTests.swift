@@ -328,6 +328,54 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
+    /// The claim offline editing rests on: a cold open with no network installs the
+    /// cached copy, which sets `hasLoadedContent` — `startEditing`'s only guard, and
+    /// the sole gate left now that the view's `!isOffline` checks are gone.
+    func testStartEditingWorksOfflineFromTheCachedCopy() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load()
+
+        viewModel.startEditing()
+
+        XCTAssertTrue(viewModel.isEditing, "a cached copy is loaded content, so editing may begin offline")
+        XCTAssertFalse(viewModel.blocks.isEmpty)
+    }
+
+    /// End-to-end offline edit: the write-ahead draft is on disk before the PATCH is
+    /// attempted, a transport failure parks the save at `.pendingSync` (never `.failed`),
+    /// and the reconnect trigger replays it once the network is back. This composition —
+    /// cold offline open → edit → queue → replay — is what the lifted view gates expose.
+    func testOfflineFlushLeavesAPendingSyncDraftThatReplaysOnReconnect() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "# Cached"))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return MockURLProtocol.Stub(
+                statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await viewModel.load()
+
+        viewModel.startEditing()
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "# Edited offline")
+        viewModel.flushPendingChanges()
+        await waitUntil { viewModel.saveState == .pendingSync }
+        XCTAssertTrue(
+            draftStore.draft(for: documentID)?.markdown.contains("Edited offline") ?? false,
+            "the offline edit is on disk before any network attempt")
+
+        // Network returns: the reconnect/foreground funnel replays the queued draft.
+        stubLoadAndSavePipeline(content: "# Cached", log: log)
+        await coordinator.syncPendingDrafts()
+
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") > 0 }
+        await waitUntil { draftStore.draft(for: documentID) == nil }
+    }
+
     func testFirstFetchWritesCacheSoNextOpenIsInstant() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         stubLoad(content: "# Fresh")

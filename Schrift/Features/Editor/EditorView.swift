@@ -38,10 +38,17 @@ struct SyncCaption: Equatable {
 /// no affordance. (1) a **failed save** wins over the rest, including the offline wording —
 /// it is the only affordance that unpins the document, because `reconcileDraft`
 /// deliberately no-ops every revalidation while a failed save's draft is on screen, and the
-/// reading surface has no other retry (tap-to-edit is itself blocked offline, which is when
-/// saves fail most). (1b) a **queued offline save** (`.pendingSync`) is its own tier just
-/// below: its "syncs when online" caption beats the generic offline wording, and it doubles
-/// as a manual retry when the device is online (where the auto-sync triggers can't fire).
+/// reading surface has no other retry. (1b) a **queued offline save** (`.pendingSync`) is
+/// its own tier just below: its "syncs when online" caption beats the generic offline
+/// wording, and it doubles as a manual retry when the device is online (where the auto-sync
+/// triggers can't fire). (1c) **dirty** content sits above the generic offline wording,
+/// because dirty means "not on disk yet" — the draft is written by the flush — while that
+/// wording asserts durability. This is the same truth `saveStatusDisplay` keeps on the
+/// editing surface, where `.dirty` holds its Save funnel even under a conflict. `.dirty`
+/// reaches *this* caption through the one mutator that runs outside an editing session,
+/// the reading-mode photo insert; pairing it with `isOffline` is defensive rather than
+/// reachable today (that insert needs the network), but the ordering is what stops a
+/// future offline mutator from silently claiming content is saved when it isn't.
 /// (2) other unsaved local content → save wording (a previously-synced doc with a stranded
 /// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
@@ -73,6 +80,11 @@ func syncCaption(
         if case .pendingSync = saveState {
             return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: !isOffline)
         }
+        // Above the offline wording: content is not on disk until the flush writes
+        // the draft, so "Saved on this device" would be a lie here.
+        if case .dirty = saveState {
+            return SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false)
+        }
         if isOffline { return SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false) }
         switch saveState {
         case .saving: return SyncCaption(text: .key(.editor_saving), offersRetry: false)
@@ -90,12 +102,18 @@ func syncCaption(
 }
 
 /// The editor toolbar's trailing actions, as an ordered list of intents. Pure so
-/// the offline/edit gating is unit-testable without SwiftUI — the view maps each
-/// case to a `ToolbarItem`.
+/// the edit/done swap is unit-testable without SwiftUI — the view maps each case
+/// to a `ToolbarItem`.
 ///
-/// Reading mode exposes **Edit only when online**: offline is read-only,
-/// matching the reading surface's other editing gates (the block tap, "Start
-/// writing", and "Add a subpage" all guard on `!isOffline`).
+/// Reading mode exposes **Edit unconditionally**, offline included. It used to
+/// take `isOffline` and withhold Edit, because offline was read-only; editing
+/// offline now queues through the write-ahead draft pipeline (the draft is on
+/// disk before the PATCH is attempted, a transport failure parks the save at
+/// `.pendingSync`, and the reconnect/foreground/launch triggers replay it), so
+/// the gate is gone — along with the parameter, which would otherwise invite it
+/// back. What keeps Edit safe on a document whose content never loaded is
+/// `EditorViewModel.startEditing`'s `hasLoadedContent` guard, exactly as it
+/// already is online during a load or an error state.
 ///
 /// Editing mode swaps Edit for **Done** in the same slot and keeps the rest.
 /// There is one system toolbar in both modes now, so Done no longer needs a bar
@@ -108,16 +126,8 @@ enum EditorToolbarAction: Equatable {
     case options
 }
 
-func editorToolbarActions(isEditing: Bool, isOffline: Bool) -> [EditorToolbarAction] {
-    var actions: [EditorToolbarAction] = []
-    if isEditing {
-        actions.append(.done)
-    } else if !isOffline {
-        actions.append(.edit)
-    }
-    actions.append(.share)
-    actions.append(.options)
-    return actions
+func editorToolbarActions(isEditing: Bool) -> [EditorToolbarAction] {
+    [isEditing ? .done : .edit, .share, .options]
 }
 
 /// The count shown on the options button while others are in the document, or
@@ -247,7 +257,7 @@ struct EditorView: View {
                     .accessibilityHidden(isPresentingPagesTree)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
+                    ForEach(editorToolbarActions(isEditing: viewModel.isEditing), id: \.self) {
                         action in
                         toolbarButton(for: action)
                             .accessibilityHidden(isPresentingPagesTree)
@@ -593,7 +603,6 @@ struct EditorView: View {
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                guard !isOffline else { return }
                                 viewModel.startEditing(focusing: block.id)
                             }
                         }
@@ -648,13 +657,13 @@ struct EditorView: View {
         } description: {
             Text(loc[.editor_empty_body])
         } actions: {
-            if !isOffline {
-                Button(loc[.editor_start_writing]) {
-                    viewModel.startEditing()
-                }
-                .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textBrand)
+            // Offline included: a cached-empty document is a legitimate edit target,
+            // and the first keystroke's draft is written before any network attempt.
+            Button(loc[.editor_start_writing]) {
+                viewModel.startEditing()
             }
+            .font(DocsFont.body)
+            .foregroundStyle(DocsColor.textBrand)
         }
         .padding(.top, DocsSpacing.spaceLG)
     }
@@ -788,6 +797,9 @@ struct EditorView: View {
                 }
                 // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
 
+                // Still gated: creating a sub-page POSTs, and a document that does not
+                // exist server-side has nothing for the draft pipeline to save to.
+                // Offline creation is its own change.
                 if !isOffline {
                     Button {
                         Task {
