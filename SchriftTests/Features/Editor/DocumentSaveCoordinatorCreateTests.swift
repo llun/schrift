@@ -175,6 +175,30 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(draftStore.draft(for: document.id)?.markdown, "# Second")
     }
 
+    /// `clearResolvedConflict` releases whatever the hold was parking by calling `start`
+    /// **directly** — the one path that reaches the network without passing through
+    /// `enqueue`'s hold, and the editor clears conflicts from five places. For a document
+    /// the server has never seen that would PATCH a nonexistent id, take a 404, and land on
+    /// `.failed`, which `runSyncPass` skips: wedged out of the replay meant to create it.
+    /// The held save must stay parked *and* stay held — dropping it would lose the content.
+    func testReleasingAHoldNeverStartsASaveForAPendingCreate() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, _, _) = makeCoordinator()
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
+
+        coordinator.clearResolvedConflict(documentID: document.id)
+
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertEqual(
+            coordinator.pendingSave(documentID: document.id)?.markdown, "# Typed offline",
+            "the held save is kept, not dropped on the floor")
+    }
+
     // MARK: - Hold 2: the sync pass must not destroy a local document
 
     /// The pass GETs every draft's document before deciding. A local id 404s, and the

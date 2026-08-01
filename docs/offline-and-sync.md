@@ -1042,8 +1042,8 @@ title and body, but it is removed by several legitimate paths, and a document
 created but never typed into has no draft content at all — yet still has to be
 POSTed. The record says *this exists*, separately from *this has unsaved text*.
 
-**The invariant: no network request may ever name a pending-create id.** Two
-funnels enforce it, and both are load-bearing:
+**The invariant: no network request may ever name a pending-create id.** Three
+funnels enforce it, and each is load-bearing:
 
 1. **`enqueue` holds the save.** The same park-the-save branch the conflict hold
    uses. Without it a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
@@ -1056,6 +1056,12 @@ funnels enforce it, and both are load-bearing:
    first launch, foreground, or reconnect after creating offline silently deletes
    the document. The catch re-checks the same predicate, because that is the line
    that would do the deleting.
+3. **`releaseHeldSave` refuses.** It is the only path that calls `start` without
+   passing through `enqueue`'s hold — reached from `clearResolvedConflict`, which
+   the editor calls from five places — so releasing a hold on a local document
+   would PATCH a nonexistent id straight into the `.failed`-then-skipped trap
+   above. Its guard returns *before* `queued.removeValue`, so the held save is
+   kept rather than dropped on the floor.
 
 **`createLocalDocument(title:parentID:)`** mints the record, writes a **seed
 draft** (so the editor's existing `restoreLocalContent` precedence renders it with

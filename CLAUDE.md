@@ -1328,7 +1328,7 @@ markdown write endpoint**. Understand this before touching the save path:
   `serverOrigin`, `syncedServerID`), the coordinator mirrors the records whose
   origin matches this session, and `isPendingCreate(documentID:)` is the predicate
   everything keys off. **Invariant: no network request may ever name a
-  pending-create id.** It is enforced at two funnels, and both are load-bearing
+  pending-create id.** It is enforced at three funnels, and each is load-bearing
   rather than defensive:
   1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
      Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
@@ -1341,6 +1341,12 @@ markdown write endpoint**. Understand this before touching the save path:
      skip the first launch/foreground/reconnect after creating offline silently
      deletes it. The 404 catch re-checks the same predicate, because that is the
      line that would do the deleting.
+  3. **`releaseHeldSave` refuses** — it is the **only** path that calls `start`
+     without passing through `enqueue`'s hold, reached from
+     `clearResolvedConflict`, which the editor calls from five places. Releasing
+     a hold on a local document would PATCH a nonexistent id straight into the
+     `.failed`-then-skipped trap above. Its guard returns **before**
+     `queued.removeValue`, so the held save is kept rather than dropped.
 
   `createLocalDocument(title:parentID:)` mints the record **plus a seed draft**
   (so the editor's existing draft precedence renders it unchanged) and sets

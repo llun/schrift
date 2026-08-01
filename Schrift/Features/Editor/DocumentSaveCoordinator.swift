@@ -653,6 +653,16 @@ final class DocumentSaveCoordinator {
     /// That is the full-overwrite save eating content — the one thing this subsystem exists to
     /// prevent. So: lift the hold, start the work it was holding.
     private func releaseHeldSave(documentID: UUID) {
+        // **The third funnel of "no request may name a pending-create id"**, and the only one
+        // that reaches `start` without passing through `enqueue`'s hold. `clearResolvedConflict`
+        // calls this, and the editor clears conflicts from five places — so releasing a hold on
+        // a document the server has never seen would PATCH a nonexistent id, take a 404, and
+        // land on `.failed`, which `runSyncPass` skips: the document wedged out of the replay
+        // meant to create it. The save stays parked; the create replay is what sends it.
+        //
+        // Ordering matters: this returns **before** `removeValue`, so the held save is kept,
+        // not silently dropped.
+        guard !isPendingCreate(documentID: documentID) else { return }
         guard inFlight[documentID] == nil, let held = queued.removeValue(forKey: documentID) else { return }
         start(documentID: documentID, save: held)
     }
