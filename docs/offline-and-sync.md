@@ -909,9 +909,14 @@ server is about to hold.
      - `.dirty` → "Edited just now", **above** the offline wording (2026-08-01):
        dirty means the content is not on disk until the flush writes the draft,
        while "Saved on this device" asserts durability. It is the same truth
-       `saveStatusDisplay` keeps on the editing surface. Nothing renders `.dirty`
-       here today — it needs reading mode, and the reading-mode photo insert
-       flushes in the same turn it dirties — so the tier is defensive;
+       `saveStatusDisplay` keeps on the editing surface. In normal operation
+       nothing renders `.dirty` here — it needs reading mode, and the
+       reading-mode photo insert flushes in the same turn it dirties — so the
+       tier is near-defensive. The one exception is a **discarded** document:
+       `flushPendingChanges` returns on `isDocumentDiscarded` before it clears
+       `isDirty`, and `markDirty` has no such guard, so a keystroke landing
+       after a delete but before the screen pops reaches reading mode still
+       dirty — and there this wording is the truthful one;
      - then, and only then, offline → "Saved on this device";
      - otherwise the coordinator's state as the VM maps it (`saveState`):
        "Saving…" / "Saved" / "Edited just now" for `.idle`.
