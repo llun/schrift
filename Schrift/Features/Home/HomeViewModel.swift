@@ -38,12 +38,18 @@ final class HomeViewModel {
         client: DocsAPIClient,
         cache: DocumentCacheStore = DocumentCacheStore(),
         saveCoordinator: DocumentSaveCoordinator? = nil,
+        serverOrigin: String = "",
         userDefaults: UserDefaults = .standard,
         diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
         self.cache = cache
-        self.saveCoordinator = saveCoordinator ?? DocumentSaveCoordinator(client: client)
+        // `serverOrigin` reaches the coordinator only to stamp documents created on this
+        // device, so a record minted against one server is never replayed into another
+        // (drafts and metadata caches deliberately survive sign-out). Ignored when a
+        // coordinator is injected — that caller owns its own origin.
+        self.saveCoordinator =
+            saveCoordinator ?? DocumentSaveCoordinator(client: client, serverOrigin: serverOrigin)
         self.userDefaults = userDefaults
         self.diagnostics = diagnostics
         pinnedDocuments = cache.loadPinnedDocuments()
