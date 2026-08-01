@@ -1450,11 +1450,14 @@ markdown write endpoint**. Understand this before touching the save path:
   waits for the **next** trigger though — `finish` does not kick the funnel and the
   `repeat` loop only re-runs on `needsAnotherSyncPass` — so a foreground, a
   reconnect, or the editor release completes it; releasing an editor on the
-  **server** id kicks the funnel for exactly that reason. Three shapes never clear
-  themselves, because `runSyncPass` skips each — a `.failed` push, a live `queued`
-  slot, and a recorded **conflict**, which waits on the user and (unlike the
-  in-memory `.failed`) is persisted on the draft, so it is the most durable of the
-  three; both bodies stay on disk, so that costs the sync, never the content.
+  **server** id kicks the funnel for exactly that reason. **Two** shapes never clear
+  themselves — a `.failed` push, which `runSyncPass` skips, and a recorded
+  **conflict**, which waits on the user and (unlike the in-memory `.failed`) is
+  persisted on the draft, so it is the more durable of the two. A `queued` slot on
+  its own is *not* one of them: filled behind an in-flight save, `finish` drains and
+  starts it, and the obstruction goes with no trigger — the self-perpetuating queued
+  slot *is* the conflict hold. Both bodies stay on disk, so this costs the sync,
+  never the content.
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
   migration adopts the server — **title included, writing nothing back.** Two

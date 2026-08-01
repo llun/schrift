@@ -1211,8 +1211,12 @@ nice-to-have:
 ### The create replay (2026-08-01)
 
 `runCreatePass()` runs **inside** `syncPendingDrafts`'s coalesced loop, immediately
-before `runSyncPass`, so a document it migrates has its body pushed by the same
-pass rather than waiting for the next trigger. It deliberately has **no triggers
+before `runSyncPass`. Note what that ordering does and does not buy: a *successful*
+migration ends in `enqueue`, which goes straight to `start` and sets `inFlight`
+synchronously, so `runSyncPass` skips it — it is not the one pushing it. What the
+ordering serves is a migration the server-id guards **deferred**: `runSyncPass`
+clears the draft standing in its way, so the next trigger can complete it. It
+deliberately has **no triggers
 of its own**: sharing the funnel is what makes two overlapping reconnects unable
 to POST the same record twice.
 
@@ -1232,8 +1236,8 @@ for a sub-page, `createDocument` for a root.
    this write landing before anything else. A record found already checkpointed
    skips the POST and resumes at migration — at worst one empty duplicate, never
    duplicated content.
-2. **Stamp the baseline.** `DraftBaseline(serverUpdatedAt: <create response>,
-   markdown:, title:)` from the server state the caller actually **observed** — the
+2. **Stamp the baseline.** `DraftBaseline(serverUpdatedAt:markdown:title:)` from the
+   server state the caller actually **observed** — the
    create response on a fresh POST, where the empty body is provable, and a
    `formattedContent` fetch on a resume, where it is not (see below). Stamping one
    is mandatory, not tidy: see the seed-draft paragraph above.
@@ -1323,8 +1327,13 @@ contribute and arming the pill would offer a "Keep my version" that PATCHes `""`
 and wipes the document. It adopts the server instead — drop the draft, enqueue
 nothing. The state is reachable: the body chain falls back to `""` when the queued
 slot, the local draft and the partially-migrated draft are all absent, which a
-death inside the migration plus an intervening `runSyncPass` produces — as does a
-document created, renamed, and never typed into.
+death inside the migration plus an intervening `runSyncPass` produces. But the
+ordinary route there is a source that is **present and empty**, not absent:
+`createLocalDocument` writes a seed draft with `markdown: ""`, and a rename before
+the replay fills `queued[localID]` with an empty body too — so a document created,
+renamed and never typed into arrives with the first source populated. **The test is
+emptiness, not absence**, and tightening it into a nil check would let precisely that
+document fall through to `enqueue` and PATCH `""` over the co-author's body.
 
 **The title is adopted with the body; nothing is written back.** Two attempts at
 preserving a local rename here were both wrong, and the reasoning is worth keeping.

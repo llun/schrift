@@ -1193,8 +1193,12 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
         XCTAssertNil(relaunched.drafts.draft(for: serverID), "no draft left behind")
         // Nothing is written back: not a content PATCH that would flatten the table, and not a
-        // title PATCH that would revert a rename this branch cannot prove is stale.
-        await waitAndConfirmNever { log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0 }
+        // title PATCH that would revert a rename this branch cannot prove is stale. The window
+        // is widened past the 0.3 s default because a regression here would most likely be a
+        // fire-and-forget `Task`, which the default could outrun.
+        await waitAndConfirmNever(timeout: 2) {
+            log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0
+        }
     }
 
     /// A missing *route* is a fact about the server, not about this document — so a root create

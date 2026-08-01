@@ -762,9 +762,16 @@ final class DocumentSaveCoordinator {
         // the server instead: drop the draft written above and enqueue nothing, leaving an
         // ordinary, fully in-sync document.
         //
-        // Reachable: the `body` chain above falls back to `""` when all three sources are
-        // absent, which a death inside the partial-migration window plus an intervening
-        // `runSyncPass` that pushes and removes the server-id draft produces exactly.
+        // **The test is emptiness, not absence — do not "tighten" it into a nil check.** Two
+        // different states reach it. The sources can all be *absent*, so the chain falls
+        // through to `""` (a death inside the partial-migration window plus an intervening
+        // `runSyncPass` that pushes and removes the server-id draft). Or — the ordinary case —
+        // a source is **present and empty**: `createLocalDocument` writes a seed draft with
+        // `markdown: ""`, and a rename before the replay fills `queued[localID]` with an empty
+        // body too, so a document created, renamed and never typed into arrives here with the
+        // first source populated. An absence test would let exactly that document fall through
+        // to `enqueue` and PATCH `""` over the co-author's body, which is the wipe this branch
+        // exists to prevent.
         if body.isEmpty, !serverMarkdown.isEmpty {
             draftStore.remove(documentID: serverID)
             // **Release any conflict on the way out.** This branch deletes every trace of local
