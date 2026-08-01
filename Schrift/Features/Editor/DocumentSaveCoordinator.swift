@@ -89,6 +89,11 @@ final class DocumentSaveCoordinator {
     private let draftStore: PendingDraftStore
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
+    /// The list caches the replay has to move a document into once the server owns it.
+    /// Without them a just-created document vanishes from Home between the POST landing
+    /// (which stops it being listed as local) and the next successful list fetch.
+    private let listCache: DocumentCacheStore
+    private let childrenCache: DocumentChildrenCacheStore
     /// The server this session is signed in to (`siteOrigin`). Create records carry the
     /// origin they were minted against; it decides what may be **listed and sent**, never
     /// what is protected — see `isPendingCreate` vs `isReplayable`.
@@ -144,6 +149,14 @@ final class DocumentSaveCoordinator {
     /// lookup rather than a UserDefaults decode. **Every** record is mirrored, whatever
     /// origin or user minted it — protection is unconditional; see `isPendingCreate`.
     private var pendingCreates: [UUID: PendingDocumentCreate] = [:]
+    /// Documents whose editor is on screen, reference-counted. The create replay **defers**
+    /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
+    /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
+    /// models and by the pushed `NavigationPath` values — so an open screen cannot follow the
+    /// id and would keep writing drafts under one the holds no longer cover. Deferring makes
+    /// mid-swap edit loss unrepresentable rather than merely unlikely: there is no moment at
+    /// which a live screen and a migration are both in progress.
+    private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
     /// 404 branch deletes drafts. Suppresses that branch entirely rather than deleting on
@@ -162,6 +175,8 @@ final class DocumentSaveCoordinator {
         draftStore: PendingDraftStore = PendingDraftStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         createStore: PendingDocumentCreateStore = PendingDocumentCreateStore(),
+        listCache: DocumentCacheStore = DocumentCacheStore(),
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         serverOrigin: String = "",
         backgroundTasks: BackgroundTaskProvider = .uiApplication
     ) {
@@ -169,6 +184,8 @@ final class DocumentSaveCoordinator {
         self.draftStore = draftStore
         self.contentCache = contentCache
         self.createStore = createStore
+        self.listCache = listCache
+        self.childrenCache = childrenCache
         self.serverOrigin = serverOrigin
         self.backgroundTasks = backgroundTasks
         createStoreUnreadable = createStore.holdsUnreadableData
@@ -364,14 +381,195 @@ final class DocumentSaveCoordinator {
     /// off the record, so the very next sync pass would GET the dead id and delete the only
     /// copy of the content.
     ///
-    /// Private for now because `discardPendingWork` is the only route that exists; the
-    /// replay will need its own, alongside a seam for *updating* a mirrored record (the
-    /// `syncedServerID` checkpoint and the parent fallback both write one), which must keep
-    /// `createStore` and `pendingCreates` in lockstep or `isPendingCreate` goes stale.
+    /// Private because the two routes that exist — `discardPendingWork` (delete) and
+    /// `migrateCreatedDocument` (replay) — are the only ones that pair it with a decision
+    /// about the draft.
     private func removePendingCreate(documentID: UUID) {
         guard pendingCreates[documentID] != nil else { return }
         pendingCreates[documentID] = nil
         createStore.remove(localID: documentID)
+    }
+
+    /// The one way to rewrite a mirrored record. Both the disk copy and the in-memory mirror
+    /// move together, because `isPendingCreate` — the predicate every gate keys off — reads
+    /// the mirror while the replay's resume path reads the disk. Letting them drift means a
+    /// document that is protected in one process and unprotected in the next.
+    private func updatePendingCreate(_ record: PendingDocumentCreate) {
+        createStore.save(record)
+        pendingCreates[record.localID] = record
+    }
+
+    // MARK: - The open-editor registry
+
+    /// Called while an editor for this document is on screen. Balanced by
+    /// `releaseOpenEditor`; the create replay skips any document held here.
+    func retainOpenEditor(documentID: UUID) {
+        openEditors[documentID, default: 0] += 1
+    }
+
+    /// Balances `retainOpenEditor`. When the last hold on a *local* document goes, kick the
+    /// sync funnel: on iPhone that is the moment popping back makes the document replayable,
+    /// and waiting for the next reconnect or foreground would be an arbitrary delay.
+    func releaseOpenEditor(documentID: UUID) {
+        guard let held = openEditors[documentID] else { return }
+        if held <= 1 {
+            openEditors[documentID] = nil
+            if isPendingCreate(documentID: documentID) {
+                Task { await syncPendingDrafts() }
+            }
+        } else {
+            openEditors[documentID] = held - 1
+        }
+    }
+
+    private func hasOpenEditor(documentID: UUID) -> Bool {
+        (openEditors[documentID] ?? 0) > 0
+    }
+
+    // MARK: - Create replay
+
+    /// POST the documents this device created, then hand their content to the ordinary draft
+    /// replay. Runs **before** `runSyncPass` inside the same coalesced pass, so a document
+    /// migrated here has its body pushed by the very same pass rather than waiting for the
+    /// next trigger.
+    ///
+    /// Dormant until something mints a record: `allCreates()` is empty, so this returns
+    /// after one `/users/me/` round trip that itself only happens when there is work.
+    private func runCreatePass() async {
+        let records = createStore.allCreates()
+        guard !records.isEmpty else { return }
+        // Which account is in front of us. Asked once per pass, and only when there is
+        // something to send: `isReplayable` needs it, and this is the layer that *can* await
+        // it — the coordinator is constructed long before `/users/me/` returns. A failure
+        // (offline, or a server that omits the id) leaves every record unreplayable, which
+        // is the correct answer rather than a reason to guess.
+        guard let currentUserID = try? await client.currentUser().id else { return }
+
+        for record in records {
+            guard isReplayable(record, currentUserID: currentUserID) else { continue }
+            // A save the *server* rejected on the merits is a retry candidate the user can
+            // see; leave it to them, exactly as `runSyncPass` does.
+            if case .failed = state(for: record.localID) { continue }
+            // Never migrate under a live screen — see `openEditors`.
+            guard !hasOpenEditor(documentID: record.localID) else { continue }
+            await replayCreate(record)
+        }
+    }
+
+    private func replayCreate(_ record: PendingDocumentCreate) async {
+        var record = record
+        if record.syncedServerID == nil {
+            // The draft carries any rename made since the document was minted, so it wins.
+            let title = draftStore.draft(for: record.localID)?.title ?? record.title
+            let created: Document
+            do {
+                if let parentID = record.parentID {
+                    created = try await client.createChild(documentID: parentID, title: title)
+                } else {
+                    created = try await client.createDocument(title: title)
+                }
+            } catch {
+                handleCreateFailure(error, for: record)
+                return
+            }
+            // **Persist the server id before anything else touches disk.** This is the whole
+            // idempotency story: the backend offers no idempotency key, so a process death
+            // between the POST landing and this write is what would produce a duplicate. With
+            // it, the next pass sees a checkpointed record and resumes at migration instead of
+            // POSTing again — at worst one empty duplicate document, never duplicated content.
+            record.syncedServerID = created.id
+            updatePendingCreate(record)
+            migrateCreatedDocument(record, to: created)
+            return
+        }
+        // Resuming after a death between the checkpoint and the migration. The document
+        // exists server-side; fetch what it looks like so the baseline is the server's own
+        // state rather than a guess. A failure here just leaves the record for the next pass.
+        guard let created = try? await client.document(documentID: record.syncedServerID!) else { return }
+        migrateCreatedDocument(record, to: created)
+    }
+
+    /// Move a local document onto the id the server just gave it, then hand its content to
+    /// the ordinary replay.
+    ///
+    /// Order is the safety property. The record is removed **last**, because it is what keeps
+    /// the holds in force: dropping it first and dying would leave a draft under a dead local
+    /// id that the very next sync pass GETs, 404s, and deletes.
+    private func migrateCreatedDocument(_ record: PendingDocumentCreate, to created: Document) {
+        let localID = record.localID
+        let serverID = created.id
+        // The create response *is* the known server state, and stamping it is mandatory: a
+        // baseline-less draft routes to `draftSyncDecision` rule 3's 120 s clock tolerance,
+        // and a document created hours ago offline is far outside it — the replay would
+        // answer `.discardServerWins` and the launch pass would delete the body, leaving the
+        // empty document this POST just made.
+        let baseline = DraftBaseline(
+            serverUpdatedAt: created.updatedAt, markdown: "", title: created.title)
+        let draft = draftStore.draft(for: localID)
+        let body = queued[localID]?.markdown ?? draft?.markdown ?? ""
+        let title = created.title ?? draft?.title ?? record.title
+
+        draftStore.remove(documentID: localID)
+        // Every per-document map the coordinator keys by id. `queued` matters most: it holds
+        // the user's newest keystrokes, and leaving it behind would strand them under an id
+        // nothing will ever push.
+        states[localID] = nil
+        queued[localID] = nil
+        settledSaves[localID] = nil
+        lastConfirmedPushMarkdown[localID] = nil
+        knownServerTitles[localID] = created.title
+        // A local document never reached the content cache (only a confirmed save or a fetch
+        // writes one), but purge defensively so a stale entry can never outlive the id.
+        contentCache.remove(documentID: localID)
+
+        // Make it visible under its real id before the record disappears, or the document
+        // drops out of Home between here and the next successful list fetch.
+        insertIntoListCaches(created, parentID: record.parentID)
+
+        removePendingCreate(documentID: localID)
+
+        // Now an ordinary document with an ordinary queued edit: rule 2 sees a server no
+        // newer than the baseline we just stamped and answers `.push`.
+        enqueue(documentID: serverID, title: title, markdown: body, baseline: baseline)
+    }
+
+    private func insertIntoListCaches(_ created: Document, parentID: UUID?) {
+        var recents = listCache.loadRecentDocuments() ?? []
+        if !recents.contains(where: { $0.id == created.id }) {
+            recents.insert(created, at: 0)
+            listCache.saveRecentDocuments(recents)
+        }
+        // Only into a level that has actually been fetched — the same rule `addSubpage`
+        // follows, so a cached "no children yet" is never fabricated from a create.
+        if let parentID, var siblings = childrenCache.children(for: parentID),
+            !siblings.contains(where: { $0.id == created.id })
+        {
+            siblings.append(created)
+            childrenCache.save(siblings, for: parentID)
+        }
+    }
+
+    /// A create that did not land. The document stays local and keeps its content whatever
+    /// happens here — the only question is whether to try again, and where.
+    private func handleCreateFailure(_ error: Error, for record: PendingDocumentCreate) {
+        guard let docsError = error as? DocsAPIError else { return }
+        if retryableSaveFailure(docsError) || docsError == .sessionExpired {
+            // Transport, 5xx, rate limit — or a re-login the shared client has already
+            // raised. Leave everything; the next trigger retries.
+            return
+        }
+        if record.parentID != nil, docsError == .forbidden || docsError == .notFound {
+            // The parent is gone or no longer ours. Retry as a **root** document rather than
+            // stranding the content: placement is recoverable by the user, a lost body is not.
+            var promoted = record
+            promoted.parentID = nil
+            updatePendingCreate(promoted)
+            return
+        }
+        // Rejected on the merits (a validation 400, a decoding bug). Surface it the way a
+        // failed save is surfaced, and stop retrying — `runCreatePass` skips `.failed`, and a
+        // relaunch clears the in-memory state so it is tried once more.
+        states[record.localID] = .failed("Couldn't save changes. Please try again.")
     }
 
     /// Content handed to the coordinator this session that the server hasn't
@@ -582,6 +780,12 @@ final class DocumentSaveCoordinator {
             needsAnotherSyncPass = false
             let launchPass = pendingLaunchRecovery
             pendingLaunchRecovery = false
+            // Creates first, inside the same pass: a document migrated here becomes an
+            // ordinary draft under a real id, which `runSyncPass` then pushes immediately
+            // rather than leaving until the next trigger. Both inherit this funnel's
+            // re-entrancy guard and coalescing — the create replay must never get its own
+            // triggers, or two passes could POST the same record twice.
+            await runCreatePass()
             await runSyncPass(isLaunchRecovery: launchPass)
         } while needsAnotherSyncPass
     }
