@@ -1,0 +1,50 @@
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_351b5e522a97a5::t_d7e56832562043 93-108
+  s_351b5e522a97a5::t_4d2ea136f6648a 299-303,314-315,320-328,336,341-350
+  s_351b5e522a97a5::t_796bfb0c72f010 119-121,128-155,159-208,351
+  s_351b5e522a97a5::t_0e6ace1f63f904 209
+  s_351b5e522a97a5::t_15f1c48deca6c2 352
+SchriftTests/Features/Editor/PendingDocumentCreateStoreTests.swift
+  s_351b5e522a97a5::t_a5e950df493ce9 138-141,147-151,174-177,179-180,182,193-197,200
+  s_351b5e522a97a5::t_d904add8356de2 87-101
+CLAUDE.md
+  s_351b5e522a97a5::t_09df6e9b234a3e 1330-1336
+  s_351b5e522a97a5::t_4b034b47b424cb 1366-1389
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_351b5e522a97a5::t_c2797a3e8960e0 228-235,240-253
+  s_351b5e522a97a5::t_673175531959b1 296-307,310-318
+  s_351b5e522a97a5::t_42b4a45f8f135d 168-178
+  s_351b5e522a97a5::t_67ab7ea080f13d 264-266,269,271-272,279-289
+  s_351b5e522a97a5::t_746737859f17d0 321-331
+  s_351b5e522a97a5::t_7a0e84fabe1769 849-862
+  s_351b5e522a97a5::t_eaaed21b82274d 93-94
+  s_351b5e522a97a5::t_f6d9f523ed67c5 180-184
+  s_351b5e522a97a5::t_e09dc03b87dc38 1051-1056
+  s_351b5e522a97a5::t_97f9217443e264 254-255
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_351b5e522a97a5::t_6914c07b45268d 201-207
+  s_351b5e522a97a5::t_f93d9edebae2c0 189,193-200,208,211
+  s_351b5e522a97a5::t_f66fcbd6cab560 57,65
+  s_351b5e522a97a5::t_01a5985ab33e4a 25-27,31-32,34-44
+  s_351b5e522a97a5::t_2a1533233a36d7 133-140
+  s_351b5e522a97a5::t_61b0dc334e5968 152-165
+  s_351b5e522a97a5::t_b7a443351b7ad6 111-113,115
+docs/offline-and-sync.md
+  s_351b5e522a97a5::t_2e7c9dc1e2f6aa 1045-1051,1071-1087,1101-1116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "dd00f1e67527767b5b54f8c48d5f8230f727bee8",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
