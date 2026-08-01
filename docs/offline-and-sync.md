@@ -1158,9 +1158,7 @@ nice-to-have:
   offline currently yields no user id at all, which is precisely the case the
   feature exists for. Failing closed is the right default; supplying the value is
   the create UI's job.
-- **The create replay**: POST → checkpoint → migrate the draft (stamping the
-  baseline above), the caches and the coordinator's id-keyed maps onto the server
-  id → push the content through the normal draft replay → remove the record last.
+- ~~**The create replay**~~ — **landed 2026-08-01**, see below.
 - **A recovery affordance, or a bounded retention policy, for records that can
   never be replayed here** — another account's, or an unattributable one. Their
   content is protected, but they are invisible, unsendable, and not deletable
@@ -1169,6 +1167,64 @@ nice-to-have:
   the sync pass's 404/403 branch. The same affordance owes a way to clear a
   **quarantined** blob, whose bytes are written once and never read or removed —
   and whose mere existence keeps draft cleanup suppressed on that device.
+
+### The create replay (2026-08-01)
+
+`runCreatePass()` runs **inside** `syncPendingDrafts`'s coalesced loop, immediately
+before `runSyncPass`, so a document it migrates has its body pushed by the same
+pass rather than waiting for the next trigger. It deliberately has **no triggers
+of its own**: sharing the funnel is what makes two overlapping reconnects unable
+to POST the same record twice.
+
+It asks `/users/me/` once per pass, and only when there is work — `isReplayable`
+needs the account, and this is the layer that *can* await it. A failure (offline,
+or a server that omits the id) simply leaves every record unreplayable, which is
+the right answer rather than a reason to guess.
+
+Per record, in `createdAt` order: skip anything `.failed` (a retry the user can
+see), skip anything whose editor is **open** (below), then POST — `createChild`
+for a sub-page, `createDocument` for a root.
+
+**The order of what follows is the safety property.**
+
+1. **Persist `syncedServerID` first.** The backend offers no idempotency key, so
+   the only thing standing between a process death and a duplicate document is
+   this write landing before anything else. A record found already checkpointed
+   skips the POST and resumes at migration — at worst one empty duplicate, never
+   duplicated content.
+2. **Stamp the baseline.** `DraftBaseline(serverUpdatedAt: <create response>,
+   markdown: "", title:)` — the create response *is* the known server state.
+   Mandatory, not tidy: see the seed-draft paragraph above.
+3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (which
+   holds the user's newest keystrokes — leaving it behind strands them under an id
+   nothing will ever push), `settledSaves`, `lastConfirmedPushMarkdown`,
+   `knownServerTitles`, and a defensive content-cache purge.
+4. **Insert into the list caches** under the real id, so the document does not
+   drop out of Home between the POST landing and the next successful list fetch.
+   A sub-page joins its parent's cached level only if that level was actually
+   fetched — the same rule `addSubpage` follows.
+5. **Remove the record last**, because it is what keeps the holds in force.
+   Dropping it first and dying would leave a draft under a dead local id that the
+   very next sync pass GETs, 404s, and deletes.
+6. **Enqueue the content** under the server id. It is now an ordinary document
+   with an ordinary queued edit, and rule 2 sees a server no newer than the
+   baseline just stamped.
+
+**Deferring while a screen is open.** `retainOpenEditor`/`releaseOpenEditor` keep a
+refcount, and the replay skips any document held there. Migration re-keys
+everything, and `EditorViewModel.documentID` is a `let` captured by four sibling
+view models and by the pushed `NavigationPath` values — an open screen cannot
+follow the id and would keep writing drafts under one the holds no longer cover.
+Deferring makes mid-swap edit loss *unrepresentable* rather than merely unlikely.
+Releasing the last hold kicks the funnel, so popping back on iPhone syncs
+immediately. The accepted cost: an iPad split-view editor left selected defers
+that document until it is deselected or the app relaunches.
+
+**Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
+leave everything for the next trigger. A sub-page whose parent is gone or no
+longer ours (`403`/`404`) is **promoted to a root** and retried — placement is
+recoverable by the user, a lost body is not. Anything else rejected on the merits
+sets `.failed`, which the pass skips and a relaunch retries once.
 
 ## Data flow
 

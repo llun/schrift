@@ -1408,6 +1408,29 @@ markdown write endpoint**. Understand this before touching the save path:
   exists, because a clean live key next launch would re-arm the delete and take the
   drafts anyway. Every field added to the record must stay Optional-on-decode for
   the same reason.
+  **The replay (`runCreatePass`) runs inside `syncPendingDrafts`'s coalesced loop,
+  before `runSyncPass`, and has no triggers of its own** — sharing the funnel is
+  what stops two overlapping reconnects POSTing the same record twice. It asks
+  `/users/me/` once per pass (only when there is work) because `isReplayable`
+  needs the account and this is the layer that can await it; a failure leaves
+  everything unreplayable, which is correct rather than a reason to guess.
+  **Its ordering is the safety property**, and each step exists for a failure that
+  was reasoned about: persist `syncedServerID` **first** (no idempotency key
+  exists, so this write landing before anything else is the only thing between a
+  process death and a duplicate — a checkpointed record resumes at migration
+  instead of re-POSTing); stamp the baseline; move every id-keyed thing including
+  **`queued`**, which holds the newest keystrokes; insert into the list caches so
+  the document doesn't vanish from Home before the next fetch; **remove the record
+  last**, because it is what keeps the holds in force; then enqueue the content.
+  **A replay never runs while an editor is open** on that document
+  (`retainOpenEditor`/`releaseOpenEditor`): migration re-keys everything, and
+  `EditorViewModel.documentID` is a `let` captured by four sibling view models and
+  by pushed `NavigationPath` values, so a live screen cannot follow the id and
+  would keep writing under one the holds no longer cover. Deferring makes mid-swap
+  edit loss unrepresentable. **No failure strands content**: transport/5xx/
+  `.sessionExpired` retry later, a sub-page whose parent is gone is **promoted to
+  a root** (placement is recoverable, a body is not), and anything rejected on the
+  merits goes `.failed` for the user to retry.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
