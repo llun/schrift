@@ -1219,6 +1219,12 @@ nice-to-have:
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
+- **A retry or discard for a sub-page whose parent probe answers with an `abilities`
+  object that omits `children_create`.** Since the replay refuses to re-parent on that
+  ambiguous value, such a record is terminal every launch: one POST plus one probe per
+  trigger, the body only in the local draft, and a "Couldn't save changes" retry that
+  `saveNow` no-ops. The trade ("`.failed` is recoverable") holds only while the server's
+  answer can change, so this owes the same affordance as its two siblings below.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it
@@ -1436,7 +1442,9 @@ the user, a lost body is not — but only on *evidence*. A `403` on a POST is no
 only "the parent isn't yours": it is also what Django answers for a bad `Origin`
 (the capitalised-host bug), and an HTML `404` is not proof a route is absent,
 since a proxy can serve one for a path it swallowed. So the parent is **probed**,
-and its answer decides — gone or forbidden ⇒ promote; reachable but
+and its answer decides — **gone ⇒ promote** (not a bare 403: an ancestor-access
+recompute 403s transiently and would 403 the create too, the same reason the resume path
+drops a checkpoint only on `.notFound`, and promotion is irreversible); reachable but
 `abilities.childrenCreate` false ⇒ **terminal `.failed`, not a promote** (without
 something here a permission downgrade between minting and replaying had *no terminal
 state at all*: it never promoted, never failed, and paid a POST plus a probe on every
@@ -1446,7 +1454,12 @@ the key is indistinguishable from one denying it; this is the app's first and on
 consumer of the field, on a route whose serializer it has never depended on before, and
 the repo has already been bitten by exactly that variance with `is_favorite`.
 Re-parenting is irreversible, so it must not rest on a value that cannot say "the server
-didn't answer"); reachable and willing ⇒ the failure was about something else, so retry. A probe that cannot
+didn't answer"); reachable and willing ⇒ the create itself was rejected, so **terminal
+`.failed`** — the same treatment the root path gives that error. Leaving it retryable was an
+asymmetry with teeth: a capitalised host makes Django answer `403 CSRF Failed` on the POST
+while the probe, a GET, succeeds — so a root create parked immediately while a sub-page paid
+a POST plus a probe on every trigger forever, caption still reading "syncs when online". A
+probe that cannot
 answer leaves the record alone — "I couldn't ask" must never read as "it isn't
 there". A `.routeNotFound` on a **root** create retries rather than parking — a missing route
 is a fact about the server, not this document, the same reading the resume path gives
@@ -1572,6 +1585,12 @@ and the content is still in a draft under the local id. Nothing is lost — the
 next pass finishes the job — but a list fetch landing in that window shows the
 empty server row, so the UI change owes an answer (suppressing a fetched row
 while a matching checkpointed record exists, which needs the checkpoint exposed).
+**And the offline case is worse**: `pendingLocalDocuments` withholds the row from the
+instant the checkpoint lands, while `insertIntoListCaches` runs only inside the
+migration — so a deferred migration plus a launch with no list fetch leaves the document
+in *neither* surface. Nothing is lost (the draft is on disk) but the only route back is
+going online, and the withholding rationale — "the fetched list is where it belongs" —
+assumes a fetched list exists.
 
 ## Data flow
 

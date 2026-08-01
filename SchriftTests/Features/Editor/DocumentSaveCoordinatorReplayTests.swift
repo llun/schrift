@@ -672,13 +672,20 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             env.creates.create(for: local.id)?.parentID, parent,
             "the sub-page keeps its parent when the 403 was not about the parent")
+        // And goes **terminal**, exactly as a root create does for this same non-retryable
+        // error. Leaving it retryable was an asymmetry: a capitalised host 403s the POST while
+        // the probe (a GET, which carries no `Origin`) succeeds, so a root create parked while
+        // a sub-page paid a POST plus a probe on every trigger forever.
+        guard case .failed = env.coordinator.state(for: local.id) else {
+            return XCTFail("a willing parent means the create itself was rejected — that is terminal")
+        }
     }
 
     // MARK: - Failures
 
     /// A parent that is gone or no longer ours must not strand the content: the document
     /// becomes a root instead. Placement is recoverable by the user; a lost body is not.
-    func testASubpageWhoseParentIsForbiddenRetriesAsARootDocument() async {
+    func testASubpageWhoseParentIsGoneRetriesAsARootDocument() async {
         let log = RequestRecorder()
         let parent = UUID()
         let env = makeEnvironment()
@@ -691,7 +698,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
                     statusCode: 200, headers: [:],
                     body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
             }
-            return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+            // The POST is forbidden; the probe then finds the parent **gone**, which is the
+            // only evidence that promotes. A bare 403 on the probe does not — an
+            // ancestor-access recompute 403s transiently, and promotion is irreversible.
+            if request.httpMethod == "POST" {
+                return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
 
         await env.coordinator.syncPendingDrafts()
@@ -978,6 +991,12 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             env.creates.create(for: local.id)?.parentID, parent,
             "an unanswerable probe leaves the placement alone")
+        // And leaves it *retryable*: since (a), all three probe outcomes keep `parentID`, so
+        // the state is the only discriminator. Without this, "every reachable parent is
+        // terminal" passes.
+        if case .failed = env.coordinator.state(for: local.id) {
+            XCTFail("\"I couldn't ask\" must not park the record — the next trigger retries")
+        }
     }
 
     // MARK: - The server id can be live too
@@ -1927,6 +1946,52 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             draft.lastPushedMarkdown, "# Already pushed",
             "the evidence rides along, so rule 1 can still recognise our own landed write")
+    }
+
+    /// The start-over must discharge the conflict **even with a save parked** — that cell is
+    /// the whole point. A queued slot with nothing in flight *is* the conflict hold, and
+    /// nothing settles it: `releaseHeldSave` is its only drainer and is reached only from the
+    /// discharge. Gating the clear on `queued == nil` (as an earlier revision did) leaves the
+    /// record stranded permanently, with `runSyncPass` skipping the draft on both `queued` and
+    /// `conflicts`, and `init` rehydrating the stamp across relaunches.
+    func testAStartOverDischargesAConflictEvenWithASaveParked() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // The conflict hold: a recorded divergence, then an edit that parks rather than starts.
+        relaunched.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Parked")
+        XCTAssertEqual(savesInFlight(log), 0, "held, not sent")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "discharged — otherwise the record strands with no reaper and no user escape")
+    }
+
+    /// A bare 403 on the probe must **not** promote — the same rule the resume path states
+    /// for the same evidence. An ancestor-access recompute 403s transiently and would 403 the
+    /// create too, so promoting on it re-roots a sub-page irreversibly on "not right now".
+    func testASubpageWhoseParentProbeIs403IsNotPromoted() async {
+        let log = RequestRecorder()
+        let parent = UUID()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            env.creates.create(for: local.id)?.parentID, parent,
+            "a transient 403 is not evidence the parent is gone")
     }
 
     // MARK: - Helpers

@@ -24,9 +24,11 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// `abilities.childrenCreate` is false), so this is always a real server id and the
     /// replay needs no dependency ordering. `var` because the replay rewrites it to nil and
     /// retries as a root create — degrading the document's *placement* rather than stranding
-    /// its content — on any of the three things that make a sub-page impossible *there*: the
-    /// parent is gone, it is forbidden, or it is reachable but its `abilities.childrenCreate`
-    /// is false. Never on the bare failure alone; see `handleCreateFailure`'s probe.
+    /// its content — but **only on evidence the server actually gave**: the probe's own 404 or
+    /// 403. A reachable parent whose `abilities.childrenCreate` is false is terminal instead,
+    /// never a re-parent, because that key decodes `decodeIfPresent(...) ?? false` and so
+    /// cannot distinguish *absent* from *denied*. Never on the bare create failure alone; see
+    /// `handleCreateFailure`'s probe.
     var parentID: UUID?
     /// Replay order, and the synthetic document's dates.
     let createdAt: Date

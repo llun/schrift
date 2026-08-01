@@ -840,6 +840,13 @@ final class DocumentSaveCoordinator {
         // exactly `draft(localID) == nil && migrated != nil`; the both-drafts guard rules out
         // every other shape in which `migrated` could be the source.
         let carriedPush = (draft == nil && queued[localID] == nil) ? migrated?.lastPushedMarkdown : nil
+        // **Load-bearing and unstated until now:** this rebuild carries no
+        // `conflictServerUpdatedAt`, so it *erases* a stamp `init` rehydrated from disk while
+        // `conflicts[serverID]` is still set in memory. Every exit below repairs it — diverged
+        // re-persists via `recordConflict`, undiverged via `enqueue`'s own stamp write, adopt
+        // removes the draft and the record together — so the mirror never splits today. Any
+        // early return inserted between here and those exits would silently drop a persisted
+        // conflict hold.
         draftStore.save(
             PendingDraft(
                 documentID: serverID, title: title, markdown: body, updatedAt: Date(),
@@ -1064,14 +1071,30 @@ final class DocumentSaveCoordinator {
                     return
                 }
                 promote = false
-            } catch let probe as DocsAPIError where probe == .notFound || probe == .forbidden {
+            } catch let probe as DocsAPIError where probe == .notFound {
+                // **`.notFound` only — never `.forbidden`**, the same rule the resume path
+                // states for the same evidence class: a bare 403 is not proof a document is
+                // gone (an ancestor-access recompute 403s transiently, and that is exactly the
+                // shape that would also 403 the create). Promotion is irreversible, so it must
+                // not rest on a value that cannot say "not right now".
                 promote = true
             } catch {
                 // The probe itself failed to answer. "I couldn't ask" must never read as
                 // "it isn't there" — leave the record alone and try again next pass.
                 return
             }
-            guard promote else { return }
+            // The probe answered and the parent is willing, so the failure was about the
+            // create itself — and it is non-retryable, since every retryable class returned
+            // above. **Terminal, exactly as the root path treats the same error.** Leaving it
+            // to retry was the one asymmetry here: a capitalised host makes Django answer
+            // `403 CSRF Failed` on the POST while the probe, a GET, succeeds — so a root
+            // create parked immediately while a sub-page paid a POST plus a probe on every
+            // trigger forever, caption still reading "syncs when online". That is verbatim the
+            // no-terminal-state this branch was added to eliminate.
+            guard promote else {
+                markCreateRejected(record)
+                return
+            }
             // Retry as a **root** document rather than stranding the content: placement is
             // recoverable by the user, a lost body is not.
             guard pendingCreates[record.localID] != nil else { return }

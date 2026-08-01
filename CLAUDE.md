@@ -1522,8 +1522,13 @@ markdown write endpoint**. Understand this before touching the save path:
   rename made here on a body-less document is lost when the server has moved on.
   **No failure strands content**: transport/5xx/
   `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
-  promotes to a root only on **evidence the server actually gave**: the probe's own 404
-  or 403. A reachable parent whose `abilities.childrenCreate` is false gets a terminal
+  promotes to a root only on **evidence the server actually gave**: the probe's own 404.
+  Not a bare 403 — an ancestor-access recompute 403s transiently and would 403 the create
+  too, the same reason the resume path drops a checkpoint only on `.notFound`. And a
+  reachable, *willing* parent means the create itself was rejected, which is terminal —
+  the root path treats the same error that way, and leaving it retryable meant a
+  capitalised host (403 on the POST, success on the probe, which is a GET and carries no
+  `Origin`) parked a root create immediately while a sub-page retried forever. A reachable parent whose `abilities.childrenCreate` is false gets a terminal
   `.failed` instead — never a re-parent, because `Document` decodes that key
   `decodeIfPresent(...) ?? false`, so *absent* and *denied* are indistinguishable, this
   is the app's only consumer of the field, and re-parenting is irreversible (the old
