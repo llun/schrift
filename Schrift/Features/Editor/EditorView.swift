@@ -44,13 +44,16 @@ struct SyncCaption: Equatable {
 /// triggers can't fire). (1c) **dirty** content sits above the generic offline wording,
 /// because dirty means "not on disk yet" — the draft is written by the flush — while that
 /// wording asserts durability. This is the same truth `saveStatusDisplay` keeps on the
-/// editing surface, where `.dirty` holds its Save funnel even under a conflict. No path
-/// renders `.dirty` on *this* caption today: it needs `mode == .reading` at render time,
-/// and the only mutator that runs outside an editing session — the reading-mode photo
-/// insert — flushes in the same synchronous turn it dirties (`insertImageBlock`'s
-/// `defer`), while `finishEditing` flushes before it sets `.reading`. So the tier is
-/// entirely defensive; it exists so a future mutator that *does* leave content dirty in
-/// reading mode cannot silently claim it is saved.
+/// editing surface, where `.dirty` holds its Save funnel even under a conflict. In normal
+/// operation nothing renders `.dirty` on *this* caption: it needs `mode == .reading` at
+/// render time, and the only mutator that runs outside an editing session — the
+/// reading-mode photo insert — flushes in the same synchronous turn it dirties
+/// (`insertImageBlock`'s `defer`), while `finishEditing` flushes before it sets `.reading`.
+/// The one exception is a **discarded** document: `flushPendingChanges` returns on
+/// `isDocumentDiscarded` *before* clearing `isDirty`, and `markDirty` has no such guard, so
+/// a keystroke landing after a delete but before the screen pops can reach reading mode
+/// still dirty. So the tier is near-defensive rather than dead, and there the wording it
+/// produces is the truthful one.
 /// (2) other unsaved local content → save wording (a previously-synced doc with a stranded
 /// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
@@ -866,6 +869,13 @@ struct EditorView: View {
             } label: {
                 MaterialSymbol(.edit, size: 22)
             }
+            // `startEditing` silently declines without loaded content, and offline with
+            // nothing cached that is now the common case — where the load error also
+            // suppresses "Start writing", leaving Edit as the only affordance on screen
+            // doing nothing at all. Mirror the formatting bar's rule: if the view model
+            // would decline, don't invite the tap. This is deliberately keyed to loaded
+            // content, not to connectivity — the parameter this resolver dropped.
+            .disabled(!viewModel.hasLoadedContent)
             .accessibilityLabel(loc[.editor_action_edit])
 
         case .done:
