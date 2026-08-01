@@ -84,6 +84,24 @@ final class StringsCompletenessTests: XCTestCase {
         }
     }
 
+    func testNoStringUsesOnePositionWithTwoArgumentKinds() {
+        // Independent of the English comparison, and that is the point: a
+        // self-contradictory string (`"%1$d … %1$@"`) renders garbage whatever
+        // it is compared against, and if the contradiction were in *English*
+        // every parity test would happily agree with it.
+        for language in AppLanguage.allCases {
+            let table = Strings.table(for: language)
+            for key in L10nKey.allCases {
+                guard let string = table[key] else { continue }
+                for (position, kind) in argumentList(string) {
+                    XCTAssertNotEqual(
+                        kind, .conflicted,
+                        "\(language.code) uses argument \(position) with two kinds in \(key.rawValue): \(string)")
+                }
+            }
+        }
+    }
+
     func testSloveneExtendedPluralPlaceholderParity() {
         // Extended forms take the same arguments as their English `other`
         // sibling (English has no dual/few form of its own to compare against).

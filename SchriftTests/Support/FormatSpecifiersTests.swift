@@ -31,9 +31,9 @@ final class FormatSpecifiersTests: XCTestCase {
         XCTAssertEqual(kinds("%d%% of %@"), [.integer, .object])
     }
 
-    func testATrailingLonePercentIsIgnoredRatherThanTrapping() {
-        XCTAssertEqual(kinds("ends with %"), [])
-        XCTAssertEqual(kinds("%"), [])
+    func testATrailingLonePercentDoesNotTrap() {
+        XCTAssertNoThrow(kinds("ends with %"))
+        XCTAssertNoThrow(kinds("%"))
     }
 
     // MARK: - Interchangeable spellings
@@ -111,18 +111,109 @@ final class FormatSpecifiersTests: XCTestCase {
         XCTAssertEqual(kinds("%Lf"), [.double])
     }
 
-    /// A `%` that runs off the end of the string — prose, or a truncated
-    /// specifier — consumes nothing rather than trapping or inventing an
-    /// argument.
-    func testATruncatedSpecifierConsumesNothing() {
-        XCTAssertEqual(kinds("%q"), [])
-        XCTAssertEqual(kinds("%-12"), [])
+    // MARK: - Never weaker than counting `%`
+
+    /// The regression that matters most: a truncated specifier trailing a valid
+    /// one used to vanish, so a corrupted string compared equal to a clean one.
+    /// Counting `%` — the gate this replaced — caught that, so dropping it here
+    /// would have made the new gate weaker in a dimension nobody was watching.
+    func testATruncatedSpecifierAfterAValidOneIsStillRecorded() {
+        XCTAssertEqual(kinds("%d files: %0"), [.integer, .unknown])
+        XCTAssertNotEqual(formatArgumentList(of: "%d files: %0"), formatArgumentList(of: "%d files"))
+    }
+
+    func testATruncatedSpecifierIsRecordedWhereverItAppears() {
+        XCTAssertEqual(kinds("%q"), [.unknown])
+        XCTAssertEqual(kinds("%-12"), [.unknown])
+        XCTAssertEqual(kinds("ends with %"), [.unknown])
+        XCTAssertEqual(kinds("%"), [.unknown])
+    }
+
+    /// One position used with two different kinds contradicts itself: the
+    /// argument cannot be both, so one of the uses renders garbage. Resolving it
+    /// last-write-wins made it compare equal to the correct string.
+    func testOnePositionUsedWithTwoKindsIsConflictedNotLastWins() {
+        XCTAssertEqual(formatArgumentList(of: "%1$d %1$@ x %2$d")[1], .conflicted)
+        XCTAssertNotEqual(
+            formatArgumentList(of: "%1$d %1$@ x %2$d"),
+            formatArgumentList(of: "%1$@ x %2$d"))
+    }
+
+    func testAConflictOnceRecordedIsNotRedeemedByALaterAgreement() {
+        XCTAssertEqual(formatArgumentList(of: "%1$@ %1$d %1$@")[1], .conflicted)
+    }
+
+    /// The whole property, stated directly: anything the old counting gate would
+    /// have flagged, this one flags too.
+    func testEveryDivergenceTheOldCountingGateCaughtIsStillCaught() {
+        // (english, translation) pairs the old gate failed on by raw `%` count.
+        let divergences = [
+            ("%d files remain", "%d files: %0"),
+            ("%1$@ x %2$d", "%1$d %1$@ x %2$d"),
+            ("Search %@", "Search"),
+            ("%@ and %@", "%@"),
+            ("100%% sure", "100% sure"),
+        ]
+        for (english, translation) in divergences {
+            XCTAssertNotEqual(
+                formatArgumentList(of: english), formatArgumentList(of: translation),
+                "the argument lists of \"\(english)\" and \"\(translation)\" must differ")
+        }
+    }
+
+    // MARK: - Arguments consumed by width and precision
+
+    /// `%*d` takes the width from an argument *before* the value, so it consumes
+    /// two. Skipping the star as punctuation made it compare equal to `%d`,
+    /// which then renders the wrong number entirely.
+    func testStarWidthAndPrecisionConsumeTheirOwnArguments() {
+        XCTAssertEqual(kinds("%*d"), [.integer, .integer])
+        XCTAssertEqual(kinds("%.*f"), [.integer, .double])
+        XCTAssertEqual(kinds("%*.*f"), [.integer, .integer, .double])
+        XCTAssertNotEqual(formatArgumentList(of: "%*d"), formatArgumentList(of: "%d"))
+    }
+
+    // MARK: - Malformed positions
+
+    /// Positions are 1-based, so `%0$@` and an overflowing index are malformed.
+    /// Neither is quietly re-read as a plain `%@`: they record `.unknown`, which
+    /// is what stops a malformed string comparing equal to a well-formed one.
+    func testAZeroOrUnparseablePositionIsMalformedRatherThanRenumbered() {
+        XCTAssertEqual(kinds("%0$@"), [.unknown])
+        XCTAssertEqual(kinds("%99999999999999999999$@"), [.unknown])
+        XCTAssertNotEqual(formatArgumentList(of: "%0$@"), formatArgumentList(of: "%@"))
+    }
+
+    /// `Int(_:)` parses ASCII digits only, so a full-width digit must not be
+    /// consumed as a position and then silently dropped.
+    func testNonASCIIDigitsAreNotReadAsAPosition() {
+        XCTAssertEqual(kinds("%１$@"), [.unknown])
+    }
+
+    // MARK: - Pointer kinds
+
+    /// `%s` and `%S` are both pointers, but to different element types, so one
+    /// read as the other is garbage rather than a respelling.
+    func testCStringAndUnicharStringAreDifferentKinds() {
+        XCTAssertNotEqual(formatArgumentList(of: "%s"), formatArgumentList(of: "%S"))
     }
 
     // MARK: - Real strings from the catalog
 
-    func testTheAppsOwnFormattedStringsParseAsExpected() {
-        XCTAssertEqual(kinds(Strings_en.table[.home_search_placeholder] ?? ""), [.object])
-        XCTAssertEqual(kinds(Strings_en.table[.shared_count_other] ?? ""), [.integer])
+    /// A property over the whole catalog rather than two hand-picked strings, so
+    /// a copy rewrite can't fail this for a reason unrelated to the parser: no
+    /// shipped English string may contain a specifier this parser cannot read.
+    func testNoShippedEnglishStringContainsAnUnreadableSpecifier() {
+        for key in L10nKey.allCases {
+            guard let string = Strings_en.table[key] else { continue }
+            for specifier in formatSpecifiers(in: string) {
+                XCTAssertNotEqual(
+                    specifier.kind, .unknown,
+                    "\(key.rawValue) has a specifier the gate cannot read: \(string)")
+                XCTAssertNotEqual(
+                    specifier.kind, .conflicted,
+                    "\(key.rawValue) uses one position with two kinds: \(string)")
+            }
+        }
     }
 }

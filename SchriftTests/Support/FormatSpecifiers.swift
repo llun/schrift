@@ -12,12 +12,25 @@ enum FormatArgumentKind: String, Equatable {
     case integer
     case double
     case character
+    /// `%s` — a C string. Deliberately distinct from `%S` (`unichar *`): they
+    /// are both pointers, but to different element types, so one read as the
+    /// other is garbage rather than a harmless respelling.
     case cString
+    case unicharString
     case pointer
-    /// A conversion this parser doesn't recognise. Kept as a distinct value
-    /// rather than dropped, so an unfamiliar specifier surfaces as a mismatch
-    /// instead of silently comparing equal to nothing.
+    /// A conversion this parser doesn't recognise, **or a specifier that never
+    /// reached one** — a `%` that runs off the end of the string, or into
+    /// nothing a conversion character follows.
+    ///
+    /// Recorded rather than dropped, and that is load-bearing: dropping it let
+    /// `"%d files: %0"` compare equal to `"%d files"`, so a corrupted tail
+    /// vanished from the comparison. The gate this replaced *caught* that (it
+    /// counted every `%`), which would have made the new one weaker.
     case unknown
+    /// One position used with two different kinds inside a single string
+    /// (`"%1$d … %1$@"`). Self-contradictory: the argument cannot be both, so
+    /// whatever it is, one of the two uses renders garbage.
+    case conflicted
 
     fileprivate init(conversion: Character) {
         switch conversion {
@@ -25,7 +38,8 @@ enum FormatArgumentKind: String, Equatable {
         case "d", "D", "i", "u", "U", "x", "X", "o", "O": self = .integer
         case "f", "F", "e", "E", "g", "G", "a", "A": self = .double
         case "c", "C": self = .character
-        case "s", "S": self = .cString
+        case "s": self = .cString
+        case "S": self = .unicharString
         case "p": self = .pointer
         default: self = .unknown
         }
@@ -44,18 +58,30 @@ struct FormatSpecifier: Equatable {
 ///
 /// Written for the localization gate, which has to answer one question: *would
 /// this table's string consume the same arguments English's does?* Hence the
-/// two things a naive scan gets wrong —
+/// things a naive scan gets wrong —
 ///
 /// - **`%%` is an escape**, not a conversion, and consumes no argument.
 /// - **positional specifiers (`%2$@`) exist so translators can reorder**, which
 ///   is the whole point of them. `"%1$@ in %2$@"` and `"%2$@ 的 %1$@"` take the
 ///   same arguments; comparing the order they appear in would fail a correct
 ///   translation. Comparing *position → kind* does not.
+/// - **`*` width and precision consume an argument of their own** (`"%*d"` takes
+///   the width *then* the value), so each one occupies a position rather than
+///   being skipped as punctuation.
+/// - **a specifier that never reaches a conversion character still happened.**
+///   It becomes `.unknown` at its position instead of disappearing.
 func formatSpecifiers(in string: String) -> [FormatSpecifier] {
     var specifiers: [FormatSpecifier] = []
     var nextImplicitPosition = 1
     let characters = Array(string)
     var index = 0
+
+    /// Takes the next implicit position — used for `*` arguments and for a
+    /// specifier whose conversion character never arrived.
+    func takeImplicitPosition() -> Int {
+        defer { nextImplicitPosition += 1 }
+        return nextImplicitPosition
+    }
 
     while index < characters.count {
         guard characters[index] == "%" else {
@@ -63,7 +89,12 @@ func formatSpecifiers(in string: String) -> [FormatSpecifier] {
             continue
         }
         index += 1
-        guard index < characters.count else { break }
+
+        // A trailing `%` is a specifier that never arrived.
+        guard index < characters.count else {
+            specifiers.append(FormatSpecifier(position: takeImplicitPosition(), kind: .unknown))
+            break
+        }
 
         // `%%` — a literal percent, consuming nothing.
         if characters[index] == "%" {
@@ -71,27 +102,43 @@ func formatSpecifiers(in string: String) -> [FormatSpecifier] {
             continue
         }
 
-        // [argument$]
+        // [argument$] — ASCII digits only. `Int(_:)` parses no other script, so
+        // accepting `Character.isNumber` would consume a full-width digit here
+        // and then silently fall back to implicit numbering.
         var explicitPosition: Int?
         var scan = index
         var digits = ""
-        while scan < characters.count, characters[scan].isNumber {
+        while scan < characters.count, characters[scan].isASCII, characters[scan].isNumber {
             digits.append(characters[scan])
             scan += 1
         }
-        if !digits.isEmpty, scan < characters.count, characters[scan] == "$" {
-            explicitPosition = Int(digits)
+        if !digits.isEmpty, scan < characters.count, characters[scan] == "$",
+            let parsed = Int(digits), parsed >= 1
+        {
+            explicitPosition = parsed
             index = scan + 1
         }
 
-        // [flags] [width] [.precision] — width and precision may be `*`, which
-        // takes its value from an argument; rare enough in UI copy that it is
-        // deliberately not counted as one.
+        // [flags]
         while index < characters.count, "-+ #0'".contains(characters[index]) { index += 1 }
-        while index < characters.count, characters[index].isNumber || characters[index] == "*" { index += 1 }
+        // [width] and [.precision] — `*` takes its value from an argument.
+        var starPositions: [Int] = []
+        while index < characters.count, characters[index].isASCII, characters[index].isNumber { index += 1 }
+        if index < characters.count, characters[index] == "*" {
+            starPositions.append(takeImplicitPosition())
+            index += 1
+        }
         if index < characters.count, characters[index] == "." {
             index += 1
-            while index < characters.count, characters[index].isNumber || characters[index] == "*" { index += 1 }
+            while index < characters.count, characters[index].isASCII, characters[index].isNumber { index += 1 }
+            if index < characters.count, characters[index] == "*" {
+                starPositions.append(takeImplicitPosition())
+                index += 1
+            }
+        }
+        // A `*` argument is an `int` and is passed before the value it sizes.
+        for position in starPositions {
+            specifiers.append(FormatSpecifier(position: position, kind: .integer))
         }
 
         // [length]
@@ -103,9 +150,14 @@ func formatSpecifiers(in string: String) -> [FormatSpecifier] {
             }
         }
 
-        guard index < characters.count else { break }
-        let position = explicitPosition ?? nextImplicitPosition
-        if explicitPosition == nil { nextImplicitPosition += 1 }
+        // The conversion character never arrived — a truncated or malformed
+        // specifier. It is still evidence, so record it.
+        guard index < characters.count else {
+            specifiers.append(FormatSpecifier(position: explicitPosition ?? takeImplicitPosition(), kind: .unknown))
+            break
+        }
+
+        let position = explicitPosition ?? takeImplicitPosition()
         specifiers.append(FormatSpecifier(position: position, kind: FormatArgumentKind(conversion: characters[index])))
         index += 1
     }
@@ -119,10 +171,24 @@ func formatSpecifiers(in string: String) -> [FormatSpecifier] {
 /// (`"%1$@ … %1$@"`) is legal and still requires exactly one argument — so a
 /// translation may reference it more often than English does without changing
 /// what it must be handed.
+///
+/// A position used with *different* kinds collapses to `.conflicted` rather
+/// than to whichever came last. Last-write-wins made `"%1$d %1$@ x %2$d"`
+/// indistinguishable from the correct `"%1$@ x %2$d"`, so a self-contradictory
+/// string passed the gate; `String(format:)` renders it as garbage.
 func formatArgumentList(of string: String) -> [Int: FormatArgumentKind] {
     var list: [Int: FormatArgumentKind] = [:]
     for specifier in formatSpecifiers(in: string) {
-        list[specifier.position] = specifier.kind
+        switch list[specifier.position] {
+        case .none:
+            list[specifier.position] = specifier.kind
+        case .some(.conflicted):
+            break  // already contradictory; nothing later can redeem it
+        case .some(let existing) where existing != specifier.kind:
+            list[specifier.position] = .conflicted
+        default:
+            break  // same kind again — legal reuse of one argument
+        }
     }
     return list
 }

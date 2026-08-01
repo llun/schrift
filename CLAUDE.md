@@ -522,7 +522,16 @@ new code reads like the surrounding code.
   positional specifiers) from a reordered plain one (not). Interchangeable
   spellings (`%d`/`%i`/`%lld`) compare equal; an unrecognised conversion is
   recorded rather than dropped, so it surfaces as a mismatch instead of
-  reading as "no argument here" — add a key to
+  reading as "no argument here" — as is a **truncated** specifier (a `%` that
+  never reaches a conversion), and `*` width/precision each occupy the argument
+  they really consume. A position used with two different kinds in one string
+  collapses to `.conflicted` rather than to whichever came last, and
+  `testNoStringUsesOnePositionWithTwoArgumentKinds` checks that independently of
+  English — a contradiction *in English* would otherwise have every parity test
+  agreeing with it. Those last three exist because the first draft of this gate,
+  while stronger against `%d`-for-`%@`, was **weaker** than the `%`-count it
+  replaced on a corrupted tail and on self-contradictory reuse; a replacement
+  gate has to be checked in that direction too — add a key to
   `L10nKey.swift` + `Strings+en.swift` first (English-only is fine to land;
   other languages are filled in by a translation pass), then that test tells
   you if a table is left stale.
