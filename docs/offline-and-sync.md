@@ -1256,15 +1256,29 @@ costs nothing: the next pass resumes at migration.
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
 longer ours is **promoted to a root** and retried — placement is recoverable by
-the user, a lost body is not — but only on *evidence*: a `403` on a POST is not
-only "the parent isn't yours", it is also what Django answers for a bad `Origin`
-(the capitalised-host bug), so the parent is probed first and a probe that cannot
-answer leaves the record alone. A deployment with no `children/` route at all
-(`.routeNotFound`) promotes without probing, since retrying as a sub-page is
-hopeless there. Anything else rejected on the merits sets `.failed`, which the
+the user, a lost body is not — but only on *evidence*. A `403` on a POST is not
+only "the parent isn't yours": it is also what Django answers for a bad `Origin`
+(the capitalised-host bug), and an HTML `404` is not proof a route is absent,
+since a proxy can serve one for a path it swallowed. So the parent is **probed**,
+and its answer decides — gone or forbidden ⇒ promote; reachable but
+`abilities.childrenCreate` false ⇒ promote (permission is the abilities dict's
+call, never ours to infer, and without this branch a permission downgrade between
+minting and replaying had *no terminal state at all*: it never promoted, never
+failed, and paid a POST plus a probe on every trigger forever); reachable and
+willing ⇒ the failure was about something else, so retry. A probe that cannot
+answer leaves the record alone — "I couldn't ask" must never read as "it isn't
+there". Anything else rejected on the merits sets `.failed`, which the
 pass skips and a relaunch retries once — note that is *not* the reading surface's
 "tap to retry", which cannot reach a local document whose content is parked in
 `queued`; a create-specific affordance belongs with the UI.
+
+**A resume reads `formattedContent`, not `document`.** The latter carries no body,
+so using it meant stamping `markdown: ""` into the baseline — asserting the server
+was empty when nothing had checked. Since the migration enqueues straight into a
+save, a checkpointed document that had *acquired* a body would have been silently
+full-overwritten, and the false baseline would have misled every later
+`draftSyncDecision` too. `""` is provable only on the fresh-POST path, where this
+device created the document a moment earlier.
 
 **A resume whose document is gone drops its checkpoint.** Retrying that GET
 forever would leave the document in no list (a checkpointed record is withheld

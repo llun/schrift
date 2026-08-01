@@ -1430,9 +1430,19 @@ markdown write endpoint**. Understand this before touching the save path:
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
   edit loss unrepresentable. **No failure strands content**: transport/5xx/
-  `.sessionExpired` retry later, a sub-page whose parent is gone is **promoted to
-  a root** (placement is recoverable, a body is not), and anything rejected on the
-  merits goes `.failed` for the user to retry.
+  `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
+  promotes to a root only on evidence (gone, forbidden, or
+  `abilities.childrenCreate` false) — a bare 403 is also what Django returns for a
+  bad `Origin`, and an HTML 404 is not proof a route is absent, so promoting on
+  either alone would silently re-parent every sub-page; and anything else rejected
+  on the merits goes `.failed`, which stops the retry loop but is **not** reachable
+  by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
+  non-nil, which a local document with content always has), so a relaunch is the
+  escape until the UI offers a create-specific one.
+  **A resume reads `formattedContent`, never `document`** — the latter carries no
+  body, so it would stamp `markdown: ""` into the baseline and full-overwrite a
+  document that had since acquired one, then mislead every later decision with the
+  false baseline. `""` is provable only on the fresh-POST path.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
