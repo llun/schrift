@@ -66,6 +66,17 @@ struct SaveStatusIndicator: View {
                 Text(loc[.editor_save])
                     .font(DocsFont.footnote.weight(.semibold))
                     .foregroundStyle(DocsColor.textBrand)
+                    // Fill the row before taking the tap shape. A footnote line
+                    // is ~16pt tall, so the drawn text was less than half the
+                    // 44pt target on its own; the enclosing row supplies the
+                    // height (see `EditorView.saveStatusRow`). The width floor
+                    // matters here and nowhere else in this switch: "Save" is
+                    // four characters, narrower than 44pt at the default text
+                    // size, where every other state is a whole phrase.
+                    // `.leading`, or widening the box would shift the word off
+                    // the row's leading edge where every other state starts.
+                    .frame(minWidth: DocsSpacing.rowMinHeight, maxHeight: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(loc[.editor_save_now_a11y])
@@ -108,6 +119,11 @@ struct SaveStatusIndicator: View {
                         .font(DocsFont.footnote.weight(.semibold))
                 }
                 .foregroundStyle(DocsColor.danger)
+                // The only retry affordance there is while editing — and, when
+                // offline, the only way out at all, since tap-to-edit is
+                // blocked. It has to be reachable.
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(loc[.editor_save_failed_a11y])

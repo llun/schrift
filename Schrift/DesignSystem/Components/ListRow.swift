@@ -26,8 +26,16 @@ struct ListRow: View {
         // action) render as plain views so VoiceOver doesn't announce an inert
         // button (mirrors the reference's `interactive` gating).
         if let action {
-            Button(action: action) { rowContent }
-                .buttonStyle(.plain)
+            Button(action: action) {
+                // Without this the row's `Spacer` and padding are dead: a plain
+                // button hit-tests the shape its label actually draws, so only
+                // the icon and the text took the tap and the rest of a 44pt row
+                // did nothing. These rows carry Delete document, Sign out and
+                // both conflict-resolution choices, so the miss lands on exactly
+                // the decisions worth getting right.
+                rowContent.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         } else {
             rowContent
         }

@@ -58,6 +58,24 @@ struct Avatar: View {
     /// (`Features/Editor/ImageLoadPolicy.swift`) prevents for document images.
     var imageURL: URL? = nil
     var size: CGFloat = 36
+    /// Supplied by `AvatarGroup` so a stacked row measures everything — the
+    /// discs, the negative overlap, the "+N" disc — from **one** scale. Two
+    /// `@ScaledMetric`s declared with the same base and `relativeTo:` do agree,
+    /// so this is not a live fix; it makes the invariant structural instead of
+    /// a comment, which is the rule `DocIcon` states next to its own scaling
+    /// (scaling is not a flat multiple, so lengths that must line up should come
+    /// from a single measured value rather than two that are trusted to match).
+    var scaleOverride: CGFloat? = nil
+
+    /// The disc and its initials scale together, like `DocIcon`. Every avatar
+    /// sits beside a name or an email that grows with Dynamic Type, so a fixed
+    /// one shrinks against its own label at large text sizes — and scaling only
+    /// the initials would crop them inside a fixed circle.
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+
+    /// The rendered diameter. Read this, never `size`, anywhere that positions
+    /// or measures the avatar.
+    var scaledSize: CGFloat { size * (scaleOverride ?? scale) }
 
     var body: some View {
         Group {
@@ -71,7 +89,7 @@ struct Avatar: View {
                 initialsView
             }
         }
-        .frame(width: size, height: size)
+        .frame(width: scaledSize, height: scaledSize)
         .clipShape(Circle())
         // Decorative: an adjacent name label carries the identity in every use.
         .accessibilityHidden(true)
@@ -83,7 +101,7 @@ struct Avatar: View {
             .fill(Color(lightHex: colors.light, darkHex: colors.dark))
             .overlay(
                 Text(avatarInitials(for: name))
-                    .font(.system(size: size * 0.4, weight: .semibold))
+                    .font(.system(size: scaledSize * 0.4, weight: .semibold))
                     .foregroundStyle(.white)
             )
     }

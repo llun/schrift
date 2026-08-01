@@ -879,6 +879,29 @@ new code reads like the surrounding code.
   it is offered on the narrowest supported devices, so a tenth button fails a
   test rather than a screen. Measure a row of fixed-minimum controls against the
   narrowest device before adding to it.
+- **A 44pt frame is not a 44pt tap target — a plain `Button` hit-tests the shape
+  its label *draws*.** So a `Button { HStack { icon; title; Spacer() } }` is
+  tappable on the glyphs and nothing else: the `Spacer`, the padding and the rest
+  of the row are dead, however tall the frame says it is. Every interactive row
+  therefore ends its label with **`.contentShape(Rectangle())`** (`ListRow`,
+  `ProfileTrailingRow`, `SharedRow`, `SubpageRow`, `PagesTreeDrawer`), and a label
+  that must fill a taller container takes **`.frame(maxHeight: .infinity)` first**
+  — a `Text` is only as tall as its line, so the shape it hands over is that line
+  (`SaveStatusIndicator`'s Save/retry, whose row supplies the height so it can't
+  jump between save states). Two shapes this rule takes:
+  - a small glyph inside a bigger target keeps the glyph fixed and pads *outside*
+    it — that is what `IconButton` does, and why an icon-only control should go
+    through `IconButton` rather than wrapping a bare `MaterialSymbol` in a
+    `Button` (the Home error-banner dismiss was a 13pt cross before it did);
+  - where a hard frame would move the glyph — the checklist checkbox is the
+    adornment of a `.top`-aligned row, so a 44pt box would centre it below the
+    first line of text it sits beside — grow the hit rect and give the growth
+    back with **symmetric negative padding**
+    (`.padding(x).contentShape(Rectangle()).padding(-x)`): same layout, bigger
+    target.
+  None of this is visible in a screenshot or catchable by the test suite, which
+  is why it survived a whole design refresh on `Delete document`, `Sign out` and
+  both conflict-resolution rows. Check it by tapping the *padding*, not the text.
 - **Inter-row hairlines are opt-in per call site, not a `ListSection`
   parameter.** There is no `divided:` flag in the Swift code (that's the React
   handoff's prop) — a section draws separators only where its own body

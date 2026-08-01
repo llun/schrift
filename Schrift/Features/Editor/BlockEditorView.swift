@@ -155,6 +155,15 @@ private struct BlockEditorRow: View {
             } label: {
                 MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: 17)
                     .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
+                    // Grow the hit rect, then give the growth back to the layout.
+                    // A plain `.frame(44)` would work for the target but this is
+                    // the adornment of a `.top`-aligned row, so the taller box
+                    // would centre the glyph below the first line of text it is
+                    // meant to sit beside. The pair leaves the glyph exactly
+                    // where it was and roughly doubles what you can hit.
+                    .padding(DocsSpacing.spaceXS)
+                    .contentShape(Rectangle())
+                    .padding(-DocsSpacing.spaceXS)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(checked ? loc[.editor_checklist_not_done_a11y] : loc[.editor_checklist_done_a11y])
