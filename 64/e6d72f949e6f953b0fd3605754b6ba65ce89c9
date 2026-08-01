@@ -1,0 +1,37 @@
+docs/architecture.md
+  s_351b5e522a97a5::t_85a96d8539bc8d 25-27
+CLAUDE.md
+  s_351b5e522a97a5::t_85a96d8539bc8d 1411-1433
+docs/offline-and-sync.md
+  s_351b5e522a97a5::t_99bca503246242 1161,1171-1227
+  s_351b5e522a97a5::t_13f5db522c5051 1228
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTests.swift
+  s_351b5e522a97a5::t_7463ba4d4d4fab 75-76
+  s_351b5e522a97a5::t_dfc33ca3f24e37 1-74,77-252,259-388
+  s_351b5e522a97a5::t_2d6ac264be08bb 253-258
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_351b5e522a97a5::t_950ff524112a39 466-470
+  s_351b5e522a97a5::t_742a8dc1ce6975 783-788
+  s_351b5e522a97a5::t_8c5027c3d72616 400,402-465,471-574
+  s_351b5e522a97a5::t_4f44b7ec855edf 401
+  s_351b5e522a97a5::t_0f6db27ed61eb5 384-386,393-399
+  s_351b5e522a97a5::t_8c12826f185a2f 92-96
+  s_351b5e522a97a5::t_37c26d5b9213b3 178-179,187-188
+  s_351b5e522a97a5::t_434ac71f5717e9 152-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "64e6d72f949e6f953b0fd3605754b6ba65ce89c9",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
