@@ -498,16 +498,29 @@ final class DocumentSaveCoordinator {
             // next pass creating a second one. `finishMigration` decides what to do with it.
             record.syncedServerID = created.id
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
-            finishMigration(record, created: created)
+            // `""` is provable here, not assumed: this POST created the document a moment ago.
+            finishMigration(
+                record, serverID: created.id, serverTitle: created.title,
+                serverUpdatedAt: created.updatedAt, serverMarkdown: "", document: created)
             return
         }
-        // Resuming after a death between the checkpoint and the migration. The document
-        // exists server-side; fetch what it looks like so the baseline is the server's own
-        // state rather than a guess.
+        // Resuming after a death between the checkpoint and the migration.
         guard let serverID = record.syncedServerID else { return }
         do {
-            let created = try await client.document(documentID: serverID)
-            finishMigration(record, created: created, isResume: true)
+            // **`formattedContent`, not `document`.** The latter carries no body, so using it
+            // meant stamping `markdown: ""` into the baseline — asserting the server was empty
+            // when nothing had checked. The migration then enqueues straight into `start`, so
+            // a document that had *acquired* a body would be silently full-overwritten, and
+            // the lying baseline would mislead every later `draftSyncDecision` too. That is no
+            // longer a crash-only path: "checkpointed but not migrated" is a routine state
+            // now, and in it the document is visible and editable on the web.
+            let formatted = try await client.formattedContent(documentID: serverID)
+            // Still needed for the list caches, which take a `Document`.
+            let document = try await client.document(documentID: serverID)
+            finishMigration(
+                record, serverID: serverID, serverTitle: formatted.title,
+                serverUpdatedAt: formatted.updatedAt, serverMarkdown: formatted.content ?? "",
+                document: document)
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             // The checkpointed document is gone or no longer ours, so resuming can never
             // succeed — and silently retrying it forever would leave this document in no
@@ -523,7 +536,10 @@ final class DocumentSaveCoordinator {
 
     /// The migration, guarded by the two things that can have changed while the POST or the
     /// resume GET was in flight.
-    private func finishMigration(_ record: PendingDocumentCreate, created: Document, isResume: Bool = false) {
+    private func finishMigration(
+        _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
+        serverMarkdown: String, document: Document
+    ) {
         // An editor can have opened during the await, and migrating under a live screen is
         // exactly what `openEditors` exists to prevent: the screen's `documentID` is a `let`,
         // so it would keep enqueueing under an id the holds no longer cover — and the next
@@ -534,7 +550,9 @@ final class DocumentSaveCoordinator {
         // has already removed the record and the draft; migrating would re-materialise a
         // document they threw away.
         guard pendingCreates[record.localID] != nil else { return }
-        migrateCreatedDocument(record, to: created, isResume: isResume)
+        migrateCreatedDocument(
+            record, serverID: serverID, serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt,
+            serverMarkdown: serverMarkdown, document: document)
     }
 
     /// Move a local document onto the id the server just gave it, then hand its content to
@@ -544,17 +562,18 @@ final class DocumentSaveCoordinator {
     /// the holds in force: dropping it first and dying would leave a draft under a dead local
     /// id that the very next sync pass GETs, 404s, and deletes.
     private func migrateCreatedDocument(
-        _ record: PendingDocumentCreate, to created: Document, isResume: Bool = false
+        _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
+        serverMarkdown: String, document: Document
     ) {
         let localID = record.localID
-        let serverID = created.id
-        // The create response *is* the known server state, and stamping it is mandatory: a
-        // baseline-less draft routes to `draftSyncDecision` rule 3's 120 s clock tolerance,
-        // and a document created hours ago offline is far outside it — the replay would
-        // answer `.discardServerWins` and the launch pass would delete the body, leaving the
-        // empty document this POST just made.
+        // The server state the caller actually observed — the create response on a fresh POST
+        // (where the empty body is provable), a `formattedContent` fetch on a resume (where it
+        // is not). Stamping a baseline is mandatory either way: a baseline-less draft routes
+        // to `draftSyncDecision` rule 3's 120 s clock tolerance, and a document created hours
+        // ago offline is far outside it — the replay would answer `.discardServerWins` and the
+        // launch pass would delete the body, leaving the empty document this POST just made.
         let baseline = DraftBaseline(
-            serverUpdatedAt: created.updatedAt, markdown: "", title: created.title)
+            serverUpdatedAt: serverUpdatedAt, markdown: serverMarkdown, title: serverTitle)
         let draft = draftStore.draft(for: localID)
         // The partially-migrated draft, if a previous attempt died between writing it and
         // removing the local one. Without this fallback a resume reads an already-removed
@@ -569,7 +588,7 @@ final class DocumentSaveCoordinator {
         // server's title, so `draftTitleOutcome` would see draft == baseline and silently keep
         // the old name. There is no co-author to protect: this device made the document.
         let title =
-            queued[localID]?.title ?? draft?.title ?? migrated?.title ?? created.title ?? record.title
+            queued[localID]?.title ?? draft?.title ?? migrated?.title ?? serverTitle ?? record.title
 
         // **Write the content under the new id before taking it off the old one.** These are
         // synchronous, but the body between them lives only in the local `body` binding, and
@@ -589,7 +608,7 @@ final class DocumentSaveCoordinator {
         settledSaves[localID] = nil
         lastConfirmedPushMarkdown[localID] = nil
         knownServerTitles[localID] = nil
-        knownServerTitles[serverID] = created.title
+        knownServerTitles[serverID] = serverTitle
         // `conflicts` is provably nil for a local id today — every `recordConflict` caller
         // needs a *successful* server interaction with it, which a client-minted id cannot
         // get. Cleared anyway, because that is an assumption about code elsewhere: if it ever
@@ -606,7 +625,7 @@ final class DocumentSaveCoordinator {
 
         // Make it visible under its real id before the record disappears, or the document
         // drops out of Home between here and the next successful list fetch.
-        insertIntoListCaches(created, parentID: record.parentID)
+        insertIntoListCaches(document, parentID: record.parentID)
 
         removePendingCreate(documentID: localID)
 
@@ -653,34 +672,35 @@ final class DocumentSaveCoordinator {
             // raised. Leave everything; the next trigger retries.
             return
         }
-        if record.parentID != nil, docsError == .routeNotFound {
-            // This deployment has no `documents/{id}/children/` route at all, so retrying as
-            // a sub-page is hopeless however healthy the parent is. Promote rather than
-            // stranding the body — and skip the probe, which asks about the wrong thing.
-            guard pendingCreates[record.localID] != nil else { return }
-            var promoted = record
-            promoted.parentID = nil
-            updatePendingCreate(promoted)
-            return
-        }
-        if let parentID = record.parentID, docsError == .forbidden || docsError == .notFound {
-            // Maybe the parent is gone or no longer ours — but a 403 on a POST is **not**
-            // only that. Django answers a bad `Origin` with `403 CSRF Failed`, which flattens
-            // to `.forbidden` here, and that is the documented symptom of the capitalised-host
-            // bug: every sub-page create would be silently promoted to a root, irreversibly.
-            // So ask about the parent specifically, and promote only on evidence.
-            let parentIsGone: Bool
+        if let parentID = record.parentID,
+            docsError == .forbidden || docsError == .notFound || docsError == .routeNotFound
+        {
+            // Maybe we may not create children under that parent — but a 403 on a POST is
+            // **not** only that. Django answers a bad `Origin` with `403 CSRF Failed`, which
+            // flattens to `.forbidden` here, and that is the documented symptom of the
+            // capitalised-host bug: every sub-page create would be silently promoted to a
+            // root, irreversibly. An HTML 404 is likewise not proof a route is absent — a
+            // proxy can serve one for a path it swallowed. So ask about the parent, and
+            // promote only on what the answer actually says.
+            let promote: Bool
             do {
-                _ = try await client.document(documentID: parentID)
-                parentIsGone = false
+                let parent = try await client.document(documentID: parentID)
+                // The parent is reachable, so the failure was not about it existing. The one
+                // thing that still makes a sub-page impossible *there* is the server saying
+                // so — and permission is the abilities dict's call, never ours to infer.
+                // Without this branch a permission downgrade between minting and replaying
+                // had no terminal state at all: it never promoted, never failed, and paid a
+                // POST plus a probe on every trigger while the caption said "syncs when
+                // online".
+                promote = !parent.abilities.childrenCreate
             } catch let probe as DocsAPIError where probe == .notFound || probe == .forbidden {
-                parentIsGone = true
+                promote = true
             } catch {
                 // The probe itself failed to answer. "I couldn't ask" must never read as
                 // "it isn't there" — leave the record alone and try again next pass.
                 return
             }
-            guard parentIsGone else { return }
+            guard promote else { return }
             // Retry as a **root** document rather than stranding the content: placement is
             // recoverable by the user, a lost body is not.
             guard pendingCreates[record.localID] != nil else { return }

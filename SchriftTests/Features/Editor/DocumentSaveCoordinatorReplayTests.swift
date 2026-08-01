@@ -221,11 +221,11 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(env.children.children(for: unknownParent))
     }
 
-    /// Every interruption point in the migration has to leave the body on disk somewhere.
-    /// The dangerous one is between removing the local draft and enqueueing under the server
-    /// id: in between, the content lives only in a local binding. Writing the replacement
-    /// first means a death anywhere in the sequence still finds it — here, by inspecting the
-    /// store immediately after a migration whose save could not land.
+    /// The content must end up on disk under the server id even when the save never lands.
+    /// Note this pins the *outcome*, not the write ordering that protects it: the window
+    /// where the body lives only in a local binding is a process-death instant no test can
+    /// take, so the reason the draft is written before the old one is removed is argued in
+    /// the code rather than asserted here.
     func testTheBodyIsOnDiskUnderTheServerIDEvenIfTheSaveNeverLands() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -257,6 +257,60 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         await waitUntil { env.drafts.draft(for: self.serverID)?.markdown == "# Written offline" }
         XCTAssertNil(env.drafts.draft(for: local.id), "and nothing is left behind under the local id")
+    }
+
+    /// A sub-page belongs to its parent's level. Whether Home's unfiltered list also
+    /// returns it is the server's answer to give — caching a row the next fetch might not
+    /// return is a worse error than a row arriving one fetch late.
+    func testASubpageIsNotInsertedIntoTheRootRecentsList() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let parent = UUID()
+        let env = makeEnvironment()
+        env.lists.saveRecentDocuments([])
+        env.children.save([], for: parent)
+        env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(env.children.children(for: parent)?.map(\.id), [serverID], "it joins its parent's level")
+        XCTAssertTrue(env.lists.loadRecentDocuments()?.isEmpty ?? false, "and not Home's root list")
+    }
+
+    /// A parent that is reachable but no longer allows children has to reach a terminal
+    /// state: before the abilities check it never promoted, never failed, and paid a POST
+    /// plus a probe on every trigger, forever.
+    func testAParentThatNoLongerAllowsChildrenPromotesToARoot() async {
+        let log = RequestRecorder()
+        let parent = UUID()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
+        MockURLProtocol.stubHandler = { [parent] request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "GET", url.contains(parent.uuidString.lowercased()) {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(parent.uuidString.lowercased())", "title": "Parent",
+                         "abilities": {"children_create": false},
+                         "content": "", "created_at": "2026-03-01T12:00:00Z",
+                         "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+                         "link_reach": "restricted", "link_role": "reader", "user_role": "reader"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(env.creates.create(for: local.id)?.parentID, "promoted rather than retrying forever")
     }
 
     // MARK: - Idempotency
@@ -496,7 +550,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
                     statusCode: 200, headers: [:],
                     body: Data(
                         """
-                        {"id": "\(parent.uuidString.lowercased())", "title": "Parent", "abilities": {},
+                        {"id": "\(parent.uuidString.lowercased())", "title": "Parent",
+                         "abilities": {"children_create": true},
                          "content": "", "created_at": "2026-03-01T12:00:00Z",
                          "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
                          "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
