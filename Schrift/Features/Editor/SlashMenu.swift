@@ -76,10 +76,20 @@ func slashQuery(text: String, kind: BlockKind) -> String? {
     return String(text.dropFirst())
 }
 
-func filteredSlashItems(query: String, items: [SlashMenuItem] = allSlashMenuItems) -> [SlashMenuItem] {
+/// Offline drops **Photo**. Every other item is a local block transformation that the
+/// draft pipeline queues like any other edit, but a photo POSTs a multipart attachment
+/// and there is no queue for one — so offered offline it would open the picker, re-encode
+/// whatever the user chose, and only then fail. That is the same reason "Add a subpage"
+/// and the Pages drawer's "New page" stay gated: it POSTs, so it can't be offered.
+/// (Editing itself is *not* gated — its edits are durable the moment the flush writes
+/// the draft.)
+func filteredSlashItems(query: String, isOffline: Bool = false, items: [SlashMenuItem] = allSlashMenuItems)
+    -> [SlashMenuItem]
+{
+    let available = isOffline ? items.filter { $0.action != .insertPhoto } : items
     let trimmed = query.trimmingCharacters(in: .whitespaces).lowercased()
-    guard !trimmed.isEmpty else { return items }
-    return items.filter { item in
+    guard !trimmed.isEmpty else { return available }
+    return available.filter { item in
         item.title.lowercased().contains(trimmed)
             || item.keywords.contains { $0.hasPrefix(trimmed) }
     }

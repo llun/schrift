@@ -6,6 +6,8 @@ import SwiftUI
 /// inline markers). Never a blind append: everything is selection-aware.
 struct EditorFormattingBar: View {
     @Bindable var viewModel: EditorViewModel
+    /// Disables Photo — it POSTs an attachment, which has no offline queue.
+    var isOffline: Bool = false
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -50,9 +52,13 @@ struct EditorFormattingBar: View {
             }
             // Stays disabled while an upload is in flight (and before content has
             // loaded): the view model would decline anyway, so don't invite the tap.
+            // Offline too — every other action here is a local block transformation the
+            // draft pipeline queues, but this one POSTs a multipart attachment with no
+            // queue behind it, so offering it would open the picker and re-encode the
+            // photo only to fail. Same rule as "Add a subpage" / "New page".
             barButton(
                 icon: .image, label: loc[.editor_format_insert_photo],
-                disabled: !hasTarget || !viewModel.canInsertPhoto
+                disabled: !hasTarget || !viewModel.canInsertPhoto || isOffline
             ) {
                 viewModel.requestPhotoInsertion()
             }

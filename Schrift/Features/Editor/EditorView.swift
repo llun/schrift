@@ -44,11 +44,13 @@ struct SyncCaption: Equatable {
 /// triggers can't fire). (1c) **dirty** content sits above the generic offline wording,
 /// because dirty means "not on disk yet" — the draft is written by the flush — while that
 /// wording asserts durability. This is the same truth `saveStatusDisplay` keeps on the
-/// editing surface, where `.dirty` holds its Save funnel even under a conflict. `.dirty`
-/// reaches *this* caption through the one mutator that runs outside an editing session,
-/// the reading-mode photo insert; pairing it with `isOffline` is defensive rather than
-/// reachable today (that insert needs the network), but the ordering is what stops a
-/// future offline mutator from silently claiming content is saved when it isn't.
+/// editing surface, where `.dirty` holds its Save funnel even under a conflict. No path
+/// renders `.dirty` on *this* caption today: it needs `mode == .reading` at render time,
+/// and the only mutator that runs outside an editing session — the reading-mode photo
+/// insert — flushes in the same synchronous turn it dirties (`insertImageBlock`'s
+/// `defer`), while `finishEditing` flushes before it sets `.reading`. So the tier is
+/// entirely defensive; it exists so a future mutator that *does* leave content dirty in
+/// reading mode cannot silently claim it is saved.
 /// (2) other unsaved local content → save wording (a previously-synced doc with a stranded
 /// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
 func syncCaption(
@@ -503,9 +505,11 @@ struct EditorView: View {
                                 uploadingPhotoBanner
                             }
                             if let query = viewModel.slashQueryText {
-                                SlashMenuView(query: query, onSelect: { viewModel.applySlashSelection($0) })
+                                SlashMenuView(
+                                    query: query, isOffline: isOffline,
+                                    onSelect: { viewModel.applySlashSelection($0) })
                             }
-                            EditorFormattingBar(viewModel: viewModel)
+                            EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
                         }
                     }
                     .padding(.horizontal, DocsSpacing.gutter)

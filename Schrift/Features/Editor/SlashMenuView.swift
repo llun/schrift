@@ -4,6 +4,8 @@ import SwiftUI
 /// popovers are unreliable on iOS; this mirrors mobile Notion).
 struct SlashMenuView: View {
     let query: String
+    /// Drops the Photo item — it POSTs an attachment, which has no offline queue.
+    var isOffline: Bool = false
     var onSelect: (SlashMenuItem) -> Void
 
     @Environment(LocalizationStore.self) private var loc
@@ -12,7 +14,7 @@ struct SlashMenuView: View {
     @ScaledMetric(relativeTo: .body) private var maxHeight: CGFloat = 4 * DocsSpacing.rowMinHeight
 
     var body: some View {
-        let items = filteredSlashItems(query: query)
+        let items = filteredSlashItems(query: query, isOffline: isOffline)
         if !items.isEmpty {
             ScrollView {
                 VStack(spacing: 0) {
@@ -76,6 +78,8 @@ private var slashMenuPreview: some View {
         VStack {
             SlashMenuView(query: "", onSelect: { _ in })
             SlashMenuView(query: "head", onSelect: { _ in })
+            // Offline: same list minus Photo, the one item that POSTs.
+            SlashMenuView(query: "", isOffline: true, onSelect: { _ in })
         }
         .padding()
     }
