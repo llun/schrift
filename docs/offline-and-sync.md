@@ -1179,7 +1179,17 @@ nice-to-have:
   currently always calls the server, which 404s). One without the other gives
   either a Delete row that always errors or a record nothing can remove — and
   that branch is load-bearing, since `discardPendingWork` is what makes the
-  replay's mid-POST delete guard fire.
+  replay's mid-POST delete guard fire. **And it needs a third piece: when the
+  record carries a `syncedServerID`, the branch must issue the server `DELETE`
+  too.** The checkpoint means the document *exists* server-side, so a purely local
+  delete leaves it there — it reappears in Home on the next list fetch, with
+  nothing on the device that knows about it. `discardPendingWork` removes the
+  record unconditionally today, which is right for the un-checkpointed case and
+  a lie for the checkpointed one.
+- **A retry or discard for a record whose create response we could not read**
+  (`replayBlockedAt`). Nothing clears the stamp, so such a document is protected
+  but permanently inert, and its server-side twin — which the failed POST did
+  create — is orphaned.
 - ~~**The create replay**~~ — **landed 2026-08-01**, see below.
 - **A recovery affordance, or a bounded retention policy, for records that can
   never be replayed here** — another account's, or an unattributable one. Their
@@ -1255,8 +1265,44 @@ throughout — so before migrating it re-reads the record from `pendingCreates` 
 delete during the POST must not be undone: writing the stale snapshot back would
 *resurrect* the record `discardPendingWork` removed) and re-checks
 `hasOpenEditor` (a screen opening during the POST is exactly the case the
-deferral exists for). Both bail *after* the checkpoint is persisted, so bailing
-costs nothing: the next pass resumes at migration.
+deferral exists for). Both bail *after* the checkpoint is persisted, so the next
+pass resumes at migration.
+
+That makes the **editor** bail genuinely free. The **delete** bail is not, and the
+difference is worth stating: the POST has already landed, and the record is
+deliberately *not* written back (writing it would resurrect what the delete
+removed), so an empty document is left on the server that nothing on this device
+references any more. Accepted for now, and it is why PR 4's local-delete branch
+owes a server `DELETE` whenever `syncedServerID` is set — otherwise a document the
+user deleted reappears in Home after the next list fetch.
+
+**The two re-checks above are keyed on `localID`; everything the migration writes
+is keyed on `serverID`** — and closing that gap needs its own guards. Once a record
+is checkpointed, `pendingLocalDocuments` withholds it, so the local row disappears
+and the *server* document comes back in an ordinary list fetch, indistinguishable
+from any other. The user can open it, type, and have a save on the wire, all under
+the server id, while a migration that only asked about the local one would
+overwrite that draft (dropping its `lastPushedMarkdown` and conflict stamp),
+replace its `queued` keystrokes, and record a conflict against an in-flight save —
+which the conflict invariant forbids outright. So the migration also defers while
+the server id has an open editor, an in-flight or queued save, or a draft that is
+provably the user's (a draft under the server id is *ours* only once the local one
+is gone, which is exactly what defines the partial-migration window). Deferring is
+normally self-healing rather than a stalemate: the same pass's `runSyncPass` pushes
+that draft, `finish` removes it, and the next pass migrates cleanly. Releasing an
+editor on the **server** id kicks the funnel too, so the deferral doesn't wait for
+an unrelated foreground. The one case that does *not* clear itself is a server-id
+draft whose own push keeps being rejected on the merits — `runSyncPass` skips a
+`.failed` draft, so the migration behind it waits indefinitely. Both bodies stay on
+disk throughout, so this costs the local document its sync, never its content.
+
+**An empty local body is never offered as a conflict.** If the migration finds
+nothing on this device and content on the server, the local side has nothing to
+contribute and arming the pill would offer a "Keep my version" that PATCHes `""`
+and wipes the document. It adopts the server instead — drop the draft, enqueue
+nothing. The state is reachable: the body chain falls back to `""` when the queued
+slot, the local draft and the partially-migrated draft are all absent, which a
+death inside the migration plus an intervening `runSyncPass` produces.
 
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
@@ -1277,12 +1323,35 @@ pass skips and a relaunch retries once — note that is *not* the reading surfac
 "tap to retry", which cannot reach a local document whose content is parked in
 `queued`; a create-specific affordance belongs with the UI.
 
+**One rejection is the exception, and it is persisted.** A `.decoding` failure on
+the create arrives *after* a 201: the server built the document and we merely could
+not read the response, so no checkpoint could be written either (the id was in the
+body that failed to decode). The in-memory `.failed` rule is exactly wrong there,
+because `init` re-seeds every record to `.pendingSync` — a free retry for a
+validation 400, but for this one, a fresh POST on every launch that abandons the
+document the last one built. This is not hypothetical: `CLAUDE.md` records
+`is_favorite`-as-required-`Bool` failing every create after the server had already
+made the document, "quietly littering the server with them". So a decode failure
+stamps `replayBlockedAt` on the record, which the pass skips. The record stays
+protected but inert; nothing clears it yet, so a retry/discard affordance is owed
+with the create UI.
+
 **A resume takes its baseline from `formattedContent`, not `document`** — it calls
 both, but the latter carries no body, so using it for the baseline stamped
 `markdown: ""`, asserting the server was empty when nothing had checked. That
 false baseline would have misled every later `draftSyncDecision`. `""` is provable
 only on the fresh-POST path, where this device created the document a moment
 earlier.
+
+**The `document` call goes first, and is allowed to fail.** It feeds only the list
+caches, and ordering it that way is load-bearing twice. It must not sit *between*
+reading the server's body and acting on that reading — a full round trip is
+hundreds of milliseconds in which a co-author can save, and the conflict check
+below would then be deciding from a body the server no longer holds. And its
+failure must never discard the checkpoint: a transient 403 there would send the next
+pass off to POST a *second* document, orphaning the first along with anything
+written into it. So it is a `try?`, and an absent `Document` simply means the
+document waits for the next ordinary list fetch.
 
 **And a resume that finds a body does not push over it.** Between the checkpoint
 and the migration the document is live and editable on the web, and
@@ -1307,7 +1376,13 @@ that a rename made elsewhere during a deferral is reverted.)
 forever would leave the document in no list (a checkpointed record is withheld
 from `pendingLocalDocuments`) and never pushed — unreachable by every route the
 app offers. Clearing `syncedServerID` lets the next pass create it afresh; there
-is nothing left to duplicate.
+is nothing left to duplicate. **`.notFound` only, never `.forbidden`** — a bare 403
+is not evidence a document is gone (Django answers a bad `Origin` with one, and an
+ancestor access recompute can 403 transiently), and acting on it here creates a
+duplicate and orphans the original, which is unrecoverable, where retrying a
+genuinely revoked document forever is merely stuck with its content safe on the
+device. Same asymmetry the parent probe already applies. `.routeNotFound` is
+likewise transient here: it is a fact about the route, not about this document.
 
 **"Checkpointed but not migrated" is now a routine state**, not only a
 crash-recovery one, because both re-checks above bail after the checkpoint. In it

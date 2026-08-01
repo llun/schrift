@@ -47,6 +47,24 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// found with this set skips straight to migration. Nothing else can close that
     /// window — the backend supports no idempotency key.
     var syncedServerID: UUID?
+    /// Set when a create POST failed in a way that leaves us **unable to tell whether the
+    /// server created the document** — in practice a `.decoding` failure, which arrives
+    /// *after* a 201. Retrying then is not a free retry: it POSTs a second document and
+    /// abandons the first.
+    ///
+    /// This is the one failure that has to survive the process. Every other merits
+    /// rejection (a validation 400) proves nothing was created, so it stays the in-memory
+    /// `.failed` state that `init` deliberately re-seeds to `.pendingSync` — a relaunch
+    /// retries and costs nothing. A decode failure is the opposite: `CLAUDE.md` records
+    /// this having happened here for real (`is_favorite` decoded as a required `Bool`
+    /// failed every create *after* the server had built the document, "quietly littering
+    /// the server with them"), and with a per-launch replay that becomes one orphaned
+    /// document per launch, forever.
+    ///
+    /// Nothing clears it yet, so such a record is inert but still protected — the holds
+    /// key off `isPendingCreate`, which does not read this. Giving the user a way to retry
+    /// or discard belongs with the create UI that can present it.
+    var replayBlockedAt: Date?
 
     init(
         localID: UUID,
@@ -55,7 +73,8 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         createdAt: Date,
         serverOrigin: String,
         ownerUserID: UUID? = nil,
-        syncedServerID: UUID? = nil
+        syncedServerID: UUID? = nil,
+        replayBlockedAt: Date? = nil
     ) {
         self.localID = localID
         self.title = title
@@ -64,6 +83,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         self.serverOrigin = serverOrigin
         self.ownerUserID = ownerUserID
         self.syncedServerID = syncedServerID
+        self.replayBlockedAt = replayBlockedAt
     }
 }
 

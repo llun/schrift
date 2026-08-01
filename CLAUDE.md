@@ -1429,7 +1429,28 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
-  edit loss unrepresentable. **No failure strands content**: transport/5xx/
+  edit loss unrepresentable.
+  **Those re-checks are keyed on the *local* id, and the migration writes under the
+  *server* id — so it defers on that side too.** A checkpointed record is withheld
+  from `pendingLocalDocuments`, so the local row disappears and the server document
+  returns in an ordinary list fetch, indistinguishable from any other: the user can
+  open it, type, and have a save on the wire under `serverID` while a local-id-only
+  guard sees nothing. Migrating then overwrites that draft (dropping its
+  `lastPushedMarkdown` and conflict stamp), replaces its `queued` keystrokes, and
+  records a conflict against an in-flight save — which the conflict invariant
+  forbids. So it also bails on an open editor, an in-flight or queued save, or a
+  draft under `serverID` that is provably the user's (**a server-id draft is *ours*
+  only once the local one is gone** — that is what defines the partial-migration
+  window). This is normally self-healing, not a stalemate: the same pass's
+  `runSyncPass` pushes that draft, `finish` removes it, the next pass migrates.
+  Releasing an editor on the **server** id kicks the funnel too. The exception is a
+  server-id draft whose push is rejected on the merits — `runSyncPass` skips
+  `.failed`, so the migration behind it waits indefinitely; both bodies stay on
+  disk, so that costs the sync, never the content.
+  **An empty local body is never offered as a conflict** — with nothing local to
+  contribute, "Keep my version" would PATCH `""` and wipe the document, so the
+  migration adopts the server (drop the draft, enqueue nothing).
+  **No failure strands content**: transport/5xx/
   `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
   promotes to a root only on evidence (gone, forbidden, or
   `abilities.childrenCreate` false) — a bare 403 is also what Django returns for a

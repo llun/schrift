@@ -350,12 +350,16 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let env = makeEnvironment()
         env.coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
-        // The first call suspends on `/users/me/`; the second then finds the re-entrancy
-        // guard set and coalesces into another pass rather than starting its own POST.
+        // Note the order: `Task {}` on the main actor is *enqueued*, while the directly
+        // awaited call to a same-actor method runs inline with no hop — so the second
+        // statement enters `syncPendingDrafts` first, sets the re-entrancy guard and suspends
+        // on `/users/me/`. Only then does `queued` run, find the guard set, and coalesce into
+        // another pass rather than starting its own POST. Either way round exactly one POST is
+        // the whole point, which is what the assertion pins.
         let coordinator = env.coordinator
-        let first = Task { await coordinator.syncPendingDrafts() }
+        let queued = Task { await coordinator.syncPendingDrafts() }
         await coordinator.syncPendingDrafts()
-        await first.value
+        await queued.value
 
         XCTAssertEqual(creates(log), 1)
     }
@@ -706,5 +710,389 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await env.coordinator.syncPendingDrafts()
 
         XCTAssertEqual(creates(log), 0, "the stub's /users/me/ is a different user")
+    }
+
+    /// A record nothing here could ever send must not even cost the `/users/me/` round trip —
+    /// otherwise every reconnect, foreground and launch pays a request that cannot produce
+    /// work, forever. Distinct from `testAnotherUsersRecordIsNeverPosted`, whose record
+    /// *passes* the cheap gate and is declined afterwards.
+    func testARecordThatCanNeverBeSentCostsNoRequestAtAll() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "From another server", createdAt: Date(),
+                serverOrigin: "https://elsewhere.example.org", ownerUserID: user))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.count, 0, "not even /users/me/")
+    }
+
+    /// A session expiry is not a merits rejection: the shared client's hook has already raised
+    /// the re-login sheet, so the record must stay replayable for the next trigger rather than
+    /// parking at `.failed` for the rest of the process.
+    func testASessionExpiryLeavesTheRecordReplayable() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 401, headers: [:], body: Data(), error: nil) }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(env.creates.create(for: local.id))
+        guard case .failed = env.coordinator.state(for: local.id) else { return }
+        XCTFail("a 401 must not become the terminal state the pass then skips")
+    }
+
+    /// A create the server rejected on the merits must stop retrying on every trigger.
+    func testAMeritsRejectionStopsRetryingWithinTheProcess() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 400, headers: [:], body: Data(), error: nil) }
+
+        await env.coordinator.syncPendingDrafts()
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 1, "the second pass skips the .failed record")
+        guard case .failed = env.coordinator.state(for: local.id) else {
+            return XCTFail("a merits rejection is terminal for this process")
+        }
+        XCTAssertNil(env.creates.create(for: local.id)?.replayBlockedAt, "but a relaunch may still retry a 400")
+    }
+
+    /// The one rejection where "the POST failed" is the wrong inference: a decode failure
+    /// arrives *after* a 201, so the server built the document. Retrying on the next launch
+    /// would abandon it and build another — one orphan per launch, forever.
+    func testAnUnreadableCreateResponseIsNotRetriedOnTheNextLaunch() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        // A 201 whose body cannot be decoded into a `Document`.
+        stubUsersMeThen(log: log) { _ in
+            .init(statusCode: 201, headers: [:], body: Data("{\"unexpected\": true}".utf8), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertEqual(creates(log), 1)
+        XCTAssertNotNil(
+            env.creates.create(for: local.id)?.replayBlockedAt,
+            "the block has to survive the process, unlike the in-memory .failed state")
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 1, "a relaunch must not POST a second document")
+        XCTAssertTrue(
+            relaunched.coordinator.isPendingCreate(documentID: local.id),
+            "and the document stays protected — inert, not abandoned")
+    }
+
+    /// A transient failure on the resume must never discard the checkpoint: that is the only
+    /// thing standing between the app and a duplicate, since the backend has no idempotency
+    /// key.
+    func testATransientResumeFailureKeepsTheCheckpoint() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 503, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.creates.create(for: local.id)?.syncedServerID, serverID,
+            "a 5xx proves nothing about the document")
+        XCTAssertEqual(creates(log), 0)
+    }
+
+    /// A bare 403 is not evidence a document is gone — Django answers a bad `Origin` with
+    /// one. Dropping the checkpoint on it would POST a duplicate and orphan the original.
+    func testAForbiddenResumeKeepsTheCheckpointRatherThanDuplicating() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(relaunched.creates.create(for: local.id)?.syncedServerID, serverID)
+        XCTAssertEqual(creates(log), 0, "never a second document on a bare 403")
+    }
+
+    /// The `document()` fetch is cosmetic — it only feeds the list caches. `formattedContent`
+    /// answering 200 is direct evidence the document exists, so a failure of the cosmetic call
+    /// must neither discard the checkpoint nor stop the migration.
+    func testACosmeticFetchFailureStillMigrates() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes", "content": "",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+            }
+            if request.httpMethod == "GET" {
+                return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        XCTAssertEqual(creates(log), 0, "and the checkpoint was never discarded")
+        XCTAssertEqual(relaunched.drafts.draft(for: serverID)?.markdown, "# Written offline")
+    }
+
+    /// "I couldn't ask" must never read as "it isn't there". Promotion re-parents the document
+    /// irreversibly, so a probe that fails to answer must leave the record alone.
+    func testAParentProbeThatCannotAnswerDoesNotPromote() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let parent = UUID()
+        let local = env.coordinator.createLocalDocument(
+            title: "Child", parentID: parent, ownerUserID: user)
+        stubUsersMeThen(log: log) { request in
+            if request.httpMethod == "POST" {
+                return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            env.creates.create(for: local.id)?.parentID, parent,
+            "an unanswerable probe leaves the placement alone")
+    }
+
+    // MARK: - The server id can be live too
+
+    /// Once a record is checkpointed the local row is withheld and the *server* document comes
+    /// back in an ordinary list fetch — so the user can be editing it under `serverID` while
+    /// the migration still guards only `localID`. Migrating then would overwrite that screen's
+    /// draft and replace its queued keystrokes.
+    func testAMigrationDefersWhileAnEditorHoldsTheServerID() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: serverID)
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Typed on the real doc")
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
+        // The screen's own save is what reaches the server — not the offline body the
+        // migration would have parked in `queued` on top of it. (Its draft is gone because
+        // that save *landed*; `finish` removes a draft the PATCH confirmed.)
+        await waitUntil {
+            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Typed on the real doc"
+        }
+    }
+
+    /// The same hazard without a registered editor: a save for the server id already in flight
+    /// or queued. Migrating would replace the queued slot, and `finish` would then PATCH the
+    /// offline body over the text the user just typed.
+    func testAMigrationDefersWhileASaveForTheServerIDIsQueued() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log, postDelay: 0.2)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# On the wire")
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Queued behind it")
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
+        await waitUntil {
+            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Queued behind it"
+        }
+    }
+
+    /// A draft under the server id belongs to the user unless the local draft is already gone
+    /// (which is what defines the partial-migration window). With both present, overwriting
+    /// the server-id one would destroy work.
+    func testAMigrationNeverOverwritesAUserDraftUnderTheServerID() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Real doc", markdown: "# Authored against the server",
+                updatedAt: Date(), baseline: nil))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Authored against the server",
+            "the user's draft survives")
+    }
+
+    /// The partial-migration window itself — the local draft already removed, the server-id
+    /// one written. The body must come from there, not fall through to `""`.
+    func testAPartiallyMigratedDraftIsAdoptedRatherThanEmptied() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Exactly the shape a death between the two draft writes leaves behind.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Survived the crash",
+                updatedAt: Date(), baseline: nil))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration finished")
+        await waitUntil {
+            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Survived the crash"
+        }
+    }
+
+    /// An empty local body must never be offered as a conflict candidate: "Keep my version"
+    /// would PATCH `""` and wipe the document. With nothing local to contribute, adopt the
+    /// server.
+    func testAnEmptyLocalBodyAdoptsTheServerInsteadOfArmingAWipe() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // No body anywhere on this device — the seed draft is gone too.
+        env.drafts.remove(documentID: local.id)
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Written on the web",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.coordinator.conflict(for: serverID), "nothing to ask about")
+        XCTAssertNil(relaunched.drafts.draft(for: serverID), "and no empty draft left to push")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
+    /// Releasing the editor that held the *server* id must kick the funnel too, or the
+    /// deferred migration waits for an unrelated foreground or reconnect.
+    func testReleasingAnEditorOnTheServerIDRunsTheDeferredMigration() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: serverID)
+        await relaunched.coordinator.syncPendingDrafts()
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "deferred while held")
+
+        relaunched.coordinator.releaseOpenEditor(documentID: serverID)
+
+        await waitUntil { relaunched.creates.create(for: local.id) == nil }
+    }
+
+    // MARK: - More than one record
+
+    /// Every skip in the record loop is a `continue`, not a `return`. One old un-replayable
+    /// record must not block every later one from ever replaying.
+    func testAnUnreplayableRecordDoesNotBlockTheOnesBehindIt() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        // Older, and owned by somebody else — skipped.
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "Theirs", createdAt: Date(timeIntervalSince1970: 1),
+                serverOrigin: origin, ownerUserID: UUID()))
+        let mine = env.coordinator.createLocalDocument(
+            title: "Mine", parentID: nil, ownerUserID: user)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 1)
+        XCTAssertNil(relaunched.creates.create(for: mine.id), "the replayable one behind it still went")
+    }
+
+    // MARK: - Helpers
+
+    /// `/users/me/` answers this user; everything else is the caller's to decide.
+    private func stubUsersMeThen(
+        log: RequestRecorder, _ handler: @escaping @Sendable (URLRequest) -> MockURLProtocol.Stub
+    ) {
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            return handler(request)
+        }
     }
 }

@@ -238,6 +238,14 @@ final class DocumentSaveCoordinator {
     /// the next relaunch, and a hold explicitly dropped on a 404 came back from the dead. A
     /// mirror with several writers is not a mirror.
     ///
+    /// **The one exemption is `migrateCreatedDocument`'s `conflicts[localID] = nil`**, and it
+    /// is one precisely because there is no mirror to diverge from: it runs after the local
+    /// draft has been removed, so `persistConflictOnDraft` would no-op, and the entry it
+    /// clears is provably nil anyway (every `recordConflict` caller needs a *successful*
+    /// server interaction with that id, which a client-minted one cannot get). It is written
+    /// as a direct clear rather than routed through here so that the id is guaranteed to carry
+    /// nothing forward — stating the exemption beats leaving a silent fourth writer.
+    ///
     /// Skips the UserDefaults round-trip when the stamp is already what it should be.
     private func persistConflictOnDraft(documentID: UUID) {
         guard let draft = draftStore.draft(for: documentID) else { return }
@@ -415,7 +423,12 @@ final class DocumentSaveCoordinator {
         guard let held = openEditors[documentID] else { return }
         if held <= 1 {
             openEditors[documentID] = nil
-            if isPendingCreate(documentID: documentID) {
+            // The local id — the ordinary case. Also the **server** id of a checkpointed
+            // record: once checkpointed the local row is withheld and the user meets the
+            // document under its real id, which is exactly the editor `finishMigration`'s
+            // `serverID` guards now defer to. Without this the deferred migration would wait
+            // for an unrelated foreground or reconnect.
+            if isPendingCreate(documentID: documentID) || isCheckpointedServerID(documentID) {
                 Task { await syncPendingDrafts() }
             }
         } else {
@@ -425,6 +438,12 @@ final class DocumentSaveCoordinator {
 
     private func hasOpenEditor(documentID: UUID) -> Bool {
         (openEditors[documentID] ?? 0) > 0
+    }
+
+    /// Whether this is the **server** id a checkpointed record is waiting to migrate onto —
+    /// the id the user actually meets that document under while it sits checkpointed.
+    private func isCheckpointedServerID(_ documentID: UUID) -> Bool {
+        pendingCreates.values.contains { $0.syncedServerID == documentID }
     }
 
     // MARK: - Create replay
@@ -458,6 +477,9 @@ final class DocumentSaveCoordinator {
             // *resurrecting* the record the delete removed.
             guard let record = pendingCreates[snapshot.localID] else { continue }
             guard isReplayable(record, currentUserID: currentUserID) else { continue }
+            // A create whose response we could not read. Retrying POSTs a duplicate and
+            // abandons whatever the server already built — see `replayBlockedAt`.
+            guard record.replayBlockedAt == nil else { continue }
             // A save the *server* rejected on the merits is a retry candidate the user can
             // see; leave it to them, exactly as `runSyncPass` does.
             if case .failed = state(for: record.localID) { continue }
@@ -494,9 +516,12 @@ final class DocumentSaveCoordinator {
             // checkpoint. Same durability as `PendingDraftStore`, which the whole offline path
             // already rests on — worth knowing, not worth a different store.
             //
-            // Written even if the document was deleted while the POST was in flight: the
-            // server object exists either way, and a record that says so is what stops the
-            // next pass creating a second one. `finishMigration` decides what to do with it.
+            // Persisted **only if the record still exists.** A delete during the POST await
+            // has already removed it, and `updatePendingCreate` writes through to disk — so
+            // dropping this guard would write the deleted record *back*, checkpoint attached,
+            // and the next pass would re-materialise in Home a document the user threw away.
+            // The local `record` copy still carries the id, which is what lets
+            // `finishMigration` run its own re-checks rather than deciding here.
             record.syncedServerID = created.id
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             // `""` is provable here, not assumed: this POST created the document a moment ago.
@@ -507,6 +532,18 @@ final class DocumentSaveCoordinator {
         }
         // Resuming after a death between the checkpoint and the migration.
         guard let serverID = record.syncedServerID else { return }
+        // **The cosmetic fetch goes first, and may fail.** It exists only to give the list
+        // caches a `Document`; nothing in the safety argument reads it. Ordering it first is
+        // load-bearing twice over. (a) It must not sit *between* reading the server's body and
+        // acting on that reading: a full round trip is 100s of milliseconds in which a
+        // co-author can save, and the conflict guard below would then be deciding from a body
+        // the server no longer holds. (b) Its failure must never discard the checkpoint — a
+        // 403 here (ACL propagation, a proxy, a bad `Origin`) would otherwise send the next
+        // pass off to POST a *second* document, orphaning the first along with anything
+        // written into it. `try?`: the document just doesn't join the cached list until the
+        // next ordinary fetch.
+        let document = try? await client.document(documentID: serverID)
+        let formatted: FormattedDocumentContent
         do {
             // **`formattedContent`, not `document`.** The latter carries no body, so using it
             // meant stamping `markdown: ""` into the baseline — asserting the server was empty
@@ -515,42 +552,76 @@ final class DocumentSaveCoordinator {
             // the lying baseline would mislead every later `draftSyncDecision` too. That is no
             // longer a crash-only path: "checkpointed but not migrated" is a routine state
             // now, and in it the document is visible and editable on the web.
-            let formatted = try await client.formattedContent(documentID: serverID)
-            // Still needed for the list caches, which take a `Document`.
-            let document = try await client.document(documentID: serverID)
-            finishMigration(
-                record, serverID: serverID, serverTitle: formatted.title,
-                serverUpdatedAt: formatted.updatedAt, serverMarkdown: formatted.content ?? "",
-                document: document)
-        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
-            // The checkpointed document is gone or no longer ours, so resuming can never
-            // succeed — and silently retrying it forever would leave this document in no
-            // list (`pendingLocalDocuments` withholds a checkpointed record) and never
-            // pushed, i.e. unreachable by every route the app offers. Drop the checkpoint so
-            // the next pass creates it afresh; there is nothing left to duplicate.
+            formatted = try await client.formattedContent(documentID: serverID)
+        } catch let error as DocsAPIError where error == .notFound {
+            // The checkpointed document is gone, so resuming can never succeed — and silently
+            // retrying forever would leave it in no list (`pendingLocalDocuments` withholds a
+            // checkpointed record) and never pushed, i.e. unreachable by every route the app
+            // offers. Drop the checkpoint so the next pass creates it afresh; there is nothing
+            // left to duplicate.
+            //
+            // **`.notFound` only — never `.forbidden`.** A bare 403 is not evidence a document
+            // is gone: Django answers a bad `Origin` with `403 CSRF Failed`, and an ancestor
+            // access recompute can 403 transiently. Acting on one here would create a
+            // duplicate and orphan the original, which is unrecoverable, where retrying a
+            // genuinely revoked document forever is merely stuck — and its content is safe on
+            // the device throughout. Same asymmetry `handleCreateFailure` already applies to a
+            // 403 on the parent probe. `.routeNotFound` falls to the transient branch for the
+            // same reason: it is a fact about the route, not about this document.
             record.syncedServerID = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
+            return
         } catch {
             // Transient — leave it for the next pass.
+            return
         }
+        finishMigration(
+            record, serverID: serverID, serverTitle: formatted.title,
+            serverUpdatedAt: formatted.updatedAt, serverMarkdown: formatted.content ?? "",
+            document: document)
     }
 
     /// The migration, guarded by the two things that can have changed while the POST or the
     /// resume GET was in flight.
     private func finishMigration(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
-        serverMarkdown: String, document: Document
+        serverMarkdown: String, document: Document?
     ) {
         // An editor can have opened during the await, and migrating under a live screen is
         // exactly what `openEditors` exists to prevent: the screen's `documentID` is a `let`,
         // so it would keep enqueueing under an id the holds no longer cover — and the next
         // sync pass would 404 and delete that draft. The checkpoint is already persisted, so
-        // bailing out here is free: the next pass resumes at migration.
+        // bailing out on *this* guard is free: the next pass resumes at migration.
         guard !hasOpenEditor(documentID: record.localID) else { return }
         // The user deleted the document while the POST was in flight. `discardPendingWork`
         // has already removed the record and the draft; migrating would re-materialise a
-        // document they threw away.
+        // document they threw away. Note bailing here is **not** free the way the guard above
+        // is: the POST landed, so an empty document is left on the server that nothing on this
+        // device now references — see the delete-branch obligation in `docs/offline-and-sync.md`.
         guard pendingCreates[record.localID] != nil else { return }
+        // **The two guards above are keyed on `localID`; everything below is keyed on
+        // `serverID`.** That asymmetry is a content-loss path on its own. Once a record is
+        // checkpointed, `pendingLocalDocuments` withholds it, so the local row disappears and
+        // the *server* document comes back in an ordinary list fetch — indistinguishable from
+        // any other document. The user can open it, type, and have a save on the wire, all
+        // under `serverID`, while this migration still believes only `localID` matters. It
+        // would then overwrite that draft (dropping its `lastPushedMarkdown` and any conflict
+        // stamp), replace its `queued` keystrokes, and record a conflict against a save that
+        // is in flight — which is also the one thing the conflict invariant forbids.
+        //
+        // Bailing is free here too, and self-healing rather than a stalemate: the very same
+        // pass's `runSyncPass` pushes that draft, `finish` removes it, and the next pass
+        // migrates cleanly.
+        guard !hasOpenEditor(documentID: serverID) else { return }
+        guard inFlight[serverID] == nil, queued[serverID] == nil else { return }
+        // A draft under the server id is *ours* only in the partial-migration window — the
+        // one `migrated` exists for — and that window is defined by the local draft already
+        // being gone (it is removed immediately after the server-id one is written). With the
+        // local draft still present, any server-id draft was authored by the user against the
+        // real document, and overwriting it would destroy work.
+        if draftStore.draft(for: record.localID) != nil, draftStore.draft(for: serverID) != nil {
+            return
+        }
         migrateCreatedDocument(
             record, serverID: serverID, serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt,
             serverMarkdown: serverMarkdown, document: document)
@@ -564,7 +635,7 @@ final class DocumentSaveCoordinator {
     /// id that the very next sync pass GETs, 404s, and deletes.
     private func migrateCreatedDocument(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
-        serverMarkdown: String, document: Document
+        serverMarkdown: String, document: Document?
     ) {
         let localID = record.localID
         // The server state the caller actually observed — the create response on a fresh POST
@@ -633,8 +704,9 @@ final class DocumentSaveCoordinator {
         contentCache.remove(documentID: localID)
 
         // Make it visible under its real id before the record disappears, or the document
-        // drops out of Home between here and the next successful list fetch.
-        insertIntoListCaches(document, parentID: record.parentID)
+        // drops out of Home between here and the next successful list fetch. Absent when the
+        // resume's cosmetic fetch failed — the document simply waits for the next list fetch.
+        if let document { insertIntoListCaches(document, parentID: record.parentID) }
 
         removePendingCreate(documentID: localID)
 
@@ -649,6 +721,19 @@ final class DocumentSaveCoordinator {
         //
         // Compared canonically, because the local body has been through the parser and the
         // server's has not — a formatting-only difference is not a conflict.
+        // **An empty local body is never worth a conflict.** If we have nothing and the server
+        // has something, the local side has nothing to contribute, and arming the pill would
+        // offer a "Keep my version" that PATCHes `""` — wiping the document outright. Adopt
+        // the server instead: drop the draft written above and enqueue nothing, leaving an
+        // ordinary, fully in-sync document.
+        //
+        // Reachable: the `body` chain below falls back to `""` when all three sources are
+        // absent, which a death inside the partial-migration window plus an intervening
+        // `runSyncPass` that pushes and removes the server-id draft produces exactly.
+        if body.isEmpty, !serverMarkdown.isEmpty {
+            draftStore.remove(documentID: serverID)
+            return
+        }
         if !serverMarkdown.isEmpty, canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body) {
             recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
         }
@@ -690,7 +775,14 @@ final class DocumentSaveCoordinator {
     /// A create that did not land. The document stays local and keeps its content whatever
     /// happens here — the only question is whether to try again, and where.
     private func handleCreateFailure(_ error: Error, for record: PendingDocumentCreate) async {
-        guard let docsError = error as? DocsAPIError else { return }
+        guard let docsError = error as? DocsAPIError else {
+            // Not one of ours (a `CancellationError`, anything a future networking change lets
+            // escape). Classify it rather than returning silently, which would be the one exit
+            // from this function that leaves the record POSTing on every trigger with nothing
+            // recorded. In-memory `.failed`, so a relaunch still retries once.
+            markCreateRejected(record)
+            return
+        }
         if retryableSaveFailure(docsError) || docsError == .sessionExpired {
             // Transport, 5xx, rate limit — or a re-login the shared client has already
             // raised. Leave everything; the next trigger retries.
@@ -733,15 +825,37 @@ final class DocumentSaveCoordinator {
             updatePendingCreate(promoted)
             return
         }
-        // Rejected on the merits (a validation 400, a decoding bug). Stop retrying every
-        // trigger — `runCreatePass` skips `.failed` — and let a relaunch try once more, since
-        // `states` is in-memory and `init` re-seeds every record to `.pendingSync`.
-        //
-        // Note this is **not** the reading surface's "tap to retry", despite reusing the
-        // state: `saveNow` early-returns while `pendingSave` is non-nil, and a local document
-        // the user has typed into always has its content parked in `queued`. So for those the
-        // tap is a no-op and a relaunch is the only escape. Giving the create pass its own
-        // retry affordance belongs with the UI that can present it.
+        // A `.decoding` failure is the one rejection where "the POST failed" is provably the
+        // wrong inference: it arrives *after* a 201, so the server built the document and we
+        // merely couldn't read the response — and no checkpoint could be written, because the
+        // id was in the body we failed to decode. Left to the in-memory rule below it would
+        // POST a fresh document on every launch, forever, abandoning each one. So this
+        // rejection is persisted on the record.
+        if case .decoding = docsError {
+            guard var blocked = pendingCreates[record.localID] else { return }
+            blocked.replayBlockedAt = Date()
+            updatePendingCreate(blocked)
+        }
+        markCreateRejected(record)
+    }
+
+    /// The terminal state for a create the server rejected on the merits.
+    ///
+    /// In-memory on purpose: `runCreatePass` skips `.failed`, which stops the retry-per-trigger
+    /// loop, while `init` re-seeds every record to `.pendingSync` so a relaunch tries once
+    /// more. That is the right trade for a validation 400 — nothing was created, so the retry
+    /// is free. The one rejection it is *wrong* for is handled by `replayBlockedAt`.
+    ///
+    /// Note this is **not** the reading surface's "tap to retry", despite reusing the state:
+    /// `saveNow` early-returns while `pendingSave` is non-nil, and a local document the user
+    /// has typed into always has its content parked in `queued`. So for those the tap is a
+    /// no-op and a relaunch is the only escape. Giving the create pass its own retry
+    /// affordance belongs with the UI that can present it.
+    private func markCreateRejected(_ record: PendingDocumentCreate) {
+        // Re-read: this runs after the POST await, and a delete during it has already removed
+        // the record and reset the state. Writing here would leave a `.failed` entry keyed to
+        // an id nothing owns.
+        guard pendingCreates[record.localID] != nil else { return }
         states[record.localID] = .failed("Couldn't save changes. Please try again.")
     }
 
