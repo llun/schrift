@@ -371,7 +371,8 @@ mirrored directory before adding a new test file. Test doubles and shared
 helpers have no source counterpart: fakes live beside the code they fake
 (`SchriftTests/Core/Networking/MockURLProtocol.swift`,
 `SchriftTests/Core/Auth/FakeKeychainStore.swift` / `FakeCookieStorage.swift`),
-and cross-suite helpers live in `SchriftTests/Support/` (`AsyncTestHelpers.swift`
+and cross-suite helpers live in `SchriftTests/Support/` (`FormatSpecifiers.swift` — `formatArgumentList(of:)`, the localization
+gate's parser, itself tested by `FormatSpecifiersTests`; `AsyncTestHelpers.swift`
 — the shared `waitUntil` poller and `RequestRecorder`; `RequestBodyHelpers.swift`
 — `bodyData(from:)`, which drains `httpBodyStream` because `URLSession` moves
 bodies there; `TestImages.swift` — `testPNGData`/`testPixelSize`/`testImageProperties`/
@@ -510,8 +511,18 @@ new code reads like the surrounding code.
   are other-only, Slovene uses the full CLDR `one`/`two`/`few`/`other` set
   including the dual, the rest are one/other — `two`/`few` are optional keys
   only Slovene resolves and otherwise fall back to `other`). `StringsCompletenessTests` gates **every** `L10nKey` present
-  in **every** language table (non-empty) and **placeholder/format-specifier
-  parity** with English (same `%@`/`%d` count per key) — add a key to
+  in **every** language table (non-empty) and **format-argument parity**
+  with English — not a count of `%` but the *argument list* each string
+  implies (`formatArgumentList(of:)`, `SchriftTests/Support/FormatSpecifiers.swift`):
+  which position takes an object, an integer, a double. Counting `%` was
+  blind to the one mismatch that actually crashes — a table writing `%d`
+  where English has `%@`, which hands `String(format:)` an `Int` to
+  dereference as an object pointer — and could not tell a **reordered
+  positional** translation (`%2$@ %1$@`, correct and the whole point of
+  positional specifiers) from a reordered plain one (not). Interchangeable
+  spellings (`%d`/`%i`/`%lld`) compare equal; an unrecognised conversion is
+  recorded rather than dropped, so it surfaces as a mismatch instead of
+  reading as "no argument here" — add a key to
   `L10nKey.swift` + `Strings+en.swift` first (English-only is fine to land;
   other languages are filled in by a translation pass), then that test tells
   you if a table is left stale.
