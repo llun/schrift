@@ -1018,8 +1018,8 @@ to what the Home list passes (still a `Document` / id).
 
 ## Documents created on this device (2026-08-01, storage + holds)
 
-Offline *creation* is still a non-goal above, but its **storage and its two safety
-holds have landed, dormant** — nothing mints a record yet. They land first and
+Offline *creation* is still a non-goal above, but its **storage and its safety
+gates have landed, dormant** — nothing mints a record yet. They land first and
 separately because without them the existing pipeline does not merely fail to
 create a local document, it **destroys** one.
 
@@ -1031,7 +1031,7 @@ until a replay POSTs it and migrates everything keyed by that id.
 
 **`PendingDocumentCreateStore`** holds one `PendingDocumentCreate` per such
 document: `localID`, `title`, `parentID` (a *server* id, or nil for a root),
-`createdAt` (replay order), `serverOrigin`, and `syncedServerID` (the two-phase
+`createdAt` (replay order), `serverOrigin`, `ownerUserID`, and `syncedServerID` (the two-phase
 checkpoint the replay will set the instant its POST lands, so a relaunch resumes
 instead of POSTing a duplicate). It follows the UserDefaults-store conventions and
 is **backup-included**, like `PendingDraftStore`: for a document that exists
@@ -1090,13 +1090,19 @@ document is purely local, and a surviving record would let a replay resurrect it
 **Synthetic `Document`s never enter a persisted metadata cache.**
 `localDocument(from:)` fills the server-owned fields with inert placeholders
 (`path: ""`, `depth: 1`, `numchild: 0`) and claims only locally-true abilities
-(update/partialUpdate/destroy). A list load replaces its array *and* its cache
+(update/partialUpdate — `destroy` waits for a
+no-network delete branch in the UI, since advertising it today would promise a
+delete that 404s). A list load replaces its array *and* its cache
 entry wholesale, so a locally-inserted row would vanish on the next fetch — lists
 merge at **read** time via `mergedWithLocalDocuments(fetched:local:)` instead,
-which also de-duplicates by id for the window where a replay has landed and the
-fetched list already carries the real document. `abilities.childrenCreate` is
-false, which is what holds children-of-local-parents out of scope until a replay
-can order them.
+whose id de-duplication is a cheap guard against overlapping lists and
+**not** a solution to the replay window — there the fetched row carries the
+*server* id while a not-yet-torn-down record surfaces under its local one, so no
+id filter can match them; `pendingLocalDocuments` withholds a checkpointed record
+instead. It also overlays the draft's title, so a document renamed since it was
+minted does not read "Untitled document" in every list.
+`abilities.childrenCreate` is false, which is what holds children-of-local-parents
+out of scope until a replay can order them.
 
 **Protection and permission are separate things, and conflating them cost the
 content.** `isPendingCreate` is deliberately *not* origin-scoped: a record minted
@@ -1111,9 +1117,19 @@ requests *and* no deletion.
 
 The owning-user half exists because origin identifies the **server**, not the
 **account**, and records survive sign-out by design: without it, user B signing
-in to the same server inherits user A's unsynced documents and POSTs them into
-B's account. It is checked by the replay, which can await `/users/me/` — the
-coordinator is built before that returns.
+in to the same server inherits user A's unsynced documents. Listing and sending
+share one `belongsToSession` test, because *showing* B another user's document is
+the worse half of that disclosure — B's edits would land in A's document when A
+signs back in. An unattributable record (nil owner) is kept and protected but
+neither shown nor sent; `createLocalDocument` requires an owner, so nil can only
+come from a future or damaged schema. The send side is checked by the replay,
+which can await `/users/me/` — the coordinator is built before that returns.
+
+**An undecodable store means the records are unknown, not absent.** The blob
+decodes in one `try?`, so a schema slip would otherwise disarm every hold and let
+the next sync pass delete every offline-created document's only copy.
+`holdsUnreadableData` detects that case and suppresses the pass's delete branch
+entirely — cleaning up nothing is recoverable; that is not.
 
 Still to come: the create replay (POST → checkpoint → migrate the draft, caches
 and coordinator maps onto the server id → push the content through the normal

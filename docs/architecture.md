@@ -22,8 +22,8 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   any network attempt, parks at `.pendingSync` ("Saved on this device · syncs
   when online"), and replays on reconnect/foreground/launch. Offline *creation*
   is still out of scope, though its storage and safety holds
-  (`PendingDocumentCreateStore`, plus the two guards that keep any request from
-  naming a client-minted id) have landed dormant. See
+  (`PendingDocumentCreateStore`, plus the gates that keep any *save* from naming a
+  client-minted id) have landed dormant. See
   [`offline-and-sync.md`](offline-and-sync.md).
 - **Persistent sessions.** Session cookies persist in the Keychain (as
   `…WhenUnlockedThisDeviceOnly`, so a restored backup can't carry a live session

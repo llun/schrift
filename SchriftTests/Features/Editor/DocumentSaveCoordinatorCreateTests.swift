@@ -11,6 +11,7 @@ import XCTest
 final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let origin = "https://docs.example.org"
+    private let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
     private var cacheDirectory: URL!
     private var suiteNames: [String] = []
 
@@ -30,9 +31,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeCoordinator(serverOrigin: String? = nil) -> (
-        DocumentSaveCoordinator, PendingDraftStore, PendingDocumentCreateStore
-    ) {
+    private func makeCoordinator() -> (DocumentSaveCoordinator, PendingDraftStore, PendingDocumentCreateStore) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "CoordinatorCreateTests.\(UUID().uuidString)"
         suiteNames.append(suiteName)
@@ -44,7 +43,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             draftStore: draftStore,
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: createStore,
-            serverOrigin: serverOrigin ?? origin,
+            serverOrigin: origin,
             backgroundTasks: .noop
         )
         return (coordinator, draftStore, createStore)
@@ -59,7 +58,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     func testCreatingALocalDocumentRecordsItAndReportsItAsPending() {
         let (coordinator, _, createStore) = makeCoordinator()
 
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         XCTAssertTrue(coordinator.isPendingCreate(documentID: document.id))
         XCTAssertEqual(createStore.create(for: document.id)?.title, "Untitled document")
@@ -72,7 +71,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     func testANewLocalDocumentGetsASeedDraftSoTheEditorCanRenderIt() {
         let (coordinator, draftStore, _) = makeCoordinator()
 
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         let draft = draftStore.draft(for: document.id)
         XCTAssertEqual(draft?.title, "Untitled document")
@@ -85,7 +84,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     func testANewLocalDocumentReportsPendingSyncNotIdle() {
         let (coordinator, _, _) = makeCoordinator()
 
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         XCTAssertEqual(coordinator.state(for: document.id), .pendingSync)
     }
@@ -95,36 +94,36 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// the fetched list cannot match (local vs server), which no de-duplication can fix.
     func testACheckpointedRecordIsNoLongerListedAsLocal() {
         let (coordinator, _, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         var record = createStore.create(for: document.id)!
 
         record.syncedServerID = UUID()
         createStore.save(record)
         let (resumed, _, _) = makeCoordinatorSharing(createStore)
 
-        XCTAssertTrue(resumed.pendingLocalDocuments(parentID: nil).isEmpty)
+        XCTAssertTrue(resumed.pendingLocalDocuments(parentID: nil, currentUserID: user).isEmpty)
         XCTAssertTrue(resumed.isPendingCreate(documentID: document.id), "still protected until migration finishes")
     }
 
     func testPendingLocalDocumentsAreScopedToTheirParent() {
         let (coordinator, _, _) = makeCoordinator()
         let parent = UUID()
-        let root = coordinator.createLocalDocument(title: "Root", parentID: nil)
-        let child = coordinator.createLocalDocument(title: "Child", parentID: parent)
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
 
-        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: nil).map(\.id), [root.id])
-        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: parent).map(\.id), [child.id])
+        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: nil, currentUserID: user).map(\.id), [root.id])
+        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: parent, currentUserID: user).map(\.id), [child.id])
     }
 
     /// A record minted against another server is not *listed* here — you should not see
     /// documents belonging to a server you are not signed in to.
     func testARecordFromAnotherOriginIsNotListed() {
         let (first, _, createStore) = makeCoordinator()
-        let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil)
+        let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil, ownerUserID: user)
 
         let (elsewhere, _, _) = makeCoordinatorSharing(createStore, serverOrigin: "https://other.example.org")
 
-        XCTAssertTrue(elsewhere.pendingLocalDocuments(parentID: nil).isEmpty)
+        XCTAssertTrue(elsewhere.pendingLocalDocuments(parentID: nil, currentUserID: user).isEmpty)
     }
 
     /// …but it **is** still protected. This is the difference between "may we send it"
@@ -137,7 +136,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     func testARecordFromAnotherOriginIsStillProtectedFromTheSyncPass() async {
         let log = RequestRecorder()
         let (first, draftStore, createStore) = makeCoordinator()
-        let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil)
+        let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil, ownerUserID: user)
         first.enqueue(documentID: document.id, title: "Written elsewhere", markdown: "# Body typed on server A")
 
         MockURLProtocol.stubHandler = { request in
@@ -169,7 +168,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
         XCTAssertTrue(coordinator.isReplayable(record, currentUserID: author))
         XCTAssertFalse(coordinator.isReplayable(record, currentUserID: someoneElse))
-        XCTAssertFalse(coordinator.isReplayable(record, currentUserID: nil))
+        XCTAssertFalse(coordinator.isReplayable(record, currentUserID: nil), "an unknown user may send nothing")
     }
 
     func testARecordIsNeverReplayableAgainstAnotherServer() {
@@ -183,28 +182,47 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertFalse(elsewhere.isReplayable(record, currentUserID: author))
     }
 
-    /// A record predating the owner field is origin-checked only — it must not become
-    /// permanently unreplayable just because it was written before the field existed.
-    func testALegacyRecordWithNoOwnerIsStillReplayable() {
+    /// An **unattributable** record belongs to nobody we can name, so it is kept and
+    /// protected but neither listed nor sent. `createLocalDocument` requires an owner, so
+    /// this can only arrive from a future or damaged schema — and "I don't know whose this
+    /// is" must not resolve to "anyone may send it", which is the disclosure the owner
+    /// field exists to prevent.
+    func testAnUnattributableRecordIsProtectedButNeitherListedNorReplayable() {
         let (coordinator, _, createStore) = makeCoordinator()
-        createStore.save(
-            PendingDocumentCreate(
-                localID: UUID(), title: "Legacy", createdAt: Date(timeIntervalSince1970: 1_000),
-                serverOrigin: origin))
-        let record = createStore.allCreates()[0]
+        let orphan = PendingDocumentCreate(
+            localID: UUID(), title: "No owner", createdAt: Date(timeIntervalSince1970: 1_000),
+            serverOrigin: origin)
+        createStore.save(orphan)
+        let (resumed, _, _) = makeCoordinatorSharing(createStore)
 
-        XCTAssertTrue(coordinator.isReplayable(record, currentUserID: UUID()))
+        XCTAssertTrue(resumed.isPendingCreate(documentID: orphan.localID), "still protected")
+        XCTAssertFalse(resumed.isReplayable(orphan, currentUserID: user))
+        XCTAssertTrue(resumed.pendingLocalDocuments(parentID: nil, currentUserID: user).isEmpty)
+    }
+
+    /// The other half of the cross-account hole: a second user on the same server must not
+    /// **see** the first user's unsynced documents either. Listing them would be worse than
+    /// the disclosure `ownerUserID` was added to stop — the content is on screen, and any
+    /// edit lands in the original author's document when they sign back in.
+    func testAnotherUsersLocalDocumentIsNotListedOnTheSameServer() {
+        let (coordinator, _, createStore) = makeCoordinator()
+        let author = UUID()
+        coordinator.createLocalDocument(title: "Author's notes", parentID: nil, ownerUserID: author)
+
+        let someoneElse = UUID()
+        XCTAssertTrue(coordinator.pendingLocalDocuments(parentID: nil, currentUserID: someoneElse).isEmpty)
+        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: nil, currentUserID: author).count, 1)
     }
 
     /// The title shown in a list is the one the user last typed, not the one the document
     /// was minted with — otherwise every list says "Untitled document" until the replay.
     func testAListedLocalDocumentShowsTheRenamedTitle() {
         let (coordinator, _, _) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
-        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: nil).first?.title, "Notes")
+        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: nil, currentUserID: user).first?.title, "Notes")
     }
 
     /// The record outlives the process that minted it, so a relaunch still knows the
@@ -212,7 +230,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// `enqueue` of the new process, before any replay has run.
     func testAPendingCreateSurvivesARelaunch() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         let (relaunched, _, _) = makeCoordinatorSharing(createStore, draftStore: draftStore)
 
@@ -232,7 +250,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
         }
         let (coordinator, draftStore, _) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
@@ -246,7 +264,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// vanished from it would let the screen claim there is nothing unsaved.
     func testAHeldCreateSaveIsStillVisibleAsPendingWork() {
         let (coordinator, _, _) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
@@ -257,7 +275,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// rather than stacking, so the replay pushes the newest content once.
     func testASecondEditReplacesTheHeldOne() {
         let (coordinator, draftStore, _) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# First")
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Second")
@@ -279,7 +297,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
         }
         let (coordinator, _, _) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
         coordinator.clearResolvedConflict(documentID: document.id)
@@ -307,7 +325,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
         let (coordinator, draftStore, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         await coordinator.syncPendingDrafts()
 
@@ -327,7 +345,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
         let (coordinator, draftStore, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
         let (relaunched, _, _) = makeCoordinatorSharing(createStore, draftStore: draftStore)
@@ -343,11 +361,40 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// for a document that exists nowhere but this device.
     func testAPendingCreateStillReportsPendingSyncAfterARelaunch() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         let (relaunched, _, _) = makeCoordinatorSharing(createStore, draftStore: draftStore)
 
         XCTAssertEqual(relaunched.state(for: document.id), .pendingSync)
+    }
+
+    /// The whole hold rests on the create store decoding. If it ever doesn't, the records
+    /// are *unknown* — not absent — so any draft might belong to a local document, and the
+    /// 404 branch would delete every offline-created document's only copy at once. Cleaning
+    /// up nothing is recoverable; that is not.
+    func testAnUnreadableCreateStoreSuppressesTheSyncPassDeleteEntirely() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        let suiteName = "CoordinatorCreateTests.corrupt.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
+        let orphanedByCorruption = UUID()
+        draftStore.save(
+            PendingDraft(
+                documentID: orphanedByCorruption, title: "Doc", markdown: "# Written offline", updatedAt: Date()))
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingCreates")
+
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: origin, backgroundTasks: .noop)
+        await coordinator.recoverDrafts()
+
+        XCTAssertEqual(
+            draftStore.draft(for: orphanedByCorruption)?.markdown, "# Written offline",
+            "unknown records must not read as 'no local documents exist'")
     }
 
     /// A real server document is unaffected: its 404 still means "deleted elsewhere",
@@ -371,7 +418,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// the user threw away.
     func testDiscardingPendingWorkRemovesTheCreateRecordToo() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
         coordinator.discardPendingWork(documentID: document.id)
@@ -386,7 +433,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// touch the create record either.
     func testSuppressingLocalWriteThroughLeavesACreateRecordAlone() {
         let (coordinator, _, createStore) = makeCoordinator()
-        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
 
         coordinator.suppressLocalWriteThrough(documentID: document.id)
 

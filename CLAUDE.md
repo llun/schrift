@@ -1325,9 +1325,9 @@ markdown write endpoint**. Understand this before touching the save path:
 - **A document created on this device has no server id, and two holds keep the
   pipeline from pretending otherwise.** `PendingDocumentCreateStore` records it
   (`PendingDocumentCreate`: `localID`, `title`, `parentID`, `createdAt`,
-  `serverOrigin`, `syncedServerID`), the coordinator mirrors the records whose
-  origin matches this session, and `isPendingCreate(documentID:)` is the predicate
-  everything keys off. **Invariant: no *save* may ever name a pending-create id.**
+  `serverOrigin`, `ownerUserID`, `syncedServerID`), the coordinator mirrors
+  **every** record — protection is unconditional — and
+  `isPendingCreate(documentID:)` is the predicate the holds key off. **Invariant: no *save* may ever name a pending-create id.**
   It is enforced at three funnels in the coordinator, each load-bearing rather
   than defensive. (Scoped to saves deliberately: opening a local document names
   its id from places the coordinator does not own — `formattedContent`, the
@@ -1367,17 +1367,29 @@ markdown write endpoint**. Understand this before touching the save path:
   no-network delete branch (advertising it today would promise a delete that
   404s, and leave the record un-removable — `discardPendingWork` is reached only
   from a *successful* delete).
-  **Protection and permission are separate, and conflating them cost content.**
-  `isPendingCreate` is deliberately **not** origin-scoped — a record minted
-  against another server still names an id that would 404 here — while
-  `isReplayable(_:currentUserID:)` (origin **and** owning user) decides what may
-  be sent, and `pendingLocalDocuments` decides what is listed. Scoping the holds
-  by origin instead left a foreign record's draft unguarded, because
-  `runSyncPass` walks *every* draft: signing in elsewhere 404ed and **deleted**
-  it, so "dormant" destroyed the content it claimed to preserve. Dormant means no
-  requests *and* no deletion. The owning-user half matters because origin
-  identifies the server, not the account, and records survive sign-out — without
-  it, user B inherits user A's unsynced documents on the same server.
+  **Protection and ownership are separate, and conflating them cost content.**
+  `isPendingCreate` is deliberately **unscoped** — a record minted against another
+  server still names an id that would 404 here — while one `belongsToSession`
+  test (origin **and** owning user) gates both what may be **listed**
+  (`pendingLocalDocuments(parentID:currentUserID:)`) and what may be **sent**
+  (`isReplayable`). Scoping the holds by origin instead left a foreign record's
+  draft unguarded, because `runSyncPass` walks *every* draft: signing in elsewhere
+  404ed and **deleted** it, so "dormant" destroyed the content it claimed to
+  preserve. Dormant means no requests *and* no deletion.
+  Listing and sending share one test on purpose: origin identifies the server, not
+  the account, and records survive sign-out — so *showing* user B another user's
+  unsynced document is the worse half of the same disclosure, since B's edits
+  would land in A's document when A signs back in. An **unattributable** record
+  (nil owner) is kept and protected but neither shown nor sent;
+  `createLocalDocument` takes a non-optional `ownerUserID` so nil can only come
+  from a future or damaged schema, and "I don't know whose this is" must never
+  resolve to "anyone may send it".
+  **The store's `try?` decode is all-or-nothing, so an undecodable blob means the
+  records are *unknown*, not absent** — which would disarm every hold and let the
+  next sync pass delete every offline-created document's only copy.
+  `holdsUnreadableData` detects it and suppresses `runSyncPass`'s delete branch
+  outright: cleaning up nothing is recoverable, that is not. Every field added to
+  the record must stay Optional-on-decode for the same reason.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and

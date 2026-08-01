@@ -115,6 +115,19 @@ final class PendingDocumentCreateStore {
         loadAll().values.sorted { orderedByCreation($0, $1) }
     }
 
+    /// There is stored data, and it does not decode — so the records are **unknown**,
+    /// which is a different thing from "there are none".
+    ///
+    /// The distinction is load-bearing rather than pedantic: the holds key off these
+    /// records, and `runSyncPass` deletes a draft whose document 404s. Reading a corrupt
+    /// blob as "no local documents exist" would therefore disarm every hold and let the
+    /// next sync pass destroy the content of every offline-created document at once. The
+    /// coordinator asks this at init and suppresses that delete entirely.
+    var holdsUnreadableData: Bool {
+        guard let data = userDefaults.data(forKey: Self.createsKey) else { return false }
+        return (try? decoder.decode([String: PendingDocumentCreate].self, from: data)) == nil
+    }
+
     private func loadAll() -> [String: PendingDocumentCreate] {
         guard let data = userDefaults.data(forKey: Self.createsKey),
             let creates = try? decoder.decode([String: PendingDocumentCreate].self, from: data)
