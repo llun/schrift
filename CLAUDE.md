@@ -1582,9 +1582,13 @@ markdown write endpoint**. Understand this before touching the save path:
   reason: "Add a subpage" (`EditorView`) and the Pages drawer's "New page" POST,
   and a document that does not exist server-side has no id for the draft
   pipeline to PATCH.
-  Two decisions ride with this. (a) The editor's `isOffline` is **chrome only** —
-  the banner, the `.pendingSync` retry affordance, the presence badge — and stays
-  derived from `HomeViewModel`'s last list-fetch outcome. It is deliberately
+  Two decisions ride with this. (a) **`isOffline` never gates durability or a save
+  decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
+  the presence badge) plus the POST-only affordances above (photo, the two create
+  buttons). Nothing about whether an edit is kept, queued, or replayed reads it.
+  It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
+  *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the
+  **list** endpoint sets it with the network perfectly healthy. It is deliberately
   *not* wired to `ConnectivityMonitor`, whose own doc comment records that it is
   "a sync trigger only" (a satisfied `NWPath` is not a usable server — see the
   Simulator HTTP/3 stall); every consequential outcome comes from a real request
@@ -1593,19 +1597,20 @@ markdown write endpoint**. Understand this before touching the save path:
   holding writes would only widen the divergence window and manufacture conflicts
   against co-authors. Accepted cosmetic wrinkle: with the toggle on and the
   network up, the offline banner shows while a save quietly succeeds.
-  **One newly-reachable interaction to know about** (Work Offline is the only way
-  to reach it, because otherwise `isOffline` tracks a real fetch failure): with
-  the toggle **on** and the network actually **up**, a save that parks at
-  `.pendingSync` for a server-side reason (a 5xx, a rate limit) offers no manual
-  retry — `syncCaption` suppresses it while `isOffline` — and the reconnect
-  trigger cannot fire, because connectivity never changed. It is not a dead end:
-  a foreground cycle re-runs `syncPendingDrafts`, and one more keystroke turns the
-  editing surface's indicator back into a tappable **Save**. Before this change
-  the state was unreachable (Work Offline forced `isOffline`, which blocked
-  editing, so no new `.pendingSync` could be created). Fixing it properly means
-  deciding whether the retry rule should key off real reachability rather than
-  this flag — deliberately left alone here, since that would overturn the
-  "`ConnectivityMonitor` is a sync trigger only" decision above.
+  **One interaction to know about, which this change makes easy to reach.**
+  Whenever `isOffline` is true but the network is actually **up** — Work Offline
+  on, or any non-401 failure of the *list* fetch — a save parked at `.pendingSync`
+  by a server-side reason (a 5xx, a rate limit) offers no manual retry, because
+  `syncCaption` suppresses it while `isOffline`, and no reconnect edge can fire,
+  because connectivity never changed. It is not a dead end: a foreground cycle
+  re-runs `syncPendingDrafts` (which reads no `workOffline` gate), and one more
+  keystroke turns the editing surface's indicator back into a tappable **Save**.
+  It was reachable before this change — an already-open session was never gated,
+  so an online edit against a server that then started failing landed in exactly
+  this state — but a *cold offline open* could not reach it, and now can. Fixing
+  it properly means deciding whether that retry rule should key off real
+  reachability rather than this flag; deliberately left alone here, since that
+  would overturn the "`ConnectivityMonitor` is a sync trigger only" decision.
 - **A clean copy always ends up showing the server's body.** `apply` takes no
   "user initiated" flag: passive `load()` and pull-to-refresh apply identical
   content rules, and `refresh()` differs only in surfacing failures (and in its

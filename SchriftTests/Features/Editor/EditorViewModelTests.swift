@@ -130,26 +130,22 @@ final class EditorViewModelTests: XCTestCase {
 
     /// Every request fails as if the device were offline — the way to reach an
     /// installed-from-cache screen whose revalidation never landed.
-    private func stubOffline() {
-        MockURLProtocol.stubHandler = { _ in
-            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
-        }
-    }
-
-    /// The offline stub, recording — the offline-editing tests count the *failed* content
-    /// PATCH as their before-reconnect baseline, so it has to reach the log.
-    private func stubOffline(log: RequestRecorder) {
+    /// `log` is optional because the offline-editing tests count the *failed* content
+    /// PATCH as their before-reconnect baseline, so it has to reach the recorder.
+    private func stubOffline(log: RequestRecorder? = nil) {
         MockURLProtocol.stubHandler = { request in
-            log.record(request)
+            log?.record(request)
             return MockURLProtocol.Stub(
                 statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
         }
     }
 
-    /// A cached copy whose title and `serverUpdatedAt` match `formattedBody`'s fixture, so
-    /// a later replay turns on the *body* rules alone: a differing title would also resolve
-    /// `draftTitleOutcome` to `.adoptServer`, and a nil `serverUpdatedAt` would drop rule 2
-    /// onto its content tiebreak instead of its date check.
+    /// A cached copy whose `serverUpdatedAt` and title match `formattedBody`'s fixture.
+    /// The date is what matters: nil would drop rule 2 off its date check onto its content
+    /// tiebreak, quietly changing which rule a replay test exercises. The matching title is
+    /// defensive — `draftTitleOutcome` short-circuits to `.keepDraft` while the server is no
+    /// newer than the baseline, so it is inert today, and load-bearing only if the fixture's
+    /// `updated_at` ever moves past it.
     private func offlineCachedEntry(markdown: String) -> CachedDocumentContent {
         CachedDocumentContent(
             documentID: documentID, title: "Doc", markdown: markdown,
@@ -437,7 +433,9 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(
             draftStore.draft(for: documentID)?.markdown, queuedBody,
             "the offline edit is held for the user to resolve, never discarded")
-        XCTAssertEqual(savesInFlight(log), savesBeforeReconnect, "a conflict must not push")
+        // `waitAndConfirmNever`, not a point-in-time equality: a push enqueued but not yet
+        // at the stub would slip past the latter.
+        await waitAndConfirmNever { self.savesInFlight(log) > savesBeforeReconnect }
     }
 
     /// "Start writing" is the gate whose removal creates a genuinely new kind of draft:
@@ -466,7 +464,9 @@ final class EditorViewModelTests: XCTestCase {
         await coordinator.syncPendingDrafts()
 
         await waitUntil { viewModel.syncConflict != nil }
-        XCTAssertEqual(savesInFlight(log), savesBeforeReconnect, "an empty baseline must not push over real text")
+        // An empty baseline must never push over real text — see the sibling test for why
+        // this is `waitAndConfirmNever` rather than an equality.
+        await waitAndConfirmNever { self.savesInFlight(log) > savesBeforeReconnect }
     }
 
     func testFirstFetchWritesCacheSoNextOpenIsInstant() async {

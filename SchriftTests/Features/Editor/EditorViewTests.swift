@@ -73,9 +73,10 @@ final class EditorViewTests: XCTestCase {
     /// Dirty means "not on disk yet" — the draft is written by the flush — so it must
     /// not fall into the offline branch, whose wording asserts durability. Same truth
     /// `saveStatusDisplay` keeps on the editing surface. Pinned as an ordering rule:
-    /// nothing renders `.dirty` on this caption today (it needs reading mode, and the
-    /// reading-mode photo insert flushes in the same turn it dirties), so this is what
-    /// stops a future reading-mode mutator from claiming a save that hasn't happened.
+    /// in normal operation nothing renders `.dirty` on this caption (it needs reading mode,
+    /// and the reading-mode photo insert flushes in the same turn it dirties) — the one
+    /// exception being a discarded document, whose flush returns before clearing `isDirty`.
+    /// So this stops a reading-mode mutator from claiming a save that hasn't happened.
     func testOfflineDirtyContentReadsAsEditedNotSavedOnDevice() {
         let caption = syncCaption(
             hasUnsavedLocalContent: true, hasConflict: false, isOffline: true, saveState: .dirty,

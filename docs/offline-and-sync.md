@@ -77,15 +77,26 @@
 > holding writes would only widen the divergence window and manufacture
 > conflicts. One accepted cosmetic wrinkle from that pair: with Work Offline on
 > and the network up, the banner shows while a save quietly succeeds. And one
-> newly-reachable interaction, recorded rather than fixed: in that same
-> toggle-on/network-up state, a save parked at `.pendingSync` by a *server-side*
-> failure offers no manual retry (`syncCaption` suppresses it while `isOffline`)
-> and no reconnect edge can fire, since connectivity never changed — recovery is
-> a foreground cycle, or one more keystroke, which turns the editing surface's
-> indicator back into a tappable **Save**. It was unreachable before, because
-> Work Offline forced `isOffline`, which blocked editing. Fixing it means
-> deciding whether that retry rule should key off real reachability instead of
-> this flag, which would reopen the ConnectivityMonitor decision above.
+> interaction recorded rather than fixed: whenever `isOffline` is true while the
+> network is actually up — Work Offline on, or *any* non-401 failure of the list
+> fetch, since that is all `isOffline` tracks — a save parked at `.pendingSync`
+> by a **server-side** failure offers no manual retry (`syncCaption` suppresses
+> it while `isOffline`) and no reconnect edge can fire, since connectivity never
+> changed. Recovery is a foreground cycle (`syncPendingDrafts` reads no
+> `workOffline` gate), or one more keystroke, which turns the editing surface's
+> indicator back into a tappable **Save**. This was already reachable — an
+> already-open session was never gated by `isOffline`, so an online edit against
+> a server that then began failing landed here — but a *cold offline open* could
+> not reach it, and now can. Fixing it means deciding whether that retry rule
+> should key off real reachability instead of this flag, which would reopen the
+> ConnectivityMonitor decision above.
+>
+> Worth knowing about the durability posture this shifts: full document bodies
+> now sit in `PendingDraftStore` for whole offline sessions rather than the
+> occasional mid-session drop, and that store is deliberately **backup-included**
+> (unlike `DocumentContentCacheStore`, which is backup-excluded and cleared on
+> sign-out). The decision predates this change; the exposure profile is what
+> moved.
 >
 > **Revised (2026-07-10):** the Markdown editing mode was removed — the block
 > editor is the only editing surface. `install(...)` no longer computes
@@ -828,7 +839,8 @@ ordering; the local phase never blocks on it. `subpages` becomes optional
 succeeded this session — render nothing (or just the eyebrow) in the meantime, so
 the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage"
 button is hidden when `isOffline` (`createChild` is a network POST; a failure
-surfaces `editor_error_add_subpage`, "Couldn't add a subpage."). Caching the subpage list is deferred (Non-goals): if
+surfaces `editor_error_add_subpage`, "Couldn't add a subpage.").
+Caching the subpage list is deferred (Non-goals): if
 it were added to `CachedDocumentContent`, the coordinator's save-success cache
 write would have to preserve the prior entry's subpages, so the fetched-flag
 approach is the baseline.
