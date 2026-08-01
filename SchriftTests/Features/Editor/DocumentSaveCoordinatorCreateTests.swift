@@ -428,6 +428,22 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(store.allCreates().count, 1)
     }
 
+    /// `remove` is a read-modify-write too, so on a corrupt blob its `loadAll` reads empty
+    /// and its `persist` overwrites the bytes. Unreachable through the coordinator today,
+    /// but a guarantee that depends on which caller runs first is not a guarantee.
+    func testRemovingAlsoQuarantinesRatherThanOverwriting() {
+        let suiteName = "CoordinatorCreateTests.quarantineRemove.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let corrupt = Data("not json".utf8)
+        defaults.set(corrupt, forKey: "dev.llun.Schrift.pendingCreates")
+        let store = PendingDocumentCreateStore(userDefaults: defaults)
+
+        store.remove(localID: UUID())
+
+        XCTAssertEqual(defaults.data(forKey: "dev.llun.Schrift.pendingCreates.unreadable"), corrupt)
+    }
+
     /// A blank draft title must not be overlaid: every list renders `title ?? untitled`,
     /// a nil check, so a whitespace-only overlay produces a blank row where the record's
     /// mint title would have read "Untitled document".

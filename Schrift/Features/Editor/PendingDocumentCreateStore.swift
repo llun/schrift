@@ -109,6 +109,12 @@ final class PendingDocumentCreateStore {
     }
 
     func remove(localID: UUID) {
+        // Same reasoning as `save`: this is a read-modify-write, so on a corrupt blob the
+        // `loadAll` below reads `[:]` and the `persist` overwrites it. Unreachable through
+        // the coordinator today — `removePendingCreate` returns early when the id isn't in
+        // the mirror, and corruption empties the mirror — but every read-modify-write here
+        // has to quarantine, or the guarantee depends on which caller happens to run first.
+        quarantineUnreadableDataIfNeeded()
         var creates = loadAll()
         creates[localID.uuidString] = nil
         persist(creates)
@@ -152,7 +158,12 @@ final class PendingDocumentCreateStore {
     /// survive under a separate key for inspection, and the live key starts clean.
     private func quarantineUnreadableDataIfNeeded() {
         guard holdsUnreadableData, let data = userDefaults.data(forKey: Self.createsKey) else { return }
-        userDefaults.set(data, forKey: Self.quarantineKey)
+        // First corruption wins. A second one would mean the store was already rebuilt after
+        // the first, so the earlier blob is the one still holding records nothing else has —
+        // and overwriting it to save a copy of a store we know was reset is the wrong trade.
+        if userDefaults.data(forKey: Self.quarantineKey) == nil {
+            userDefaults.set(data, forKey: Self.quarantineKey)
+        }
         userDefaults.removeObject(forKey: Self.createsKey)
     }
 
