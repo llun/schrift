@@ -140,7 +140,7 @@ enum Strings_nl {
         .editor_save_failed_a11y: "Opslaan mislukt. Opnieuw proberen",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Je werkt in de kopie die op dit apparaat is opgeslagen",
+        .editor_offline_local_copy: "Je werkt aan de kopie die op dit apparaat is opgeslagen",
         .editor_update_available: "Document bijgewerkt · tik om te vernieuwen",
         .editor_update_available_a11y: "Document bijgewerkt. Tik om te vernieuwen.",
         .editor_uploading_photo: "Foto uploaden…",

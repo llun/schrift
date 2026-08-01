@@ -136,7 +136,7 @@ enum Strings_zhHant {
         .editor_save_failed_a11y: "儲存失敗。重試",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "正在編輯儲存在此裝置的副本",
+        .editor_offline_local_copy: "正在使用儲存在此裝置的副本",
         .editor_update_available: "文件已更新 · 點按以重新整理",
         .editor_update_available_a11y: "文件已更新。點按以重新整理。",
         .editor_uploading_photo: "正在上傳照片…",

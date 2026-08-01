@@ -45,7 +45,7 @@ struct OfflineBanner: View {
 #Preview {
     VStack(spacing: 0) {
         OfflineBanner(note: "All documents saved on this device")
-        OfflineBanner(note: "Editing the copy saved on this device")
+        OfflineBanner(note: "Working on the copy saved on this device")
         Spacer()
     }
     .environment(LocalizationStore())
