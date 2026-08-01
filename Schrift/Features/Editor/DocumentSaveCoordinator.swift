@@ -203,8 +203,9 @@ final class DocumentSaveCoordinator {
         // matching ones left a foreign record's draft with no hold at all: the pass GET
         // 404ed and **deleted it**, so signing in elsewhere destroyed the content while
         // leaving the record pointing at nothing. Dormant has to mean *no requests and no
-        // deletion*. Origin decides what is **listed** (below) and, once the replay lands,
-        // what may be **POSTed** — never whether the content is protected.
+        // deletion*. Origin decides what is **listed** (below) and, with the owning user,
+        // what the replay may **POST** (`isReplayable`) — never whether the content is
+        // protected.
         for create in createStore.allCreates() {
             pendingCreates[create.localID] = create
             // `states` is in-memory, so without this every local document reads `.idle`
@@ -1164,9 +1165,12 @@ final class DocumentSaveCoordinator {
     /// reason about a save landing underneath it and resurrecting the losing body.
     ///
     /// The create migration is a third recording site, and it holds for its own reason:
-    /// the id it records against was minted by the server moments earlier, so nothing in
-    /// this process has ever addressed it. (`finish`'s deferred re-decision is a fourth,
-    /// and holds because it runs from the settling save itself.)
+    /// nothing has ever addressed that id through this coordinator. It only records on the
+    /// **resume** path — the fresh-POST path is guarded by `!serverMarkdown.isEmpty`, and
+    /// `""` is proven there — so the id may well have been minted by a *previous* process;
+    /// what matters is that this one has never enqueued against it, having just learned it
+    /// from disk. (`finish`'s deferred re-decision is a fourth, and holds because it runs
+    /// from the settling save itself.)
     ///
     /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
     /// wins — an accepted race, recoverable from the server's version history).

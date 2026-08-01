@@ -162,10 +162,10 @@ amendment above; when this was written, editing offline was still blocked.)
 - **Offline *creation*** — a document that does not exist server-side has no id
   to PATCH, so the draft pipeline has nothing to save to. The two create
   buttons ("Add a subpage", the Pages drawer's "New page") therefore stay gated
-  on `!isOffline`. **In progress**: the storage and the safety holds landed
-  2026-08-01 (see "Documents created on this device" below) but nothing mints a
-  record yet, so the gates and this non-goal stand until the replay and the UI
-  land alongside them.
+  on `!isOffline`. **In progress**: the storage, the safety gates and the replay
+  all landed 2026-08-01 (see "Documents created on this device" below), but
+  nothing mints a record yet — so the gates and this non-goal stand until the UI
+  lands alongside them.
 - ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
   amendment at the top). Editing a previously-opened document offline is
   supported: the edit is written to `PendingDraftStore` before any network
@@ -1016,7 +1016,7 @@ to what the Home list passes (still a `Document` / id).
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
 
-## Documents created on this device (2026-08-01, storage + holds)
+## Documents created on this device (2026-08-01, storage + gates + replay)
 
 Offline *creation* is still a non-goal above, but its **storage and its safety
 gates have landed, dormant** — nothing mints a record yet. They land first and
@@ -1295,9 +1295,13 @@ server's has not — the migration records a conflict first, and the ordinary
 enqueue-hold and pill ask the user. Inert on the fresh-POST path and on the
 overwhelmingly common empty-server resume.
 
-(The "no co-author to protect" reasoning behind the local-title-wins rule is
-narrower than it sounds: accesses are ancestor-aware, so a sub-page created under
-a shared parent has co-authors from birth.)
+(Local-title-wins is **not** justified by "this device made it, so there are no
+co-authors" — that was the tempting argument and it is wrong: accesses are
+ancestor-aware, so a sub-page under a shared parent has co-authors from birth, and
+the same user on another client is not a co-author at all. It is justified by
+scope: only the *title* is resolved that way, across a window that is normally
+microseconds, while the body is protected by the conflict above. The residual is
+that a rename made elsewhere during a deferral is reverted.)
 
 **A resume whose document is gone drops its checkpoint.** Retrying that GET
 forever would leave the document in no list (a checkpointed record is withheld
