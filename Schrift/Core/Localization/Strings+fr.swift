@@ -5,7 +5,6 @@ enum Strings_fr {
     static let table: [L10nKey: String] = [
         .common_cancel: "Annuler",
         .common_close: "Fermer",
-        .common_retry: "Réessayer",
         .common_untitled: "Document sans titre",
         .common_profile: "Profil",
         .common_clear_search: "Effacer la recherche",
@@ -293,6 +292,16 @@ enum Strings_fr {
         .account_unavailable_title: "Compte indisponible",
         .account_unavailable_body:
             "Impossible de charger les détails de votre compte. Vérifiez votre connexion et réessayez.",
+        // Pages tree drawer
+        .pages_title: "Pages",
+        .pages_open: "Afficher les pages",
+        .pages_close: "Fermer les pages",
+        .pages_expand: "Développer",
+        .pages_collapse: "Réduire",
+        .pages_new: "Nouvelle page",
+        .pages_empty: "Aucune sous-page pour le moment. Ajoutez-en une pour organiser ce document.",
+        .pages_error_load: "Impossible de charger les pages. Veuillez réessayer.",
+        .pages_error_create: "Impossible d’ajouter la page. Veuillez réessayer.",
         .account_language_footer:
             "La langue utilisée par votre serveur pour les e-mails et le contenu partagé. La langue de l’application se trouve dans Préférences.",
         // Toast

@@ -6,7 +6,6 @@ enum Strings_en {
     static let table: [L10nKey: String] = [
         .common_cancel: "Cancel",
         .common_close: "Close",
-        .common_retry: "Try again",
         .common_untitled: "Untitled document",
         .common_profile: "Profile",
         .common_clear_search: "Clear search",
@@ -290,6 +289,16 @@ enum Strings_en {
         .account_unavailable_title: "Account unavailable",
         .account_unavailable_body:
             "Your account details couldn't be loaded. Check your connection and try again.",
+        // Pages tree drawer
+        .pages_title: "Pages",
+        .pages_open: "Show pages",
+        .pages_close: "Close pages",
+        .pages_expand: "Expand",
+        .pages_collapse: "Collapse",
+        .pages_new: "New page",
+        .pages_empty: "No subpages yet. Add one to organize this document.",
+        .pages_error_load: "Couldn't load the pages. Please try again.",
+        .pages_error_create: "Couldn't add the page. Please try again.",
         .account_language_footer:
             "The language your server uses for emails and shared content. The app's own language is in Preferences.",
         // Toast

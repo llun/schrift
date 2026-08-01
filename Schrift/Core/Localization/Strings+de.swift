@@ -5,7 +5,6 @@ enum Strings_de {
     static let table: [L10nKey: String] = [
         .common_cancel: "Abbrechen",
         .common_close: "Schließen",
-        .common_retry: "Erneut versuchen",
         .common_untitled: "Unbenanntes Dokument",
         .common_profile: "Profil",
         .common_clear_search: "Suche löschen",
@@ -294,6 +293,16 @@ enum Strings_de {
         .account_unavailable_title: "Konto nicht verfügbar",
         .account_unavailable_body:
             "Deine Kontodetails konnten nicht geladen werden. Überprüfe deine Verbindung und versuche es erneut.",
+        // Pages tree drawer
+        .pages_title: "Seiten",
+        .pages_open: "Seiten anzeigen",
+        .pages_close: "Seiten schließen",
+        .pages_expand: "Aufklappen",
+        .pages_collapse: "Einklappen",
+        .pages_new: "Neue Seite",
+        .pages_empty: "Noch keine Unterseiten. Füge eine hinzu, um dieses Dokument zu organisieren.",
+        .pages_error_load: "Die Seiten konnten nicht geladen werden. Bitte versuche es erneut.",
+        .pages_error_create: "Die Seite konnte nicht hinzugefügt werden. Bitte versuche es erneut.",
         .account_language_footer:
             "Die Sprache, die Ihr Server für E-Mails und geteilte Inhalte verwendet. Die Sprache der App finden Sie unter Einstellungen.",
         // Toast

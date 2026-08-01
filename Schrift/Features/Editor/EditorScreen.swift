@@ -16,6 +16,9 @@ struct EditorScreen: View {
     var onOpenDocument: ((Document) -> Void)? = nil
 
     @State private var viewModel: EditorViewModel
+    /// Retained past `init` because the Pages drawer reads the same store the
+    /// view model writes; a test that isolates one must isolate both.
+    private let childrenCache: DocumentChildrenCacheStore
 
     init(
         client: DocsAPIClient,
@@ -44,6 +47,7 @@ struct EditorScreen: View {
                 childrenCache: childrenCache,
                 diagnostics: diagnostics
             ))
+        self.childrenCache = childrenCache
         self.reach = reach
         self.serverHost = serverHost
         self.serverOrigin = serverOrigin
@@ -60,6 +64,7 @@ struct EditorScreen: View {
             reach: reach,
             serverHost: serverHost,
             serverOrigin: serverOrigin,
+            childrenCache: childrenCache,
             linkRole: linkRole,
             initialIsFavorite: initialIsFavorite,
             isOffline: isOffline,

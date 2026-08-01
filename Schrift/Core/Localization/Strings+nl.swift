@@ -5,7 +5,6 @@ enum Strings_nl {
     static let table: [L10nKey: String] = [
         .common_cancel: "Annuleren",
         .common_close: "Sluiten",
-        .common_retry: "Opnieuw proberen",
         .common_untitled: "Naamloos document",
         .common_profile: "Profiel",
         .common_clear_search: "Zoekopdracht wissen",
@@ -292,6 +291,16 @@ enum Strings_nl {
         .account_unavailable_title: "Account niet beschikbaar",
         .account_unavailable_body:
             "Kan je accountgegevens niet laden. Controleer je verbinding en probeer het opnieuw.",
+        // Pages tree drawer
+        .pages_title: "Pagina's",
+        .pages_open: "Pagina's tonen",
+        .pages_close: "Pagina's sluiten",
+        .pages_expand: "Uitklappen",
+        .pages_collapse: "Inklappen",
+        .pages_new: "Nieuwe pagina",
+        .pages_empty: "Nog geen subpagina's. Voeg er een toe om dit document te organiseren.",
+        .pages_error_load: "Kan de pagina's niet laden. Probeer het opnieuw.",
+        .pages_error_create: "Kan de pagina niet toevoegen. Probeer het opnieuw.",
         .account_language_footer:
             "De taal die je server gebruikt voor e-mails en gedeelde inhoud. De taal van de app vind je bij Voorkeuren.",
         // Toast

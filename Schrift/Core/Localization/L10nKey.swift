@@ -7,7 +7,6 @@ enum L10nKey: String, CaseIterable, Sendable {
     // Common
     case common_cancel = "common.cancel"
     case common_close = "common.close"  // "Close" — sheet close-button accessibility label
-    case common_retry = "common.retry"
     case common_untitled = "common.untitled_document"
     case common_profile = "common.profile"  // "Profile"
     case common_clear_search = "common.clear_search"  // "Clear search"
@@ -321,6 +320,16 @@ enum L10nKey: String, CaseIterable, Sendable {
     case account_manage_on_web = "account.manage_on_web"  // "Manage account on the web"
     case account_unavailable_title = "account.unavailable_title"  // "Account unavailable"
     case account_unavailable_body = "account.unavailable_body"
+    // Pages tree drawer (the editor's document tree)
+    case pages_title = "pages.title"  // "Pages"
+    case pages_open = "pages.open"  // "Show pages" — toolbar button
+    case pages_close = "pages.close"  // "Close pages"
+    case pages_expand = "pages.expand"  // "Expand"
+    case pages_collapse = "pages.collapse"  // "Collapse"
+    case pages_new = "pages.new"  // "New page"
+    case pages_empty = "pages.empty"
+    case pages_error_load = "pages.error_load"
+    case pages_error_create = "pages.error_create"
     case account_language_footer = "account.language_footer"
     // Transient confirmation toast
     case toast_link_copied = "toast.link_copied"  // "Link copied"

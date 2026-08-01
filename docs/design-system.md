@@ -216,6 +216,76 @@
 >   it — Options and Share both dismiss themselves in the same breath, and a
 >   toast inside one would be torn down before it could be read.
 
+> **Revised: 2026-07-31 (Pages tree drawer — the refresh complete).** The
+> handoff's `DocTreePanel`, which it designed but never wired to an opener.
+>
+> - A **leading slide-in drawer** in the editor, opened from a toolbar button
+>   beside back (it is a *left* panel, and the trailing group already has
+>   three items). Root row = the open document, then its subpages, expandable
+>   to any depth; the scrim closes it.
+> - **Levels load lazily and cache-first.** Opening fetches the root's children;
+>   each expand fetches that node's. Every level is read from
+>   `DocumentChildrenCacheStore` before the network — the same store the
+>   editor's own Subpages list fills — so a document you have already opened
+>   has its level available offline. A failed fetch keeps whatever the cache
+>   gave and says so; it never empties a level the user can see, and never
+>   tears the editor down (it concerns a *different* document's children).
+>   **"Work offline" is honoured the same way the document lists honour it** —
+>   read through the view model's injected `UserDefaults`, and the network is
+>   never reached at all, not attempted-and-caught.
+> - **A level that failed with nothing cached collapses again**, and its error
+>   is recorded per node rather than in one shared flag. Left expanded it would
+>   render as a node with no children — indistinguishable from a leaf, with no
+>   way back — and one shared flag would let a success elsewhere in the tree
+>   silently clear a message about a level the user is still looking at.
+>   Collapsed, the arrow returns, and tapping it is the retry.
+> - **"New page" only slots into a level that is actually known.** Appending to
+>   an unloaded one would show, and durably cache, a fabricated one-item level
+>   that hides the document's real children — and the cache is shared with the
+>   editor's Subpages list, so the lie outlives the drawer. This is the same
+>   rule, for the same reason, as `EditorViewModel.addSubpage`. A per-level
+>   mutation stamp additionally drops a list fetch that started *before* the
+>   create, whose snapshot would otherwise take the new page back off screen —
+>   and the stamp is bumped **only when the create actually appended**. Bumping
+>   it on a create that declined to append blocks the in-flight fetch as well,
+>   and then *neither* writer fills the level: it stays unknown, and the drawer
+>   reports "no subpages" about a document that just got its first one.
+> - A failed **create** is cleared when the drawer is reopened, not by the next
+>   successful load. The view model is `@State` on the editor and outlives the
+>   drawer, so without that a single failed "New page" would keep reporting
+>   itself over every later opening; clearing it on any load instead would let
+>   an unrelated level erase a message the user is still reading.
+> - **The disclosure arrow comes from `numchild`**, so it appears before a level
+>   has ever been fetched. `pagesTreeRows` is the pure flattening rule and
+>   carries the whole layout decision — including that an expanded-but-unloaded
+>   node contributes nothing yet, so a slow level never collapses the ones above
+>   it, and a cycle in server data terminates instead of overrunning the stack.
+> - The arrow and the title are **separate controls**: collapsing a branch
+>   should not navigate away from what you are reading. Both are floored at the
+>   44pt tap target (`PagesTreeLayout.disclosureWidth`; the title's label fills
+>   the row's height before taking its tap shape, or a 44pt-*looking* row would
+>   only open from the middle strip of text). The chevron itself stays small —
+>   this is `IconButton`'s pattern, tap target around glyph.
+> - A row's identity is **the (parent, document) pair**, not the document id.
+>   The tree is drawn from a session-local dictionary of levels, so a document
+>   the server has re-parented can still sit in a stale level while its new
+>   parent lists it too; keyed on the id alone those two rows collide in
+>   `ForEach`.
+> - Because it is an overlay rather than a sheet it gets **none of a sheet's
+>   VoiceOver scoping for free**: the editor behind it is explicitly
+>   `.accessibilityHidden` while it is open, and opening/closing posts a
+>   screen-changed notification. A new modal-ish overlay owes the same — and
+>   note that hiding the screen's body is **not** enough on its own: toolbar
+>   content is hosted by the navigation bar as its own accessibility subtree,
+>   so the bar buttons must be hidden with it or a swipe still reaches them
+>   through the covering surface.
+>
+> **Deviation:** the drawer sits below the navigation bar rather than covering
+> the full height as the mock does, so the toolbar (and its back button) stays
+> reachable while the tree is open. **Still deferred:** breadcrumbs, for the
+> reason recorded in the previous amendment — the API exposes no ancestors
+> route, and the tree drawer does not change that.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match
@@ -527,6 +597,12 @@ Final Profile structure (matches the screenshot exactly):
   case was `.account`), the `.navigationDestination(for: HomeRoute.self)`, and
   the `onOpenAccount` param/closure on `ProfileScreen`/`HomeView`.
   `ProfileViewModel` is retained (supplies the email).
+  > **Superseded 2026-07-31.** The revised handoff specifies an Account screen,
+  > so it is back — `Features/Profile/AccountScreen.swift`, pushed from the
+  > Profile user row via `NavigationLink(value: ProfileRoute.account)` with the
+  > destination registered in `MainTabView`. It is trimmed to what `/users/me/`
+  > actually returns (see the 2026-07-31 amendment near the top of this file).
+  > `HomeView` no longer exists either; its shell is `MainTabView`.
 - The **Support** section (Help & feedback, Privacy policy) → replaced by the
   ABOUT → Version row.
 

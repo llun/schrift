@@ -9,7 +9,6 @@ enum Strings_sl {
     static let table: [L10nKey: String] = [
         .common_cancel: "Prekliči",
         .common_close: "Zapri",
-        .common_retry: "Poskusi znova",
         .common_untitled: "Neimenovan dokument",
         .common_profile: "Profil",
         .common_clear_search: "Počisti iskanje",
@@ -301,6 +300,16 @@ enum Strings_sl {
         .account_manage_on_web: "Upravljajte račun v spletu",
         .account_unavailable_title: "Račun ni na voljo",
         .account_unavailable_body: "Podatkov o računu ni bilo mogoče naložiti. Preverite povezavo in poskusite znova.",
+        // Pages tree drawer
+        .pages_title: "Strani",
+        .pages_open: "Prikaži strani",
+        .pages_close: "Zapri strani",
+        .pages_expand: "Razširi",
+        .pages_collapse: "Strni",
+        .pages_new: "Nova stran",
+        .pages_empty: "Še ni podstrani. Dodajte jo, da organizirate ta dokument.",
+        .pages_error_load: "Strani ni bilo mogoče naložiti. Poskusite znova.",
+        .pages_error_create: "Strani ni bilo mogoče dodati. Poskusite znova.",
         .account_language_footer:
             "Jezik, ki ga uporablja vaš strežnik za e-pošto in deljeno vsebino. Jezik aplikacije najdete v Nastavitvah.",
         // Toast

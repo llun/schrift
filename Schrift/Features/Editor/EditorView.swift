@@ -155,6 +155,8 @@ struct EditorView: View {
     /// that raise them — those dismiss themselves in the same breath, and a
     /// toast inside one would be torn down before it could be read.
     @State private var toastMessage: ToastMessage?
+    @State private var isPresentingPagesTree = false
+    @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
     /// its 44pt tap target plus the inset's own padding.
@@ -178,6 +180,7 @@ struct EditorView: View {
         reach: LinkReach,
         serverHost: String,
         serverOrigin: String,
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
@@ -199,6 +202,12 @@ struct EditorView: View {
         _shareViewModel = State(
             initialValue: ShareViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
+        // The same store the editor's own Subpages list fills, so a level either
+        // side has fetched is available to the other — and so a test can hand
+        // both an isolated one.
+        _pagesTreeViewModel = State(
+            initialValue: PagesTreeViewModel(
+                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache))
     }
 
     var body: some View {
@@ -208,16 +217,40 @@ struct EditorView: View {
             // same edge — Copy Link is reachable from the toolbar mid-edit, so
             // the two genuinely collide.
             .toast($toastMessage, bottomInset: viewModel.isEditing ? editingToastInset : 0)
+            // The drawer is an overlay rather than a sheet, so it gets none of a
+            // sheet's VoiceOver scoping for free: without this the editor behind
+            // it stays in the accessibility tree and a swipe walks straight into
+            // toolbar buttons the drawer is covering. Ordered before `.overlay`,
+            // which adds the drawer on top of the hidden content.
+            .accessibilityHidden(isPresentingPagesTree)
+            .overlay { pagesTreeOverlay }
             // One system toolbar in both modes. The document title stays in the
             // canvas as a large content header (`headerBlock`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions
             // — hence `.inline` with no `.navigationTitle`.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Leading, beside back: this is a *left* panel, and the trailing
+                // group is already three items.
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isPresentingPagesTree = true
+                    } label: {
+                        MaterialSymbol(.account_tree, size: 22)
+                    }
+                    .accessibilityLabel(loc[.pages_open])
+                    // Hidden here as well as on `mainContent`: toolbar content is
+                    // hosted by the navigation bar as its own accessibility
+                    // subtree, so hiding the screen's body never reached it, and
+                    // a VoiceOver swipe could still land on a bar button the
+                    // drawer is covering.
+                    .accessibilityHidden(isPresentingPagesTree)
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     ForEach(editorToolbarActions(isEditing: viewModel.isEditing, isOffline: isOffline), id: \.self) {
                         action in
                         toolbarButton(for: action)
+                            .accessibilityHidden(isPresentingPagesTree)
                     }
                 }
             }
@@ -319,6 +352,38 @@ struct EditorView: View {
         )
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    private var pagesTreeOverlay: some View {
+        // The `.animation` belongs here, on the container the drawer comes and
+        // goes inside — on the body it would also animate whatever else changed
+        // in the same transaction (the save status, a conflict pill).
+        ZStack {
+            if isPresentingPagesTree {
+                PagesTreeDrawer(
+                    viewModel: pagesTreeViewModel,
+                    rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
+                    isOffline: isOffline,
+                    onOpen: { document in
+                        isPresentingPagesTree = false
+                        onOpenDocument?(document)
+                    },
+                    onClose: { dismissPagesTree() }
+                )
+                .task {
+                    // Nothing announces an overlay the way it would a sheet, so
+                    // say the screen changed and let VoiceOver land in the drawer.
+                    AccessibilityNotification.ScreenChanged().post()
+                    await pagesTreeViewModel.loadRoot()
+                }
+            }
+        }
+        .animation(.snappy, value: isPresentingPagesTree)
+    }
+
+    private func dismissPagesTree() {
+        isPresentingPagesTree = false
+        AccessibilityNotification.ScreenChanged().post()
     }
 
     /// The screen's content column, lifted out of `body` so the long

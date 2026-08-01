@@ -3,7 +3,6 @@ enum Strings_zhHans {
     static let table: [L10nKey: String] = [
         .common_cancel: "取消",
         .common_close: "关闭",
-        .common_retry: "重试",
         .common_untitled: "无标题文档",
         .common_profile: "个人资料",
         .common_clear_search: "清除搜索",
@@ -282,6 +281,16 @@ enum Strings_zhHans {
         .account_manage_on_web: "在网页上管理账号",
         .account_unavailable_title: "账号不可用",
         .account_unavailable_body: "无法加载您的账号详情。请检查网络连接后重试。",
+        // Pages tree drawer
+        .pages_title: "页面",
+        .pages_open: "显示页面",
+        .pages_close: "关闭页面",
+        .pages_expand: "展开",
+        .pages_collapse: "折叠",
+        .pages_new: "新建页面",
+        .pages_empty: "还没有子页面。添加一个来整理此文档。",
+        .pages_error_load: "无法加载页面。请重试。",
+        .pages_error_create: "无法添加页面。请重试。",
         .account_language_footer: "您的服务器用于电子邮件和共享内容的语言。应用自身的语言在偏好设置中。",
         // Toast
         .toast_link_copied: "链接已复制",
