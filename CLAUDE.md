@@ -1450,8 +1450,18 @@ markdown write endpoint**. Understand this before touching the save path:
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
   edit loss unrepresentable. Everything that can change during the POST await is
   re-checked after it: the record is re-read from `pendingCreates` (a delete during
-  the POST must not be undone — writing the stale snapshot back would *resurrect*
-  it) and `hasOpenEditor` is asked again.
+  the POST must not be undone — acting on the stale copy would POST a document the
+  user threw away and orphan it server-side; it would *not* resurrect the record,
+  which every `updatePendingCreate` on that path already guards) and `hasOpenEditor`
+  is asked again.
+  **A resume whose document is gone takes the body back before it drops the
+  checkpoint.** A death inside the migration can leave the only copy under the
+  *server* id, and the checkpoint is the last thing tying it to the record — so
+  clearing first would let `runSyncPass` (which no longer sees a pending-create id)
+  GET that draft, 404, and delete it, after which the re-POST creates an **empty**
+  document. Move-then-clear is self-healing across a kill between the two writes;
+  clear-then-move reproduces the very loss it closes. Guarded on the local draft
+  being absent, or a `serverID` draft that is the *user's* work would overwrite it.
   **Both of those re-checks are keyed on the *local* id, and the migration writes under the
   *server* id — so it defers on that side too.** A checkpointed record is withheld
   from `pendingLocalDocuments`, so the local row disappears and the server document

@@ -591,20 +591,25 @@ final class DocumentSaveCoordinator {
             // body alive only in the local draft. The trade is deliberate (unrecoverable
             // duplicate vs. recoverable invisibility), and making such a record visible and
             // dischargeable is owed with the create UI.
-            record.syncedServerID = nil
-            if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
-            // **Take the body back to the local id before starting over.** A process death
-            // inside the migration can leave the only copy under `serverID` — that draft is
-            // written before the local one is removed, precisely so no instant exists with the
-            // content nowhere. Dropping the checkpoint severs the last thing associating it
-            // with this record, and then two rules that are each individually right combine
+            // **Take the body back to the local id *before* clearing the checkpoint.** A
+            // process death inside the migration can leave the only copy under `serverID` —
+            // that draft is written before the local one is removed, precisely so no instant
+            // exists with the content nowhere. The checkpoint is the last thing associating it
+            // with this record, so once that is gone two individually-correct rules combine
             // into content loss: `runSyncPass` no longer sees a pending-create id, so it GETs
-            // that draft, takes the same 404, and deletes it — after which the re-POST finds
-            // an all-nil body chain and creates an *empty* document in place of the user's
-            // text. Moving it back keeps it under the id the fresh create will look for, and
-            // under the pending-create hold that stops the 404 branch reaching it at all.
+            // that draft, takes the same 404, and deletes it — after which the re-POST finds an
+            // all-nil body chain and creates an *empty* document in place of the user's text.
             //
-            // Guarded on the local draft being absent, the same discriminator `finishMigration`
+            // **Order is the whole point, and getting it backwards reproduces exactly that.**
+            // These are two independent UserDefaults keys, so a kill between them is a real
+            // state: clear-then-move leaves an un-checkpointed record with the body still
+            // stranded under `serverID`, which is the loss above reached through this branch.
+            // Move-then-clear is self-healing instead — the record is still checkpointed and
+            // the local draft is back, so the next resume takes the local-present guard below
+            // and simply clears the checkpoint. Same discipline `migrateCreatedDocument`
+            // applies one function above: write under the new id before taking it off the old.
+            //
+            // The guard is on the local draft being absent, the discriminator `finishMigration`
             // uses: with one present this is not the partial-migration window, so a draft under
             // `serverID` is the user's own work against a real document and must not be moved.
             if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID) {
@@ -614,6 +619,8 @@ final class DocumentSaveCoordinator {
                         updatedAt: orphan.updatedAt, baseline: nil))
                 draftStore.remove(documentID: serverID)
             }
+            record.syncedServerID = nil
+            if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             return
         } catch {
             // Transient — leave it for the next pass.

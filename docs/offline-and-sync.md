@@ -1292,8 +1292,9 @@ that document until it is deselected or the app relaunches.
 **Everything that can change during the await is re-checked after it.** The pass
 awaits `/users/me/` and then a POST per record, and the main actor is reentrant
 throughout — so before migrating it re-reads the record from `pendingCreates` (a
-delete during the POST must not be undone: writing the stale snapshot back would
-*resurrect* the record `discardPendingWork` removed) and re-checks
+delete during the POST must not be undone: acting on the stale copy would POST a
+document the user threw away and orphan it server-side — it would *not* resurrect
+the record, which every `updatePendingCreate` on that path already guards) and re-checks
 `hasOpenEditor` (a screen opening during the POST is exactly the case the
 deferral exists for). The **editor** re-check bails after the checkpoint is
 persisted, so the next pass resumes at migration.
@@ -1449,7 +1450,24 @@ that a rename made elsewhere during a deferral is reverted.)
 forever would leave the document in no list (a checkpointed record is withheld
 from `pendingLocalDocuments`) and never pushed — unreachable by every route the
 app offers. Clearing `syncedServerID` lets the next pass create it afresh; there
-is nothing left to duplicate. **`.notFound` only, never `.forbidden`** — a bare 403
+is nothing left to duplicate.
+
+**But it takes the body back to the local id *first*.** A death inside the migration
+can leave the only copy under `serverID` — the draft is written there before the local
+one is removed, so that no instant exists with the content nowhere — and the
+checkpoint is the last thing tying it to the record. Clear it first and two
+individually-correct rules combine into loss: `runSyncPass` no longer sees a
+pending-create id, so it GETs that draft, takes the same 404 and deletes it, after
+which the re-POST finds an all-nil body chain and creates an **empty** document in
+place of the user's text. **Order is the whole point.** These are two independent
+UserDefaults keys, so a kill between them is a real state: move-then-clear is
+self-healing (record still checkpointed, local draft back, so the next resume just
+clears), while clear-then-move reproduces exactly the loss the move exists to close.
+Guarded on the local draft being absent — the discriminator `finishMigration` uses —
+since with one present this is not the partial-migration window and the `serverID`
+draft is the user's own work against a real document.
+
+**`.notFound` only, never `.forbidden`** — a bare 403
 is not evidence a document is gone (an ancestor access recompute can 403
 transiently), and acting on it here creates a duplicate and orphans the original,
 which is unrecoverable. `.routeNotFound` is likewise transient here: it is a fact

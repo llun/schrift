@@ -1241,6 +1241,36 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(relaunched.drafts.draft(for: serverID), "nothing left under the dead server id")
     }
 
+    /// With a local draft still present this is *not* the partial-migration window, so a draft
+    /// under the server id is the user's own work against a real document — the take-back must
+    /// leave it alone rather than overwriting the local body with it.
+    func testAStartOverLeavesAUserDraftUnderTheServerIDAlone() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Both present: the local seed draft (rewritten with a body) and a server-id draft.
+        env.drafts.save(
+            PendingDraft(
+                documentID: local.id, title: "Mine", markdown: "# Local body", updatedAt: Date(),
+                baseline: nil))
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Theirs", markdown: "# Against the real document",
+                updatedAt: Date(), baseline: nil))
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: local.id)?.markdown, "# Local body",
+            "the local body is not overwritten by the server-id draft")
+    }
+
     /// **A delete arriving under the server id must clear the record too.** Once checkpointed,
     /// that is the only id the user is offered — the local row is withheld — so this is the
     /// ordinary way such a document gets deleted. `isPendingCreate` is keyed on the *local* id
