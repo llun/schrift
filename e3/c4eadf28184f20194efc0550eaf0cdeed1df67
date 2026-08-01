@@ -1,0 +1,21 @@
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTests.swift
+  s_351b5e522a97a5::t_7d25fccde183bb 1576-1637
+  s_351b5e522a97a5::t_03c8b261293386 1251-1257
+  s_351b5e522a97a5::t_3f639fc2ec9dfa 1363-1366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "e3c4eadf28184f20194efc0550eaf0cdeed1df67",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
