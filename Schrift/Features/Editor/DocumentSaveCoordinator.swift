@@ -150,10 +150,11 @@ final class DocumentSaveCoordinator {
     /// an assumption: a schema slip must degrade to "nothing is cleaned up", never to
     /// "every offline-created document is destroyed".
     ///
-    /// Read once, which is sound in both directions: nothing can make the blob undecodable
-    /// mid-process (`persist` only ever writes encoder output), and the store quarantines
-    /// an unreadable blob before its first write, so a repair only ever leaves this
-    /// over-suppressing for the rest of the session.
+    /// Read once, which is sound: nothing can make the blob undecodable mid-process
+    /// (`persist` only ever writes encoder output), and the store's own flag is **sticky**
+    /// — it stays true while a quarantine exists — so a repair does not silently re-arm the
+    /// delete on the next launch either. Suppression outlives the session by design; see
+    /// `holdsUnreadableData`.
     private let createStoreUnreadable: Bool
 
     init(
@@ -763,8 +764,9 @@ final class DocumentSaveCoordinator {
     /// That is the full-overwrite save eating content — the one thing this subsystem exists to
     /// prevent. So: lift the hold, start the work it was holding.
     private func releaseHeldSave(documentID: UUID) {
-        // **The third funnel of "no save may name a pending-create id"**, and the only one
-        // that reaches `start` without passing through `enqueue`'s hold. `clearResolvedConflict`
+        // **The third gate of "no save may name a pending-create id"**, and one of the two
+        // paths that reach `start` without passing through `enqueue`'s hold (the other is
+        // `finish`'s queued restart, which carries the same guard). `clearResolvedConflict`
         // calls this, and the editor clears conflicts from five places — so releasing a hold on
         // a document the server has never seen would PATCH a nonexistent id, take a 404, and
         // land on `.failed`, which `runSyncPass` skips: the document wedged out of the replay

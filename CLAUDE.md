@@ -1351,8 +1351,15 @@ markdown write endpoint**. Understand this before touching the save path:
      a hold on a local document would PATCH a nonexistent id straight into the
      `.failed`-then-skipped trap above. Its guard returns **before**
      `queued.removeValue`, so the held save is kept rather than dropped.
+  4. **`finish`'s queued restart refuses** — the other such path: draining a
+     settled save's queued slot calls `start` directly, re-applying the conflict
+     hold and now the pending-create one too. Unreachable today (no save can be
+     in flight for a local id), but it is the one place the invariant would
+     otherwise be asserted asymmetrically, and the id migration is exactly the
+     change that could make it reachable.
 
-  `createLocalDocument(title:parentID:)` mints the record **plus a seed draft**
+  `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
+  seed draft**
   (so the editor's existing draft precedence renders it unchanged) and sets
   `.pendingSync` — nothing is syncing, but the work is on the device.
   `discardPendingWork` drops the record with the draft: a local delete is purely

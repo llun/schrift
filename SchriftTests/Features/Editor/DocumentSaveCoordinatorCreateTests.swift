@@ -431,6 +431,32 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
                 + "launch would see a clean store and delete the drafts those unknown records owned")
     }
 
+    /// A second corruption keeps the **first** quarantine: by then the store has been
+    /// rebuilt at least once, so the earlier blob is the one holding records that were
+    /// never re-minted. Content safety does not turn on this — suppression stays on either
+    /// way — but which bytes are kept should be a decision, not an accident.
+    func testASecondCorruptionKeepsTheFirstQuarantinedBlob() {
+        let suiteName = "CoordinatorCreateTests.quarantineTwice.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let first = Data("first corruption".utf8)
+        defaults.set(first, forKey: "dev.llun.Schrift.pendingCreates")
+        let store = PendingDocumentCreateStore(userDefaults: defaults)
+        store.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "After first", createdAt: Date(timeIntervalSince1970: 1_000),
+                serverOrigin: origin, ownerUserID: user))
+
+        defaults.set(Data("second corruption".utf8), forKey: "dev.llun.Schrift.pendingCreates")
+        store.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "After second", createdAt: Date(timeIntervalSince1970: 2_000),
+                serverOrigin: origin, ownerUserID: user))
+
+        XCTAssertEqual(defaults.data(forKey: "dev.llun.Schrift.pendingCreates.unreadable"), first)
+        XCTAssertTrue(store.holdsUnreadableData, "and suppression stays on regardless")
+    }
+
     /// The sticky flag must not make the *next* write quarantine the healthy blob it just
     /// wrote — quarantining keys off the live data, the suppression keys off the flag.
     func testQuarantiningOnceDoesNotMoveTheReplacementStoreAside() {

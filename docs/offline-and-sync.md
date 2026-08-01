@@ -1147,8 +1147,8 @@ branch and delete the drafts those unknown records owned — which is the loss t
 whole mechanism exists to prevent. The cost is that drafts for genuinely-deleted
 server documents stop being cleaned up on that device until the quarantine is
 cleared; a stale draft is inert where a deleted one is gone, and clearing it
-belongs with the recovery affordance below. Nothing reads or clears the
-quarantine key today.
+belongs with the recovery affordance below. Nothing reads the quarantined *bytes*
+or clears the key — its mere existence is what keeps the suppression on.
 
 Still to come, and each is an obligation this change creates rather than a
 nice-to-have:
@@ -1167,8 +1167,8 @@ nice-to-have:
   through any UI, and they hold a full document body in UserDefaults indefinitely.
   Note this is a *change*: before the holds, such a draft was eventually reaped by
   the sync pass's 404/403 branch. The same affordance owes a way to clear a
-  **quarantined** blob, which is likewise written once and never read or removed —
-  and which, while it exists, keeps draft cleanup suppressed on that device.
+  **quarantined** blob, whose bytes are written once and never read or removed —
+  and whose mere existence keeps draft cleanup suppressed on that device.
 
 ## Data flow
 
