@@ -586,7 +586,15 @@ final class DocumentSaveCoordinator {
         // moments ago, which a rename landing *during* the POST has already superseded. Either
         // way nothing downstream would flag the difference — the baseline is stamped with the
         // server's title, so `draftTitleOutcome` would see draft == baseline and silently keep
-        // the old name. There is no co-author to protect: this device made the document.
+        // the old name.
+        //
+        // The trade this accepts: a rename made *elsewhere* while the document sat
+        // checkpointed is reverted. "This device made it, so there is no co-author" is the
+        // tempting justification and it is too strong — accesses are ancestor-aware, so a
+        // sub-page under a shared parent has co-authors from birth, and the same user on
+        // another client is not a co-author at all. What makes it acceptable is scope: only
+        // the *title* is decided this way, and only across a window that is normally
+        // microseconds; the **body** is protected properly, by the conflict recorded below.
         let title =
             queued[localID]?.title ?? draft?.title ?? migrated?.title ?? serverTitle ?? record.title
 
@@ -1154,6 +1162,11 @@ final class DocumentSaveCoordinator {
     /// `inFlight` and `queued` — and nothing can *start* one afterwards, because the
     /// enqueue-hold below only ever fills the queued slot. So a resolver never has to
     /// reason about a save landing underneath it and resurrecting the losing body.
+    ///
+    /// The create migration is a third recording site, and it holds for its own reason:
+    /// the id it records against was minted by the server moments earlier, so nothing in
+    /// this process has ever addressed it. (`finish`'s deferred re-decision is a fourth,
+    /// and holds because it runs from the settling save itself.)
     ///
     /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
     /// wins — an accepted race, recoverable from the server's version history).

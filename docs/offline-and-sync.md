@@ -1088,9 +1088,12 @@ tolerance. The instant the create POST lands, the new document's `updated_at` is
 *now* while the draft's is however long ago the user last typed, which offline is
 the entire point. Rule 3 would answer `.discardServerWins`, and the launch pass
 would **delete the body**, leaving the empty document the POST had just created.
-The create response *is* the known server state, so migration must write
-`DraftBaseline(serverUpdatedAt: <response updatedAt>, markdown: "", title:)`
-before the draft is replayed. `discardPendingWork` drops the record with the draft: deleting a local
+So migration must stamp one before the draft is replayed, from the server state it
+actually **observed**: the create response on a fresh POST — where `markdown: ""`
+is provable, because this device made the document a moment earlier — and a
+`formattedContent` fetch on a resume, where it is not (see "A resume takes its
+baseline from `formattedContent`" below).
+`discardPendingWork` drops the record with the draft: deleting a local
 document is purely local, and a surviving record would let a replay resurrect it.
 
 **Synthetic `Document`s never enter a persisted metadata cache.**

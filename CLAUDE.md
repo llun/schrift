@@ -1606,7 +1606,10 @@ markdown write endpoint**. Understand this before touching the save path:
   `handleDidDelete`) clears the record, or the enqueue-hold wedges the document's save
   pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
   flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
-  unreachable during a save; `syncPendingDrafts` guards on both), which is why
+  unreachable during a save; `syncPendingDrafts` guards on both; the **create
+  migration** holds for its own reason — the id it records against was minted by
+  the server moments earlier, so nothing in this process has ever addressed it),
+  which is why
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
   never sent, and counting it wedged "keep the server version" permanently.
