@@ -98,6 +98,8 @@ final class DocumentSaveCoordinator {
     /// origin they were minted against; it decides what may be **listed and sent**, never
     /// what is protected — see `isPendingCreate` vs `isReplayable`.
     private let serverOrigin: String
+    /// Scopes `replayBlockedAt` — see `PendingDocumentCreate.isReplayBlocked(forBuild:)`.
+    private let appBuild: String
     private let backgroundTasks: BackgroundTaskProvider
 
     private var states: [UUID: DocSaveState] = [:]
@@ -178,6 +180,7 @@ final class DocumentSaveCoordinator {
         listCache: DocumentCacheStore = DocumentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         serverOrigin: String = "",
+        appBuild: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
         backgroundTasks: BackgroundTaskProvider = .uiApplication
     ) {
         self.client = client
@@ -187,6 +190,7 @@ final class DocumentSaveCoordinator {
         self.listCache = listCache
         self.childrenCache = childrenCache
         self.serverOrigin = serverOrigin
+        self.appBuild = appBuild
         self.backgroundTasks = backgroundTasks
         createStoreUnreadable = createStore.holdsUnreadableData
         // Same reasoning as the conflict rehydration below: the holds these records drive
@@ -461,7 +465,12 @@ final class DocumentSaveCoordinator {
         // attribute, can never be replayed here (see `belongsToSession`) and nothing deletes
         // it — so without this every reconnect, foreground and launch would pay a
         // `/users/me/` request that cannot produce work, forever.
-        guard records.contains(where: { $0.serverOrigin == serverOrigin && $0.ownerUserID != nil }) else { return }
+        guard
+            records.contains(where: {
+                $0.serverOrigin == serverOrigin && $0.ownerUserID != nil
+                    && !$0.isReplayBlocked(forBuild: appBuild)
+            })
+        else { return }
         // Which account is in front of us. Asked once per pass, and only when there is
         // something to send: `isReplayable` needs it, and this is the layer that *can* await
         // it — the coordinator is constructed long before `/users/me/` returns. A failure
@@ -477,9 +486,11 @@ final class DocumentSaveCoordinator {
             // *resurrecting* the record the delete removed.
             guard let record = pendingCreates[snapshot.localID] else { continue }
             guard isReplayable(record, currentUserID: currentUserID) else { continue }
-            // A create whose response we could not read. Retrying POSTs a duplicate and
-            // abandons whatever the server already built — see `replayBlockedAt`.
-            guard record.replayBlockedAt == nil else { continue }
+            // A create *this build* could not read the response of. Retrying it POSTs a
+            // duplicate and abandons whatever the server already built — see
+            // `replayBlockedAt`. A stamp from another build is spent, so a shipped fix
+            // recovers the record on its first launch.
+            guard !record.isReplayBlocked(forBuild: appBuild) else { continue }
             // A save the *server* rejected on the merits is a retry candidate the user can
             // see; leave it to them, exactly as `runSyncPass` does.
             if case .failed = state(for: record.localID) { continue }
@@ -561,13 +572,20 @@ final class DocumentSaveCoordinator {
             // left to duplicate.
             //
             // **`.notFound` only — never `.forbidden`.** A bare 403 is not evidence a document
-            // is gone: Django answers a bad `Origin` with `403 CSRF Failed`, and an ancestor
-            // access recompute can 403 transiently. Acting on one here would create a
-            // duplicate and orphan the original, which is unrecoverable, where retrying a
-            // genuinely revoked document forever is merely stuck — and its content is safe on
-            // the device throughout. Same asymmetry `handleCreateFailure` already applies to a
-            // 403 on the parent probe. `.routeNotFound` falls to the transient branch for the
-            // same reason: it is a fact about the route, not about this document.
+            // is gone: an ancestor access recompute can 403 transiently. (Not the bad-`Origin`
+            // argument that applies on a POST — `performRequest` attaches `Origin`/`Referer`
+            // only to non-GETs, so a CSRF 403 cannot reach *this* call. `handleCreateFailure`
+            // is the mirror image: there the 403 arrives on the POST and the probe is the GET.)
+            // Acting on one here would create a duplicate and orphan the original, which is
+            // unrecoverable. `.routeNotFound` falls to the transient branch too: it is a fact
+            // about the route, not about this document.
+            //
+            // The cost is real and is **not** "merely stuck": a genuinely revoked document
+            // ends up in exactly the state the branch below calls unreachable — withheld from
+            // `pendingLocalDocuments`, never pushed, two GETs per trigger, forever — with its
+            // body alive only in the local draft. The trade is deliberate (unrecoverable
+            // duplicate vs. recoverable invisibility), and making such a record visible and
+            // dischargeable is owed with the create UI.
             record.syncedServerID = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             return
@@ -609,9 +627,13 @@ final class DocumentSaveCoordinator {
         // stamp), replace its `queued` keystrokes, and record a conflict against a save that
         // is in flight — which is also the one thing the conflict invariant forbids.
         //
-        // Bailing is free here too, and self-healing rather than a stalemate: the very same
-        // pass's `runSyncPass` pushes that draft, `finish` removes it, and the next pass
-        // migrates cleanly.
+        // Bailing is free here too, and normally self-clearing: this same pass's `runSyncPass`
+        // pushes that draft and `finish` removes it, so the obstruction is gone. The migration
+        // itself waits for the *next* trigger though — `finish` does not kick the funnel and
+        // the `repeat` loop only re-runs when `needsAnotherSyncPass` is set — i.e. a
+        // foreground, a reconnect, or the editor release below. A draft whose own push keeps
+        // being rejected on the merits blocks it indefinitely, since `runSyncPass` skips
+        // `.failed`; both bodies stay on disk, so that costs the sync, never the content.
         guard !hasOpenEditor(documentID: serverID) else { return }
         guard inFlight[serverID] == nil, queued[serverID] == nil else { return }
         // A draft under the server id is *ours* only in the partial-migration window — the
@@ -647,9 +669,12 @@ final class DocumentSaveCoordinator {
         let baseline = DraftBaseline(
             serverUpdatedAt: serverUpdatedAt, markdown: serverMarkdown, title: serverTitle)
         let draft = draftStore.draft(for: localID)
-        // The partially-migrated draft, if a previous attempt died between writing it and
-        // removing the local one. Without this fallback a resume reads an already-removed
-        // local draft as empty and overwrites the good content with "".
+        // The partially-migrated draft: a previous attempt died **after** removing the local
+        // draft and before removing the record. (Not the window between the two draft writes —
+        // there both drafts exist, `body` stops at the local one, and the server-id guard above
+        // defers the migration entirely rather than reaching here.) Without this fallback a
+        // resume reads an already-removed local draft as empty and overwrites good content
+        // with "".
         let migrated = draftStore.draft(for: serverID)
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
         // The **local** title wins on both paths, for the same reason the body does: it is the
@@ -731,7 +756,17 @@ final class DocumentSaveCoordinator {
         // absent, which a death inside the partial-migration window plus an intervening
         // `runSyncPass` that pushes and removes the server-id draft produces exactly.
         if body.isEmpty, !serverMarkdown.isEmpty {
-            draftStore.remove(documentID: serverID)
+            // A rename is the one thing the local side *can* still contribute here, and
+            // dropping the draft outright would silently revert it — the mirror of the
+            // title-loss this same function reasons about above. Push the server's own body
+            // back unchanged (so the content decision stays "adopt") carrying the local
+            // title, through the ordinary funnel that resolves it. With no rename there is
+            // nothing to say, so drop the draft and leave an in-sync document.
+            guard let serverTitle, title != serverTitle else {
+                draftStore.remove(documentID: serverID)
+                return
+            }
+            enqueue(documentID: serverID, title: title, markdown: serverMarkdown, baseline: baseline)
             return
         }
         if !serverMarkdown.isEmpty, canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body) {
@@ -788,6 +823,9 @@ final class DocumentSaveCoordinator {
             // raised. Leave everything; the next trigger retries.
             return
         }
+        // A missing *route* is a fact about the server, not about this document or its parent
+        // — the same reason the resume treats it as transient. Retry rather than parking.
+        if docsError == .routeNotFound, record.parentID == nil { return }
         if let parentID = record.parentID,
             docsError == .forbidden || docsError == .notFound || docsError == .routeNotFound
         {
@@ -831,9 +869,15 @@ final class DocumentSaveCoordinator {
         // id was in the body we failed to decode. Left to the in-memory rule below it would
         // POST a fresh document on every launch, forever, abandoning each one. So this
         // rejection is persisted on the record.
+        // Note what this does and does not prove: `.decoding` means the response was 2xx and
+        // unreadable, not specifically that a document was created — a gateway answering `200`
+        // with HTML created nothing. Blocking is still the right default (a duplicate is
+        // unrecoverable, a delayed retry is not), which is exactly why the stamp is scoped to
+        // this build rather than permanent.
         if case .decoding = docsError {
             guard var blocked = pendingCreates[record.localID] else { return }
             blocked.replayBlockedAt = Date()
+            blocked.replayBlockedBuild = appBuild
             updatePendingCreate(blocked)
         }
         markCreateRejected(record)

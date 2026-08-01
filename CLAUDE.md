@@ -1441,15 +1441,21 @@ markdown write endpoint**. Understand this before touching the save path:
   forbids. So it also bails on an open editor, an in-flight or queued save, or a
   draft under `serverID` that is provably the user's (**a server-id draft is *ours*
   only once the local one is gone** — that is what defines the partial-migration
-  window). This is normally self-healing, not a stalemate: the same pass's
-  `runSyncPass` pushes that draft, `finish` removes it, the next pass migrates.
-  Releasing an editor on the **server** id kicks the funnel too. The exception is a
+  window — note a death *between* the two draft writes leaves **both** present, so
+  that window defers rather than migrating). Deferring normally clears itself: the
+  same pass's `runSyncPass` pushes that draft and `finish` removes it. The migration
+  waits for the **next** trigger though — `finish` does not kick the funnel and the
+  `repeat` loop only re-runs on `needsAnotherSyncPass` — so a foreground, a
+  reconnect, or the editor release completes it; releasing an editor on the
+  **server** id kicks the funnel for exactly that reason. The exception is a
   server-id draft whose push is rejected on the merits — `runSyncPass` skips
   `.failed`, so the migration behind it waits indefinitely; both bodies stay on
   disk, so that costs the sync, never the content.
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
-  migration adopts the server (drop the draft, enqueue nothing).
+  migration adopts the server. A **rename** is the one thing the local side can
+  still contribute, so a differing local title pushes the server's own body back
+  unchanged carrying that title rather than silently reverting it.
   **No failure strands content**: transport/5xx/
   `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
   promotes to a root only on evidence (gone, forbidden, or
@@ -1459,7 +1465,16 @@ markdown write endpoint**. Understand this before touching the save path:
   on the merits goes `.failed`, which stops the retry loop but is **not** reachable
   by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
   non-nil, which a local document with content always has), so a relaunch is the
-  escape until the UI offers a create-specific one.
+  escape until the UI offers a create-specific one. **The one rejection that is
+  persisted is `.decoding`**, which arrives *after* a 201: the server built the
+  document and no checkpoint could be written (the id was in the body that failed
+  to decode), so the in-memory rule would POST and abandon another every launch —
+  the `is_favorite`-as-required-`Bool` incident, on a loop. It stamps
+  `replayBlockedAt` **scoped to the app build** (`isReplayBlocked(forBuild:)`);
+  a blanket block would make that same incident unrecoverable by *shipping the
+  fix*, which is worse than the littering it prevents. A stamp from another build
+  is spent, so a fixed build retries once, and the gate excludes blocked records
+  so they cost no `/users/me/` round trip either.
   **A resume takes its baseline from `formattedContent`, never from `document`**
   (it calls both — `document` only feeds the list caches). The latter carries no
   body, so using it stamped `markdown: ""`, asserting an empty server nothing had

@@ -40,7 +40,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let defaults: UserDefaults
     }
 
-    private func makeEnvironment(sharing defaults: UserDefaults? = nil) -> Environment {
+    private func makeEnvironment(sharing defaults: UserDefaults? = nil, appBuild: String = "1") -> Environment {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let defaults =
             defaults
@@ -58,7 +58,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
                 client: client, draftStore: drafts,
                 contentCache: DocumentContentCacheStore(directory: cacheDirectory),
                 createStore: creates, listCache: lists, childrenCache: children,
-                serverOrigin: origin, backgroundTasks: .noop),
+                serverOrigin: origin, appBuild: appBuild, backgroundTasks: .noop),
             drafts: drafts, creates: creates, lists: lists, children: children, defaults: defaults)
     }
 
@@ -794,6 +794,48 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "and the document stays protected — inert, not abandoned")
     }
 
+    /// The block says "*this build* could not read the response", not "never try again". A
+    /// blanket block would make the very incident it cites — a decode bug shipped in the app —
+    /// unrecoverable by shipping the fix, which is worse than the littering it prevents.
+    func testAShippedFixRecoversARecordTheOldBuildCouldNotRead() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment(appBuild: "100")
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        stubUsersMeThen(log: log) { _ in
+            .init(statusCode: 201, headers: [:], body: Data("{\"unexpected\": true}".utf8), error: nil)
+        }
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertEqual(creates(log), 1)
+
+        // The decode fix ships: same records on disk, a new build, and a server the app can
+        // now read.
+        stubReplayPipeline(log: log)
+        let updated = makeEnvironment(sharing: env.defaults, appBuild: "101")
+        await updated.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 2, "the new build retries exactly once")
+        XCTAssertNil(updated.creates.create(for: local.id), "and the document finally syncs")
+    }
+
+    /// The pre-flight gate's own rule — never pay `/users/me/` for work that cannot happen —
+    /// has to hold for a blocked record too, or it reintroduces the cost it exists to prevent.
+    func testABlockedRecordCostsNoRequestOnLaterTriggers() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment(appBuild: "100")
+        env.coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+        stubUsersMeThen(log: log) { _ in
+            .init(statusCode: 201, headers: [:], body: Data("{\"unexpected\": true}".utf8), error: nil)
+        }
+        await env.coordinator.syncPendingDrafts()
+
+        let relaunched = makeEnvironment(sharing: env.defaults, appBuild: "100")
+        let before = log.methods.count
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.count, before, "not even /users/me/")
+    }
+
     /// A transient failure on the resume must never discard the checkpoint: that is the only
     /// thing standing between the app and a duplicate, since the backend has no idempotency
     /// key.
@@ -909,26 +951,23 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         record.syncedServerID = serverID
         env.creates.save(record)
 
+        // No competing save: the retain is the *only* thing that can defer this, so the
+        // assertion cannot be satisfied by one of the sibling guards instead.
         let relaunched = makeEnvironment(sharing: env.defaults)
         relaunched.coordinator.retainOpenEditor(documentID: serverID)
-        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Typed on the real doc")
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
-        // The screen's own save is what reaches the server — not the offline body the
-        // migration would have parked in `queued` on top of it. (Its draft is gone because
-        // that save *landed*; `finish` removes a draft the PATCH confirmed.)
-        await waitUntil {
-            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Typed on the real doc"
-        }
+        XCTAssertNil(relaunched.drafts.draft(for: serverID), "and wrote nothing under the server id")
     }
 
-    /// The same hazard without a registered editor: a save for the server id already in flight
-    /// or queued. Migrating would replace the queued slot, and `finish` would then PATCH the
-    /// offline body over the text the user just typed.
+    /// The same hazard without a registered editor: a save for the server id sitting in the
+    /// *queued* slot with nothing in flight — the shape the conflict hold produces. Migrating
+    /// would replace that slot, and releasing the hold would then PATCH the offline body over
+    /// the text the user typed.
     func testAMigrationDefersWhileASaveForTheServerIDIsQueued() async {
         let log = RequestRecorder()
-        stubReplayPipeline(log: log, postDelay: 0.2)
+        stubReplayPipeline(log: log)
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil, ownerUserID: user)
@@ -937,13 +976,46 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         env.creates.save(record)
 
         let relaunched = makeEnvironment(sharing: env.defaults)
-        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# On the wire")
-        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Queued behind it")
+        // The enqueue-hold parks the save in `queued` and starts nothing, so `inFlight` is
+        // provably nil and only the `queued` half of the guard can be what defers.
+        relaunched.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Typed on the real doc")
+        XCTAssertEqual(savesInFlight(log), 0, "held, not sent — so `inFlight` is nil")
+
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Typed on the real doc",
+            "the held work is untouched")
+    }
+
+    /// A death *between* the migration's two draft writes leaves **both** drafts present. The
+    /// discriminator reads that as the user's, so the migration defers rather than migrating —
+    /// safe, and it recovers, because `runSyncPass` pushes the server-id draft and a later
+    /// trigger then migrates.
+    func testADeathBetweenTheTwoDraftWritesDefersRatherThanGuessing() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Offline body")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Both drafts on disk — the server-id one written, the local one not yet removed.
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Offline body",
+                updatedAt: Date(), baseline: nil))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "deferred rather than migrated")
         await waitUntil {
-            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Queued behind it"
+            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Offline body"
         }
     }
 

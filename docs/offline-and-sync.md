@@ -1165,9 +1165,14 @@ nice-to-have:
   the pass's per-pass fetch should read the persisted value instead — which also
   makes the replay work against a server that omits `id`.
 - **Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
-  create UI.** The "+" creates a document and opens its editor immediately, so a
-  missed retain makes the very first reconnect-while-typing the
-  migration-under-a-live-screen case. Copy `EditorView`'s
+  create UI — from `EditorView` itself, for *every* document, not only
+  locally-created ones.** The "+" case is the obvious one: it opens an editor
+  immediately, so a missed retain makes the very first reconnect-while-typing the
+  migration-under-a-live-screen case. But the `serverID` half of the guard is only
+  live if an *ordinary* document opened from Home, Search or Shared retains too —
+  that is precisely its motivating scenario, the user meeting a checkpointed
+  document under its real id. Retaining only for local documents leaves that guard
+  dead in the case it was added for. Copy `EditorView`'s
   `holdsCollaborationSession` shape — a one-shot `@State` flag, released only if
   held — rather than calling retain from `onAppear` directly, so the pairing
   cannot double-count or leak. A leaked retain is not harmless *within* a
@@ -1187,9 +1192,12 @@ nice-to-have:
   record unconditionally today, which is right for the un-checkpointed case and
   a lie for the checkpointed one.
 - **A retry or discard for a record whose create response we could not read**
-  (`replayBlockedAt`). Nothing clears the stamp, so such a document is protected
-  but permanently inert, and its server-side twin — which the failed POST did
-  create — is orphaned.
+  (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
+  fix recovers the record on its first launch — but *within* a build nothing clears
+  it, and the server-side twin the failed POST may have created stays orphaned
+  either way. The same affordance owes a discharge for a record whose resume keeps
+  taking a `.forbidden`: it is checkpointed, so `pendingLocalDocuments` withholds
+  it, leaving a body that is invisible in every list and unpushable.
 - ~~**The create replay**~~ — **landed 2026-08-01**, see below.
 - **A recovery affordance, or a bounded retention policy, for records that can
   never be replayed here** — another account's, or an unattributable one. Their
@@ -1287,14 +1295,22 @@ replace its `queued` keystrokes, and record a conflict against an in-flight save
 which the conflict invariant forbids outright. So the migration also defers while
 the server id has an open editor, an in-flight or queued save, or a draft that is
 provably the user's (a draft under the server id is *ours* only once the local one
-is gone, which is exactly what defines the partial-migration window). Deferring is
-normally self-healing rather than a stalemate: the same pass's `runSyncPass` pushes
-that draft, `finish` removes it, and the next pass migrates cleanly. Releasing an
-editor on the **server** id kicks the funnel too, so the deferral doesn't wait for
-an unrelated foreground. The one case that does *not* clear itself is a server-id
-draft whose own push keeps being rejected on the merits — `runSyncPass` skips a
-`.failed` draft, so the migration behind it waits indefinitely. Both bodies stay on
-disk throughout, so this costs the local document its sync, never its content.
+is gone, which is exactly what defines the partial-migration window). Deferring
+normally clears itself: the same pass's `runSyncPass` pushes that draft and `finish`
+removes it, so the obstruction goes away. The migration itself waits for the *next*
+trigger, though — `finish` does not kick the funnel and the `repeat` loop only
+re-runs when `needsAnotherSyncPass` is set — so it is a foreground, a reconnect, or
+an editor release that completes it. Releasing an editor on the **server** id kicks
+the funnel too, which is why that case doesn't wait for an unrelated foreground. The
+one shape that does *not* clear itself is a server-id draft whose own push keeps
+being rejected on the merits — `runSyncPass` skips a `.failed` draft, so the
+migration behind it waits indefinitely. Both bodies stay on disk throughout, so this
+costs the local document its sync, never its content.
+
+A death **between** the migration's two draft writes leaves *both* drafts present,
+and the discriminator reads that as the user's — so that window is now deferred
+rather than migrated. It recovers the same way: `runSyncPass` pushes the server-id
+draft, and a later trigger migrates.
 
 **An empty local body is never offered as a conflict.** If the migration finds
 nothing on this device and content on the server, the local side has nothing to
@@ -1302,7 +1318,11 @@ contribute and arming the pill would offer a "Keep my version" that PATCHes `""`
 and wipes the document. It adopts the server instead — drop the draft, enqueue
 nothing. The state is reachable: the body chain falls back to `""` when the queued
 slot, the local draft and the partially-migrated draft are all absent, which a
-death inside the migration plus an intervening `runSyncPass` produces.
+death inside the migration plus an intervening `runSyncPass` produces. A **rename**
+is the one thing the local side can still contribute there, so when the local title
+differs the migration pushes the server's own body back unchanged carrying that
+title; dropping the draft outright would silently revert it, the mirror of the title
+loss the normal path reasons about.
 
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
@@ -1377,12 +1397,18 @@ forever would leave the document in no list (a checkpointed record is withheld
 from `pendingLocalDocuments`) and never pushed — unreachable by every route the
 app offers. Clearing `syncedServerID` lets the next pass create it afresh; there
 is nothing left to duplicate. **`.notFound` only, never `.forbidden`** — a bare 403
-is not evidence a document is gone (Django answers a bad `Origin` with one, and an
-ancestor access recompute can 403 transiently), and acting on it here creates a
-duplicate and orphans the original, which is unrecoverable, where retrying a
-genuinely revoked document forever is merely stuck with its content safe on the
-device. Same asymmetry the parent probe already applies. `.routeNotFound` is
-likewise transient here: it is a fact about the route, not about this document.
+is not evidence a document is gone (an ancestor access recompute can 403
+transiently), and acting on it here creates a duplicate and orphans the original,
+which is unrecoverable. `.routeNotFound` is likewise transient here: it is a fact
+about the route, not about this document. Note the bad-`Origin` argument does *not*
+apply on this call — `performRequest` attaches `Origin`/`Referer` only to non-GETs,
+so a CSRF 403 cannot reach a GET; that argument belongs to the create POST, where
+`handleCreateFailure` uses it. And the cost here is **not** "merely stuck": a
+genuinely revoked document lands in exactly the state the `.notFound` branch calls
+unreachable — withheld from `pendingLocalDocuments`, never pushed, two GETs per
+trigger — with its body alive only in the local draft. The trade is deliberate (an
+unrecoverable duplicate versus recoverable invisibility); making such a record
+visible and dischargeable is owed with the create UI.
 
 **"Checkpointed but not migrated" is now a routine state**, not only a
 crash-recovery one, because both re-checks above bail after the checkpoint. In it

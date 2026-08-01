@@ -61,10 +61,22 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// the server with them"), and with a per-launch replay that becomes one orphaned
     /// document per launch, forever.
     ///
-    /// Nothing clears it yet, so such a record is inert but still protected — the holds
-    /// key off `isPendingCreate`, which does not read this. Giving the user a way to retry
-    /// or discard belongs with the create UI that can present it.
+    /// **Scoped to the build that set it** (`replayBlockedBuild`), which is what keeps this
+    /// from being worse than the bug it fixes. A blanket block would make the cited incident
+    /// *unrecoverable by an app update*: every affected record is stamped, the fix ships, and
+    /// the pass keeps skipping records that the new build could now decode perfectly — where
+    /// before this field the bug at least self-healed on the first launch after the fix. So
+    /// the block means "*this* build could not read the response", and a different build
+    /// retries once. That also bounds the littering it prevents to one orphan per app
+    /// version rather than one per launch.
+    ///
+    /// Giving the user a way to retry or discard within a build still belongs with the create
+    /// UI that can present it.
     var replayBlockedAt: Date?
+    /// The app build that set `replayBlockedAt`. Optional-on-decode like everything here, and
+    /// a record carrying a stamp with no build is treated as blocked for *no* build — an
+    /// unknown blocker cannot be shown to still apply.
+    var replayBlockedBuild: String?
 
     init(
         localID: UUID,
@@ -74,7 +86,8 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         serverOrigin: String,
         ownerUserID: UUID? = nil,
         syncedServerID: UUID? = nil,
-        replayBlockedAt: Date? = nil
+        replayBlockedAt: Date? = nil,
+        replayBlockedBuild: String? = nil
     ) {
         self.localID = localID
         self.title = title
@@ -84,6 +97,13 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         self.ownerUserID = ownerUserID
         self.syncedServerID = syncedServerID
         self.replayBlockedAt = replayBlockedAt
+        self.replayBlockedBuild = replayBlockedBuild
+    }
+
+    /// Whether this build should skip the record. A stamp from a *different* build is spent:
+    /// that build's inability to read the create response says nothing about this one's.
+    func isReplayBlocked(forBuild build: String) -> Bool {
+        replayBlockedAt != nil && replayBlockedBuild == build
     }
 }
 
