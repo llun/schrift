@@ -1469,7 +1469,10 @@ markdown write endpoint**. Understand this before touching the save path:
   *server* id, and the checkpoint is the last thing tying it to the record — so
   clearing first **orphans** the body: the re-POST mints a different server id and
   its body chain never looks under the old one, so it builds an **empty** document,
-  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
+  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule — which is why the
+  start-over first discharges any conflict against that id: `runSyncPass` **skips a
+  conflicted draft**, so the reap it defers to would never run and the record would
+  strand permanently (`init` rehydrates the stamp, so the skip outlives relaunches). (That
   draft is never covered by the pending-create hold in either ordering — the hold is
   keyed on the local id. The ordering decides whether the body is still *reachable*,
   not whether it is protected from that sweep.) Move-then-clear is self-healing across a kill between the two writes;
@@ -1519,8 +1522,12 @@ markdown write endpoint**. Understand this before touching the save path:
   rename made here on a body-less document is lost when the server has moved on.
   **No failure strands content**: transport/5xx/
   `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
-  promotes to a root only on evidence (gone, forbidden, or
-  `abilities.childrenCreate` false) — a bare 403 is also what Django returns for a
+  promotes to a root only on **evidence the server actually gave**: the probe's own 404
+  or 403. A reachable parent whose `abilities.childrenCreate` is false gets a terminal
+  `.failed` instead — never a re-parent, because `Document` decodes that key
+  `decodeIfPresent(...) ?? false`, so *absent* and *denied* are indistinguishable, this
+  is the app's only consumer of the field, and re-parenting is irreversible (the old
+  parent is stored nowhere and there is no move feature) — a bare 403 is also what Django returns for a
   bad `Origin`, and an HTML 404 is not proof a route is absent, so promoting on
   either alone would silently re-parent every sub-page. A `.routeNotFound` on a **root**
   create retries instead of parking — a missing route is a fact about the server, not
@@ -1729,8 +1736,9 @@ markdown write endpoint**. Understand this before touching the save path:
   forever); `resolveConflictKeepingServer` is the one sanctioned discard and **fetches
   before it discards** (a failed fetch must not cost the user the only copy of their
   work). Every purge path (`discardPendingWork`, `suppressLocalWriteThrough`,
-  `handleDidDelete`, and the create migration's **adopt-the-server** branch, which
-  deletes every local trace for that id) clears the record, or the enqueue-hold
+  `handleDidDelete`, the create migration's **adopt-the-server** branch, which deletes
+  every local trace for that id, and the replay's **start-over**, whose id is now dead)
+  clears the record, or the enqueue-hold
   wedges the document's save pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
   flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
   unreachable during a save; `syncPendingDrafts` guards on both; the **create

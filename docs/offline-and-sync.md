@@ -1221,7 +1221,8 @@ nice-to-have:
   fallback, so it should be fixed in the same change rather than propagated.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
-  fix recovers the record on its first launch — but *within* a build nothing clears
+  fix recovers the record on its first launch, and a later successful POST clears it
+  outright (that proves the block spent) — but *within* a build nothing clears
   it, and the server-side twin the failed POST may have created stays orphaned
   either way. The same affordance owes a discharge for a record whose resume keeps
   taking a `.forbidden`: it is checkpointed, so `pendingLocalDocuments` withholds
@@ -1436,11 +1437,16 @@ only "the parent isn't yours": it is also what Django answers for a bad `Origin`
 (the capitalised-host bug), and an HTML `404` is not proof a route is absent,
 since a proxy can serve one for a path it swallowed. So the parent is **probed**,
 and its answer decides — gone or forbidden ⇒ promote; reachable but
-`abilities.childrenCreate` false ⇒ promote (permission is the abilities dict's
-call, never ours to infer, and without this branch a permission downgrade between
-minting and replaying had *no terminal state at all*: it never promoted, never
-failed, and paid a POST plus a probe on every trigger forever); reachable and
-willing ⇒ the failure was about something else, so retry. A probe that cannot
+`abilities.childrenCreate` false ⇒ **terminal `.failed`, not a promote** (without
+something here a permission downgrade between minting and replaying had *no terminal
+state at all*: it never promoted, never failed, and paid a POST plus a probe on every
+trigger forever — but promoting on that value is not available to us, since `Document`
+decodes it `decodeIfPresent(...) ?? false`, so an `abilities` object that merely omits
+the key is indistinguishable from one denying it; this is the app's first and only
+consumer of the field, on a route whose serializer it has never depended on before, and
+the repo has already been bitten by exactly that variance with `is_favorite`.
+Re-parenting is irreversible, so it must not rest on a value that cannot say "the server
+didn't answer"); reachable and willing ⇒ the failure was about something else, so retry. A probe that cannot
 answer leaves the record alone — "I couldn't ask" must never read as "it isn't
 there". A `.routeNotFound` on a **root** create retries rather than parking — a missing route
 is a fact about the server, not this document, the same reading the resume path gives
@@ -1463,7 +1469,8 @@ document the last one built. This is not hypothetical: `CLAUDE.md` records
 `is_favorite`-as-required-`Bool` failing every create after the server had already
 made the document, "quietly littering the server with them". So a decode failure
 stamps `replayBlockedAt` on the record, which the pass skips. The record stays
-protected but inert; nothing clears it yet, so a retry/discard affordance is owed
+protected but inert until a later POST succeeds, which clears the stamp; a
+retry/discard affordance within the same build is still owed
 with the create UI.
 
 **A resume takes its baseline from `formattedContent`, not `document`** — it calls
@@ -1517,7 +1524,10 @@ one is removed, so that no instant exists with the content nowhere — and the
 checkpoint is the last thing tying it to the record. Clear it first and the body is
 **orphaned**: the re-POST mints a *different* server id and its body chain looks under
 the local id and the new one, never the old, so it builds an empty document — and the
-stranded draft is separately reaped by `runSyncPass`, which GETs it and takes the same
+stranded draft is separately reaped by `runSyncPass` — which is why the start-over must
+first **discharge any conflict** against that id, since `runSyncPass` skips a conflicted
+draft and the reap would otherwise never run, stranding the record permanently (`init`
+rehydrates the stamp, so the skip outlives relaunches). It GETs the draft and takes the same
 404. (That draft is never covered by the pending-create hold in either ordering — the
 hold is keyed on the local id. The ordering decides whether the body is still
 *reachable*, not whether it is protected from that sweep.)

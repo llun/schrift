@@ -295,7 +295,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// A parent that is reachable but no longer allows children has to reach a terminal
     /// state: before the abilities check it never promoted, never failed, and paid a POST
     /// plus a probe on every trigger, forever.
-    func testAParentThatNoLongerAllowsChildrenPromotesToARoot() async {
+    func testAParentThatNoLongerAllowsChildrenIsTerminalNotReParented() async {
         let log = RequestRecorder()
         let parent = UUID()
         let env = makeEnvironment()
@@ -326,7 +326,16 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await env.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(env.creates.create(for: local.id), "the document is still ours to send")
-        XCTAssertNil(env.creates.create(for: local.id)?.parentID, "promoted rather than retrying forever")
+        // **Terminal, not re-parented.** `childrenCreate` decodes `?? false`, so an `abilities`
+        // object that merely omits the key is indistinguishable from one denying it — and
+        // re-parenting is irreversible (the old parent is stored nowhere, and there is no move
+        // feature). So a reachable-but-unwilling parent stops the retry loop without moving the
+        // document; only the probe's own 404/403, which is real evidence, promotes.
+        XCTAssertEqual(
+            env.creates.create(for: local.id)?.parentID, parent, "the placement is left alone")
+        guard case .failed = env.coordinator.state(for: local.id) else {
+            return XCTFail("a reachable-but-unwilling parent needs a terminal state")
+        }
     }
 
     // MARK: - Idempotency
@@ -1192,6 +1201,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
         XCTAssertNil(relaunched.coordinator.conflict(for: serverID), "nothing to ask about")
         XCTAssertNil(relaunched.drafts.draft(for: serverID), "and no empty draft left to push")
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
@@ -1624,6 +1634,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
         XCTAssertNil(
             relaunched.coordinator.conflict(for: serverID),
             "a formatting-only export difference is not a divergence to ask about")
@@ -1876,6 +1887,46 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(
             relaunched.coordinator.conflict(for: serverID),
             "the document is gone — nothing left to ask about, and the record must not strand")
+    }
+
+    /// The partial-migration draft's push evidence must be **carried forward** when the body
+    /// comes from it. That body is not the offline one — a previous attempt already wrote it
+    /// under the server id — so "the local body does not descend from that push" is false of
+    /// it, and dropping the stamp raises a conflict no evidence can ever release against the
+    /// user's own earlier write. Every other test builds server-id drafts with a nil stamp, so
+    /// replacing `carriedPush` with `nil` outright leaves them all green.
+    func testAPartiallyMigratedDraftKeepsThePushItDescendsFrom() async throws {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The partial-migration shape: local draft gone, server-id draft present — and it
+        // records that its body was already pushed.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Already pushed",
+                updatedAt: Date(), baseline: nil, lastPushedMarkdown: "# Already pushed"))
+        // The server holds that same pushed body, so this is our own write, not a divergence.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Already pushed",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        let draft = try XCTUnwrap(relaunched.drafts.draft(for: serverID))
+        XCTAssertEqual(
+            draft.lastPushedMarkdown, "# Already pushed",
+            "the evidence rides along, so rule 1 can still recognise our own landed write")
     }
 
     // MARK: - Helpers

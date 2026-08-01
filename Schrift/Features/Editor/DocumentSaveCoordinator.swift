@@ -542,6 +542,13 @@ final class DocumentSaveCoordinator {
             // The local `record` copy still carries the id, which is what lets
             // `finishMigration` run its own re-checks rather than deciding here.
             record.syncedServerID = created.id
+            // A successful POST proves any earlier block spent, and **this** is where the wedge
+            // is created — the start-over path is reachable only on a build the stamp does not
+            // match, i.e. never for the record it actually wedges. Carried forward, a
+            // checkpointed record keeps a stamp from an older build, and reverting to that build
+            // skips it forever with the local row withheld and the body unmigrated.
+            record.replayBlockedAt = nil
+            record.replayBlockedBuild = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             // `""` is provable here, not assumed: this POST created the document a moment ago.
             finishMigration(
@@ -645,12 +652,18 @@ final class DocumentSaveCoordinator {
             // about, and this is the third server-id transition that has to discharge the
             // record, alongside the adopt branch and `discardPendingWork`'s checkpointed sweep.
             //
-            // Gated on nothing being parked, so `releaseHeldSave` cannot start a PATCH at an id
-            // that just 404'd. With a save queued the document is not stranded anyway — that
-            // save settles and takes the ordinary route.
-            if queued[serverID] == nil, inFlight[serverID] == nil {
-                clearResolvedConflict(documentID: serverID)
-            }
+            // **Drop the held work first, then clear unconditionally** — the pattern
+            // `discardPendingWork`, `resolveConflictKeepingServer` and
+            // `suppressLocalWriteThrough` all use for this same "the document is gone" shape.
+            // Gating the clear on `queued[serverID] == nil` instead would skip the one cell
+            // that needs it: a queued slot with nothing in flight *is* the conflict hold
+            // (`enqueue` fills it only for a pending-create id, a recorded conflict, or an
+            // in-flight save, and the first is keyed on the local id), and nothing settles it —
+            // `releaseHeldSave` is its only drainer, reached only from the call being skipped.
+            // Dropping it makes `releaseHeldSave` a provable no-op, so no PATCH can start at an
+            // id that just 404'd, and the ordinary 404 rule can finally reap the draft.
+            queued[serverID] = nil
+            clearResolvedConflict(documentID: serverID)
             record.syncedServerID = nil
             // The block belongs to the create attempt that failed to decode, and this record is
             // about to start over with a fresh POST — carrying a spent stamp forward would wedge
@@ -953,7 +966,10 @@ final class DocumentSaveCoordinator {
             // is never even reached; `releaseConflictIfProven` clears the conflict and the
             // held save overwrites them. The local body provably does not descend from that
             // push, so the evidence is as false as the baseline would have been. (The draft
-            // written above carries no `lastPushedMarkdown`, so clearing the map is enough.)
+            // written above usually carries none. Not sufficient alone: `enqueue` falls back to
+            // the draft's own stamp, which the partial-migration path deliberately carries
+            // forward — see `carriedPush`, honest exactly where it fires, since the body came
+            // from that draft and so does descend from its push.)
             lastConfirmedPushMarkdown[serverID] = nil
             recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
         }
@@ -1027,14 +1043,27 @@ final class DocumentSaveCoordinator {
             let promote: Bool
             do {
                 let parent = try await client.document(documentID: parentID)
-                // The parent is reachable, so the failure was not about it existing. The one
-                // thing that still makes a sub-page impossible *there* is the server saying
-                // so — and permission is the abilities dict's call, never ours to infer.
-                // Without this branch a permission downgrade between minting and replaying
+                // The parent is reachable, so the failure was not about it existing — and a
+                // reachable-but-unwilling parent gets a **terminal state, not a re-parent.**
+                // Without something here a permission downgrade between minting and replaying
                 // had no terminal state at all: it never promoted, never failed, and paid a
                 // POST plus a probe on every trigger while the caption said "syncs when
-                // online".
-                promote = !parent.abilities.childrenCreate
+                // online". But promoting on `!childrenCreate` is not available to us:
+                // `Document` decodes it `decodeIfPresent(...) ?? false`, so an `abilities`
+                // object that simply **omits** the key is indistinguishable from one that
+                // denies it — and this is the app's first and only consumer of that field, on
+                // a route (`GET documents/{id}/`) whose serializer the app has never depended
+                // on before. This repo has already been bitten by exactly that variance
+                // (`is_favorite`, present on list routes and absent from creates). Re-parenting
+                // is irreversible — the old parent is stored nowhere and there is no move
+                // feature — so it must never rest on a value that cannot say "the server
+                // didn't answer". `.failed` is recoverable; a silently re-rooted sub-page is
+                // not.
+                if !parent.abilities.childrenCreate {
+                    markCreateRejected(record)
+                    return
+                }
+                promote = false
             } catch let probe as DocsAPIError where probe == .notFound || probe == .forbidden {
                 promote = true
             } catch {
@@ -1303,7 +1332,8 @@ final class DocumentSaveCoordinator {
             // buy: a *successful* migration ends in an `enqueue` that `runSyncPass` then skips
             // — undiverged it went straight to `start` and set `inFlight`; diverged it is
             // parked in `queued` behind the conflict hold; and the adopt branch returns before
-            // enqueueing at all. Either way the pass is not the one pushing it. What the ordering serves is a migration the server-id guards
+            // enqueueing at all. Either way the pass is not the one pushing it. What the
+            // ordering serves is a migration the server-id guards
             // **deferred**: `runSyncPass` clears the draft standing in its way, so the next
             // trigger can complete it. Both inherit this funnel's
             // re-entrancy guard and coalescing — the create replay must never get its own
@@ -1466,10 +1496,10 @@ final class DocumentSaveCoordinator {
     /// record is otherwise only ever cleared by a user resolution or a purge — and the
     /// enqueue-hold would then park every save for this document *indefinitely*, waiting on
     /// a question that no longer has anything to ask about. The detection sites call this
-    /// only on a non-`.conflict` decision, so they cannot discard a live one. The create
-    /// migration's adopt-the-server branch is the exception, and discards deliberately: it
-    /// has just removed every local trace for that id, so any rehydrated record is moot by
-    /// construction.
+    /// only on a non-`.conflict` decision, so they cannot discard a live one. Two create-replay sites
+    /// discard deliberately: the adopt-the-server branch, which has just removed every local
+    /// trace for that id, and the start-over, whose id the server has just 404'd. In both the
+    /// rehydrated record is moot by construction.
     func clearResolvedConflict(documentID: UUID) {
         conflicts[documentID] = nil
         persistConflictOnDraft(documentID: documentID)
