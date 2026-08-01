@@ -113,6 +113,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         log.count(ofMethod: "POST", urlContaining: "documents/")
     }
 
+    private func savesInFlight(_ log: RequestRecorder) -> Int {
+        log.count(ofMethod: "PATCH", urlContaining: "/content/")
+    }
+
     // MARK: - The happy path
 
     func testAReplayPostsTheDocumentAndMigratesEverythingOntoTheServerID() async {
@@ -310,6 +314,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         await env.coordinator.syncPendingDrafts()
 
+        XCTAssertNotNil(env.creates.create(for: local.id), "the document is still ours to send")
         XCTAssertNil(env.creates.create(for: local.id)?.parentID, "promoted rather than retrying forever")
     }
 
@@ -353,6 +358,65 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await first.value
 
         XCTAssertEqual(creates(log), 1)
+    }
+
+    /// The whole reason a resume reads `formattedContent` rather than `document`: the latter
+    /// carries no body, so the baseline claimed the server was empty. With a real body on the
+    /// server the baseline must reflect it — **and** the push must not go through unasked,
+    /// since between the checkpoint and the resume the document is live and editable on the
+    /// web. Every other resume test runs against an empty server body, so nothing else here
+    /// distinguishes the two calls.
+    func testAResumeWhoseServerCopyHasABodyRecordsAConflictInsteadOfOverwriting() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        MockURLProtocol.stubHandler = { [serverID] request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+                         "content": "# Typed on the web", "created_at": "2026-03-01T12:00:00Z",
+                         "updated_at": "2026-03-02T09:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            return .init(
+                statusCode: 200, headers: [:],
+                body: Data(
+                    """
+                    {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+                     "abilities": {}, "content": "", "created_at": "2026-03-01T12:00:00Z",
+                     "updated_at": "2026-03-02T09:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+                     "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
+                    """.utf8), error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.baseline?.markdown, "# Typed on the web",
+            "the baseline is what the server actually holds, not an assumed empty document")
+        XCTAssertNotNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "and the co-author's body is not silently full-overwritten")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Written offline",
+            "while the offline body is kept for the user to choose")
     }
 
     // MARK: - Deferring while a screen is open

@@ -1439,10 +1439,14 @@ markdown write endpoint**. Understand this before touching the save path:
   by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
   non-nil, which a local document with content always has), so a relaunch is the
   escape until the UI offers a create-specific one.
-  **A resume reads `formattedContent`, never `document`** — the latter carries no
-  body, so it would stamp `markdown: ""` into the baseline and full-overwrite a
-  document that had since acquired one, then mislead every later decision with the
-  false baseline. `""` is provable only on the fresh-POST path.
+  **A resume takes its baseline from `formattedContent`, never from `document`**
+  (it calls both — `document` only feeds the list caches). The latter carries no
+  body, so using it stamped `markdown: ""`, asserting an empty server nothing had
+  checked; `""` is provable only on the fresh-POST path. And because a resume can
+  find a body that arrived while the document sat checkpointed — live and editable
+  on the web — the migration **records a conflict** when the server's body differs
+  from ours (compared canonically) instead of pushing: the enqueue there goes
+  straight to `start`, since the record is already gone and nothing holds it.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and

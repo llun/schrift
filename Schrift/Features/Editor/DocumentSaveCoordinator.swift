@@ -629,7 +629,22 @@ final class DocumentSaveCoordinator {
 
         removePendingCreate(documentID: localID)
 
-        // Now an ordinary document with an ordinary queued edit: rule 2 sees a server no
+        // **If the server already holds a body, ask — do not push over it.** Reachable only
+        // on a resume: between the checkpoint and here the document has been live on the web,
+        // and "checkpointed but not migrated" is a routine state, so a co-author (or the same
+        // user on another client) can have written to it. The enqueue below goes straight to
+        // `start` — the record is gone, so nothing holds it — which would silently
+        // full-overwrite that body. Recording a conflict first engages the ordinary
+        // enqueue-hold and the pill, so the user chooses. `serverMarkdown` is `""` on the
+        // fresh-POST path and on the overwhelmingly common resume, so this is inert there.
+        //
+        // Compared canonically, because the local body has been through the parser and the
+        // server's has not — a formatting-only difference is not a conflict.
+        if !serverMarkdown.isEmpty, canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body) {
+            recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
+        }
+
+        // Otherwise an ordinary document with an ordinary queued edit: rule 2 sees a server no
         // newer than the baseline we just stamped and answers `.push`.
         enqueue(documentID: serverID, title: title, markdown: body, baseline: baseline)
     }

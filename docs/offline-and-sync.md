@@ -1212,8 +1212,10 @@ for a sub-page, `createDocument` for a root.
    skips the POST and resumes at migration — at worst one empty duplicate, never
    duplicated content.
 2. **Stamp the baseline.** `DraftBaseline(serverUpdatedAt: <create response>,
-   markdown: "", title:)` — the create response *is* the known server state.
-   Mandatory, not tidy: see the seed-draft paragraph above.
+   markdown:, title:)` from the server state the caller actually **observed** — the
+   create response on a fresh POST, where the empty body is provable, and a
+   `formattedContent` fetch on a resume, where it is not (see below). Stamping one
+   is mandatory, not tidy: see the seed-draft paragraph above.
 3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (which
    holds the user's newest keystrokes — leaving it behind strands them under an id
    nothing will ever push), `settledSaves`, `lastConfirmedPushMarkdown`,
@@ -1272,13 +1274,27 @@ pass skips and a relaunch retries once — note that is *not* the reading surfac
 "tap to retry", which cannot reach a local document whose content is parked in
 `queued`; a create-specific affordance belongs with the UI.
 
-**A resume reads `formattedContent`, not `document`.** The latter carries no body,
-so using it meant stamping `markdown: ""` into the baseline — asserting the server
-was empty when nothing had checked. Since the migration enqueues straight into a
-save, a checkpointed document that had *acquired* a body would have been silently
-full-overwritten, and the false baseline would have misled every later
-`draftSyncDecision` too. `""` is provable only on the fresh-POST path, where this
-device created the document a moment earlier.
+**A resume takes its baseline from `formattedContent`, not `document`** — it calls
+both, but the latter carries no body, so using it for the baseline stamped
+`markdown: ""`, asserting the server was empty when nothing had checked. That
+false baseline would have misled every later `draftSyncDecision`. `""` is provable
+only on the fresh-POST path, where this device created the document a moment
+earlier.
+
+**And a resume that finds a body does not push over it.** Between the checkpoint
+and the migration the document is live and editable on the web, and
+"checkpointed but not migrated" is a routine state — so a co-author, or the same
+user on another client, can have written to it. The migration's `enqueue` goes
+**straight to `start`** (the record is gone by then, so nothing holds it), which
+would silently full-overwrite that body. So when the server's markdown differs
+from ours — compared canonically, since ours has been through the parser and the
+server's has not — the migration records a conflict first, and the ordinary
+enqueue-hold and pill ask the user. Inert on the fresh-POST path and on the
+overwhelmingly common empty-server resume.
+
+(The "no co-author to protect" reasoning behind the local-title-wins rule is
+narrower than it sounds: accesses are ancestor-aware, so a sub-page created under
+a shared parent has co-authors from birth.)
 
 **A resume whose document is gone drops its checkpoint.** Retrying that GET
 forever would leave the document in no list (a checkpointed record is withheld
