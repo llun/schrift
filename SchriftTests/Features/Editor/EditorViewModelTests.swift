@@ -353,7 +353,7 @@ final class EditorViewModelTests: XCTestCase {
         stubOffline()
         await viewModel.load()
 
-        XCTAssertTrue(viewModel.canStartEditing, "the toolbar's Edit button reads this")
+        XCTAssertTrue(viewModel.canStartEditing, "the predicate the guard and the Edit button share")
         viewModel.startEditing()
 
         XCTAssertTrue(viewModel.isEditing, "a cached copy is loaded content, so editing may begin offline")

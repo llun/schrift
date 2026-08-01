@@ -58,25 +58,32 @@
 > toolbar's Edit action (`editorToolbarActions` no longer takes `isOffline` at
 > all, so the gate cannot quietly return). What still guards Edit on a document
 > whose content never loaded is `startEditing`'s `hasLoadedContent`, exactly as
-> it already did online. **The dividing line is whether the action POSTs**, and
-> it now cuts through the editing surface itself: every block transformation is
-> a local edit the draft pipeline queues, but **inserting a photo** uploads a
-> multipart attachment for which there is no queue, so it is withheld offline
-> too (disabled in `EditorFormattingBar`, dropped from the slash menu by
-> `filteredSlashItems(query:isOffline:)`) — otherwise it would open the picker
-> and re-encode the chosen image only to fail. Offline **creation** remains out
-> of scope here for the same reason (the "Add a subpage" and Pages-drawer "New
-> page" buttons stay gated: they POST, and a document that does not exist
-> server-side has nothing for the draft pipeline to save to) — it is the subject
-> of its own change. Two decisions ride along:
+> it already did online. **Within the editor's surfaces the dividing line is
+> whether the action POSTs**, and it now cuts through the editing surface
+> itself: every block transformation is a local edit the draft pipeline queues,
+> but **inserting a photo** uploads a multipart attachment for which there is no
+> queue, so it is withheld offline too (disabled in `EditorFormattingBar`,
+> dropped from the slash menu by `filteredSlashItems(query:isOffline:)`) —
+> otherwise it would open the picker and re-encode the chosen image only to
+> fail. Offline **creation** remains out of scope here for the same reason (the
+> "Add a subpage" and Pages-drawer "New page" buttons stay gated: they POST, and
+> a document that does not exist server-side has nothing for the draft pipeline
+> to save to) — it is the subject of its own change. That rule describes the
+> editor, **not the whole app**: Home's `+` POSTs ungated and simply errors, and
+> the Options/Share sheets stay reachable offline throughout. Both predate this
+> change. Two decisions ride along:
 > the editor's `isOffline` stays a **chrome-only** signal derived from the Home
 > list's last fetch outcome (`ConnectivityMonitor` remains "a sync trigger
 > only"; every consequential outcome comes from a real request result, so a
 > stale flag degrades gracefully in both directions), and **Work Offline does
 > not hold saves** — the write-ahead draft is the durability guarantee, and
 > holding writes would only widen the divergence window and manufacture
-> conflicts. One accepted cosmetic wrinkle from that pair: with Work Offline on
-> and the network up, the banner shows while a save quietly succeeds. And one
+> conflicts. That costs more than a cosmetic wrinkle, and it is worth naming:
+> Work Offline is a strict no-network contract on every *read* path, but a save
+> PATCHes regardless — so with the toggle on and the network up, a preference
+> named "Work offline" emits traffic while the banner claims otherwise. The
+> asymmetry predates this change; a cold offline open now leading straight into
+> editing is what makes it routine. And one
 > interaction recorded rather than fixed: whenever `isOffline` is true while the
 > network is actually up — Work Offline on, or *any* non-401 failure of the list
 > fetch, since that is all `isOffline` tracks — a save parked at `.pendingSync`
@@ -839,7 +846,8 @@ ordering; the local phase never blocks on it. `subpages` becomes optional
 succeeded this session — render nothing (or just the eyebrow) in the meantime, so
 the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage"
 button is hidden when `isOffline` (`createChild` is a network POST; a failure
-surfaces `editor_error_add_subpage`, "Couldn't add a subpage.").
+surfaces `editor_error_add_subpage`, "Couldn't add the subpage. Please try
+again.").
 Caching the subpage list is deferred (Non-goals): if
 it were added to `CachedDocumentContent`, the coordinator's save-success cache
 write would have to preserve the prior entry's subpages, so the fetched-flag

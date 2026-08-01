@@ -1572,16 +1572,25 @@ markdown write endpoint**. Understand this before touching the save path:
   `draftSyncDecision` on reconnect/foreground/launch. The one entry guard left is
   `startEditing`'s `hasLoadedContent` — **do not add an offline check back**; a
   document with nothing loaded is the case that guard exists for, online or off.
-  **The dividing line is whether the action POSTs**, and it cuts through the
-  editing surface itself: every block transformation is a local edit the draft
-  pipeline queues, but **inserting a photo** uploads a multipart attachment that
-  has no queue, so it stays gated offline in *both* entry points — disabled in
-  `EditorFormattingBar`, and dropped from the slash menu by the pure
+  **Within the editor's own surfaces the dividing line is whether the action
+  POSTs**, and it cuts through the editing surface itself: every block
+  transformation is a local edit the draft pipeline queues, but **inserting a
+  photo** uploads a multipart attachment that has no queue, so it stays gated
+  offline in *both* entry points — disabled in `EditorFormattingBar` (via
+  `canOfferPhotoInsertion`), and dropped from the slash menu by the pure
   `filteredSlashItems(query:isOffline:)`. Offering it would open the picker and
-  re-encode the chosen image only to fail. **Creating** is gated for the same
-  reason: "Add a subpage" (`EditorView`) and the Pages drawer's "New page" POST,
-  and a document that does not exist server-side has no id for the draft
-  pipeline to PATCH.
+  re-encode the chosen image only to fail. The editor's two **create** buttons
+  are gated for the same reason: "Add a subpage" (`EditorView`) and the Pages
+  drawer's "New page" POST, and a document that does not exist server-side has
+  no id for the draft pipeline to PATCH.
+  **This is a rule about the editor's surfaces, not an app-wide invariant — do
+  not read it as an inventory.** Several POSTing affordances elsewhere are
+  deliberately ungated and simply fail loudly: Home's **`+`**
+  (`DocumentListView`, which errors with `home_error_create`), and the Options
+  and Share sheets' actions (pin, delete, invite, role changes), which stay
+  reachable offline because `editorToolbarActions` never gated `.share` or
+  `.options`. All of that predates offline editing; it is listed here so the
+  paragraph above isn't mistaken for a complete one.
   Two decisions ride with this. (a) **`isOffline` never gates durability or a save
   decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
   the presence badge) plus the POST-only affordances above (photo, the two create
@@ -1595,8 +1604,13 @@ markdown write endpoint**. Understand this before touching the save path:
   result, so a stale flag degrades gracefully both ways. (b) `schrift.workOffline`
   does **not** hold saves: the write-ahead draft is the durability guarantee, and
   holding writes would only widen the divergence window and manufacture conflicts
-  against co-authors. Accepted cosmetic wrinkle: with the toggle on and the
-  network up, the offline banner shows while a save quietly succeeds.
+  against co-authors. Note what that costs, which is more than cosmetic: Work
+  Offline is a strict no-network contract on every *read* path (`HomeViewModel`,
+  `SharedViewModel` and `PagesTreeViewModel` all return before touching the
+  network), but a save PATCHes regardless — so a preference named "Work offline"
+  does emit traffic, and the offline banner shows while that save quietly
+  succeeds. The asymmetry predates this change; what is new is that a cold
+  offline open now leads straight into editing, which makes it routine.
   **One interaction to know about, which this change makes easy to reach.**
   Whenever `isOffline` is true but the network is actually **up** — Work Offline
   on, or any non-401 failure of the *list* fetch — a save parked at `.pendingSync`

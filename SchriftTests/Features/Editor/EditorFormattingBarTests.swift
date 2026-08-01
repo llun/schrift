@@ -91,8 +91,9 @@ final class EditorFormattingBarTests: XCTestCase {
 
     /// The pre-existing reasons still stand on their own: nothing to insert into, or an
     /// upload already running (which `canInsertPhoto` also uses to mean "content loaded").
-    func testPhotoNeedsATargetAndAnIdleUploaderRegardlessOfConnectivity() {
+    func testPhotoStillNeedsATargetAndAnIdleUploader() {
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: true, isOffline: false))
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: false, isOffline: false))
+        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: true, isOffline: true))
     }
 }
