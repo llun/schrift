@@ -1359,9 +1359,8 @@ markdown write endpoint**. Understand this before touching the save path:
      change that could make it reachable.
 
   `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
-  seed draft**
-  (so the editor's existing draft precedence renders it unchanged) and sets
-  `.pendingSync` — nothing is syncing, but the work is on the device.
+  seed draft** (so the editor's existing draft precedence renders it unchanged)
+  and sets `.pendingSync` — nothing is syncing, but the work is on the device.
   `discardPendingWork` drops the record with the draft: a local delete is purely
   local, and a surviving record would let a replay resurrect it.
   **Synthetic `Document`s (`localDocument(from:)`) must never enter a persisted
