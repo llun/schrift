@@ -1559,8 +1559,72 @@ markdown write endpoint**. Understand this before touching the save path:
   makes superseded fetches no-ops) — content equality (never re-serialized
   blocks) decides whether the fetched body counts as a change at all.
   The coordinator write-throughs the cache on save success; delete and 404/403
-  revalidation purge the entry; sign-out clears the store. Offline is
-  read-only. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
+  revalidation purge the entry; sign-out clears the store. See
+  [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
+- **Offline is editable, not read-only — but only for a document that already
+  exists on the server.** The three reading-surface edit gates (the block tap,
+  "Start writing", and the toolbar's Edit action) were lifted 2026-08-01;
+  `editorToolbarActions(isEditing:)` deliberately no longer *takes* `isOffline`,
+  so the gate cannot quietly return. What makes this safe is that the save
+  pipeline was already built for it: `enqueue` persists the draft **before** it
+  attempts the PATCH, `retryableSaveFailure` routes a transport failure to
+  `.pendingSync` rather than `.failed`, and `syncPendingDrafts` replays through
+  `draftSyncDecision` on reconnect/foreground/launch. The one entry guard left is
+  `startEditing`'s `hasLoadedContent` — **do not add an offline check back**; a
+  document with nothing loaded is the case that guard exists for, online or off.
+  **Within the editor's own surfaces the dividing line is whether the action
+  POSTs**, and it cuts through the editing surface itself: every block
+  transformation is a local edit the draft pipeline queues, but **inserting a
+  photo** uploads a multipart attachment that has no queue, so it stays gated
+  offline in *both* entry points — disabled in `EditorFormattingBar` (via
+  `canOfferPhotoInsertion`), and dropped from the slash menu by the pure
+  `filteredSlashItems(query:isOffline:)`. Offering it would open the picker and
+  re-encode the chosen image only to fail. The editor's two **create** buttons
+  are gated for the same reason: "Add a subpage" (`EditorView`) and the Pages
+  drawer's "New page" POST, and a document that does not exist server-side has
+  no id for the draft pipeline to PATCH.
+  **This is a rule about the editor's surfaces, not an app-wide invariant — do
+  not read it as an inventory.** Several POSTing affordances elsewhere are
+  deliberately ungated and simply fail loudly: Home's **`+`**
+  (`DocumentListView`, which errors with `home_error_create`), and the Options
+  and Share sheets' actions (pin, delete, invite, role changes), which stay
+  reachable offline because `editorToolbarActions` never gated `.share` or
+  `.options`. All of that predates offline editing; it is listed here so the
+  paragraph above isn't mistaken for a complete one.
+  Two decisions ride with this. (a) **`isOffline` never gates durability or a save
+  decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
+  the presence badge) plus the POST-only affordances above (photo, the two create
+  buttons). Nothing about whether an edit is kept, queued, or replayed reads it.
+  It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
+  *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the
+  **list** endpoint sets it with the network perfectly healthy. It is deliberately
+  *not* wired to `ConnectivityMonitor`, whose own doc comment records that it is
+  "a sync trigger only" (a satisfied `NWPath` is not a usable server — see the
+  Simulator HTTP/3 stall); every consequential outcome comes from a real request
+  result, so a stale flag degrades gracefully both ways. (b) `schrift.workOffline`
+  does **not** hold saves: the write-ahead draft is the durability guarantee, and
+  holding writes would only widen the divergence window and manufacture conflicts
+  against co-authors. Note what that costs, which is more than cosmetic: Work
+  Offline is a strict no-network contract on every *read* path (`HomeViewModel`,
+  `SharedViewModel` and `PagesTreeViewModel` all return before touching the
+  network), but a save PATCHes regardless — so a preference named "Work offline"
+  does emit traffic, and the offline banner shows while that save quietly
+  succeeds. The asymmetry predates this change; what is new is that a cold
+  offline open now leads straight into editing, which makes it routine.
+  **One interaction to know about, which this change makes easy to reach.**
+  Whenever `isOffline` is true but the network is actually **up** — Work Offline
+  on, or any non-401 failure of the *list* fetch — a save parked at `.pendingSync`
+  by a server-side reason (a 5xx, a rate limit) offers no manual retry, because
+  `syncCaption` suppresses it while `isOffline`, and no reconnect edge can fire,
+  because connectivity never changed. It is not a dead end: a foreground cycle
+  re-runs `syncPendingDrafts` (which reads no `workOffline` gate), and one more
+  keystroke turns the editing surface's indicator back into a tappable **Save**.
+  It was reachable before this change — an already-open session was never gated,
+  so an online edit against a server that then started failing landed in exactly
+  this state — but a *cold offline open* could not reach it, and now can. Fixing
+  it properly means deciding whether that retry rule should key off real
+  reachability rather than this flag; deliberately left alone here, since that
+  would overturn the "`ConnectivityMonitor` is a sync trigger only" decision.
 - **A clean copy always ends up showing the server's body.** `apply` takes no
   "user initiated" flag: passive `load()` and pull-to-refresh apply identical
   content rules, and `refresh()` differs only in surfacing failures (and in its
@@ -1666,8 +1730,10 @@ markdown write endpoint**. Understand this before touching the save path:
      the guarded reads could miss.) A failed save pins the
      document (every revalidation and pull-to-refresh no-ops while its draft is on
      screen), so the reading surface's **"Couldn't save · tap to retry" caption is
-     load-bearing** — it is the only way out when offline, where tap-to-edit is
-     blocked. **`pendingDraftClockTolerance`
+     load-bearing** — it is the only affordance that unpins such a document,
+     which is why it outranks the offline wording (tap-to-edit reaches `saveNow`
+     too, and now works offline, but it is not a *retry* — it re-enters the
+     session rather than resending). **`pendingDraftClockTolerance`
      may only discard a draft *stranded by an earlier session*** — that is
      `recoverDrafts`' job. A draft whose save failed *this* session is a retry
      candidate the user is looking at, so `reconcileDraft` returns early on

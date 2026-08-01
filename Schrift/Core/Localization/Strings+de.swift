@@ -142,7 +142,7 @@ enum Strings_de {
         .editor_save_failed_a11y: "Speichern fehlgeschlagen. Erneut versuchen",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Du siehst die auf diesem Gerät gespeicherte Kopie",
+        .editor_offline_local_copy: "Du arbeitest an der auf diesem Gerät gespeicherten Kopie",
         .editor_update_available: "Dokument aktualisiert · zum Aktualisieren tippen",
         .editor_update_available_a11y: "Dokument aktualisiert. Zum Aktualisieren tippen.",
         .editor_uploading_photo: "Foto wird hochgeladen…",
@@ -257,7 +257,7 @@ enum Strings_de {
         .profile_user: "Benutzer",
         .profile_prefs: "Einstellungen",
         .profile_prefs_footer:
-            "Wenn aktiviert, bleiben von Ihnen geöffnete Dokumente auf diesem Gerät auch ohne Verbindung lesbar.",
+            "Wenn aktiviert, bleiben von Ihnen geöffnete Dokumente auf diesem Gerät auch ohne Verbindung les- und bearbeitbar.",
         .profile_appearance: "Erscheinungsbild",
         .profile_language: "Sprache",
         .profile_notifications: "Benachrichtigungen",

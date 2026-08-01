@@ -34,6 +34,26 @@ final class SlashMenuTests: XCTestCase {
         XCTAssertTrue(filteredSlashItems(query: "zzzz").isEmpty)
     }
 
+    /// Editing offline is supported because the draft pipeline queues every edit —
+    /// but a photo POSTs a multipart attachment, and there is no queue for one. Offered
+    /// offline it would open the picker and re-encode the chosen image only to fail, so
+    /// it is withheld like "Add a subpage" and "New page". Everything else is a local
+    /// block transformation and stays available.
+    func testOfflineWithholdsPhotoAndKeepsEveryLocalTransformation() {
+        let offline = filteredSlashItems(query: "", isOffline: true)
+
+        XCTAssertFalse(offline.contains { $0.action == .insertPhoto })
+        XCTAssertEqual(offline.count, allSlashMenuItems.count - 1)
+        XCTAssertTrue(filteredSlashItems(query: "", isOffline: false).contains { $0.action == .insertPhoto })
+    }
+
+    /// The gate applies to a search that names it too, not just the unfiltered list —
+    /// otherwise typing "/photo" would walk straight past it.
+    func testOfflineWithholdsPhotoFromAMatchingQuery() {
+        XCTAssertTrue(filteredSlashItems(query: "photo", isOffline: true).isEmpty)
+        XCTAssertEqual(filteredSlashItems(query: "photo", isOffline: false).map(\.id), ["photo"])
+    }
+
     // MARK: - Actions
 
     func testConvertItemsCarryTheirBlockKind() {

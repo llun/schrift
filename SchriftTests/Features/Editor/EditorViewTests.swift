@@ -29,9 +29,8 @@ final class EditorViewTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_000_000)
 
     /// A failed save is the only affordance that unpins the document —
-    /// `reconcileDraft` no-ops every revalidation while its draft is on screen, and
-    /// tap-to-edit (the other route to `saveNow()`) is blocked offline, which is
-    /// exactly when saves fail. So it must beat the offline wording.
+    /// `reconcileDraft` no-ops every revalidation while its draft is on screen —
+    /// so it must beat the offline wording.
     func testFailedSaveOffersRetryEvenOffline() {
         let caption = syncCaption(
             hasUnsavedLocalContent: true, hasConflict: false, isOffline: true, saveState: .failed("x"),
@@ -69,6 +68,21 @@ final class EditorViewTests: XCTestCase {
             locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: false))
+    }
+
+    /// Dirty means "not on disk yet" — the draft is written by the flush — so it must
+    /// not fall into the offline branch, whose wording asserts durability. Same truth
+    /// `saveStatusDisplay` keeps on the editing surface. Pinned as an ordering rule:
+    /// in normal operation nothing renders `.dirty` on this caption (it needs reading mode,
+    /// and the reading-mode photo insert flushes in the same turn it dirties) — the one
+    /// exception being a discarded document, whose flush returns before clearing `isDirty`.
+    /// So this stops a reading-mode mutator from claiming a save that hasn't happened.
+    func testOfflineDirtyContentReadsAsEditedNotSavedOnDevice() {
+        let caption = syncCaption(
+            hasUnsavedLocalContent: true, hasConflict: false, isOffline: true, saveState: .dirty,
+            lastSyncedAt: now, now: now, locale: locale)
+
+        XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_edited_just_now), offersRetry: false))
     }
 
     func testUnsavedContentWinsOverSyncedCaption() {

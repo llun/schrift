@@ -136,7 +136,7 @@ enum Strings_zhHant {
         .editor_save_failed_a11y: "儲存失敗。重試",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "正在閱讀儲存在此裝置的副本",
+        .editor_offline_local_copy: "正在使用儲存在此裝置的副本",
         .editor_update_available: "文件已更新 · 點按以重新整理",
         .editor_update_available_a11y: "文件已更新。點按以重新整理。",
         .editor_uploading_photo: "正在上傳照片…",
@@ -248,7 +248,8 @@ enum Strings_zhHant {
         .profile_title: "個人檔案",
         .profile_user: "使用者",
         .profile_prefs: "偏好設定",
-        .profile_prefs_footer: "開啟後，您開啟過的文件即使離線也能在此裝置上閱讀。",
+        .profile_prefs_footer:
+            "開啟後，您開啟過的文件即使離線也能在此裝置上閱讀和編輯。",
         .profile_appearance: "外觀",
         .profile_language: "語言",
         .profile_notifications: "通知",

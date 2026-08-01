@@ -139,7 +139,7 @@ enum Strings_en {
         .editor_save_failed_a11y: "Save failed. Retry",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Reading the copy saved on this device",
+        .editor_offline_local_copy: "Working on the copy saved on this device",
         .editor_update_available: "Document updated · tap to refresh",
         .editor_update_available_a11y: "Document updated. Tap to refresh.",
         .editor_uploading_photo: "Uploading photo…",
@@ -253,7 +253,8 @@ enum Strings_en {
         .profile_title: "Profile",
         .profile_user: "User",
         .profile_prefs: "Preferences",
-        .profile_prefs_footer: "When on, documents you've opened stay readable on this device without a connection.",
+        .profile_prefs_footer:
+            "When on, documents you've opened stay available to read and edit on this device without a connection.",
         .profile_appearance: "Appearance",
         .profile_language: "Language",
         .profile_notifications: "Notifications",

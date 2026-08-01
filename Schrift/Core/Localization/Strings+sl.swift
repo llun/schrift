@@ -149,7 +149,7 @@ enum Strings_sl {
         .editor_save_failed_a11y: "Shranjevanje ni uspelo. Poskusi znova",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Berete kopijo, shranjeno v tej napravi",
+        .editor_offline_local_copy: "Delate s kopijo, shranjeno v tej napravi",
         .editor_update_available: "Dokument posodobljen · tapnite za osvežitev",
         .editor_update_available_a11y: "Dokument posodobljen. Tapnite za osvežitev.",
         .editor_uploading_photo: "Nalaganje fotografije…",
@@ -265,7 +265,7 @@ enum Strings_sl {
         .profile_user: "Uporabnik",
         .profile_prefs: "Nastavitve",
         .profile_prefs_footer:
-            "Ko je vklopljeno, ostanejo dokumenti, ki ste jih odprli, berljivi v tej napravi brez povezave.",
+            "Ko je vklopljeno, lahko dokumente, ki ste jih odprli, v tej napravi berete in urejate tudi brez povezave.",
         .profile_appearance: "Videz",
         .profile_language: "Jezik",
         .profile_notifications: "Obvestila",

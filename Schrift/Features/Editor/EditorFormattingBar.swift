@@ -1,11 +1,28 @@
 import SwiftUI
 
+/// Whether the photo button may be offered: there must be a focused block to insert
+/// into, no upload already in flight (`canInsertPhoto` also covers "content loaded"),
+/// and the device must not be offline.
+///
+/// Offline is the odd one out and the reason this is a named function rather than an
+/// inline expression: every *other* action in the bar is a local block transformation
+/// the draft pipeline queues, so editing offline is supported. A photo POSTs a
+/// multipart attachment and there is no queue for one — offered offline it would open
+/// the picker and re-encode the chosen image only to fail. Same rule as "Add a
+/// subpage" and the Pages drawer's "New page", and the slash menu's half of it lives
+/// in `filteredSlashItems(query:isOffline:)`.
+func canOfferPhotoInsertion(hasTarget: Bool, canInsertPhoto: Bool, isOffline: Bool) -> Bool {
+    hasTarget && canInsertPhoto && !isOffline
+}
+
 /// Floating formatting toolbar shown above the keyboard while editing.
 ///
 /// The actions target the focused block (convert type, wrap the selection in
 /// inline markers). Never a blind append: everything is selection-aware.
 struct EditorFormattingBar: View {
     @Bindable var viewModel: EditorViewModel
+    /// Disables Photo — it POSTs an attachment, which has no offline queue.
+    var isOffline: Bool = false
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -50,9 +67,11 @@ struct EditorFormattingBar: View {
             }
             // Stays disabled while an upload is in flight (and before content has
             // loaded): the view model would decline anyway, so don't invite the tap.
+            // Offline too — see `canOfferPhotoInsertion`.
             barButton(
                 icon: .image, label: loc[.editor_format_insert_photo],
-                disabled: !hasTarget || !viewModel.canInsertPhoto
+                disabled: !canOfferPhotoInsertion(
+                    hasTarget: hasTarget, canInsertPhoto: viewModel.canInsertPhoto, isOffline: isOffline)
             ) {
                 viewModel.requestPhotoInsertion()
             }

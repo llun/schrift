@@ -138,7 +138,7 @@ enum Strings_th {
         .editor_save_failed_a11y: "บันทึกไม่สำเร็จ ลองใหม่",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "กำลังอ่านสำเนาที่บันทึกไว้บนอุปกรณ์นี้",
+        .editor_offline_local_copy: "กำลังทำงานกับสำเนาที่บันทึกไว้บนอุปกรณ์นี้",
         .editor_update_available: "เอกสารมีการอัปเดต · แตะเพื่อรีเฟรช",
         .editor_update_available_a11y: "เอกสารมีการอัปเดต แตะเพื่อรีเฟรช",
         .editor_uploading_photo: "กำลังอัปโหลดรูปภาพ…",
@@ -250,7 +250,8 @@ enum Strings_th {
         .profile_title: "โปรไฟล์",
         .profile_user: "ผู้ใช้",
         .profile_prefs: "การตั้งค่า",
-        .profile_prefs_footer: "เมื่อเปิดใช้งาน เอกสารที่คุณเปิดไว้จะยังอ่านได้บนอุปกรณ์นี้แม้ไม่มีการเชื่อมต่อ",
+        .profile_prefs_footer:
+            "เมื่อเปิดใช้งาน เอกสารที่คุณเปิดไว้จะยังอ่านและแก้ไขได้บนอุปกรณ์นี้แม้ไม่มีการเชื่อมต่อ",
         .profile_appearance: "รูปลักษณ์",
         .profile_language: "ภาษา",
         .profile_notifications: "การแจ้งเตือน",

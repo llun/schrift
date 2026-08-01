@@ -140,7 +140,7 @@ enum Strings_fr {
         .editor_save_failed_a11y: "Échec de l’enregistrement. Réessayer",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Lecture de la copie enregistrée sur cet appareil",
+        .editor_offline_local_copy: "Vous travaillez sur la copie enregistrée sur cet appareil",
         .editor_update_available: "Document mis à jour · appuyez pour actualiser",
         .editor_update_available_a11y: "Document mis à jour. Appuyez pour actualiser.",
         .editor_uploading_photo: "Envoi de la photo…",
@@ -255,7 +255,7 @@ enum Strings_fr {
         .profile_user: "Utilisateur",
         .profile_prefs: "Préférences",
         .profile_prefs_footer:
-            "Lorsque cette option est activée, les documents que vous avez ouverts restent lisibles sur cet appareil sans connexion.",
+            "Lorsque cette option est activée, les documents que vous avez ouverts restent consultables et modifiables sur cet appareil sans connexion.",
         .profile_appearance: "Apparence",
         .profile_language: "Langue",
         .profile_notifications: "Notifications",

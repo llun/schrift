@@ -14,11 +14,14 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
 - **Saving is fully on-device.** The app builds a byte-exact Yjs update with a
   hand-written encoder in `Core/Yjs` and `PATCH`es it directly — no temporary
   document is created.
-- **Offline reading and lists.** Previously-opened documents and every document
-  list are cached on-device and render instantly with silent background
-  revalidation; a **Work Offline** toggle (`schrift.workOffline`, Profile) forces
-  read-only offline mode. Offline *editing* is out of scope. See
-  [`offline-and-sync.md`](offline-and-sync.md).
+- **Offline reading, editing, and lists.** Previously-opened documents and every
+  document list are cached on-device and render instantly with silent background
+  revalidation; a **Work Offline** toggle (`schrift.workOffline`, Profile) serves
+  those caches without touching the network. Since 2026-08-01 a cached document
+  is also **editable** offline: the edit is written to `PendingDraftStore` before
+  any network attempt, parks at `.pendingSync` ("Saved on this device · syncs
+  when online"), and replays on reconnect/foreground/launch. Offline *creation*
+  is out of scope. See [`offline-and-sync.md`](offline-and-sync.md).
 - **Persistent sessions.** Session cookies persist in the Keychain (as
   `…WhenUnlockedThisDeviceOnly`, so a restored backup can't carry a live session
   onto another device) across app kills, and a real 401 presents an in-place
@@ -56,8 +59,12 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 ## Non-goals (v1)
 
 - Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3; default off pending the on-device WebSocket verification). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
-- Offline editing/sync queue. (Offline *reading* of previously-opened documents
-  was added 2026-07-03; editing still requires connectivity.)
+- ~~Offline editing/sync queue.~~ **Superseded.** Offline *reading* of
+  previously-opened documents was added 2026-07-03; the sync queue (write-ahead
+  drafts, `.pendingSync`, conflict-checked replay on reconnect/foreground/launch)
+  landed with the offline-sync work, and 2026-08-01 removed the view gates that
+  kept it unreachable from a cold offline open. Offline **creation** of a
+  document is still a non-goal.
 - Comments/threads.
 - AI features (proxy/transform/translate endpoints exist server-side but are out of scope).
 - ~~Document version history browsing/restore.~~ **Superseded for browsing**: a
@@ -956,11 +963,14 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 - `403` → permission-denied inline state; in practice this should be rare since UI affordances are gated by the `abilities` dict already.
 - `404` → "not found / no longer available" state (covers soft-deleted-past-cutoff documents, which the backend intentionally 404s rather than 403s to avoid leaking existence).
 - `429` → respect `Retry-After` if present; otherwise simple backoff with a banner ("Too many requests, try again shortly").
-- Network failure → retry affordance on the failed view; no offline edit/sync
-  queue in v1 (since 2026-07-03, previously-opened documents are content-cached
-  on-device and readable offline, and document lists — Home (the unfiltered
-  recent feed plus pinned), Shared, editor sub-pages — are metadata-cached and
-  shown instantly with silent background revalidation).
+- Network failure → retry affordance on the failed view. Since 2026-07-03,
+  previously-opened documents are content-cached on-device and readable offline,
+  and document lists — Home (the unfiltered recent feed plus pinned), Shared,
+  editor sub-pages — are metadata-cached and shown instantly with silent
+  background revalidation. A **failed save is not a lost save**: a transport or
+  5xx failure classifies to `.pendingSync`, keeping the write-ahead draft for the
+  reconnect/foreground/launch replay, which is what makes editing offline safe
+  (2026-08-01). Creating a document still requires connectivity.
 - Save conflicts are not detected (see Editing & save mechanism) — documented limitation, not silently swallowed.
 
 ## Testing

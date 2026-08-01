@@ -139,7 +139,7 @@ enum Strings_pt {
         .editor_save_failed_a11y: "Falha ao guardar. Tentar novamente",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "A ler a cópia guardada neste dispositivo",
+        .editor_offline_local_copy: "A trabalhar na cópia guardada neste dispositivo",
         .editor_update_available: "Documento atualizado · toque para atualizar",
         .editor_update_available_a11y: "Documento atualizado. Toque para atualizar.",
         .editor_uploading_photo: "A carregar fotografia…",
@@ -254,7 +254,7 @@ enum Strings_pt {
         .profile_user: "Usuário",
         .profile_prefs: "Preferências",
         .profile_prefs_footer:
-            "Quando ativado, os documentos que você abriu continuam legíveis neste dispositivo sem conexão.",
+            "Quando ativado, os documentos que você abriu podem ser lidos e editados neste dispositivo sem conexão.",
         .profile_appearance: "Aparência",
         .profile_language: "Idioma",
         .profile_notifications: "Notificações",

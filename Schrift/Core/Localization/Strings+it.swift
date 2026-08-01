@@ -138,7 +138,7 @@ enum Strings_it {
         .editor_save_failed_a11y: "Salvataggio non riuscito. Riprova",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Stai leggendo la copia salvata su questo dispositivo",
+        .editor_offline_local_copy: "Stai lavorando sulla copia salvata su questo dispositivo",
         .editor_update_available: "Documento aggiornato · tocca per aggiornare",
         .editor_update_available_a11y: "Documento aggiornato. Tocca per aggiornare.",
         .editor_uploading_photo: "Caricamento foto…",
@@ -253,7 +253,7 @@ enum Strings_it {
         .profile_user: "Utente",
         .profile_prefs: "Preferenze",
         .profile_prefs_footer:
-            "Se attivo, i documenti aperti restano leggibili su questo dispositivo anche senza connessione.",
+            "Se attivo, i documenti aperti restano leggibili e modificabili su questo dispositivo anche senza connessione.",
         .profile_appearance: "Aspetto",
         .profile_language: "Lingua",
         .profile_notifications: "Notifiche",
