@@ -21,7 +21,10 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   is also **editable** offline: the edit is written to `PendingDraftStore` before
   any network attempt, parks at `.pendingSync` ("Saved on this device · syncs
   when online"), and replays on reconnect/foreground/launch. Offline *creation*
-  is out of scope. See [`offline-and-sync.md`](offline-and-sync.md).
+  is still out of scope, though its storage and safety holds
+  (`PendingDocumentCreateStore`, plus the two guards that keep any request from
+  naming a client-minted id) have landed dormant. See
+  [`offline-and-sync.md`](offline-and-sync.md).
 - **Persistent sessions.** Session cookies persist in the Keychain (as
   `…WhenUnlockedThisDeviceOnly`, so a restored backup can't carry a live session
   onto another device) across app kills, and a real 401 presents an in-place

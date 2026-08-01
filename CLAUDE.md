@@ -339,7 +339,9 @@ Schrift/
 │                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
 │                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
-│                        ConflictSheetView), photo insert (ImagePreparation),
+│                        ConflictSheetView), documents created on-device
+│                        (PendingDocumentCreateStore — dormant until the create UI),
+│                        photo insert (ImagePreparation),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
@@ -1320,6 +1322,41 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; draft replay).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
+- **A document created on this device has no server id, and two holds keep the
+  pipeline from pretending otherwise.** `PendingDocumentCreateStore` records it
+  (`PendingDocumentCreate`: `localID`, `title`, `parentID`, `createdAt`,
+  `serverOrigin`, `syncedServerID`), the coordinator mirrors the records whose
+  origin matches this session, and `isPendingCreate(documentID:)` is the predicate
+  everything keys off. **Invariant: no network request may ever name a
+  pending-create id.** It is enforced at two funnels, and both are load-bearing
+  rather than defensive:
+  1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
+     Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
+     404, and — a 404 being non-retryable — lands on `.failed`, which
+     `runSyncPass` *skips*, wedging the document out of the replay meant to
+     create it. Write-ahead and latest-wins still apply; only `start` is withheld.
+  2. **`runSyncPass` skips it** — that pass GETs each draft's document before
+     deciding, and its `.notFound`/`.forbidden` catch **removes the draft**. For a
+     document that exists nowhere else that draft is the only copy, so without the
+     skip the first launch/foreground/reconnect after creating offline silently
+     deletes it. The 404 catch re-checks the same predicate, because that is the
+     line that would do the deleting.
+
+  `createLocalDocument(title:parentID:)` mints the record **plus a seed draft**
+  (so the editor's existing draft precedence renders it unchanged) and sets
+  `.pendingSync` — nothing is syncing, but the work is on the device.
+  `discardPendingWork` drops the record with the draft: a local delete is purely
+  local, and a surviving record would let a replay resurrect it.
+  **Synthetic `Document`s (`localDocument(from:)`) must never enter a persisted
+  metadata cache** — lists merge them at read time via
+  `mergedWithLocalDocuments(fetched:local:)`, because a list load replaces its
+  array *and* its cache entry wholesale, and a cached synthetic would afterwards
+  be indistinguishable from a real document. `abilities.childrenCreate` is false,
+  which is what holds children-of-local-parents out of scope until a replay can
+  order them. Records are **origin-scoped**: drafts and metadata caches
+  deliberately survive sign-out, so a record minted against another server stays
+  dormant (never deleted — the user may sign back in) rather than being POSTed
+  into the wrong account.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
@@ -1934,7 +1971,11 @@ markdown write endpoint**. Understand this before touching the save path:
   `schrift.workOffline` read goes through the VM's injected `userDefaults`,
   never the singleton. Metadata caches are **not** cleared on sign-out — a
   recorded decision; neither are unsaved drafts in `PendingDraftStore` (full
-  document text, deliberately backup-included so unsaved work survives); only
+  document text, deliberately backup-included so unsaved work survives) nor the
+  on-device create records in `PendingDocumentCreateStore` (same reasoning — for
+  a document that exists nowhere else, that record and its draft are the only
+  copies; the records carry a `serverOrigin` so surviving sign-out can never mean
+  replaying one into a different account); only
   the full bodies in `DocumentContentCacheStore` are. That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it

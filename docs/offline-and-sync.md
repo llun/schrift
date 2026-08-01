@@ -162,7 +162,10 @@ amendment above; when this was written, editing offline was still blocked.)
 - **Offline *creation*** — a document that does not exist server-side has no id
   to PATCH, so the draft pipeline has nothing to save to. The two create
   buttons ("Add a subpage", the Pages drawer's "New page") therefore stay gated
-  on `!isOffline`; that is its own change.
+  on `!isOffline`. **In progress**: the storage and the safety holds landed
+  2026-08-01 (see "Documents created on this device" below) but nothing mints a
+  record yet, so the gates and this non-goal stand until the replay and the UI
+  land alongside them.
 - ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
   amendment at the top). Editing a previously-opened document offline is
   supported: the edit is written to `PendingDraftStore` before any network
@@ -1012,6 +1015,75 @@ to what the Home list passes (still a `Document` / id).
   through the existing sign-out path — e.g. alongside where `SessionStore.signOut`
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
+
+## Documents created on this device (2026-08-01, storage + holds)
+
+Offline *creation* is still a non-goal above, but its **storage and its two safety
+holds have landed, dormant** — nothing mints a record yet. They land first and
+separately because without them the existing pipeline does not merely fail to
+create a local document, it **destroys** one.
+
+**The shape of the problem.** The server assigns document ids, along with `path`
+(a treebeard segment allocated from sibling ordering), `depth`, and the
+timestamps; there is no client-supplied-id mechanism and no idempotency key. So a
+document created offline necessarily exists under a **client-minted `localID`**
+until a replay POSTs it and migrates everything keyed by that id.
+
+**`PendingDocumentCreateStore`** holds one `PendingDocumentCreate` per such
+document: `localID`, `title`, `parentID` (a *server* id, or nil for a root),
+`createdAt` (replay order), `serverOrigin`, and `syncedServerID` (the two-phase
+checkpoint the replay will set the instant its POST lands, so a relaunch resumes
+instead of POSTing a duplicate). It follows the UserDefaults-store conventions and
+is **backup-included**, like `PendingDraftStore`: for a document that exists
+nowhere else, this record and the draft beside it are the only copies.
+
+It is deliberately **not** a flag on `PendingDraft`. The draft already carries the
+title and body, but it is removed by several legitimate paths, and a document
+created but never typed into has no draft content at all — yet still has to be
+POSTed. The record says *this exists*, separately from *this has unsaved text*.
+
+**The invariant: no network request may ever name a pending-create id.** Two
+funnels enforce it, and both are load-bearing:
+
+1. **`enqueue` holds the save.** The same park-the-save branch the conflict hold
+   uses. Without it a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
+   404, and — a 404 being non-retryable — lands on `.failed`; `runSyncPass` skips
+   `.failed` drafts, so the document would be wedged out of the very replay meant
+   to create it. Write-ahead and latest-wins still apply; only `start` is withheld.
+2. **`runSyncPass` skips it.** That pass GETs each draft's document before
+   deciding, and its `.notFound`/`.forbidden` catch **removes the draft**. For a
+   locally-created document that draft is the only copy, so without the skip the
+   first launch, foreground, or reconnect after creating offline silently deletes
+   the document. The catch re-checks the same predicate, because that is the line
+   that would do the deleting.
+
+**`createLocalDocument(title:parentID:)`** mints the record, writes a **seed
+draft** (so the editor's existing `restoreLocalContent` precedence renders it with
+no editor changes at all), and sets `.pendingSync` — nothing is syncing, but the
+work is on the device, so the caption's "syncs when online" wording is already
+correct. `discardPendingWork` drops the record with the draft: deleting a local
+document is purely local, and a surviving record would let a replay resurrect it.
+
+**Synthetic `Document`s never enter a persisted metadata cache.**
+`localDocument(from:)` fills the server-owned fields with inert placeholders
+(`path: ""`, `depth: 1`, `numchild: 0`) and claims only locally-true abilities
+(update/partialUpdate/destroy). A list load replaces its array *and* its cache
+entry wholesale, so a locally-inserted row would vanish on the next fetch — lists
+merge at **read** time via `mergedWithLocalDocuments(fetched:local:)` instead,
+which also de-duplicates by id for the window where a replay has landed and the
+fetched list already carries the real document. `abilities.childrenCreate` is
+false, which is what holds children-of-local-parents out of scope until a replay
+can order them.
+
+**Records are origin-scoped.** Drafts and metadata caches deliberately survive
+sign-out, so a record minted against one server could otherwise be replayed into a
+different account — POSTing the user's content somewhere they never wrote it. A
+record whose `serverOrigin` doesn't match the session is not mirrored and not
+treated as pending; it stays on disk, dormant, because the user may sign back in.
+
+Still to come: the create replay (POST → checkpoint → migrate the draft, caches
+and coordinator maps onto the server id → push the content through the normal
+draft replay), and the UI that calls `createLocalDocument`.
 
 ## Data flow
 
