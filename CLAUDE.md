@@ -1539,8 +1539,33 @@ markdown write endpoint**. Understand this before touching the save path:
   makes superseded fetches no-ops) — content equality (never re-serialized
   blocks) decides whether the fetched body counts as a change at all.
   The coordinator write-throughs the cache on save success; delete and 404/403
-  revalidation purge the entry; sign-out clears the store. Offline is
-  read-only. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
+  revalidation purge the entry; sign-out clears the store. See
+  [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
+- **Offline is editable, not read-only — but only for a document that already
+  exists on the server.** The three reading-surface edit gates (the block tap,
+  "Start writing", and the toolbar's Edit action) were lifted 2026-08-01;
+  `editorToolbarActions(isEditing:)` deliberately no longer *takes* `isOffline`,
+  so the gate cannot quietly return. What makes this safe is that the save
+  pipeline was already built for it: `enqueue` persists the draft **before** it
+  attempts the PATCH, `retryableSaveFailure` routes a transport failure to
+  `.pendingSync` rather than `.failed`, and `syncPendingDrafts` replays through
+  `draftSyncDecision` on reconnect/foreground/launch. The one entry guard left is
+  `startEditing`'s `hasLoadedContent` — **do not add an offline check back**; a
+  document with nothing loaded is the case that guard exists for, online or off.
+  **Creating** offline is different and still gated: "Add a subpage"
+  (`EditorView`) and the Pages drawer's "New page" POST, and a document that does
+  not exist server-side has no id for the draft pipeline to PATCH.
+  Two decisions ride with this. (a) The editor's `isOffline` is **chrome only** —
+  the banner, the `.pendingSync` retry affordance, the presence badge — and stays
+  derived from `HomeViewModel`'s last list-fetch outcome. It is deliberately
+  *not* wired to `ConnectivityMonitor`, whose own doc comment records that it is
+  "a sync trigger only" (a satisfied `NWPath` is not a usable server — see the
+  Simulator HTTP/3 stall); every consequential outcome comes from a real request
+  result, so a stale flag degrades gracefully both ways. (b) `schrift.workOffline`
+  does **not** hold saves: the write-ahead draft is the durability guarantee, and
+  holding writes would only widen the divergence window and manufacture conflicts
+  against co-authors. Accepted cosmetic wrinkle: with the toggle on and the
+  network up, the offline banner shows while a save quietly succeeds.
 - **A clean copy always ends up showing the server's body.** `apply` takes no
   "user initiated" flag: passive `load()` and pull-to-refresh apply identical
   content rules, and `refresh()` differs only in surfacing failures (and in its
@@ -1646,8 +1671,10 @@ markdown write endpoint**. Understand this before touching the save path:
      the guarded reads could miss.) A failed save pins the
      document (every revalidation and pull-to-refresh no-ops while its draft is on
      screen), so the reading surface's **"Couldn't save · tap to retry" caption is
-     load-bearing** — it is the only way out when offline, where tap-to-edit is
-     blocked. **`pendingDraftClockTolerance`
+     load-bearing** — it is the only affordance that unpins such a document,
+     which is why it outranks the offline wording (tap-to-edit reaches `saveNow`
+     too, and now works offline, but it is not a *retry* — it re-enters the
+     session rather than resending). **`pendingDraftClockTolerance`
      may only discard a draft *stranded by an earlier session*** — that is
      `recoverDrafts`' job. A draft whose save failed *this* session is a retry
      candidate the user is looking at, so `reconcileDraft` returns early on

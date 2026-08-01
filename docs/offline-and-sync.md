@@ -44,6 +44,33 @@
 > installed or cached (the server may answer it from the pre-save state, and the
 > next full-overwrite save would push that resurrected body back).
 >
+> **Amendment (2026-08-01): offline editing is now supported, and the
+> "offline is read-only" non-goal below is withdrawn for *editing*.** The
+> premise that non-goal rested on — "never a path that produces edits which
+> cannot save" — was true when it was written and has not been true since the
+> draft-sync work landed: `enqueue` persists the draft **before** it attempts
+> the PATCH, a transport failure classifies to `.pendingSync` rather than
+> `.failed`, and `syncPendingDrafts` replays on the reconnect edge, on
+> foreground, and at launch, reconciled by `draftSyncDecision`. The pipeline
+> was already exercised whenever connectivity dropped *mid-session*; all that
+> was missing was a way to *enter* an editing session offline. So the three
+> reading-surface edit gates are gone — the block tap, "Start writing", and the
+> toolbar's Edit action (`editorToolbarActions` no longer takes `isOffline` at
+> all, so the gate cannot quietly return). What still guards Edit on a document
+> whose content never loaded is `startEditing`'s `hasLoadedContent`, exactly as
+> it already did online. Offline **creation** remains out of scope here (the
+> "Add a subpage" and Pages-drawer "New page" buttons stay gated: they POST, and
+> a document that does not exist server-side has nothing for the draft pipeline
+> to save to) — it is the subject of its own change. Two decisions ride along:
+> the editor's `isOffline` stays a **chrome-only** signal derived from the Home
+> list's last fetch outcome (`ConnectivityMonitor` remains "a sync trigger
+> only"; every consequential outcome comes from a real request result, so a
+> stale flag degrades gracefully in both directions), and **Work Offline does
+> not hold saves** — the write-ahead draft is the durability guarantee, and
+> holding writes would only widen the divergence window and manufacture
+> conflicts. One accepted cosmetic wrinkle from that pair: with Work Offline on
+> and the network up, the banner shows while a save quietly succeeds.
+>
 > **Revised (2026-07-10):** the Markdown editing mode was removed — the block
 > editor is the only editing surface. `install(...)` no longer computes
 > `openInMarkdownMode` or a mode-dependent baseline; it sets
@@ -76,9 +103,9 @@ would be destructive: there the fresh body is stashed behind a subtle, tappable
 **"Updated"** banner that surfaces once editing ends.
 
 As a direct consequence, previously-opened documents become **readable offline**
-for the first time (offline remains read-only — editing stays disabled offline,
-as today), and the editor's offline chrome is corrected to reading-oriented
-wording gated on an actual local copy existing.
+for the first time, and the editor's offline chrome is gated on an actual local
+copy existing. (They are now **editable** offline too — see the 2026-08-01
+amendment above; when this was written, editing offline was still blocked.)
 
 ## Goals
 
@@ -94,16 +121,21 @@ wording gated on an actual local copy existing.
   update it live when a sync completes.
 - Read previously-opened documents offline (natural consequence of the cache).
 - Correct the editor's offline messaging so it only claims a device copy when one
-  exists, and describes reading (not editing).
+  exists.
 
 ## Non-goals
 
-- **Offline editing / sync queue** remains a non-goal (unchanged from the v1
-  spec). The existing offline edit guards are **unchanged**: the tap-to-edit
-  gesture stays guarded (`guard !isOffline`, `EditorView.swift:189`) and the
-  "Start writing" button stays hidden offline (`EditorView.swift:215–221`).
-  Offline is read-only; this feature adds offline *reading* of cached content,
-  never a path that produces edits which cannot save.
+- **Offline *creation*** — a document that does not exist server-side has no id
+  to PATCH, so the draft pipeline has nothing to save to. The two create
+  buttons ("Add a subpage", the Pages drawer's "New page") therefore stay gated
+  on `!isOffline`; that is its own change.
+- ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
+  amendment at the top). Editing a previously-opened document offline is
+  supported: the edit is written to `PendingDraftStore` before any network
+  attempt, parks at `.pendingSync`, and replays on reconnect/foreground/launch
+  through the same conflict-checked funnel every other queued draft uses. The
+  original rationale — "never a path that produces edits which cannot save" —
+  is preserved, not abandoned: the edits *can* save, just later.
 - No live cursors. Saves remain full-overwrite / last-write-wins **when the classic
   path is what's active** — see "Cache stays consistent on save" (§3) below for the
   live-snapshot save path that now runs alongside it. **Live *reading* and, as of
@@ -884,12 +916,13 @@ server is about to hold.
   confirmation-gated **Keep the server version** (`resolveConflictKeepingServer()`),
   plus a footnote that overwritten versions are restorable from the web's version
   history. See *Conflict detection & resolution* above.
-- **`OfflineBanner` gated on a real copy, with reading-oriented copy**
-  (`EditorView.swift:54`). Show **"Reading the copy saved on this device"** only
-  when `isOffline && viewModel.hasLocalCopy`. (Editing stays blocked offline —
-  the guards are unchanged, per Non-goals — so the old "Editing…" wording would
-  still over-promise.) Offline with nothing cached falls through to the normal
-  error/empty state.
+- **`OfflineBanner` gated on a real copy.** Show **"Working on the copy saved on
+  this device"** only when `isOffline && viewModel.hasLocalCopy`. Offline with
+  nothing cached falls through to the normal error/empty state. The wording is
+  mode-neutral deliberately: the banner sits above *both* surfaces, and since
+  2026-08-01 the surface below it may be the editing one, so the earlier
+  "Reading the copy…" would be wrong mid-edit — as the still-earlier
+  "Editing…" was wrong while offline was read-only.
 
 ### 5. Navigation / wiring
 
@@ -1046,7 +1079,8 @@ XCTest, mirroring the source tree. New/updated:
 - [`architecture.md`](architecture.md) — the error-handling line "no offline
   queue/cache in v1" is superseded: previously-opened documents are now cached on
   disk and readable offline with background revalidation (see this doc). The
-  "Offline editing/sync queue" non-goal stands — offline *editing* remains out of
-  scope; only offline *reading* was added.
+  "Offline editing/sync queue" non-goal is **also superseded as of 2026-08-01**:
+  offline *editing* of a previously-opened document is supported (queued draft,
+  replayed on reconnect); offline *creation* remains out of scope.
 - `README.md` reviewed — it makes no offline/loading claims, so no change.
 - This document is a living design doc — kept current as behavior changes.
