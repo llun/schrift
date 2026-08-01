@@ -733,9 +733,11 @@ final class DocumentSaveCoordinator {
         // a rename from the intervening launch; on a fresh POST the server's is what we sent
         // moments ago, which a rename landing *during* the POST has already superseded. Either
         // way nothing downstream would flag the difference — the baseline carries the server's
-        // title on both paths, so `draftTitleOutcome` answers `.keepDraft` before any
-        // draft-versus-baseline comparison: undiverged by the `serverUpdatedAt <= baselineDate`
-        // short-circuit, diverged (nil clock) by `serverTitle == baselineTitle`.
+        // title on both paths, so `draftTitleOutcome` answers `.keepDraft` either way:
+        // undiverged by the `serverUpdatedAt <= baselineDate` short-circuit, before comparing
+        // anything; diverged (nil clock) by `serverTitle == baselineTitle`, which is reached
+        // after the draft-versus-baseline test but cannot be preceded by it, since a differing
+        // draft title is the only way to get past that line.
         //
         // The trade this accepts: a rename made *elsewhere* while the document sat
         // checkpointed is reverted. "This device made it, so there is no co-author" is the
@@ -766,7 +768,12 @@ final class DocumentSaveCoordinator {
         // before asking it.
         //
         // So: `nil` clock and `""` body when diverged — both honest, and together they reach
-        // rule 2's `.conflict` while staying non-nil, so rule 3 can never discard.
+        // rule 2's `.conflict` while staying non-nil, so rule 3 can never discard. (One
+        // reachable exception, benign: if the co-author *empties* the document before the user
+        // answers, rule 2's body tiebreak matches `"" == ""` and releases. The pill vanishes
+        // unanswered and their deletion is undone — but the server held nothing, so no content
+        // is destroyed.) **And the baseline is not the only proof that must be withheld** —
+        // rule 1 is consulted first; see the push-evidence clear below.
         // `serverTitle` rides along on both paths; with a nil clock `draftTitleOutcome`
         // reaches `serverTitle == baselineTitle` and keeps the draft's.
         //
@@ -868,6 +875,13 @@ final class DocumentSaveCoordinator {
             // but the invariant is stated absolutely, so this discharges it rather than
             // claiming an exemption.
             clearResolvedConflict(documentID: serverID)
+            // And reset the state, exactly as `resolveConflictKeepingServer` does for this same
+            // "the local side is gone" transition. Left at `.failed` — reachable when a save
+            // under the server id was rejected on the merits before the resume ran — the
+            // editing surface keeps a live **retry** button whose `saveNow` enqueues the
+            // *server's own* re-fetched body with `baseline: nil`, a full overwrite re-encoded
+            // through `MarkdownYjs`: precisely the flattening this branch refuses to perform.
+            states[serverID] = .idle
             // **The title is adopted with the body — the local one is not written back.** Two
             // earlier attempts here were both wrong and are worth recording. Pushing the
             // server's markdown back to carry our title re-encodes it through `MarkdownYjs`,
@@ -1466,7 +1480,7 @@ final class DocumentSaveCoordinator {
     /// The create migration is a third recording site, and it holds by an explicit check
     /// rather than by an argument about the id. "Nothing has ever addressed that id" is
     /// **not** true and must not be relied on: it only records on the **resume** path — the
-    /// fresh-POST path is guarded by `!serverMarkdown.isEmpty` and `""` is proven there — so
+    /// fresh-POST path is guarded by `!canonicalServer.isEmpty` and `""` is proven there — so
     /// the id may have been minted by a *previous* process, come back in an ordinary list
     /// fetch since, and be carrying a save this process started. What actually holds the
     /// invariant is `finishMigration`'s `guard inFlight[serverID] == nil, queued[serverID] ==

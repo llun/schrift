@@ -1740,6 +1740,65 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// Both emptiness tests are **canonical**, matching the inequality between them. Raw, a
+    /// local body of `" "` is non-empty, so it skips the adopt branch and falls to the conflict
+    /// — arming a "Keep my version" that PATCHes whitespace over the co-author, the exact wipe
+    /// that branch exists to prevent.
+    func testAWhitespaceOnlyLocalBodyAdoptsTheServerRatherThanArmingAWipe() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Present, and whitespace-only — canonically empty but raw non-empty.
+        env.drafts.save(
+            PendingDraft(
+                documentID: local.id, title: "Notes", markdown: "   \n\n  ", updatedAt: Date(),
+                baseline: nil))
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Written on the web",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.coordinator.conflict(for: serverID), "nothing to ask about")
+        XCTAssertNil(relaunched.drafts.draft(for: serverID), "and no whitespace draft left to push")
+    }
+
+    /// The other direction: a server body that is raw non-empty but canonically empty must not
+    /// record a conflict at all. Raw, it records one that the very next evaluation releases
+    /// (rule 2's body tiebreak matches `"" == ""`) — a pill that provably self-clears.
+    func testAWhitespaceOnlyServerBodyIsNotADivergence() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes", "content": "  \\n\\n ",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "a canonically empty server body is not a divergence to ask about")
+    }
+
     // MARK: - Helpers
 
     /// `/users/me/` answers this user; everything else is the caller's to decide.

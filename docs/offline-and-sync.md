@@ -1274,8 +1274,19 @@ for a sub-page, `createDocument` for a root.
    held save full-overwrites the co-author — *by way of* the conflict meant to prevent
    it. It is also the advance `resolveConflictKeepingLocal` performs as the user's
    **answer**. So the diverged baseline carries a `nil` clock and an empty body: both
-   honest, and together they fall through rule 2 to `.conflict` on every
-   re-evaluation while staying non-nil so rule 3 can never discard.
+   honest, and together they reach rule 2's `.conflict` while staying non-nil so rule 3
+   can never discard. **But the baseline is not the only proof that has to be
+   withheld.** Rule 1 (`serverHoldsOurLastPush`) is consulted *before* rule 2, and
+   `enqueue` stamps the draft's `lastPushedMarkdown` from
+   `lastConfirmedPushMarkdown[serverID]` — which can hold the very body just conflicted
+   against, since a checkpointed document is met under its *server* id and the user's
+   save there may already have landed. The diverged path therefore clears that map entry
+   too; without it the honest baseline is never even reached and the held save
+   overwrites the co-author anyway. The general rule this leaves: **the migration must
+   withhold every proof, not just the baseline.** (One benign exception to "every
+   re-evaluation": a co-author who *empties* the document before the user answers makes
+   rule 2's body tiebreak match `"" == ""` and release — their deletion is undone, but
+   the server held nothing.)
 3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (a copy of
    the user's newest keystrokes; hygiene rather than a rescue, since for a pending
    create it always agrees with the draft — `enqueue` write-ahead-saves from the same
@@ -1381,7 +1392,7 @@ death inside the migration plus an intervening `runSyncPass` produces. But the
 ordinary route there is a source that is **present and empty**, not absent:
 `createLocalDocument` writes a seed draft with `markdown: ""`, and a rename before
 the replay fills `queued[localID]` with an empty body too — so a document created,
-renamed and never typed into arrives with the first source populated. **The test is
+renamed and never typed into arrives with the first source populated. **The test is canonical
 emptiness, not absence**, and tightening it into a nil check would let precisely that
 document fall through to `enqueue`, arming the very "Keep my version" wipe the branch
 exists to prevent. (The conflict check would fire and the enqueue would take the
