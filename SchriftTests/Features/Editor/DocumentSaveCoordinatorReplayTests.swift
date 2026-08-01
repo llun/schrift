@@ -1846,6 +1846,38 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// A start-over must discharge any conflict against the dead server id. The take-back's
+    /// "the ordinary 404-draft rule will collect it" argument has a hole: `runSyncPass` **skips
+    /// a conflicted draft**, so the 404 branch it defers to is unreachable for exactly that
+    /// draft — and `init` rehydrates the stamp from disk, so the skip outlives relaunches. No
+    /// process kill is needed to reach it.
+    func testAStartOverDischargesAConflictAgainstTheDeadServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The user met the document under its server id, typed, and a divergence was recorded
+        // there before the document was deleted — a draft carrying a conflict stamp.
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Typed under the server id",
+                updatedAt: Date(), baseline: nil, lastPushedMarkdown: nil,
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 1)))
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "rehydrated from the draft")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "the document is gone — nothing left to ask about, and the record must not strand")
+    }
+
     // MARK: - Helpers
 
     /// `/users/me/` answers this user; everything else is the caller's to decide.

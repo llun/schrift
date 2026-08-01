@@ -1328,9 +1328,13 @@ everything, and `EditorViewModel.documentID` is a `let` captured by four sibling
 view models and by the pushed `NavigationPath` values — an open screen cannot
 follow the id and would keep writing drafts under one the holds no longer cover.
 Deferring makes mid-swap edit loss *unrepresentable* rather than merely unlikely.
-Releasing the last hold kicks the funnel, so popping back on iPhone syncs
-immediately. The accepted cost: an iPad split-view editor left selected defers
-that document until it is deselected or the app relaunches.
+Releasing the last hold kicks the funnel — for a pending-create id or a checkpointed
+server id — so popping back on iPhone syncs immediately. The accepted cost: an iPad
+split-view editor left selected defers that document until it is deselected or the app
+relaunches. **None of this is live yet**: `retainOpenEditor`/`releaseOpenEditor` have
+zero production callers, so both `finishMigration` editor guards are statically true
+and this invariant, like the pending-create one, is broader than its enforcement. The
+create UI owes the wiring — see "What the create UI still owes".
 
 **Everything that can change during the await is re-checked after it.** The pass
 awaits `/users/me/` and then a POST per record, and the main actor is reentrant
@@ -1389,7 +1393,10 @@ draft, and a later trigger migrates.
 nothing on this device and content on the server, the local side has nothing to
 contribute and arming the pill would offer a "Keep my version" that PATCHes `""`
 and wipes the document. It adopts the server instead — drop the draft, enqueue
-nothing, and **release any conflict record on the way out**, since with every local
+nothing, **reset `states[serverID]`** (as `resolveConflictKeepingServer` does for the
+same transition — left at `.failed` the editing surface keeps a live retry whose
+`saveNow` would PATCH the server's own re-fetched body back, re-encoded), and
+**release any conflict record on the way out**, since with every local
 trace for that id gone a rehydrated record would park every future save behind a pill
 with nothing left to ask. The state is reachable: the body chain falls back to `""` when the queued
 slot, the local draft and the partially-migrated draft are all absent, which a
@@ -1398,11 +1405,13 @@ ordinary route there is a source that is **present and empty**, not absent:
 `createLocalDocument` writes a seed draft with `markdown: ""`, and a rename before
 the replay fills `queued[localID]` with an empty body too — so a document created,
 renamed and never typed into arrives with the first source populated. **The test is canonical
-emptiness, not absence**, and tightening it into a nil check would let precisely that
+emptiness, not absence**. Tightening it into a nil check would let precisely that
 document fall through to `enqueue`, arming the very "Keep my version" wipe the branch
 exists to prevent. (The conflict check would fire and the enqueue would take the
 hold, so nothing is PATCHed unasked — the damage is offering a destructive choice
-against a document the user has no local version of.)
+against a document the user has no local version of.) A **raw** `isEmpty` fails the
+other way: a body of `" "` is raw-non-empty and canonically empty, so it skips this
+branch and arms the same wipe with whitespace as the local version.
 
 **The title is adopted with the body; nothing is written back.** Two attempts at
 preserving a local rename here were both wrong, and the reasoning is worth keeping.
@@ -1433,7 +1442,9 @@ minting and replaying had *no terminal state at all*: it never promoted, never
 failed, and paid a POST plus a probe on every trigger forever); reachable and
 willing ⇒ the failure was about something else, so retry. A probe that cannot
 answer leaves the record alone — "I couldn't ask" must never read as "it isn't
-there". Anything else rejected on the merits sets `.failed`, which the
+there". A `.routeNotFound` on a **root** create retries rather than parking — a missing route
+is a fact about the server, not this document, the same reading the resume path gives
+it. Anything else rejected on the merits sets `.failed`, which the
 pass skips and a relaunch retries once — note that is *not* the reading surface's
 "tap to retry", which cannot reach a local document whose content is parked in
 `queued`; a create-specific affordance belongs with the UI.
@@ -1542,8 +1553,8 @@ unrecoverable duplicate versus recoverable invisibility); making such a record
 visible and dischargeable is owed with the create UI.
 
 **"Checkpointed but not migrated" is now a routine state**, not only a
-crash-recovery one, because the editor re-check and the three server-id guards all
-bail after the checkpoint (the *delete* re-check is the one exception — there the
+crash-recovery one, because the server-id guards bail after the checkpoint (and the
+editor re-check will too, once it has production callers) (the *delete* re-check is the one exception — there the
 record is gone, so there is nothing left to resume and the server document is simply
 orphaned). In it the server holds an empty document, the record is withheld from the
 local list,

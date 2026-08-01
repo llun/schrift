@@ -635,7 +635,28 @@ final class DocumentSaveCoordinator {
                         updatedAt: orphan.updatedAt, baseline: nil))
                 draftStore.remove(documentID: serverID)
             }
+            // **Discharge any conflict against the dead id, or the reap above never runs.**
+            // The "the ordinary 404-draft rule will collect it" argument has a hole: a
+            // server-id draft can be carrying a conflict (the user met the document under that
+            // id, typed, and `runSyncPass` recorded a divergence before it was deleted), and
+            // `runSyncPass` *skips a conflicted draft* — so the 404 branch it defers to is
+            // unreachable for exactly that draft, and `init` rehydrates the stamp from disk, so
+            // the skip outlives relaunches. The document is gone: there is nothing left to ask
+            // about, and this is the third server-id transition that has to discharge the
+            // record, alongside the adopt branch and `discardPendingWork`'s checkpointed sweep.
+            //
+            // Gated on nothing being parked, so `releaseHeldSave` cannot start a PATCH at an id
+            // that just 404'd. With a save queued the document is not stranded anyway — that
+            // save settles and takes the ordinary route.
+            if queued[serverID] == nil, inFlight[serverID] == nil {
+                clearResolvedConflict(documentID: serverID)
+            }
             record.syncedServerID = nil
+            // The block belongs to the create attempt that failed to decode, and this record is
+            // about to start over with a fresh POST — carrying a spent stamp forward would wedge
+            // the record for any build that matches it.
+            record.replayBlockedAt = nil
+            record.replayBlockedBuild = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             return
         } catch {
@@ -798,9 +819,18 @@ final class DocumentSaveCoordinator {
         // the replacement unwritten, and the server holding the empty document this POST just created. The
         // final `enqueue` rewrites this same draft; the point is that no instant exists where
         // the content is on disk nowhere.
+        // Carry the partially-migrated draft's push evidence forward **when the body came from
+        // it**. That body is not the offline one — it is whatever a previous attempt already
+        // wrote under the server id — so the diverged path's "the local body provably does not
+        // descend from that push" is false of it, and dropping the stamp would raise a conflict
+        // no evidence can ever release against the user's own earlier write. The condition is
+        // exactly `draft(localID) == nil && migrated != nil`; the both-drafts guard rules out
+        // every other shape in which `migrated` could be the source.
+        let carriedPush = (draft == nil && queued[localID] == nil) ? migrated?.lastPushedMarkdown : nil
         draftStore.save(
             PendingDraft(
-                documentID: serverID, title: title, markdown: body, updatedAt: Date(), baseline: baseline))
+                documentID: serverID, title: title, markdown: body, updatedAt: Date(),
+                baseline: baseline, lastPushedMarkdown: carriedPush))
         draftStore.remove(documentID: localID)
         // Every per-document map the coordinator keys by id. `queued` matters most: it holds
         // a copy of the user's newest keystrokes. (Hygiene rather than a rescue: for a pending
@@ -831,6 +861,15 @@ final class DocumentSaveCoordinator {
         // Make it visible under its real id before the record disappears, or the document
         // drops out of Home between here and the next successful list fetch. Absent when the
         // resume's cosmetic fetch failed — the document simply waits for the next list fetch.
+        // **Take the server-id draft off before the record goes**, when the adopt branch below
+        // will fire. Removing the record first and dying leaves an unprotected draft holding a
+        // canonically empty body and a `(nil, "")` baseline — `runSyncPass` picks it up, rule 2
+        // answers `.conflict`, and "Keep my version" PATCHes `""` over the co-author: verbatim
+        // the wipe that branch refuses. This order is idempotent instead — record still
+        // checkpointed, both drafts gone, so the next resume re-derives `body = ""` and
+        // re-enters the same branch.
+        let willAdoptServer = canonicalBody.isEmpty && !canonicalServer.isEmpty
+        if willAdoptServer { draftStore.remove(documentID: serverID) }
         if let document { insertIntoListCaches(document, parentID: record.parentID) }
 
         removePendingCreate(documentID: localID)
@@ -865,8 +904,7 @@ final class DocumentSaveCoordinator {
         // (Precisely: the conflict check below would fire and the enqueue would take the
         // hold, so nothing is PATCHed unasked — the damage is that the user is offered a
         // destructive choice against a document they have no local version of.)
-        if canonicalBody.isEmpty, !canonicalServer.isEmpty {
-            draftStore.remove(documentID: serverID)
+        if willAdoptServer {
             // **Release any conflict on the way out.** This branch deletes every trace of local
             // work for `serverID`, so a record rehydrated by `init` from a persisted
             // `conflictServerUpdatedAt` is now moot — and the lifecycle invariant is that a
