@@ -40,10 +40,10 @@ struct AvatarGroup: View {
     var size: CGFloat = 32
     var max: Int = 4
 
-    /// Declared here as well as in `Avatar`, and deliberately with the same
-    /// `relativeTo:`, so both arrive at the same factor: the negative overlap
-    /// and the "+N" disc have to track the avatars they sit against, or the
-    /// stack comes apart at large text sizes.
+    /// The row's single scale. It is handed down to each `Avatar` rather than
+    /// letting them scale themselves, so the discs, the negative overlap and the
+    /// "+N" disc are all measured from the same number — the stack comes apart
+    /// at large text sizes if any one of them drifts.
     @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
 
     var body: some View {
@@ -51,7 +51,7 @@ struct AvatarGroup: View {
         let metrics = avatarGroupMetrics(size: size, scale: scale)
         HStack(spacing: metrics.overlap) {
             ForEach(Array(layout.visibleNames.enumerated()), id: \.offset) { _, name in
-                Avatar(name: name, size: size)
+                Avatar(name: name, size: size, scaleOverride: scale)
                     .overlay(Circle().stroke(DocsColor.surfacePage, lineWidth: 2))
             }
             if layout.overflowCount > 0 {

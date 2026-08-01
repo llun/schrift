@@ -913,7 +913,9 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   were dead however tall the frame said it was. Every interactive row now ends
 >   its label with `.contentShape(Rectangle())`, and a label filling a taller
 >   container takes `.frame(maxHeight: .infinity)` first (a `Text` is only as
->   tall as its line). This had been true of `ListRow` since it was written,
+>   tall as its line) — and a *narrow* label needs the width floor too, which is
+>   why the editor's "Save" carries a `minWidth` its longer-phrased sibling
+>   states do not. This had been true of `ListRow` since it was written,
 >   which put it under **Delete document, Sign out and both conflict-resolution
 >   choices** — the decisions least forgiving of a missed tap. It is invisible in
 >   a screenshot and uncatchable by the suite; test it by tapping the padding.
