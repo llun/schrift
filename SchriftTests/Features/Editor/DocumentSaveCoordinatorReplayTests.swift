@@ -237,10 +237,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     }
 
     /// The content must end up on disk under the server id even when the save never lands.
-    /// Note this pins the *outcome*, not the write ordering that protects it: the window
-    /// where the body lives only in a local binding is a process-death instant no test can
-    /// take, so the reason the draft is written before the old one is removed is argued in
-    /// the code rather than asserted here.
+    /// Note this pins the *outcome*, not the write ordering that protects it: the ordering
+    /// is only observable across a process death (in between, the body is on disk twice —
+    /// which is the point), so the reason the draft is written before the old one is removed
+    /// is argued in the code rather than asserted here.
     func testTheBodyIsOnDiskUnderTheServerIDEvenIfTheSaveNeverLands() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -376,8 +376,9 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     }
 
     /// The whole reason a resume reads `formattedContent` rather than `document`: the latter
-    /// carries no body, so the baseline claimed the server was empty. With a real body on the
-    /// server the baseline must reflect it — **and** the push must not go through unasked,
+    /// carries no body, so the baseline claimed the server was empty when nothing had checked.
+    /// With a real body on the server the push must not go through unasked — and the baseline
+    /// must not *prove* that push either,
     /// since between the checkpoint and the resume the document is live and editable on the
     /// web. The other resume tests that do supply a body answer both GETs from one stub, so
     /// this is the only one where the two calls are distinguishable — nothing else here
@@ -582,8 +583,9 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     }
 
     /// A rename made between the checkpoint and the resume must survive. The server's title
-    /// is the pre-death one, and since the baseline is stamped from it, `draftTitleOutcome`
-    /// would see draft == baseline and silently keep the old name.
+    /// is the pre-death one, and since the baseline carries it, `draftTitleOutcome`
+    /// short-circuits to `.keepDraft` on `serverUpdatedAt <= baselineDate` before comparing
+    /// anything, and the rename would be silently lost.
     func testAResumeKeepsARenameMadeAfterTheCheckpoint() async {
         let log = RequestRecorder()
         stubReplayPipeline(log: log, title: "Untitled document")
@@ -1680,6 +1682,62 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             env.children.children(for: parent)?.filter { $0.id == self.serverID }.count, 1,
             "one row, not two")
+    }
+
+    /// **The conflict must survive rule 1 as well as rule 2.** A checkpointed document is met
+    /// under its *server* id, so the user can have opened it, typed and had that save land
+    /// before the migration runs — leaving `lastConfirmedPushMarkdown[serverID]` holding the
+    /// very body the migration then records a conflict against. `enqueue` stamps that onto the
+    /// draft, and rule 1 (`serverHoldsOurLastPush`) is consulted *before* rule 2, so an honest
+    /// baseline is never even reached: `releaseConflictIfProven` clears the conflict and the
+    /// held save overwrites them. Every other conflict test uses a relaunched coordinator,
+    /// where that map is structurally empty — which is exactly why this axis was uncovered.
+    func testAConflictSurvivesEvidenceOfAPushUnderTheServerID() async throws {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+
+        // Relaunch so the mirror picks up the checkpoint, then — in *this* session — the user
+        // meets the document under its server id and their save lands, leaving push evidence
+        // on the same coordinator the migration will run on.
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Their newer text")
+        await waitUntil {
+            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == "# Their newer text"
+        }
+
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Their newer text",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T09:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "the divergence is recorded")
+        let draft = try XCTUnwrap(relaunched.drafts.draft(for: serverID))
+        XCTAssertNil(
+            draft.lastPushedMarkdown,
+            "the push evidence is cleared — the offline body does not descend from that push")
+        let decision = draftSyncDecision(
+            baseline: draft.baseline, lastPushedMarkdown: draft.lastPushedMarkdown,
+            localMarkdown: draft.markdown, draftTitle: draft.title, draftUpdatedAt: draft.updatedAt,
+            serverTitle: "Notes",
+            serverUpdatedAt: ISO8601DateFormatter().date(from: "2026-03-02T09:00:00Z")!,
+            serverMarkdown: "# Their newer text")
+        guard case .conflict = decision else {
+            return XCTFail("rule 1 must not release the conflict — got \(decision)")
+        }
     }
 
     // MARK: - Helpers

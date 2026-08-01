@@ -1235,8 +1235,10 @@ nice-to-have:
 
 `runCreatePass()` runs **inside** `syncPendingDrafts`'s coalesced loop, immediately
 before `runSyncPass`. Note what that ordering does and does not buy: a *successful*
-migration ends in `enqueue`, which goes straight to `start` and sets `inFlight`
-synchronously, so `runSyncPass` skips it — it is not the one pushing it. What the
+migration ends in an `enqueue` that `runSyncPass` then skips — undiverged it went
+straight to `start` and set `inFlight`; diverged it is parked in `queued` behind the
+conflict hold; and the adopt branch returns before enqueueing at all. Either way the
+pass is not the one pushing it. What the
 ordering serves is a migration the server-id guards **deferred**: `runSyncPass`
 clears the draft standing in its way, so the next trigger can complete it. It
 deliberately has **no triggers
@@ -1268,7 +1270,7 @@ for a sub-page, `createDocument` for a root.
    device created*, not from theirs. Claiming otherwise hands `draftSyncBodyDecision`
    rule 2 a proof (`serverUpdatedAt <= baselineDate` is trivially true of the state it
    was copied from), so the next revalidation answers `.push(.descendsFromBaseline)`,
-   `releaseConflictIfProven` clears the conflict step 6 is about to record, and the
+   `releaseConflictIfProven` clears the conflict recorded a step later, and the
    held save full-overwrites the co-author — *by way of* the conflict meant to prevent
    it. It is also the advance `resolveConflictKeepingLocal` performs as the user's
    **answer**. So the diverged baseline carries a `nil` clock and an empty body: both
@@ -1281,10 +1283,10 @@ for a sub-page, `createDocument` for a root.
    `settledSaves`, `lastConfirmedPushMarkdown`,
    `knownServerTitles`, and a defensive content-cache purge. The draft is
    **written under the new id before it is removed from the old one**: these are
-   synchronous statements, but in between the body lives only in a local binding,
-   and a death there would leave the draft removed, the replacement unwritten, and
-   the server holding the empty document the POST just made. Writing first means no
-   instant exists where the content is on disk nowhere.
+   synchronous statements, and in between the body is on disk **twice** — which is
+   the point. The *reverse* order is what would leave a death with the draft removed,
+   the replacement unwritten, and the server holding the empty document the POST just
+   made. Writing first means no instant exists where the content is on disk nowhere.
 4. **Insert into the list caches** under the real id, so the document does not
    drop out of Home between the POST landing and the next successful list fetch.
    **Neither cache is ever fabricated**: `nil` (never fetched) is deliberately
@@ -1299,9 +1301,10 @@ for a sub-page, `createDocument` for a root.
 5. **Remove the record last**, because it is what keeps the holds in force.
    Dropping it first and dying would leave a draft under a dead local id that the
    very next sync pass GETs, 404s, and deletes.
-6. **Enqueue the content** under the server id. It is now an ordinary document
-   with an ordinary queued edit, and rule 2 sees a server no newer than the
-   baseline just stamped.
+6. **Enqueue the content** under the server id. Undiverged, it is now an ordinary
+   document with an ordinary queued edit and rule 2 sees a server no newer than the
+   baseline just stamped. Diverged, the baseline deliberately proves nothing, so the
+   same enqueue is parked by the hold the conflict record engaged a step earlier.
 
 **Deferring while a screen is open.** `retainOpenEditor`/`releaseOpenEditor` keep a
 refcount, and the replay skips any document held there. Migration re-keys
@@ -1439,9 +1442,12 @@ with the create UI.
 **A resume takes its baseline from `formattedContent`, not `document`** — it calls
 both, but the latter carries no body, so using it for the baseline stamped
 `markdown: ""`, asserting the server was empty when nothing had checked. That
-false baseline would have misled every later `draftSyncDecision`. `""` is provable
-only on the fresh-POST path, where this device created the document a moment
-earlier.
+false baseline would have misled every later `draftSyncDecision`. Note this is about
+the **undiverged** stamp: a diverged resume deliberately carries `markdown: ""` with a
+*nil clock*, which is the opposite thing — a checked "our body descends from the empty
+document we made", not an unchecked assertion about the server, and it is what makes
+the conflict survive re-evaluation. An unchecked `""` is provable only on the
+fresh-POST path, where this device created the document a moment earlier.
 
 **The `document` call goes first, and is allowed to fail.** It feeds only the list
 caches, and ordering it that way is load-bearing twice. It must not sit *between*

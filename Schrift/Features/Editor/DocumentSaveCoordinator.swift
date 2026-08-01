@@ -338,10 +338,11 @@ final class DocumentSaveCoordinator {
         // which is the whole point of creating offline. Rule 3 would answer
         // `.discardServerWins` and the launch pass would **delete the body**, leaving the
         // empty document the POST just made. Migration must stamp one before the draft is
-        // replayed, from the server state it actually **observed**: the create response on a
-        // fresh POST, where `markdown: ""` is provable because the document was made moments
-        // ago — and a `formattedContent` fetch on a resume, where it is not, since the
-        // document may have been live on the web for hours.
+        // replayed, saying what the body **descends from** — the create response on an
+        // undiverged fresh POST, a `formattedContent` fetch on an undiverged resume, and a
+        // nil clock with an empty body when the two have **diverged**, where claiming the
+        // observed state would prove the very push the conflict is holding. See
+        // `migrateCreatedDocument`.
         draftStore.save(
             PendingDraft(documentID: record.localID, title: title, markdown: "", updatedAt: record.createdAt))
         states[record.localID] = .pendingSync
@@ -731,9 +732,10 @@ final class DocumentSaveCoordinator {
         // newer one. On a resume the server's is the pre-death title while the draft may hold
         // a rename from the intervening launch; on a fresh POST the server's is what we sent
         // moments ago, which a rename landing *during* the POST has already superseded. Either
-        // way nothing downstream would flag the difference — the baseline is stamped with the
-        // server's title, so `draftTitleOutcome` would see draft == baseline and silently keep
-        // the old name.
+        // way nothing downstream would flag the difference — the baseline carries the server's
+        // title on both paths, so `draftTitleOutcome` answers `.keepDraft` before any
+        // draft-versus-baseline comparison: undiverged by the `serverUpdatedAt <= baselineDate`
+        // short-circuit, diverged (nil clock) by `serverTitle == baselineTitle`.
         //
         // The trade this accepts: a rename made *elsewhere* while the document sat
         // checkpointed is reverted. "This device made it, so there is no co-author" is the
@@ -763,11 +765,21 @@ final class DocumentSaveCoordinator {
         // performs as the user's *answer*; doing it here answers the question destructively
         // before asking it.
         //
-        // So: `nil` clock and `""` body when diverged — both honest, and together they fall
-        // through rule 2 to `.conflict` on every re-evaluation while staying non-nil, so
-        // rule 3 can never discard. `serverTitle` rides along on both paths; with a nil clock
-        // `draftTitleOutcome` reaches `serverTitle == baselineTitle` and keeps the draft's.
-        let diverged = !serverMarkdown.isEmpty && canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body)
+        // So: `nil` clock and `""` body when diverged — both honest, and together they reach
+        // rule 2's `.conflict` while staying non-nil, so rule 3 can never discard.
+        // `serverTitle` rides along on both paths; with a nil clock `draftTitleOutcome`
+        // reaches `serverTitle == baselineTitle` and keeps the draft's.
+        //
+        // **Both emptiness tests are canonical, matching the inequality below.** A raw
+        // `isEmpty` disagrees with `canonicalMarkdown` on whitespace: `"\n"` is raw-non-empty
+        // and canonically empty. Raw, a server body of `"\n"` records a conflict that the
+        // next evaluation immediately releases (rule 2's body tiebreak matches `"" == ""`),
+        // and a *local* body of `" "` skips the adopt branch below and arms a "Keep my
+        // version" that PATCHes whitespace over the co-author — the exact wipe that branch
+        // exists to prevent.
+        let canonicalBody = canonicalMarkdown(body)
+        let canonicalServer = canonicalMarkdown(serverMarkdown)
+        let diverged = !canonicalServer.isEmpty && canonicalServer != canonicalBody
         let baseline =
             diverged
             ? DraftBaseline(serverUpdatedAt: nil, markdown: "", title: serverTitle)
@@ -833,8 +845,9 @@ final class DocumentSaveCoordinator {
         // the server instead: drop the draft written above and enqueue nothing, leaving an
         // ordinary, fully in-sync document.
         //
-        // **The test is emptiness, not absence — do not "tighten" it into a nil check.** Two
-        // different states reach it. The sources can all be *absent*, so the chain falls
+        // **The test is emptiness — canonical emptiness — not absence, and must not be
+        // "tightened" into a nil check.** Two different states reach it. The sources can all
+        // be *absent*, so the chain falls
         // through to `""` (a death inside the partial-migration window plus an intervening
         // `runSyncPass` that pushes and removes the server-id draft). Or — the ordinary case —
         // a source is **present and empty**: `createLocalDocument` writes a seed draft with
@@ -845,7 +858,7 @@ final class DocumentSaveCoordinator {
         // (Precisely: the conflict check below would fire and the enqueue would take the
         // hold, so nothing is PATCHed unasked — the damage is that the user is offered a
         // destructive choice against a document they have no local version of.)
-        if body.isEmpty, !serverMarkdown.isEmpty {
+        if canonicalBody.isEmpty, !canonicalServer.isEmpty {
             draftStore.remove(documentID: serverID)
             // **Release any conflict on the way out.** This branch deletes every trace of local
             // work for `serverID`, so a record rehydrated by `init` from a persisted
@@ -876,6 +889,18 @@ final class DocumentSaveCoordinator {
             return
         }
         if diverged {
+            // **Clear the push evidence for the same reason as the baseline, or rule 1 arms
+            // the identical release one rule earlier.** `enqueue` stamps the draft's
+            // `lastPushedMarkdown` from `lastConfirmedPushMarkdown[serverID]`, and that map
+            // can hold the very body we just recorded a conflict against: a checkpointed
+            // document is met under its server id, so the user can have opened it, typed, and
+            // had that save land — `finish` records it — before this migration runs. Rule 1
+            // (`serverHoldsOurLastPush`) is consulted *before* rule 2, so an honest baseline
+            // is never even reached; `releaseConflictIfProven` clears the conflict and the
+            // held save overwrites them. The local body provably does not descend from that
+            // push, so the evidence is as false as the baseline would have been. (The draft
+            // written above carries no `lastPushedMarkdown`, so clearing the map is enough.)
+            lastConfirmedPushMarkdown[serverID] = nil
             recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
         }
 
@@ -1221,9 +1246,10 @@ final class DocumentSaveCoordinator {
             let launchPass = pendingLaunchRecovery
             pendingLaunchRecovery = false
             // Creates first, inside the same pass. Note what that ordering does and does not
-            // buy: a *successful* migration ends in `enqueue`, which goes straight to `start`
-            // and sets `inFlight` synchronously, so `runSyncPass` skips it — it is not the one
-            // pushing it. What the ordering serves is a migration the server-id guards
+            // buy: a *successful* migration ends in an `enqueue` that `runSyncPass` then skips
+            // — undiverged it went straight to `start` and set `inFlight`; diverged it is
+            // parked in `queued` behind the conflict hold; and the adopt branch returns before
+            // enqueueing at all. Either way the pass is not the one pushing it. What the ordering serves is a migration the server-id guards
             // **deferred**: `runSyncPass` clears the draft standing in its way, so the next
             // trigger can complete it. Both inherit this funnel's
             // re-entrancy guard and coalescing — the create replay must never get its own
@@ -1483,6 +1509,14 @@ final class DocumentSaveCoordinator {
                     // use the draft's own body: if a later fetch shows the server holding it,
                     // that is our own push having landed (idempotent), and anything else is a
                     // genuinely new conflict, which is exactly the discrimination we want.
+                    //
+                    // A `""` baseline body no longer implies fabrication, though: the create
+                    // migration's diverged path stamps one deliberately (with a nil clock).
+                    // Carrying it forward here inherits the same tiebreak — so if a co-author
+                    // later empties the document, this pushes instead of re-conflicting.
+                    // Narrow, and "keep mine" is the answer the user already gave, so the
+                    // push is what they asked for; noted because the reasoning above assumes
+                    // a `""` body can only have been invented.
                     baseline: DraftBaseline(
                         serverUpdatedAt: resolved.serverUpdatedAt,
                         markdown: draft.baseline?.markdown ?? draft.markdown,

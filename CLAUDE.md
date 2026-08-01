@@ -1531,7 +1531,9 @@ markdown write endpoint**. Understand this before touching the save path:
   **A resume takes its baseline from `formattedContent`, never from `document`**
   (it calls both — `document` only feeds the list caches). The latter carries no
   body, so using it stamped `markdown: ""`, asserting an empty server nothing had
-  checked; `""` is provable only on the fresh-POST path. And because a resume can
+  checked; an *unchecked* `""` is provable only on the fresh-POST path. (Distinct from
+  the diverged baseline's `""`, which comes with a nil clock and asserts nothing about
+  the server — see above.) And because a resume can
   find a body that arrived while the document sat checkpointed — live and editable
   on the web — the migration **records a conflict** when the server's body differs
   from ours (compared canonically) instead of pushing. Recording it *first* is what
