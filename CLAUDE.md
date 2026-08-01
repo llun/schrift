@@ -1322,10 +1322,11 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; draft replay).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
-- **A document created on this device has no server id, and two holds keep the
+- **A document created on this device has no server id, and four gates keep the
   pipeline from pretending otherwise.** `PendingDocumentCreateStore` records it
   (`PendingDocumentCreate`: `localID`, `title`, `parentID`, `createdAt`,
-  `serverOrigin`, `ownerUserID`, `syncedServerID`), the coordinator mirrors
+  `serverOrigin`, `ownerUserID`, `syncedServerID`, `replayBlockedAt`/
+  `replayBlockedBuild`), the coordinator mirrors
   **every** record — protection is unconditional — and
   `isPendingCreate(documentID:)` is the predicate the holds key off. **Invariant: no *save* may ever name a pending-create id.**
   It is enforced at four gates in the coordinator, each load-bearing rather
@@ -1361,8 +1362,13 @@ markdown write endpoint**. Understand this before touching the save path:
   `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
   seed draft** (so the editor's existing draft precedence renders it unchanged)
   and sets `.pendingSync` — nothing is syncing, but the work is on the device.
-  `discardPendingWork` drops the record with the draft: a local delete is purely
-  local, and a surviving record would let a replay resurrect it.
+  `discardPendingWork` drops the record with the draft, or a replay would resurrect
+  what the user threw away. **But "a local delete is purely local" holds only while
+  the record is un-checkpointed** — once `syncedServerID` is set the POST has landed
+  and a real server object exists, while `isPendingCreate` is still true, so the
+  delete branch runs for exactly the case where it is false. The create UI owes the
+  server `DELETE` there; without it the document survives and reappears in Home on
+  the next list fetch with nothing on the device that knows about it.
   **Synthetic `Document`s (`localDocument(from:)`) must never enter a persisted
   metadata cache** — lists merge them at read time via
   `mergedWithLocalDocuments(fetched:local:)`, because a list load replaces its

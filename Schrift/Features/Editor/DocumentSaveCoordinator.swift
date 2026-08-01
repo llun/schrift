@@ -770,8 +770,10 @@ final class DocumentSaveCoordinator {
         // `markdown: ""`, and a rename before the replay fills `queued[localID]` with an empty
         // body too, so a document created, renamed and never typed into arrives here with the
         // first source populated. An absence test would let exactly that document fall through
-        // to `enqueue` and PATCH `""` over the co-author's body, which is the wipe this branch
-        // exists to prevent.
+        // to `enqueue`, arming the very "Keep my version" wipe this branch exists to prevent.
+        // (Precisely: the conflict check below would fire and the enqueue would take the
+        // hold, so nothing is PATCHed unasked — the damage is that the user is offered a
+        // destructive choice against a document they have no local version of.)
         if body.isEmpty, !serverMarkdown.isEmpty {
             draftStore.remove(documentID: serverID)
             // **Release any conflict on the way out.** This branch deletes every trace of local
@@ -1471,9 +1473,19 @@ final class DocumentSaveCoordinator {
         clearResolvedConflict(documentID: documentID)  // the document is gone — the conflict is moot
         lastConfirmedPushMarkdown[documentID] = nil
         knownServerTitles[documentID] = nil
-        // A locally-created document is deleted purely locally (there is no server object
-        // to DELETE), so its record must go with its draft — otherwise the create replay
-        // would resurrect a document the user threw away. Its `.pendingSync` goes with it:
+        // A locally-created document's record must go with its draft, or the create replay
+        // would resurrect a document the user threw away.
+        //
+        // **This is not the whole of a delete once the record is checkpointed.** Then the POST
+        // has landed and a real server object exists, while `isPendingCreate` is still true
+        // (the migration only clears it at `removePendingCreate`), so this branch runs for
+        // exactly the case where "purely local" is false. It stays right as far as it goes —
+        // the local traces must be removed either way — but the caller owes the server
+        // `DELETE` when `syncedServerID` is set, or the document survives and reappears in
+        // Home on the next list fetch with nothing on the device that knows about it. See the
+        // delete-branch obligation in `docs/offline-and-sync.md`.
+        //
+        // Its `.pendingSync` goes with it:
         // nothing is on the device to sync any more, and unlike a server document there is
         // no `finish` coming to reset it (the hold means no save was ever started).
         //

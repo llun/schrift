@@ -1036,9 +1036,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
+        // Prove it deferred at the *guards* rather than never getting there: a resume that
+        // failed its fetch would also leave the record, and would satisfy the assertion above
+        // for the wrong reason. (`syncedServerID` cannot do this job — the test sets it, and
+        // only the `.notFound` branch clears it, which this stub never returns.)
         XCTAssertEqual(
-            relaunched.creates.create(for: local.id)?.syncedServerID, serverID,
-            "and it is still checkpointed, i.e. it really did reach the migration")
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1,
+            "the resume read the server copy, so the migration really ran its guards")
     }
 
     /// A death *between* the migration's two draft writes leaves **both** drafts present. The
@@ -1199,6 +1203,42 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await waitAndConfirmNever(timeout: 2) {
             log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0
         }
+    }
+
+    /// Adopting the server removes every trace of local work for that id, so a conflict record
+    /// rehydrated from a persisted stamp is now moot — and a record outliving the work it
+    /// protects parks every future save for that document behind a pill with nothing to ask.
+    func testAdoptingTheServerReleasesAConflictThatIsNowMoot() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+        // A server-id draft with an empty body carrying a conflict stamp — what `init`
+        // rehydrates `conflicts` from.
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "", updatedAt: Date(), baseline: nil,
+                lastPushedMarkdown: nil, conflictServerUpdatedAt: Date(timeIntervalSince1970: 1)))
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Written on the web",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "rehydrated from the draft")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "released — otherwise every later save for this document is parked behind it")
     }
 
     /// A missing *route* is a fact about the server, not about this document — so a root create

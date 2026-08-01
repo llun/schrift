@@ -1093,8 +1093,12 @@ actually **observed**: the create response on a fresh POST — where `markdown: 
 is provable, because this device made the document a moment earlier — and a
 `formattedContent` fetch on a resume, where it is not (see "A resume takes its
 baseline from `formattedContent`" below).
-`discardPendingWork` drops the record with the draft: deleting a local
-document is purely local, and a surviving record would let a replay resurrect it.
+`discardPendingWork` drops the record with the draft, or a replay would resurrect
+what the user threw away. "Deleting a local document is purely local" holds only
+while the record is **un-checkpointed**, though: once `syncedServerID` is set the
+POST has landed and a real server object exists — while `isPendingCreate` is still
+true — so that branch runs for exactly the case where it is false. See the
+delete-branch obligation under "What the create UI still owes".
 
 **Synthetic `Document`s never enter a persisted metadata cache.**
 `localDocument(from:)` fills the server-owned fields with inert placeholders
@@ -1333,7 +1337,10 @@ ordinary route there is a source that is **present and empty**, not absent:
 the replay fills `queued[localID]` with an empty body too — so a document created,
 renamed and never typed into arrives with the first source populated. **The test is
 emptiness, not absence**, and tightening it into a nil check would let precisely that
-document fall through to `enqueue` and PATCH `""` over the co-author's body.
+document fall through to `enqueue`, arming the very "Keep my version" wipe the branch
+exists to prevent. (The conflict check would fire and the enqueue would take the
+hold, so nothing is PATCHed unasked — the damage is offering a destructive choice
+against a document the user has no local version of.)
 
 **The title is adopted with the body; nothing is written back.** Two attempts at
 preserving a local rename here were both wrong, and the reasoning is worth keeping.
