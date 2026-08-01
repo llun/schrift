@@ -119,9 +119,9 @@ struct SaveStatusIndicator: View {
                         .font(DocsFont.footnote.weight(.semibold))
                 }
                 .foregroundStyle(DocsColor.danger)
-                // The only retry affordance there is while editing — and, when
-                // offline, the only way out at all, since tap-to-edit is
-                // blocked. It has to be reachable.
+                // The only retry affordance there is while editing, and the only
+                // thing that unpins a document whose revalidations `reconcileDraft`
+                // no-ops. It has to be reachable.
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }

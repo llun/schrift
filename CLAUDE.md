@@ -1552,9 +1552,16 @@ markdown write endpoint**. Understand this before touching the save path:
   `draftSyncDecision` on reconnect/foreground/launch. The one entry guard left is
   `startEditing`'s `hasLoadedContent` — **do not add an offline check back**; a
   document with nothing loaded is the case that guard exists for, online or off.
-  **Creating** offline is different and still gated: "Add a subpage"
-  (`EditorView`) and the Pages drawer's "New page" POST, and a document that does
-  not exist server-side has no id for the draft pipeline to PATCH.
+  **The dividing line is whether the action POSTs**, and it cuts through the
+  editing surface itself: every block transformation is a local edit the draft
+  pipeline queues, but **inserting a photo** uploads a multipart attachment that
+  has no queue, so it stays gated offline in *both* entry points — disabled in
+  `EditorFormattingBar`, and dropped from the slash menu by the pure
+  `filteredSlashItems(query:isOffline:)`. Offering it would open the picker and
+  re-encode the chosen image only to fail. **Creating** is gated for the same
+  reason: "Add a subpage" (`EditorView`) and the Pages drawer's "New page" POST,
+  and a document that does not exist server-side has no id for the draft
+  pipeline to PATCH.
   Two decisions ride with this. (a) The editor's `isOffline` is **chrome only** —
   the banner, the `.pendingSync` retry affordance, the presence badge — and stays
   derived from `HomeViewModel`'s last list-fetch outcome. It is deliberately
