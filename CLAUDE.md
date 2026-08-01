@@ -1419,7 +1419,9 @@ markdown write endpoint**. Understand this before touching the save path:
   exists, so this write landing before anything else is the only thing between a
   process death and a duplicate — a checkpointed record resumes at migration
   instead of re-POSTing); stamp the baseline; move every id-keyed thing including
-  **`queued`**, which holds the newest keystrokes; insert into the list caches so
+  **`queued`**, which holds the newest keystrokes (and write the draft under the
+  new id *before* removing the old one — in between, the body exists only in
+  memory); insert into the list caches so
   the document doesn't vanish from Home before the next fetch; **remove the record
   last**, because it is what keeps the holds in force; then enqueue the content.
   **A replay never runs while an editor is open** on that document

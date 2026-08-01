@@ -1157,7 +1157,26 @@ nice-to-have:
   it is only ever learned from `/users/me/` and stored nowhere — so launching
   offline currently yields no user id at all, which is precisely the case the
   feature exists for. Failing closed is the right default; supplying the value is
-  the create UI's job.
+  the create UI's job. There are now **three** fetch sites (`RootView`,
+  `ProfileViewModel`, and the create pass) and none persists it; once one does,
+  the pass's per-pass fetch should read the persisted value instead — which also
+  makes the replay work against a server that omits `id`.
+- **Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
+  create UI.** The "+" creates a document and opens its editor immediately, so a
+  missed retain makes the very first reconnect-while-typing the
+  migration-under-a-live-screen case. Copy `EditorView`'s
+  `holdsCollaborationSession` shape — a one-shot `@State` flag, released only if
+  held — rather than calling retain from `onAppear` directly, so the pairing
+  cannot double-count or leak. A leaked retain is not harmless *within* a
+  session: that document never replays while the caption says "syncs when
+  online".
+- **Deleting a local document**, which is two changes that must land together:
+  `localDocument(from:)`'s `abilities.destroy` flipping to true, and
+  `OptionsViewModel.delete()` short-circuiting for a pending-create id (it
+  currently always calls the server, which 404s). One without the other gives
+  either a Delete row that always errors or a record nothing can remove — and
+  that branch is load-bearing, since `discardPendingWork` is what makes the
+  replay's mid-POST delete guard fire.
 - ~~**The create replay**~~ — **landed 2026-08-01**, see below.
 - **A recovery affordance, or a bounded retention policy, for records that can
   never be replayed here** — another account's, or an unattributable one. Their
@@ -1198,7 +1217,12 @@ for a sub-page, `createDocument` for a root.
 3. **Move everything keyed by the id**: the draft, `states`, **`queued`** (which
    holds the user's newest keystrokes — leaving it behind strands them under an id
    nothing will ever push), `settledSaves`, `lastConfirmedPushMarkdown`,
-   `knownServerTitles`, and a defensive content-cache purge.
+   `knownServerTitles`, and a defensive content-cache purge. The draft is
+   **written under the new id before it is removed from the old one**: these are
+   synchronous statements, but in between the body lives only in a local binding,
+   and a death there would leave the draft removed, the replacement unwritten, and
+   the server holding the empty document the POST just made. Writing first means no
+   instant exists where the content is on disk nowhere.
 4. **Insert into the list caches** under the real id, so the document does not
    drop out of Home between the POST landing and the next successful list fetch.
    A sub-page joins its parent's cached level only if that level was actually
@@ -1220,11 +1244,41 @@ Releasing the last hold kicks the funnel, so popping back on iPhone syncs
 immediately. The accepted cost: an iPad split-view editor left selected defers
 that document until it is deselected or the app relaunches.
 
+**Everything that can change during the await is re-checked after it.** The pass
+awaits `/users/me/` and then a POST per record, and the main actor is reentrant
+throughout — so before migrating it re-reads the record from `pendingCreates` (a
+delete during the POST must not be undone: writing the stale snapshot back would
+*resurrect* the record `discardPendingWork` removed) and re-checks
+`hasOpenEditor` (a screen opening during the POST is exactly the case the
+deferral exists for). Both bail *after* the checkpoint is persisted, so bailing
+costs nothing: the next pass resumes at migration.
+
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
-longer ours (`403`/`404`) is **promoted to a root** and retried — placement is
-recoverable by the user, a lost body is not. Anything else rejected on the merits
-sets `.failed`, which the pass skips and a relaunch retries once.
+longer ours is **promoted to a root** and retried — placement is recoverable by
+the user, a lost body is not — but only on *evidence*: a `403` on a POST is not
+only "the parent isn't yours", it is also what Django answers for a bad `Origin`
+(the capitalised-host bug), so the parent is probed first and a probe that cannot
+answer leaves the record alone. A deployment with no `children/` route at all
+(`.routeNotFound`) promotes without probing, since retrying as a sub-page is
+hopeless there. Anything else rejected on the merits sets `.failed`, which the
+pass skips and a relaunch retries once — note that is *not* the reading surface's
+"tap to retry", which cannot reach a local document whose content is parked in
+`queued`; a create-specific affordance belongs with the UI.
+
+**A resume whose document is gone drops its checkpoint.** Retrying that GET
+forever would leave the document in no list (a checkpointed record is withheld
+from `pendingLocalDocuments`) and never pushed — unreachable by every route the
+app offers. Clearing `syncedServerID` lets the next pass create it afresh; there
+is nothing left to duplicate.
+
+**"Checkpointed but not migrated" is now a routine state**, not only a
+crash-recovery one, because both re-checks above bail after the checkpoint. In it
+the server holds an empty document, the record is withheld from the local list,
+and the content is still in a draft under the local id. Nothing is lost — the
+next pass finishes the job — but a list fetch landing in that window shows the
+empty server row, so the UI change owes an answer (suppressing a fetched row
+while a matching checkpointed record exists, which needs the checkpoint exposed).
 
 ## Data flow
 
