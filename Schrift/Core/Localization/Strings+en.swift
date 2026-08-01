@@ -139,7 +139,7 @@ enum Strings_en {
         .editor_save_failed_a11y: "Save failed. Retry",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Reading the copy saved on this device",
+        .editor_offline_local_copy: "Working on the copy saved on this device",
         .editor_update_available: "Document updated · tap to refresh",
         .editor_update_available_a11y: "Document updated. Tap to refresh.",
         .editor_uploading_photo: "Uploading photo…",

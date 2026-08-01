@@ -136,7 +136,7 @@ enum Strings_zhHans {
         .editor_save_failed_a11y: "保存失败。重试",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "正在阅读保存在此设备上的副本",
+        .editor_offline_local_copy: "正在编辑保存在此设备上的副本",
         .editor_update_available: "文档已更新 · 点按以刷新",
         .editor_update_available_a11y: "文档已更新。点按以刷新。",
         .editor_uploading_photo: "正在上传照片…",

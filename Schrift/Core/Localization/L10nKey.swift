@@ -156,7 +156,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_save_failed_a11y = "editor.save_failed_a11y"  // "Save failed. Retry"
 
     // Editor - reading surface / chrome
-    case editor_offline_local_copy = "editor.offline_local_copy"  // "Reading the copy saved on this device"
+    case editor_offline_local_copy = "editor.offline_local_copy"  // "Working on the copy saved on this device"
     case editor_update_available = "editor.update_available"  // "Document updated · tap to refresh"
     case editor_update_available_a11y = "editor.update_available_a11y"  // "Document updated. Tap to refresh."
     case editor_uploading_photo = "editor.uploading_photo"  // "Uploading photo…"

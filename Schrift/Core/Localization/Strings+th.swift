@@ -138,7 +138,7 @@ enum Strings_th {
         .editor_save_failed_a11y: "บันทึกไม่สำเร็จ ลองใหม่",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "กำลังอ่านสำเนาที่บันทึกไว้บนอุปกรณ์นี้",
+        .editor_offline_local_copy: "กำลังทำงานกับสำเนาที่บันทึกไว้บนอุปกรณ์นี้",
         .editor_update_available: "เอกสารมีการอัปเดต · แตะเพื่อรีเฟรช",
         .editor_update_available_a11y: "เอกสารมีการอัปเดต แตะเพื่อรีเฟรช",
         .editor_uploading_photo: "กำลังอัปโหลดรูปภาพ…",

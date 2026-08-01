@@ -149,7 +149,7 @@ enum Strings_sl {
         .editor_save_failed_a11y: "Shranjevanje ni uspelo. Poskusi znova",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Berete kopijo, shranjeno v tej napravi",
+        .editor_offline_local_copy: "Delate s kopijo, shranjeno v tej napravi",
         .editor_update_available: "Dokument posodobljen · tapnite za osvežitev",
         .editor_update_available_a11y: "Dokument posodobljen. Tapnite za osvežitev.",
         .editor_uploading_photo: "Nalaganje fotografije…",

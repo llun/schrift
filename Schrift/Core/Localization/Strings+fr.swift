@@ -140,7 +140,7 @@ enum Strings_fr {
         .editor_save_failed_a11y: "Échec de l’enregistrement. Réessayer",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Lecture de la copie enregistrée sur cet appareil",
+        .editor_offline_local_copy: "Vous travaillez sur la copie enregistrée sur cet appareil",
         .editor_update_available: "Document mis à jour · appuyez pour actualiser",
         .editor_update_available_a11y: "Document mis à jour. Appuyez pour actualiser.",
         .editor_uploading_photo: "Envoi de la photo…",

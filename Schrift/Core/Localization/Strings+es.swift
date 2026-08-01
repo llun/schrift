@@ -142,7 +142,7 @@ enum Strings_es {
         .editor_save_failed_a11y: "Error al guardar. Reintentar",
 
         // Editor - reading surface / chrome
-        .editor_offline_local_copy: "Leyendo la copia guardada en este dispositivo",
+        .editor_offline_local_copy: "Trabajando en la copia guardada en este dispositivo",
         .editor_update_available: "Documento actualizado · toca para actualizar",
         .editor_update_available_a11y: "Documento actualizado. Toca para actualizar.",
         .editor_uploading_photo: "Subiendo foto…",
