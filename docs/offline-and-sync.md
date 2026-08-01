@@ -1193,9 +1193,15 @@ nice-to-have:
   record carries a `syncedServerID`, the branch must issue the server `DELETE`
   too.** The checkpoint means the document *exists* server-side, so a purely local
   delete leaves it there — it reappears in Home on the next list fetch, with
-  nothing on the device that knows about it. `discardPendingWork` removes the
-  record unconditionally today, which is right for the un-checkpointed case and
-  a lie for the checkpointed one.
+  nothing on the device that knows about it. **This needs a seam that does not
+  exist yet**: `pendingCreates`, `createStore` and `removePendingCreate` are
+  private and `isPendingCreate` returns only a `Bool`, so no caller can read a
+  record's `syncedServerID` to know whether a `DELETE` is owed. Add the accessor
+  *with* the delete branch — an unused public getter landed early is speculative
+  API. (The **inbound** direction is already handled: a delete arriving under the
+  *server* id clears the record and the local draft itself, since that path is
+  reachable through today's Options sheet and would otherwise resurrect the
+  document on the next replay.)
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch — but *within* a build nothing clears
