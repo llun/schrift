@@ -213,19 +213,20 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
     /// A sub-page goes into its parent's cached level — but only one that has actually been
     /// fetched, so a create can never fabricate "this parent has exactly one child".
-    func testASubpageJoinsAKnownParentLevelAndNeverInventsOne() async {
+    func testASubpageJoinsAKnownParentLevel() async {
         let log = RequestRecorder()
         stubReplayPipeline(log: log)
         let knownParent = UUID()
-        let unknownParent = UUID()
         let env = makeEnvironment()
         env.children.save([], for: knownParent)
         env.coordinator.createLocalDocument(title: "Child", parentID: knownParent, ownerUserID: user)
 
         await env.coordinator.syncPendingDrafts()
 
+        // The never-invents-one half lives in `testASubpageNeverFabricatesAnUnfetchedParentLevel`
+        // — it needs a parent whose level was *not* pre-fetched, which this test's setup rules
+        // out, so asserting it here could only ever be vacuous.
         XCTAssertEqual(env.children.children(for: knownParent)?.map(\.id), [serverID])
-        XCTAssertNil(env.children.children(for: unknownParent))
     }
 
     /// The content must end up on disk under the server id even when the save never lands.
@@ -1217,9 +1218,12 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     }
 
     /// A death inside the migration can leave the only copy of the body under `serverID`.
-    /// Dropping the checkpoint severs the last thing tying it to the record — and then
-    /// `runSyncPass`, which no longer sees a pending-create id, GETs that draft, takes the same
-    /// 404 and deletes it, so the re-POST creates an *empty* document in place of the text.
+    /// Dropping the checkpoint severs the last thing tying it to the record, **orphaning** the
+    /// body: the re-POST mints a different server id and its body chain looks under the local
+    /// id and the new one, never the old, so it builds an *empty* document in place of the
+    /// text — and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
+    /// draft is never covered by the pending-create hold in either ordering; the hold is keyed
+    /// on the local id.)
     func testAStartOverTakesTheOrphanedBodyBackToTheLocalID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -1348,6 +1352,35 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(
             relaunched.coordinator.conflict(for: serverID),
             "released — otherwise every later save for this document is parked behind it")
+    }
+
+    /// The promote path's own write-back guard — the third of the trio, and the one with two
+    /// awaits in front of it (the POST *and* the parent probe). A delete landing in either
+    /// window has already removed the record, and `updatePendingCreate` writes through to
+    /// disk, so without the guard the record comes back with `parentID` rewritten to nil and
+    /// the next pass POSTs a document the user threw away.
+    func testADeleteDuringTheParentProbeDoesNotResurrectTheRecord() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let parent = UUID()
+        let local = env.coordinator.createLocalDocument(
+            title: "Child", parentID: parent, ownerUserID: user)
+        // The POST is forbidden, and the probe that follows is held open so the delete can
+        // land inside its window.
+        stubUsersMeThen(log: log) { request in
+            if request.httpMethod == "POST" {
+                return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.3)
+        }
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: parent.uuidString.lowercased()) == 1 }
+        coordinator.discardPendingWork(documentID: local.id)
+        await pass.value
+
+        XCTAssertNil(env.creates.create(for: local.id), "the delete stands — nothing is written back")
     }
 
     /// A missing *route* is a fact about the server, not about this document — so a root create

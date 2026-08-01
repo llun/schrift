@@ -1486,7 +1486,7 @@ since with one present this is not the partial-migration window and the `serverI
 draft is the user's own separate work, which must not overwrite the local body. (Not
 "work against a real document" — that is `finishMigration`'s reasoning, where the
 fetch succeeded; here it 404'd, so the document is gone.) The accepted consequence:
-`runSyncPass`, next in the same pass and no longer gated by `isPendingCreate`, GETs
+`runSyncPass`, next in the same pass, GETs
 that draft, takes the same 404 and removes it — so the newer server-id body is dropped
 while the older local one is re-POSTed. It needs a checkpointed record, an edit under
 the server id whose save failed transiently, *and* a server-side delete; and it is the

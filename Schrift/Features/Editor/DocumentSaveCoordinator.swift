@@ -1564,9 +1564,12 @@ final class DocumentSaveCoordinator {
             // id can never acquire since `recordConflict` needs a *successful* server
             // interaction, and the content cache, which a local document never reaches). Of
             // the four, only `queued` is actually writable — by `enqueue`'s own pending-create
-            // hold; the other three need `start`, which the four gates make unreachable for a
-            // pending-create id. Cleared anyway so the asymmetry cannot become load-bearing
-            // once the create UI lands.
+            // hold. `settledSaves` and `lastConfirmedPushMarkdown` need `start`, which the four
+            // gates make unreachable for a pending-create id; `knownServerTitles` has a second
+            // writer in `noteServerTitle`, but its call sites fire only past
+            // `mayPredateLocalSave` on a *successful* fetch, which a client-minted id can never
+            // get. Cleared anyway so the asymmetry cannot become load-bearing once the create
+            // UI lands.
             removePendingCreate(documentID: checkpointed.localID)
             states[checkpointed.localID] = .idle
             draftStore.remove(documentID: checkpointed.localID)
