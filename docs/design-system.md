@@ -903,3 +903,34 @@ uncertain piece.
 Per `CLAUDE.md`: swift-format run; full suite green locally and on CI
 (`Build & Test`); new behavior test-covered; docs updated in the same change; PR
 title a Conventional Commit; PR review loop run and threads resolved.
+
+> **Revised: 2026-08-01 (accessibility pass).** Cleanup after the native-first
+> refresh, from an audit of the completed series.
+>
+> - **A 44pt frame is not a 44pt tap target.** A plain `Button` hit-tests the
+>   shape its label *draws*, so a row whose label is `HStack { icon; title;
+>   Spacer() }` was tappable on the glyphs alone — the `Spacer` and the padding
+>   were dead however tall the frame said it was. Every interactive row now ends
+>   its label with `.contentShape(Rectangle())`, and a label filling a taller
+>   container takes `.frame(maxHeight: .infinity)` first (a `Text` is only as
+>   tall as its line). This had been true of `ListRow` since it was written,
+>   which put it under **Delete document, Sign out and both conflict-resolution
+>   choices** — the decisions least forgiving of a missed tap. It is invisible in
+>   a screenshot and uncatchable by the suite; test it by tapping the padding.
+> - Icon-only controls go through **`IconButton`**, which keeps the small glyph
+>   and pads *outside* it to the floor, rather than wrapping a bare
+>   `MaterialSymbol` in a `Button` (the Home error-banner dismiss was a 13pt
+>   cross). Where a hard frame would move the glyph — the checklist checkbox is
+>   the adornment of a `.top`-aligned row — grow the hit rect and give the growth
+>   back with symmetric negative padding.
+> - **`Avatar`/`AvatarGroup` now scale with Dynamic Type**, the last shipping
+>   views with a bare `Font.system(size:)` and a fixed frame; the refresh's
+>   typography sweep missed them, so they shrank against the names beside them at
+>   large text sizes. `avatarGroupMetrics(size:scale:)` is the pure rule, and its
+>   test pins the one thing that can go wrong: the diameter, the negative overlap
+>   and the "+N" label must scale *together*.
+> - The eleven **`DocsColor` wrappers with no call site** are gone, per the
+>   standing convention that a hue consumed only by a style resolver stays
+>   hex-only. The `DocsColorHex`/`DocsColorHexDark` palette is untouched — it is
+>   the design system's colour definition, complete whether or not every entry is
+>   currently spent.

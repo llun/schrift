@@ -35,6 +35,12 @@ struct ProfileTrailingRow<Trailing: View>: View {
         }
         .padding(.horizontal, DocsSpacing.gutter)
         .frame(minHeight: DocsSpacing.rowMinHeight)
+        // Callers wrap this in a plain `Button` (the server row opens the
+        // disconnect confirmation), which hit-tests only what its label draws —
+        // so without this the gap between the title and the trailing badge is
+        // dead. Harmless on the rows whose trailing control is a `Switch`: that
+        // control is in front and still takes its own taps.
+        .contentShape(Rectangle())
         // Merge the title with the trailing control so VoiceOver announces which
         // setting a switch controls (otherwise it reads a bare "switch").
         .accessibilityElement(children: .combine)

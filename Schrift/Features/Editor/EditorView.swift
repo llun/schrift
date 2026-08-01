@@ -547,6 +547,11 @@ struct EditorView: View {
             }
             .padding(.horizontal, DocsSpacing.gutter)
             .padding(.bottom, DocsSpacing.spaceXS)
+            // A fixed row height for every state, not just the two that carry a
+            // button: sized per-state, the canvas below would jump as the status
+            // moved Save → Saving → Saved. The two button states fill this
+            // height, which is what gets them to 44pt.
+            .frame(minHeight: DocsSpacing.rowMinHeight)
         }
     }
 

@@ -59,6 +59,16 @@ struct Avatar: View {
     var imageURL: URL? = nil
     var size: CGFloat = 36
 
+    /// The disc and its initials scale together, like `DocIcon`. Every avatar
+    /// sits beside a name or an email that grows with Dynamic Type, so a fixed
+    /// one shrinks against its own label at large text sizes — and scaling only
+    /// the initials would crop them inside a fixed circle.
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+
+    /// The rendered diameter. Read this, never `size`, anywhere that positions
+    /// or measures the avatar — `AvatarGroup`'s overlap is derived from it too.
+    var scaledSize: CGFloat { size * scale }
+
     var body: some View {
         Group {
             if let imageURL {
@@ -71,7 +81,7 @@ struct Avatar: View {
                 initialsView
             }
         }
-        .frame(width: size, height: size)
+        .frame(width: scaledSize, height: scaledSize)
         .clipShape(Circle())
         // Decorative: an adjacent name label carries the identity in every use.
         .accessibilityHidden(true)
@@ -83,7 +93,7 @@ struct Avatar: View {
             .fill(Color(lightHex: colors.light, darkHex: colors.dark))
             .overlay(
                 Text(avatarInitials(for: name))
-                    .font(.system(size: size * 0.4, weight: .semibold))
+                    .font(.system(size: scaledSize * 0.4, weight: .semibold))
                     .foregroundStyle(.white)
             )
     }

@@ -39,13 +39,15 @@ struct DocumentListView: View {
                                 }
                             }
                             Spacer(minLength: 0)
-                            Button {
-                                viewModel.dismissError()
-                            } label: {
-                                MaterialSymbol(.close, size: DocsTypographySpec.footnote.size)
-                                    .foregroundStyle(DocsColor.textSecondary)
-                            }
-                            .accessibilityLabel(loc[.home_dismiss_error])
+                            // Through `IconButton` rather than a bare 13pt glyph:
+                            // it keeps the small visual box but floors the tap
+                            // target at 44pt, which a footnote-sized close cross
+                            // came nowhere near on its own.
+                            IconButton(
+                                icon: .close,
+                                label: loc[.home_dismiss_error],
+                                size: .small,
+                                action: viewModel.dismissError)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, DocsSpacing.spaceXS)

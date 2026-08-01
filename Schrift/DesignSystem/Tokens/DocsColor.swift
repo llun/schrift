@@ -71,18 +71,13 @@ enum DocsColorHex {
 
 enum DocsColor {
     static let brandFill = Color(lightHex: DocsColorHex.brandFill, darkHex: DocsColorHexDark.brandFill)
-    static let brandFillHover = Color(lightHex: DocsColorHex.brandFillHover, darkHex: DocsColorHexDark.brandFillHover)
-    static let brandFillSoft = Color(lightHex: DocsColorHex.brandFillSoft, darkHex: DocsColorHexDark.brandFillSoft)
     static let brandFillSubtle = Color(
         lightHex: DocsColorHex.brandFillSubtle, darkHex: DocsColorHexDark.brandFillSubtle)
     static let textBrand = Color(lightHex: DocsColorHex.textBrand, darkHex: DocsColorHexDark.textBrand)
-    static let textBrandSecondary = Color(
-        lightHex: DocsColorHex.textBrandSecondary, darkHex: DocsColorHexDark.textBrandSecondary)
 
     static let textPrimary = Color(lightHex: DocsColorHex.textPrimary, darkHex: DocsColorHexDark.textPrimary)
     static let textSecondary = Color(lightHex: DocsColorHex.textSecondary, darkHex: DocsColorHexDark.textSecondary)
     static let textTertiary = Color(lightHex: DocsColorHex.textTertiary, darkHex: DocsColorHexDark.textTertiary)
-    static let textDisabled = Color(lightHex: DocsColorHex.textDisabled, darkHex: DocsColorHexDark.textDisabled)
     static let textOnBrand = Color(lightHex: DocsColorHex.textOnBrand, darkHex: DocsColorHexDark.textOnBrand)
 
     static let surfacePage = Color(lightHex: DocsColorHex.surfacePage, darkHex: DocsColorHexDark.surfacePage)
@@ -90,18 +85,10 @@ enum DocsColor {
     static let surfaceMuted = Color(lightHex: DocsColorHex.surfaceMuted, darkHex: DocsColorHexDark.surfaceMuted)
 
     static let borderDefault = Color(lightHex: DocsColorHex.borderDefault, darkHex: DocsColorHexDark.borderDefault)
-    static let borderStrong = Color(lightHex: DocsColorHex.borderStrong, darkHex: DocsColorHexDark.borderStrong)
     static let borderFocus = Color(lightHex: DocsColorHex.borderFocus, darkHex: DocsColorHexDark.borderFocus)
 
-    static let info = Color(lightHex: DocsColorHex.info, darkHex: DocsColorHexDark.info)
     static let success = Color(lightHex: DocsColorHex.success, darkHex: DocsColorHexDark.success)
-    static let warning = Color(lightHex: DocsColorHex.warning, darkHex: DocsColorHexDark.warning)
     static let danger = Color(lightHex: DocsColorHex.danger, darkHex: DocsColorHexDark.danger)
-
-    static let infoSoft = Color(lightHex: DocsColorHex.infoSoft, darkHex: DocsColorHexDark.infoSoft)
-    static let successSoft = Color(lightHex: DocsColorHex.successSoft, darkHex: DocsColorHexDark.successSoft)
-    static let warningSoft = Color(lightHex: DocsColorHex.warningSoft, darkHex: DocsColorHexDark.warningSoft)
-    static let dangerSoft = Color(lightHex: DocsColorHex.dangerSoft, darkHex: DocsColorHexDark.dangerSoft)
 
     static let brandLogo = Color(lightHex: DocsColorHex.brandLogo, darkHex: DocsColorHexDark.brandLogo)
 
