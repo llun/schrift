@@ -1,0 +1,21 @@
+CLAUDE.md
+  s_351b5e522a97a5::t_f27383cfe6c4c3 1576-1588
+docs/offline-and-sync.md
+  s_351b5e522a97a5::t_0e90def61b3933 79-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "5b8f69db828196ba23b0d72173e2f7f2f346efb9",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
