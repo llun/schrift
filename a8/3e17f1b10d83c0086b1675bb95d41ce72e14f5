@@ -1,0 +1,48 @@
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_351b5e522a97a5::t_d2a10e84c26f62 100-106
+  s_351b5e522a97a5::t_6525d2aae72547 64-74,76-79
+  s_351b5e522a97a5::t_056a99be22aa91 89-90
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_351b5e522a97a5::t_2abfcfff018798 672-677
+  s_351b5e522a97a5::t_dd798feb6dfdb7 630-636
+  s_351b5e522a97a5::t_72876efb101c76 759-769
+  s_351b5e522a97a5::t_725b4a571bb97d 468-473
+  s_351b5e522a97a5::t_bf140b47b799ca 575-588
+  s_351b5e522a97a5::t_aefdca30de3468 101-102
+  s_351b5e522a97a5::t_9e107311cf1be0 183
+  s_351b5e522a97a5::t_131764d4e9424e 489-493
+  s_351b5e522a97a5::t_50af19635411b1 872-876,880
+  s_351b5e522a97a5::t_ce59877a206185 826-828
+  s_351b5e522a97a5::t_626c23bb5dbc06 193
+CLAUDE.md
+  s_351b5e522a97a5::t_462b3407a9e562 1444-1450,1456-1458
+  s_351b5e522a97a5::t_baf409bd16b18f 1468-1477
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTests.swift
+  s_351b5e522a97a5::t_c08d1a77c18ef8 61
+  s_351b5e522a97a5::t_6f2127eb12a83f 954-955,961,964-967,970,979-982,984,988-1016,1018
+  s_351b5e522a97a5::t_afc2c0c07c71d3 983
+  s_351b5e522a97a5::t_e659c6afd80567 797-838
+  s_351b5e522a97a5::t_62149be87cded6 43
+docs/offline-and-sync.md
+  s_351b5e522a97a5::t_93810dfbbedc0f 1400-1411
+  s_351b5e522a97a5::t_19c234f16f5f05 1321-1325
+  s_351b5e522a97a5::t_97ebd15d54a91a 1195-1200
+  s_351b5e522a97a5::t_8decb3a7bc22fb 1298-1313
+  s_351b5e522a97a5::t_ae19e2ba246ce2 1168-1175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "a83e17f1b10d83c0086b1675bb95d41ce72e14f5",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
