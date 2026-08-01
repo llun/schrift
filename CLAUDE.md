@@ -339,7 +339,9 @@ Schrift/
 │                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
 │                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
-│                        ConflictSheetView), photo insert (ImagePreparation),
+│                        ConflictSheetView), documents created on-device
+│                        (PendingDocumentCreateStore — dormant until the create UI),
+│                        photo insert (ImagePreparation),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
@@ -1320,6 +1322,101 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; draft replay).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
+- **A document created on this device has no server id, and two holds keep the
+  pipeline from pretending otherwise.** `PendingDocumentCreateStore` records it
+  (`PendingDocumentCreate`: `localID`, `title`, `parentID`, `createdAt`,
+  `serverOrigin`, `ownerUserID`, `syncedServerID`), the coordinator mirrors
+  **every** record — protection is unconditional — and
+  `isPendingCreate(documentID:)` is the predicate the holds key off. **Invariant: no *save* may ever name a pending-create id.**
+  It is enforced at four gates in the coordinator, each load-bearing rather
+  than defensive. (Scoped to saves deliberately: opening a local document names
+  its id from places the coordinator does not own — `formattedContent`, the
+  children fetch, the collaboration room, Options' delete and version history —
+  and gating those is the create UI's job. Until then the invariant is *broader
+  than its enforcement*, which is why nothing may mint a record yet.)
+  1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
+     Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
+     404, and — a 404 being non-retryable — lands on `.failed`, which
+     `runSyncPass` *skips*, wedging the document out of the replay meant to
+     create it. Write-ahead and latest-wins still apply; only `start` is withheld.
+  2. **`runSyncPass` skips it** — that pass GETs each draft's document before
+     deciding, and its `.notFound`/`.forbidden` catch **removes the draft**. For a
+     document that exists nowhere else that draft is the only copy, so without the
+     skip the first launch/foreground/reconnect after creating offline silently
+     deletes it. The 404 catch re-checks the same predicate, because that is the
+     line that would do the deleting.
+  3. **`releaseHeldSave` refuses** — one of two paths that call `start`
+     without passing through `enqueue`'s hold, reached from
+     `clearResolvedConflict`, which the editor calls from five places. Releasing
+     a hold on a local document would PATCH a nonexistent id straight into the
+     `.failed`-then-skipped trap above. Its guard returns **before**
+     `queued.removeValue`, so the held save is kept rather than dropped.
+  4. **`finish`'s queued restart refuses** — the other such path: draining a
+     settled save's queued slot calls `start` directly, re-applying the conflict
+     hold and now the pending-create one too. Unreachable today (no save can be
+     in flight for a local id), but it is the one place the invariant would
+     otherwise be asserted asymmetrically, and the id migration is exactly the
+     change that could make it reachable.
+
+  `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
+  seed draft** (so the editor's existing draft precedence renders it unchanged)
+  and sets `.pendingSync` — nothing is syncing, but the work is on the device.
+  `discardPendingWork` drops the record with the draft: a local delete is purely
+  local, and a surviving record would let a replay resurrect it.
+  **Synthetic `Document`s (`localDocument(from:)`) must never enter a persisted
+  metadata cache** — lists merge them at read time via
+  `mergedWithLocalDocuments(fetched:local:)`, because a list load replaces its
+  array *and* its cache entry wholesale, and a cached synthetic would afterwards
+  be indistinguishable from a real document. `abilities.childrenCreate` is false,
+  which is what holds children-of-local-parents out of scope until a replay can
+  order them; `destroy` is false for the same reason, until the UI has a
+  no-network delete branch (advertising it today would promise a delete that
+  404s, and leave the record un-removable — `discardPendingWork` is reached only
+  from a *successful* delete).
+  **Protection and ownership are separate, and conflating them cost content.**
+  `isPendingCreate` is deliberately **unscoped** — a record minted against another
+  server still names an id that would 404 here — while one `belongsToSession`
+  test (origin **and** owning user) gates both what may be **listed**
+  (`pendingLocalDocuments(parentID:currentUserID:)`) and what may be **sent**
+  (`isReplayable`). Scoping the holds by origin instead left a foreign record's
+  draft unguarded, because `runSyncPass` walks *every* draft: signing in elsewhere
+  404ed and **deleted** it, so "dormant" destroyed the content it claimed to
+  preserve. Dormant means no requests *and* no deletion.
+  Listing and sending share one test on purpose: origin identifies the server, not
+  the account, and records survive sign-out — so *showing* user B another user's
+  unsynced document is the worse half of the same disclosure, since B's edits
+  would land in A's document when A signs back in. An **unattributable** record
+  (nil owner) is kept and protected but neither shown nor sent;
+  `createLocalDocument(title:parentID:ownerUserID:)` takes a **non-optional**
+  `ownerUserID` so nil can only come from a future or damaged schema, and "I don't
+  know whose this is" must never resolve to "anyone may send it".
+  **That makes the signed-in user id a prerequisite for the whole feature, and the
+  app does not have one offline yet** — it is only ever learned from
+  `client.currentUser()` and persisted nowhere. So the create UI owes persisting it
+  at sign-in: without that, launching offline (the entire point) yields no user id,
+  local documents are not listed, and none can be minted. Failing closed is right;
+  the gap is that nothing supplies the value yet.
+  **The store's `try?` decode is all-or-nothing, so an undecodable blob means the
+  records are *unknown*, not absent** — which would disarm every hold and let the
+  next sync pass delete every offline-created document's only copy.
+  `holdsUnreadableData` detects it and suppresses `runSyncPass`'s delete branch
+  outright: cleaning up nothing is recoverable, that is not. Two details make that
+  real rather than nominal — the unreadable bytes are **quarantined** to
+  `…pendingCreates.unreadable` before the live key is reused (every
+  read-modify-write here reads through a `loadAll` that answers empty for a corrupt
+  blob and would `persist` over it), and the flag is **sticky** while a quarantine
+  exists, because a clean live key next launch would re-arm the delete and take the
+  drafts anyway. Every field added to the record must stay Optional-on-decode for
+  the same reason.
+  **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
+  Nil is the only honest value at mint time (there is no server state yet), but a
+  baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
+  the moment a create POST lands, the new document's `updated_at` is *now* while
+  the draft's is hours old, which is the point of creating offline. Rule 3 would
+  answer `.discardServerWins` and the launch pass would delete the body, leaving
+  the empty document the POST just made. Migration must write
+  `DraftBaseline(serverUpdatedAt: <POST response>, markdown: "", title:)` before
+  the draft is replayed.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
@@ -1934,7 +2031,11 @@ markdown write endpoint**. Understand this before touching the save path:
   `schrift.workOffline` read goes through the VM's injected `userDefaults`,
   never the singleton. Metadata caches are **not** cleared on sign-out — a
   recorded decision; neither are unsaved drafts in `PendingDraftStore` (full
-  document text, deliberately backup-included so unsaved work survives); only
+  document text, deliberately backup-included so unsaved work survives) nor the
+  on-device create records in `PendingDocumentCreateStore` (same reasoning — for
+  a document that exists nowhere else, that record and its draft are the only
+  copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by
+  `serverOrigin` alone, which identifies the server and not the account); only
   the full bodies in `DocumentContentCacheStore` are. That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it

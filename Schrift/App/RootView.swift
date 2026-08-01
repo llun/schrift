@@ -54,7 +54,9 @@ private struct AuthenticatedHomeContainer: View {
             onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } },
             onRequestFailure: { failure in diagnostics.record(failure) }
         )
-        _viewModel = State(initialValue: HomeViewModel(client: client, diagnostics: diagnostics))
+        let origin = siteOrigin(for: serverURL) ?? ""
+        _viewModel = State(
+            initialValue: HomeViewModel(client: client, serverOrigin: origin, diagnostics: diagnostics))
         // The app-scoped live-collaboration manager. Built once per authenticated
         // server session (it needs the server origin + cookies); dormant until the
         // `schrift.liveCollaboration` toggle is on AND the server advertises the
@@ -77,7 +79,7 @@ private struct AuthenticatedHomeContainer: View {
                 socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
-        serverOrigin = siteOrigin(for: serverURL) ?? ""
+        serverOrigin = origin
         self.sessionStore = sessionStore
         self.onSignOut = onSignOut
     }
