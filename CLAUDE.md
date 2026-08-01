@@ -1429,8 +1429,11 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
-  edit loss unrepresentable.
-  **Those re-checks are keyed on the *local* id, and the migration writes under the
+  edit loss unrepresentable. Everything that can change during the POST await is
+  re-checked after it: the record is re-read from `pendingCreates` (a delete during
+  the POST must not be undone — writing the stale snapshot back would *resurrect*
+  it) and `hasOpenEditor` is asked again.
+  **Both of those re-checks are keyed on the *local* id, and the migration writes under the
   *server* id — so it defers on that side too.** A checkpointed record is withheld
   from `pendingLocalDocuments`, so the local row disappears and the server document
   returns in an ordinary list fetch, indistinguishable from any other: the user can
@@ -1454,13 +1457,15 @@ markdown write endpoint**. Understand this before touching the save path:
   three; both bodies stay on disk, so that costs the sync, never the content.
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
-  migration adopts the server. A **rename** is the one thing the local side can
-  still contribute, and it goes as a **title-only PATCH** (`updateTitle`) rather
-  than through `enqueue` — a content save re-encodes via `MarkdownYjs`, where a
-  co-author's table or nested list is an `.unknown` block that round-trips as
-  literal paragraphs, so pushing "the server's own body back" would rebuild
-  someone else's document and be the app's only full-overwrite of content no local
-  user authored.
+  migration adopts the server — **title included, writing nothing back.** Two
+  attempts to preserve a local rename there were both wrong: pushing the server's
+  own markdown back to carry it re-encodes via `MarkdownYjs`, where a co-author's
+  table is an `.unknown` block that round-trips as literal paragraphs (the app's
+  only full-overwrite of content no local user authored); and a title-only PATCH
+  writes a name **nothing here can show is the newer one** — it falls back to the
+  mint title, and the branch only fires once the server has a body, i.e. after
+  elapsed time in which a web rename is at least as likely. Accepted residual: a
+  rename made here on a body-less document is lost when the server has moved on.
   **No failure strands content**: transport/5xx/
   `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
   promotes to a root only on evidence (gone, forbidden, or
@@ -1494,9 +1499,10 @@ markdown write endpoint**. Understand this before touching the save path:
   the moment a create POST lands, the new document's `updated_at` is *now* while
   the draft's is hours old, which is the point of creating offline. Rule 3 would
   answer `.discardServerWins` and the launch pass would delete the body, leaving
-  the empty document the POST just made. Migration must write
-  `DraftBaseline(serverUpdatedAt: <POST response>, markdown: "", title:)` before
-  the draft is replayed.
+  the empty document the POST just made. Migration must stamp one before the draft
+  is replayed, from the server state it actually **observed** — the create response
+  on a fresh POST, where `markdown: ""` is provable, and a `formattedContent` fetch
+  on a resume, where it is not.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
@@ -1648,8 +1654,12 @@ markdown write endpoint**. Understand this before touching the save path:
   pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
   flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
   unreachable during a save; `syncPendingDrafts` guards on both; the **create
-  migration** holds for its own reason — the id it records against was minted by
-  the server moments earlier, so nothing in this process has ever addressed it),
+  migration** holds by an explicit check, *not* by the tempting argument that the
+  id was just minted — it only records on the **resume** path, where the id may
+  come from a previous process, may have returned in an ordinary list fetch since,
+  and may already carry a save this process started, so what holds it is
+  `finishMigration`'s `guard inFlight[serverID] == nil, queued[serverID] == nil`
+  immediately before the record),
   which is why
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is

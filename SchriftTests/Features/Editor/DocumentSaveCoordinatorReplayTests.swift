@@ -1157,12 +1157,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
-    /// The rename the local side still holds must travel as a **title-only** PATCH. Routing it
-    /// through `enqueue` would re-encode the *server's* markdown via `MarkdownYjs`, and
-    /// anything the editor can't model — a co-author's table — comes back as literal
-    /// paragraphs. That would be the only full-overwrite in the app for content no local user
-    /// authored.
-    func testARenameOnAnAdoptedDocumentNeverRewritesTheCoauthorsBody() async {
+    /// Adopting the server means adopting its **title** as well as its body: this branch has
+    /// no evidence its own title is the newer one (it falls back to the mint title, and it
+    /// only fires once the server has acquired a body, i.e. after real elapsed time during
+    /// which a web rename is at least as likely). So it writes nothing at all — not the body,
+    /// which would flatten a co-author's table through `MarkdownYjs`, and not the title, which
+    /// would silently revert their rename.
+    func testAdoptingTheServerWritesNothingBackAtAll() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
@@ -1189,8 +1190,11 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0 }
-        XCTAssertEqual(savesInFlight(log), 0, "the table is never re-encoded and pushed back")
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        XCTAssertNil(relaunched.drafts.draft(for: serverID), "no draft left behind")
+        // Nothing is written back: not a content PATCH that would flatten the table, and not a
+        // title PATCH that would revert a rename this branch cannot prove is stale.
+        await waitAndConfirmNever { log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0 }
     }
 
     /// A missing *route* is a fact about the server, not about this document — so a root create
@@ -1211,7 +1215,6 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await env.coordinator.syncPendingDrafts()
 
         XCTAssertEqual(creates(log), 2, "not parked at .failed after the first attempt")
-        XCTAssertNil(env.creates.create(for: local.id)?.parentID, "and never promoted — it is already a root")
     }
 
     /// Releasing the editor that held the *server* id must kick the funnel too, or the

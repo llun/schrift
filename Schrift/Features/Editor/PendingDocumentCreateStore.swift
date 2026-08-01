@@ -76,6 +76,13 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// The app build that set `replayBlockedAt`. Optional-on-decode like everything here, and
     /// a record carrying a stamp with no build is treated as blocked for *no* build — an
     /// unknown blocker cannot be shown to still apply.
+    ///
+    /// If the *running* build is unknown (an empty `CFBundleVersion`), the stamp matches and
+    /// the block is permanent. That is deliberate: the alternative — never blocking — is the
+    /// re-POST-every-launch loop this field exists to stop, and the file's ranking is that a
+    /// duplicate is unrecoverable where a delayed retry is not. Unreachable in a shipped
+    /// build anyway; `project.yml` sets `CURRENT_PROJECT_VERSION` and CI overrides it with the
+    /// run number.
     var replayBlockedBuild: String?
 
     init(
@@ -103,11 +110,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// Whether this build should skip the record. A stamp from a *different* build is spent:
     /// that build's inability to read the create response says nothing about this one's.
     func isReplayBlocked(forBuild build: String) -> Bool {
-        // An unknown build cannot scope anything: `"" == ""` would make the block permanent,
-        // which is the exact failure mode scoping exists to avoid. Refuse to block rather
-        // than block forever.
-        guard !build.isEmpty else { return false }
-        return replayBlockedAt != nil && replayBlockedBuild == build
+        replayBlockedAt != nil && replayBlockedBuild == build
     }
 }
 

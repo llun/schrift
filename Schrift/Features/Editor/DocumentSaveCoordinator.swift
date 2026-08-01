@@ -337,9 +337,11 @@ final class DocumentSaveCoordinator {
         // *now* while this draft's `updatedAt` is whenever the user last typed — hours ago,
         // which is the whole point of creating offline. Rule 3 would answer
         // `.discardServerWins` and the launch pass would **delete the body**, leaving the
-        // empty document the POST just made. Migration must write
-        // `DraftBaseline(serverUpdatedAt: <POST response updatedAt>, markdown: "", title:)`
-        // — the create response *is* the known server state — before the draft is replayed.
+        // empty document the POST just made. Migration must stamp one before the draft is
+        // replayed, from the server state it actually **observed**: the create response on a
+        // fresh POST, where `markdown: ""` is provable because the document was made moments
+        // ago — and a `formattedContent` fetch on a resume, where it is not, since the
+        // document may have been live on the web for hours.
         draftStore.save(
             PendingDraft(documentID: record.localID, title: title, markdown: "", updatedAt: record.createdAt))
         states[record.localID] = .pendingSync
@@ -453,12 +455,12 @@ final class DocumentSaveCoordinator {
     // MARK: - Create replay
 
     /// POST the documents this device created, then hand their content to the ordinary draft
-    /// replay. Runs **before** `runSyncPass` inside the same coalesced pass, so a document
-    /// migrated here has its body pushed by the very same pass rather than waiting for the
-    /// next trigger.
+    /// replay. Runs **before** `runSyncPass` inside the same coalesced pass, so that a
+    /// migration *deferred* by the server-id guards has the draft blocking it cleared by the
+    /// same pass rather than waiting a trigger longer.
     ///
-    /// Dormant until something mints a record: `allCreates()` is empty, so this returns
-    /// after one `/users/me/` round trip that itself only happens when there is work.
+    /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
+    /// returns before issuing any request at all.
     private func runCreatePass() async {
         let records = createStore.allCreates()
         // Cheap gate before the round trip: a record from another server, or one nothing can
@@ -633,12 +635,15 @@ final class DocumentSaveCoordinator {
         // the `repeat` loop only re-runs when `needsAnotherSyncPass` is set — i.e. a
         // foreground, a reconnect, or the editor release below.
         //
-        // Three shapes do **not** clear themselves, because `runSyncPass` skips each: a draft
-        // whose push was rejected on the merits (`.failed`), one still holding a `queued`
-        // slot, and one behind a recorded **conflict** — which waits on the user answering the
-        // pill and, unlike the in-memory `.failed`, is persisted on the draft, so it outlives
-        // relaunches and is the most durable blocker of the three. In every case both bodies
-        // stay on disk: this costs the local document its sync, never its content.
+        // Two shapes do **not** clear themselves: a draft whose push was rejected on the
+        // merits (`.failed`, which `runSyncPass` skips) and one behind a recorded **conflict**
+        // — which waits on the user answering the pill and, unlike the in-memory `.failed`, is
+        // persisted on the draft, so it outlives relaunches and is the more durable of the
+        // two. (A `queued` slot on its own is not one of them: filled behind an in-flight
+        // save, `finish` drains and starts it, and the obstruction goes with no trigger. The
+        // self-perpetuating queued slot *is* the conflict hold, already counted.) In both
+        // cases the bodies stay on disk: this costs the local document its sync, never its
+        // content.
         guard !hasOpenEditor(documentID: serverID) else { return }
         guard inFlight[serverID] == nil, queued[serverID] == nil else { return }
         // A draft under the server id is *ours* only in the partial-migration window — the
@@ -757,27 +762,37 @@ final class DocumentSaveCoordinator {
         // the server instead: drop the draft written above and enqueue nothing, leaving an
         // ordinary, fully in-sync document.
         //
-        // Reachable: the `body` chain below falls back to `""` when all three sources are
+        // Reachable: the `body` chain above falls back to `""` when all three sources are
         // absent, which a death inside the partial-migration window plus an intervening
         // `runSyncPass` that pushes and removes the server-id draft produces exactly.
         if body.isEmpty, !serverMarkdown.isEmpty {
             draftStore.remove(documentID: serverID)
-            // A rename is the one thing the local side *can* still contribute, and dropping
-            // the draft outright would silently revert it. Carry it with a **title-only
-            // PATCH**, never through `enqueue`: a content save re-encodes markdown through
-            // `MarkdownYjs`, and this body is the *server's*. Anything the editor cannot model
-            // — a co-author's table, nested list, or raw HTML — is an `.unknown` block that
-            // round-trips as one literal paragraph per line, so "push the server's body back
-            // unchanged" is true of the markdown text and false of the stored document.
-            // Rebuilding someone else's content to carry our title is not a trade worth
-            // making, and it would be the only full-overwrite in the app for content no local
-            // user authored.
+            // **Release any conflict on the way out.** This branch deletes every trace of local
+            // work for `serverID`, so a record rehydrated by `init` from a persisted
+            // `conflictServerUpdatedAt` is now moot — and the lifecycle invariant is that a
+            // record outliving the work it protects parks every future save for that document.
+            // Narrow to reach (it needs a server-id draft carrying a stamp and an empty body),
+            // but the invariant is stated absolutely, so this discharges it rather than
+            // claiming an exemption.
+            clearResolvedConflict(documentID: serverID)
+            // **The title is adopted with the body — the local one is not written back.** Two
+            // earlier attempts here were both wrong and are worth recording. Pushing the
+            // server's markdown back to carry our title re-encodes it through `MarkdownYjs`,
+            // where a co-author's table is an `.unknown` block that round-trips as literal
+            // paragraphs — flattening their document to carry our name. A title-only PATCH
+            // avoids that but fails for a different reason: **nothing here can show our title
+            // is the newer one.** `title` falls back through the draft to the mint title, so a
+            // never-typed-into document offers the name we POSTed, and the branch only fires
+            // once the server has acquired a *body* — i.e. after real elapsed time in the
+            // checkpointed state, during which a rename on the web is at least as likely as
+            // one here. Writing it would silently revert a co-author, unasked, and it would do
+            // so through an unowned `Task` outside every piece of ordering bookkeeping the
+            // coordinator maintains (`knownServerTitles`, `settledSaves`, the list-cache row
+            // written moments earlier).
             //
-            // Fire-and-forget: a failure loses the rename, which is exactly where it stood
-            // before this branch existed, and there is no local work left to strand.
-            guard let serverTitle, title != serverTitle else { return }
-            let client = self.client
-            Task { try? await client.updateTitle(documentID: serverID, title: title) }
+            // The accepted residual, in exchange: a rename made *here* on a document with no
+            // local body is lost when the server has moved on. Recovering it needs evidence
+            // this branch does not have — see the create UI's owed work.
             return
         }
         if !serverMarkdown.isEmpty, canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body) {
@@ -1122,9 +1137,12 @@ final class DocumentSaveCoordinator {
             needsAnotherSyncPass = false
             let launchPass = pendingLaunchRecovery
             pendingLaunchRecovery = false
-            // Creates first, inside the same pass: a document migrated here becomes an
-            // ordinary draft under a real id, which `runSyncPass` then pushes immediately
-            // rather than leaving until the next trigger. Both inherit this funnel's
+            // Creates first, inside the same pass. Note what that ordering does and does not
+            // buy: a *successful* migration ends in `enqueue`, which goes straight to `start`
+            // and sets `inFlight` synchronously, so `runSyncPass` skips it — it is not the one
+            // pushing it. What the ordering serves is a migration the server-id guards
+            // **deferred**: `runSyncPass` clears the draft standing in its way, so the next
+            // trigger can complete it. Both inherit this funnel's
             // re-entrancy guard and coalescing — the create replay must never get its own
             // triggers, or two passes could POST the same record twice.
             await runCreatePass()
@@ -1333,13 +1351,16 @@ final class DocumentSaveCoordinator {
     /// enqueue-hold below only ever fills the queued slot. So a resolver never has to
     /// reason about a save landing underneath it and resurrecting the losing body.
     ///
-    /// The create migration is a third recording site, and it holds for its own reason:
-    /// nothing has ever addressed that id through this coordinator. It only records on the
-    /// **resume** path — the fresh-POST path is guarded by `!serverMarkdown.isEmpty`, and
-    /// `""` is proven there — so the id may well have been minted by a *previous* process;
-    /// what matters is that this one has never enqueued against it, having just learned it
-    /// from disk. (`finish`'s deferred re-decision is a fourth, and holds because it runs
-    /// from the settling save itself.)
+    /// The create migration is a third recording site, and it holds by an explicit check
+    /// rather than by an argument about the id. "Nothing has ever addressed that id" is
+    /// **not** true and must not be relied on: it only records on the **resume** path — the
+    /// fresh-POST path is guarded by `!serverMarkdown.isEmpty` and `""` is proven there — so
+    /// the id may have been minted by a *previous* process, come back in an ordinary list
+    /// fetch since, and be carrying a save this process started. What actually holds the
+    /// invariant is `finishMigration`'s `guard inFlight[serverID] == nil, queued[serverID] ==
+    /// nil`, followed by `recordConflict` with no await in between. **Do not delete that
+    /// guard on the strength of the id being freshly learned.** (`finish`'s deferred
+    /// re-decision is a fourth site, and holds because it runs from the settling save itself.)
     ///
     /// Keep-mine: clear the record and push the held work (unchecked, last-writer-
     /// wins — an accepted race, recoverable from the server's version history).

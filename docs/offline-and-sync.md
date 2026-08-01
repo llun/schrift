@@ -1273,8 +1273,8 @@ throughout — so before migrating it re-reads the record from `pendingCreates` 
 delete during the POST must not be undone: writing the stale snapshot back would
 *resurrect* the record `discardPendingWork` removed) and re-checks
 `hasOpenEditor` (a screen opening during the POST is exactly the case the
-deferral exists for). Both bail *after* the checkpoint is persisted, so the next
-pass resumes at migration.
+deferral exists for). The **editor** re-check bails after the checkpoint is
+persisted, so the next pass resumes at migration.
 
 That makes the **editor** bail genuinely free. The **delete** bail is not, and the
 difference is worth stating: the POST has already landed, and the record is
@@ -1302,12 +1302,15 @@ trigger, though — `finish` does not kick the funnel and the `repeat` loop only
 re-runs when `needsAnotherSyncPass` is set — so it is a foreground, a reconnect, or
 an editor release that completes it. Releasing an editor on the **server** id kicks
 the funnel too, which is why that case doesn't wait for an unrelated foreground.
-Three shapes do *not* clear themselves, because `runSyncPass` skips each: a draft
-whose push was rejected on the merits (`.failed`), one still holding a `queued` slot,
-and one behind a recorded **conflict** — which waits on the user answering the pill
-and, unlike the in-memory `.failed`, is persisted on the draft, so it outlives
-relaunches and is the most durable blocker of the three. Both bodies stay on disk
-throughout, so this costs the local document its sync, never its content.
+Two shapes do *not* clear themselves: a draft whose push was rejected on the merits
+(`.failed`, which `runSyncPass` skips) and one behind a recorded **conflict**, which
+waits on the user answering the pill and — unlike the in-memory `.failed` — is
+persisted on the draft, so it outlives relaunches and is the more durable of the two.
+A `queued` slot on its own is not one of them: filled behind an in-flight save,
+`finish` drains and starts it, and the obstruction goes with no trigger; the
+self-perpetuating queued slot *is* the conflict hold, already counted. Both bodies
+stay on disk throughout, so this costs the local document its sync, never its
+content.
 
 A death **between** the migration's two draft writes leaves *both* drafts present,
 and the discriminator reads that as the user's — so that window is now deferred
@@ -1320,16 +1323,23 @@ contribute and arming the pill would offer a "Keep my version" that PATCHes `""`
 and wipes the document. It adopts the server instead — drop the draft, enqueue
 nothing. The state is reachable: the body chain falls back to `""` when the queued
 slot, the local draft and the partially-migrated draft are all absent, which a
-death inside the migration plus an intervening `runSyncPass` produces. A **rename**
-is the one thing the local side can still contribute there, and it travels as a
-**title-only PATCH** (`updateTitle`), never through `enqueue`. Routing it through a
-content save looks harmless — the body would be the server's own markdown — but a
-content save re-encodes through `MarkdownYjs`, and anything the editor cannot model
-(a co-author's table, a nested list, raw HTML) is an `.unknown` block that
-round-trips as one literal paragraph per line. "Pushes the server's body back
-unchanged" is true of the markdown text and false of the stored document, and it
-would be the only full-overwrite in the app for content no local user authored. A
-failed title PATCH simply loses the rename, which is where it stood before.
+death inside the migration plus an intervening `runSyncPass` produces — as does a
+document created, renamed, and never typed into.
+
+**The title is adopted with the body; nothing is written back.** Two attempts at
+preserving a local rename here were both wrong, and the reasoning is worth keeping.
+Pushing the server's own markdown back to carry our title re-encodes it through
+`MarkdownYjs`, where anything the editor cannot model (a co-author's table, nested
+list, raw HTML) is an `.unknown` block that round-trips as one literal paragraph per
+line — so "pushes the body back unchanged" is true of the markdown text and false of
+the stored document, and it would be the app's only full-overwrite of content no
+local user authored. A title-only PATCH avoids that but fails differently: **nothing
+here can show our title is the newer one.** It falls back through the draft to the
+mint title, and the branch only fires once the server has acquired a *body* — after
+real elapsed time in the checkpointed state, during which a rename on the web is at
+least as likely as one on the device. So the accepted residual is that a rename made
+here on a document with no local body is lost when the server has moved on;
+recovering it needs evidence this branch does not have.
 
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
@@ -1418,8 +1428,11 @@ unrecoverable duplicate versus recoverable invisibility); making such a record
 visible and dischargeable is owed with the create UI.
 
 **"Checkpointed but not migrated" is now a routine state**, not only a
-crash-recovery one, because both re-checks above bail after the checkpoint. In it
-the server holds an empty document, the record is withheld from the local list,
+crash-recovery one, because the editor re-check and the three server-id guards all
+bail after the checkpoint (the *delete* re-check is the one exception — there the
+record is gone, so there is nothing left to resume and the server document is simply
+orphaned). In it the server holds an empty document, the record is withheld from the
+local list,
 and the content is still in a draft under the local id. Nothing is lost — the
 next pass finishes the job — but a list fetch landing in that window shows the
 empty server row, so the UI change owes an answer (suppressing a fetched row
