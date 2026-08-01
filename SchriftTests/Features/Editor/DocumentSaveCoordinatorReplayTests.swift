@@ -162,11 +162,11 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// made.
     func testTheMigratedDraftCarriesTheCreateResponseAsItsBaseline() async {
         let log = RequestRecorder()
-        stubReplayPipeline(log: log, createStatus: 201)
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil, ownerUserID: user)
-        // A body the save PATCH will fail on, so the draft survives for inspection.
+        // This test installs its own handler below rather than using `stubReplayPipeline`,
+        // because it needs the save PATCH to fail so the draft survives for inspection.
         MockURLProtocol.stubHandler = { [serverID] request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
@@ -227,6 +227,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         // — it needs a parent whose level was *not* pre-fetched, which this test's setup rules
         // out, so asserting it here could only ever be vacuous.
         XCTAssertEqual(env.children.children(for: knownParent)?.map(\.id), [serverID])
+        // And it must go to the **children** route. The suite's POST counter matches both
+        // `documents/` and `documents/{parent}/children/`, so without this a refactor dropping
+        // `replayCreate`'s `if let parentID` branch would create every offline sub-page at the
+        // root and leave the whole suite green.
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: "documents/\(knownParent.uuidString.lowercased())/children/"),
+            1, "a sub-page is POSTed to its parent's children route, not to documents/")
     }
 
     /// The content must end up on disk under the server id even when the save never lands.
@@ -1000,9 +1007,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
-        XCTAssertEqual(
-            relaunched.drafts.draft(for: serverID)?.markdown, "# Typed on the real doc",
-            "the held work is untouched")
+        // Assert the *conflict stamp*, not the body: with the guard deleted the migration
+        // rewrites this draft from `migrated?.markdown` — the same bytes — so a body assertion
+        // passes either way. The stamp is what it would actually destroy (the rewritten draft
+        // carries `conflictServerUpdatedAt: nil`), along with the queued slot.
+        XCTAssertNotNil(
+            relaunched.drafts.draft(for: serverID)?.conflictServerUpdatedAt,
+            "the held work keeps its conflict stamp — the migration did not rewrite it")
     }
 
     /// The other half of the same guard: a save actually on the wire for the server id.
@@ -1157,13 +1168,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
              "content": "# Written on the web",
              "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
             """.utf8)
-        stubUsersMeThen(log: log) { request in
-            let url = request.url?.absoluteString ?? ""
-            if url.contains("formatted-content") {
-                return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
-            }
-            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
-        }
+        // One body answers both GETs (the cosmetic `document` fetch and `formatted-content`).
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
@@ -1244,6 +1250,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "the record survives to be retried")
         XCTAssertNil(relaunched.creates.create(for: local.id)?.syncedServerID, "the checkpoint dropped")
         XCTAssertEqual(
             relaunched.drafts.draft(for: local.id)?.markdown, "# Only copy",
@@ -1593,12 +1600,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
              "content": "# Heading  \\n\\n\\nBody\\n",
              "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
             """.utf8)
-        stubUsersMeThen(log: log) { request in
-            if request.url?.absoluteString.contains("formatted-content") == true {
-                return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
-            }
-            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
-        }
+        // One body answers both GETs (the cosmetic `document` fetch and `formatted-content`).
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
@@ -1632,6 +1635,34 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(env.creates.create(for: local.id), "it migrated")
         XCTAssertEqual(
             env.lists.loadRecentDocuments()?.filter { $0.id == self.serverID }.count, 1,
+            "one row, not two")
+    }
+
+    /// The children cache's dedupe, the twin of the recents one. Same reachability — a
+    /// migration deferred behind an open editor running after the level was fetched — and the
+    /// same consequence, a duplicate `Identifiable` row, here in the Pages tree drawer.
+    func testTheChildrenInsertDoesNotDuplicateAnAlreadyCachedRow() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let parent = UUID()
+        let local = env.coordinator.createLocalDocument(
+            title: "Child", parentID: parent, ownerUserID: user)
+        // The level was fetched *and* already contains the real document.
+        env.children.save(
+            [
+                Document(
+                    id: serverID, title: "Child", excerpt: nil, abilities: DocumentAbilities(),
+                    linkReach: .restricted, linkRole: .reader, computedLinkReach: nil,
+                    computedLinkRole: nil, isFavorite: false, depth: 1, numchild: 0, path: "00000A",
+                    createdAt: Date(), updatedAt: Date(), userRole: .owner, creator: nil)
+            ], for: parent)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(env.creates.create(for: local.id), "it migrated")
+        XCTAssertEqual(
+            env.children.children(for: parent)?.filter { $0.id == self.serverID }.count, 1,
             "one row, not two")
     }
 

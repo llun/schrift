@@ -1212,7 +1212,7 @@ nice-to-have:
   result, which is exactly the one-row fabrication the replay's own insert refuses —
   a first fetch that failed then renders one row, no skeleton, and
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
-  is scoped to the replay), but PR 4 rewrites that method for the local-create
+  is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
@@ -1317,7 +1317,7 @@ That makes the **editor** bail genuinely free. The **delete** bail is not, and t
 difference is worth stating: the POST has already landed, and the record is
 deliberately *not* written back (writing it would resurrect what the delete
 removed), so an empty document is left on the server that nothing on this device
-references any more. Accepted for now, and it is why PR 4's local-delete branch
+references any more. Accepted for now, and it is why the create UI's local-delete branch
 owes a server `DELETE` whenever `syncedServerID` is set — otherwise a document the
 user deleted reappears in Home after the next list fetch.
 

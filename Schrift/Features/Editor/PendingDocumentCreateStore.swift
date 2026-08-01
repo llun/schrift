@@ -22,9 +22,11 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// The **server** id of the parent, or nil for a root document. v1 never creates
     /// under a parent that is itself pending (the synthetic document's
     /// `abilities.childrenCreate` is false), so this is always a real server id and the
-    /// replay needs no dependency ordering. `var` because the replay rewrites it to nil
-    /// when the parent turns out to be gone or forbidden, retrying as a root create —
-    /// degrading the document's *placement* rather than stranding its content.
+    /// replay needs no dependency ordering. `var` because the replay rewrites it to nil and
+    /// retries as a root create — degrading the document's *placement* rather than stranding
+    /// its content — on any of the three things that make a sub-page impossible *there*: the
+    /// parent is gone, it is forbidden, or it is reachable but its `abilities.childrenCreate`
+    /// is false. Never on the bare failure alone; see `handleCreateFailure`'s probe.
     var parentID: UUID?
     /// Replay order, and the synthetic document's dates.
     let createdAt: Date
@@ -186,11 +188,15 @@ final class PendingDocumentCreateStore {
     /// next sync pass destroy the content of every offline-created document at once. The
     /// coordinator asks this at init and suppresses that delete entirely.
     ///
-    /// That suppression only has to cover the 404 branch: every other draft-deleting path
-    /// (`resolveConflictKeepingServer`, `discardStoredDraft`, `finish`'s success and
-    /// discarded branches, the `.discardServerWins` branch) requires a *successful* server
-    /// interaction with that id — a landed PATCH, a 200 `formattedContent`, a successful
-    /// DELETE — and a client-minted id can never get one. Under corruption a local document
+    /// That suppression only has to cover the 404 branch. Every other draft-deleting path
+    /// falls into one of two classes, neither of which can fire under corruption. Some
+    /// require a *successful* server interaction with that id — a landed PATCH, a 200
+    /// `formattedContent`, a successful DELETE (`resolveConflictKeepingServer`,
+    /// `discardStoredDraft`, `finish`'s success and discarded branches, the
+    /// `.discardServerWins` branch) — and a client-minted id can never get one. The rest are
+    /// the replay's own (the migration's draft move, the `.notFound` take-back, the
+    /// adopt-the-server branch, `discardPendingWork`'s checkpointed branch), and they read
+    /// the same empty mirror a corrupt blob produces, so they never run at all. Under corruption a local document
     /// degrades to `.failed` with its draft intact, never to deletion.
     /// **Sticky across launches, deliberately.** Quarantining preserves the record *bytes*,
     /// but on its own it buys nothing for the thing that matters: the live key comes back
