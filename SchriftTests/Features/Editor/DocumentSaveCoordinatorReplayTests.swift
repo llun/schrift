@@ -975,6 +975,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         record.syncedServerID = serverID
         env.creates.save(record)
 
+        // The local draft has to go, or the both-drafts discriminator defers first and this
+        // test passes without ever reaching the guard it names.
+        env.drafts.remove(documentID: local.id)
+
         let relaunched = makeEnvironment(sharing: env.defaults)
         // The enqueue-hold parks the save in `queued` and starts nothing, so `inFlight` is
         // provably nil and only the `queued` half of the guard can be what defers.
@@ -988,6 +992,53 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# Typed on the real doc",
             "the held work is untouched")
+    }
+
+    /// The other half of the same guard: a save actually on the wire for the server id.
+    /// Migrating would replace the queued slot behind it, and `finish` would then PATCH the
+    /// offline body over the text the user just typed.
+    func testAMigrationDefersWhileASaveForTheServerIDIsInFlight() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // The resume GETs must SUCCEED, or the pass never reaches the migration and the test
+        // passes for the wrong reason. Only the PATCH is held open, so the save is provably
+        // still in flight when the migration runs its guards.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes", "content": "",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
+            }
+            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+        }
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# On the wire")
+        await waitUntil { self.savesInFlight(log) == 1 }
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
+        XCTAssertEqual(
+            relaunched.creates.create(for: local.id)?.syncedServerID, serverID,
+            "and it is still checkpointed, i.e. it really did reach the migration")
     }
 
     /// A death *between* the migration's two draft writes leaves **both** drafts present. The
@@ -1104,6 +1155,63 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(relaunched.coordinator.conflict(for: serverID), "nothing to ask about")
         XCTAssertNil(relaunched.drafts.draft(for: serverID), "and no empty draft left to push")
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
+    /// The rename the local side still holds must travel as a **title-only** PATCH. Routing it
+    /// through `enqueue` would re-encode the *server's* markdown via `MarkdownYjs`, and
+    /// anything the editor can't model — a co-author's table — comes back as literal
+    /// paragraphs. That would be the only full-overwrite in the app for content no local user
+    /// authored.
+    func testARenameOnAnAdoptedDocumentNeverRewritesTheCoauthorsBody() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Renamed on this device, never typed into.
+        env.drafts.save(
+            PendingDraft(
+                documentID: local.id, title: "My renamed page", markdown: "", updatedAt: Date(),
+                baseline: nil))
+        // The co-author's body is a table — an `.unknown` block that cannot round-trip.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+             "content": "| a | b |\\n| - | - |\\n| 1 | 2 |",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in
+            .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "documents/") > 0 }
+        XCTAssertEqual(savesInFlight(log), 0, "the table is never re-encoded and pushed back")
+    }
+
+    /// A missing *route* is a fact about the server, not about this document — so a root create
+    /// retries rather than parking, matching what the resume path does with the same error.
+    func testARouteNotFoundOnARootCreateRetriesRatherThanParking() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        // Django's own missing-route page: an HTML 404, which maps to `.routeNotFound`.
+        stubUsersMeThen(log: log) { _ in
+            .init(
+                statusCode: 404, headers: ["Content-Type": "text/html; charset=utf-8"],
+                body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 2, "not parked at .failed after the first attempt")
+        XCTAssertNil(env.creates.create(for: local.id)?.parentID, "and never promoted — it is already a root")
     }
 
     /// Releasing the editor that held the *server* id must kick the funnel too, or the

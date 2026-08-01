@@ -103,7 +103,11 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// Whether this build should skip the record. A stamp from a *different* build is spent:
     /// that build's inability to read the create response says nothing about this one's.
     func isReplayBlocked(forBuild build: String) -> Bool {
-        replayBlockedAt != nil && replayBlockedBuild == build
+        // An unknown build cannot scope anything: `"" == ""` would make the block permanent,
+        // which is the exact failure mode scoping exists to avoid. Refuse to block rather
+        // than block forever.
+        guard !build.isEmpty else { return false }
+        return replayBlockedAt != nil && replayBlockedBuild == build
     }
 }
 

@@ -1447,15 +1447,20 @@ markdown write endpoint**. Understand this before touching the save path:
   waits for the **next** trigger though — `finish` does not kick the funnel and the
   `repeat` loop only re-runs on `needsAnotherSyncPass` — so a foreground, a
   reconnect, or the editor release completes it; releasing an editor on the
-  **server** id kicks the funnel for exactly that reason. The exception is a
-  server-id draft whose push is rejected on the merits — `runSyncPass` skips
-  `.failed`, so the migration behind it waits indefinitely; both bodies stay on
-  disk, so that costs the sync, never the content.
+  **server** id kicks the funnel for exactly that reason. Three shapes never clear
+  themselves, because `runSyncPass` skips each — a `.failed` push, a live `queued`
+  slot, and a recorded **conflict**, which waits on the user and (unlike the
+  in-memory `.failed`) is persisted on the draft, so it is the most durable of the
+  three; both bodies stay on disk, so that costs the sync, never the content.
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
   migration adopts the server. A **rename** is the one thing the local side can
-  still contribute, so a differing local title pushes the server's own body back
-  unchanged carrying that title rather than silently reverting it.
+  still contribute, and it goes as a **title-only PATCH** (`updateTitle`) rather
+  than through `enqueue` — a content save re-encodes via `MarkdownYjs`, where a
+  co-author's table or nested list is an `.unknown` block that round-trips as
+  literal paragraphs, so pushing "the server's own body back" would rebuild
+  someone else's document and be the app's only full-overwrite of content no local
+  user authored.
   **No failure strands content**: transport/5xx/
   `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
   promotes to a root only on evidence (gone, forbidden, or

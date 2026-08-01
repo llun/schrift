@@ -627,13 +627,18 @@ final class DocumentSaveCoordinator {
         // stamp), replace its `queued` keystrokes, and record a conflict against a save that
         // is in flight — which is also the one thing the conflict invariant forbids.
         //
-        // Bailing is free here too, and normally self-clearing: this same pass's `runSyncPass`
+        // Bailing is free here too, and usually self-clearing: this same pass's `runSyncPass`
         // pushes that draft and `finish` removes it, so the obstruction is gone. The migration
         // itself waits for the *next* trigger though — `finish` does not kick the funnel and
         // the `repeat` loop only re-runs when `needsAnotherSyncPass` is set — i.e. a
-        // foreground, a reconnect, or the editor release below. A draft whose own push keeps
-        // being rejected on the merits blocks it indefinitely, since `runSyncPass` skips
-        // `.failed`; both bodies stay on disk, so that costs the sync, never the content.
+        // foreground, a reconnect, or the editor release below.
+        //
+        // Three shapes do **not** clear themselves, because `runSyncPass` skips each: a draft
+        // whose push was rejected on the merits (`.failed`), one still holding a `queued`
+        // slot, and one behind a recorded **conflict** — which waits on the user answering the
+        // pill and, unlike the in-memory `.failed`, is persisted on the draft, so it outlives
+        // relaunches and is the most durable blocker of the three. In every case both bodies
+        // stay on disk: this costs the local document its sync, never its content.
         guard !hasOpenEditor(documentID: serverID) else { return }
         guard inFlight[serverID] == nil, queued[serverID] == nil else { return }
         // A draft under the server id is *ours* only in the partial-migration window — the
@@ -756,17 +761,23 @@ final class DocumentSaveCoordinator {
         // absent, which a death inside the partial-migration window plus an intervening
         // `runSyncPass` that pushes and removes the server-id draft produces exactly.
         if body.isEmpty, !serverMarkdown.isEmpty {
-            // A rename is the one thing the local side *can* still contribute here, and
-            // dropping the draft outright would silently revert it — the mirror of the
-            // title-loss this same function reasons about above. Push the server's own body
-            // back unchanged (so the content decision stays "adopt") carrying the local
-            // title, through the ordinary funnel that resolves it. With no rename there is
-            // nothing to say, so drop the draft and leave an in-sync document.
-            guard let serverTitle, title != serverTitle else {
-                draftStore.remove(documentID: serverID)
-                return
-            }
-            enqueue(documentID: serverID, title: title, markdown: serverMarkdown, baseline: baseline)
+            draftStore.remove(documentID: serverID)
+            // A rename is the one thing the local side *can* still contribute, and dropping
+            // the draft outright would silently revert it. Carry it with a **title-only
+            // PATCH**, never through `enqueue`: a content save re-encodes markdown through
+            // `MarkdownYjs`, and this body is the *server's*. Anything the editor cannot model
+            // — a co-author's table, nested list, or raw HTML — is an `.unknown` block that
+            // round-trips as one literal paragraph per line, so "push the server's body back
+            // unchanged" is true of the markdown text and false of the stored document.
+            // Rebuilding someone else's content to carry our title is not a trade worth
+            // making, and it would be the only full-overwrite in the app for content no local
+            // user authored.
+            //
+            // Fire-and-forget: a failure loses the rename, which is exactly where it stood
+            // before this branch existed, and there is no local work left to strand.
+            guard let serverTitle, title != serverTitle else { return }
+            let client = self.client
+            Task { try? await client.updateTitle(documentID: serverID, title: title) }
             return
         }
         if !serverMarkdown.isEmpty, canonicalMarkdown(serverMarkdown) != canonicalMarkdown(body) {

@@ -1301,11 +1301,13 @@ removes it, so the obstruction goes away. The migration itself waits for the *ne
 trigger, though — `finish` does not kick the funnel and the `repeat` loop only
 re-runs when `needsAnotherSyncPass` is set — so it is a foreground, a reconnect, or
 an editor release that completes it. Releasing an editor on the **server** id kicks
-the funnel too, which is why that case doesn't wait for an unrelated foreground. The
-one shape that does *not* clear itself is a server-id draft whose own push keeps
-being rejected on the merits — `runSyncPass` skips a `.failed` draft, so the
-migration behind it waits indefinitely. Both bodies stay on disk throughout, so this
-costs the local document its sync, never its content.
+the funnel too, which is why that case doesn't wait for an unrelated foreground.
+Three shapes do *not* clear themselves, because `runSyncPass` skips each: a draft
+whose push was rejected on the merits (`.failed`), one still holding a `queued` slot,
+and one behind a recorded **conflict** — which waits on the user answering the pill
+and, unlike the in-memory `.failed`, is persisted on the draft, so it outlives
+relaunches and is the most durable blocker of the three. Both bodies stay on disk
+throughout, so this costs the local document its sync, never its content.
 
 A death **between** the migration's two draft writes leaves *both* drafts present,
 and the discriminator reads that as the user's — so that window is now deferred
@@ -1319,10 +1321,15 @@ and wipes the document. It adopts the server instead — drop the draft, enqueue
 nothing. The state is reachable: the body chain falls back to `""` when the queued
 slot, the local draft and the partially-migrated draft are all absent, which a
 death inside the migration plus an intervening `runSyncPass` produces. A **rename**
-is the one thing the local side can still contribute there, so when the local title
-differs the migration pushes the server's own body back unchanged carrying that
-title; dropping the draft outright would silently revert it, the mirror of the title
-loss the normal path reasons about.
+is the one thing the local side can still contribute there, and it travels as a
+**title-only PATCH** (`updateTitle`), never through `enqueue`. Routing it through a
+content save looks harmless — the body would be the server's own markdown — but a
+content save re-encodes through `MarkdownYjs`, and anything the editor cannot model
+(a co-author's table, a nested list, raw HTML) is an `.unknown` block that
+round-trips as one literal paragraph per line. "Pushes the server's body back
+unchanged" is true of the markdown text and false of the stored document, and it
+would be the only full-overwrite in the app for content no local user authored. A
+failed title PATCH simply loses the rename, which is where it stood before.
 
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
