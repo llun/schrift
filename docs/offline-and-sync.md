@@ -1094,11 +1094,16 @@ tolerance. The instant the create POST lands, the new document's `updated_at` is
 *now* while the draft's is however long ago the user last typed, which offline is
 the entire point. Rule 3 would answer `.discardServerWins`, and the launch pass
 would **delete the body**, leaving the empty document the POST had just created.
-So migration must stamp one before the draft is replayed, from the server state it
-actually **observed**: the create response on a fresh POST — where `markdown: ""`
-is provable, because this device made the document a moment earlier — and a
-`formattedContent` fetch on a resume, where it is not (see "A resume takes its
-baseline from `formattedContent`" below).
+So migration must stamp one before the draft is replayed — saying what the body
+**descends from**, which is not always what was observed. Undiverged that *is* the
+observed state: the create response on a fresh POST (where `markdown: ""` is provable,
+because this device made the document a moment earlier) or a `formattedContent` fetch
+on a resume (where it is not — see "A resume takes its baseline from
+`formattedContent`" below). **Diverged, it must not be**: an offline body descends from
+the empty document this device created, not from the co-author's, and stamping the
+observation would hand rule 2 a proof that releases the migration's own conflict. See
+step 2 of the replay for the full argument, and note the baseline is not the only
+proof that has to be withheld.
 `discardPendingWork` drops the record with the draft, or a replay would resurrect
 what the user threw away. "Deleting a local document is purely local" holds only
 while the record is **un-checkpointed**, though: once `syncedServerID` is set the

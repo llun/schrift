@@ -1768,6 +1768,9 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
+        // Positive first: without it, anything that stops the pass reaching the migration
+        // turns the two absences green while testing nothing.
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
         XCTAssertNil(relaunched.coordinator.conflict(for: serverID), "nothing to ask about")
         XCTAssertNil(relaunched.drafts.draft(for: serverID), "and no whitespace draft left to push")
     }
@@ -1794,9 +1797,53 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let relaunched = makeEnvironment(sharing: env.defaults)
         await relaunched.coordinator.syncPendingDrafts()
 
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
         XCTAssertNil(
             relaunched.coordinator.conflict(for: serverID),
             "a canonically empty server body is not a divergence to ask about")
+    }
+
+    /// Adopting the server must also reset the state, as `resolveConflictKeepingServer` does
+    /// for the same "the local side is gone" transition. Left at `.failed`, the editing surface
+    /// keeps a live retry whose `saveNow` enqueues the *server's own* re-fetched body with no
+    /// baseline — a full overwrite re-encoded through `MarkdownYjs`, exactly the flattening
+    /// this branch refuses to perform.
+    func testAdoptingTheServerClearsAFailedStateUnderTheServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // A save under the server id, rejected on the merits, leaving `.failed` and an empty
+        // server-id draft — the partial-migration shape the branch's comment names.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 400, headers: [:], body: Data(), error: nil)
+        }
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "")
+        await waitUntil {
+            if case .failed = relaunched.coordinator.state(for: self.serverID) { return true }
+            return false
+        }
+
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Written on the web",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        if case .failed = relaunched.coordinator.state(for: serverID) {
+            XCTFail("a live retry here would PATCH the co-author's own body back, re-encoded")
+        }
     }
 
     // MARK: - Helpers

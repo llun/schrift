@@ -877,7 +877,9 @@ final class DocumentSaveCoordinator {
             clearResolvedConflict(documentID: serverID)
             // And reset the state, exactly as `resolveConflictKeepingServer` does for this same
             // "the local side is gone" transition. Left at `.failed` — reachable when a save
-            // under the server id was rejected on the merits before the resume ran — the
+            // under the server id was rejected on the merits *and* left a canonically empty
+            // body, in the partial-migration window where the local draft is already gone
+            // (with it present the both-drafts guard defers before reaching here) — the
             // editing surface keeps a live **retry** button whose `saveNow` enqueues the
             // *server's own* re-fetched body with `baseline: nil`, a full overwrite re-encoded
             // through `MarkdownYjs`: precisely the flattening this branch refuses to perform.

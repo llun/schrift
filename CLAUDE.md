@@ -1441,14 +1441,20 @@ markdown write endpoint**. Understand this before touching the save path:
   (and write the draft under the
   new id *before* removing the old one — in between it is on disk twice, which is
   the point; the reverse order is what leaves a window with it nowhere); insert into the list caches so
-  the document doesn't vanish from Home before the next fetch — **roots only, and
-  never fabricating a level**, since `nil` (never fetched) and `[]` (fetched, empty)
+  the document doesn't vanish from Home before the next fetch — the **recents** insert
+  roots-only (a sub-page *is* appended to the children cache), and **neither cache ever
+  fabricated**, since `nil` (never fetched) and `[]` (fetched, empty)
   are read as different by the lists' "is this known" logic, and Home's feed is
   fetched without a parent filter so a sub-page's place there is the server's answer
   to give; **remove the record
   last**, because it is what keeps the holds in force; then enqueue the content.
   **A replay never runs while an editor is open** on that document
-  (`retainOpenEditor`/`releaseOpenEditor`): migration re-keys everything, and
+  (`retainOpenEditor`/`releaseOpenEditor`) — **once those are wired, which they are
+  not: both have zero production callers today, so the guards are statically true and
+  this invariant is, like the pending-create one above, broader than its enforcement.**
+  The create UI owes the wiring, from `EditorView` and for *every* document rather than
+  only locally-created ones (the server-id guard's motivating case is an ordinary
+  document opened from Home). Why it matters: migration re-keys everything, and
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
@@ -1498,7 +1504,11 @@ markdown write endpoint**. Understand this before touching the save path:
   never the content.
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
-  migration adopts the server — **title included, writing nothing back.** Two
+  migration adopts the server — **title included, writing nothing back.** The test is
+  **canonical** emptiness, not absence and not a raw `isEmpty`: the seed draft is
+  present-and-empty, so a nil check lets a created-renamed-never-typed document through,
+  and a raw check lets a `" "` body through — both arming the very "Keep my version"
+  wipe the branch exists to prevent. Two
   attempts to preserve a local rename there were both wrong: pushing the server's
   own markdown back to carry it re-encodes via `MarkdownYjs`, where a co-author's
   table is an `.unknown` block that round-trips as literal paragraphs (the app's
@@ -1512,7 +1522,9 @@ markdown write endpoint**. Understand this before touching the save path:
   promotes to a root only on evidence (gone, forbidden, or
   `abilities.childrenCreate` false) — a bare 403 is also what Django returns for a
   bad `Origin`, and an HTML 404 is not proof a route is absent, so promoting on
-  either alone would silently re-parent every sub-page; and anything else rejected
+  either alone would silently re-parent every sub-page. A `.routeNotFound` on a **root**
+  create retries instead of parking — a missing route is a fact about the server, not
+  this document, the same reading the resume path gives it. Anything else rejected
   on the merits goes `.failed`, which stops the retry loop but is **not** reachable
   by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
   non-nil, which a local document with content always has), so a relaunch is the
