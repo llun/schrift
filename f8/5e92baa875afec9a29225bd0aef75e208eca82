@@ -1,0 +1,27 @@
+docs/design-system.md
+  s_7b8db48b6506c1::t_4d9118b8b3f860 916-918
+Schrift/Features/Editor/SaveStatusIndicator.swift
+  s_7b8db48b6506c1::t_59d6ad3ad8a7ae 76-78
+  s_7b8db48b6506c1::t_a2041209a112e0 72-75
+Schrift/DesignSystem/Components/Avatar.swift
+  s_7b8db48b6506c1::t_849017bdafb19c 61-68,77-78
+Schrift/DesignSystem/Components/AvatarGroup.swift
+  s_7b8db48b6506c1::t_06aef282944ac2 54
+  s_7b8db48b6506c1::t_1051ee469c93d6 43-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "f85e92baa875afec9a29225bd0aef75e208eca82",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
