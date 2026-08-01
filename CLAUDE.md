@@ -1573,6 +1573,19 @@ markdown write endpoint**. Understand this before touching the save path:
   holding writes would only widen the divergence window and manufacture conflicts
   against co-authors. Accepted cosmetic wrinkle: with the toggle on and the
   network up, the offline banner shows while a save quietly succeeds.
+  **One newly-reachable interaction to know about** (Work Offline is the only way
+  to reach it, because otherwise `isOffline` tracks a real fetch failure): with
+  the toggle **on** and the network actually **up**, a save that parks at
+  `.pendingSync` for a server-side reason (a 5xx, a rate limit) offers no manual
+  retry — `syncCaption` suppresses it while `isOffline` — and the reconnect
+  trigger cannot fire, because connectivity never changed. It is not a dead end:
+  a foreground cycle re-runs `syncPendingDrafts`, and one more keystroke turns the
+  editing surface's indicator back into a tappable **Save**. Before this change
+  the state was unreachable (Work Offline forced `isOffline`, which blocked
+  editing, so no new `.pendingSync` could be created). Fixing it properly means
+  deciding whether the retry rule should key off real reachability rather than
+  this flag — deliberately left alone here, since that would overturn the
+  "`ConnectivityMonitor` is a sync trigger only" decision above.
 - **A clean copy always ends up showing the server's body.** `apply` takes no
   "user initiated" flag: passive `load()` and pull-to-refresh apply identical
   content rules, and `refresh()` differs only in surfacing failures (and in its

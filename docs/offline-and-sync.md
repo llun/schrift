@@ -76,7 +76,16 @@
 > not hold saves** — the write-ahead draft is the durability guarantee, and
 > holding writes would only widen the divergence window and manufacture
 > conflicts. One accepted cosmetic wrinkle from that pair: with Work Offline on
-> and the network up, the banner shows while a save quietly succeeds.
+> and the network up, the banner shows while a save quietly succeeds. And one
+> newly-reachable interaction, recorded rather than fixed: in that same
+> toggle-on/network-up state, a save parked at `.pendingSync` by a *server-side*
+> failure offers no manual retry (`syncCaption` suppresses it while `isOffline`)
+> and no reconnect edge can fire, since connectivity never changed — recovery is
+> a foreground cycle, or one more keystroke, which turns the editing surface's
+> indicator back into a tappable **Save**. It was unreachable before, because
+> Work Offline forced `isOffline`, which blocked editing. Fixing it means
+> deciding whether that retry rule should key off real reachability instead of
+> this flag, which would reopen the ConnectivityMonitor decision above.
 >
 > **Revised (2026-07-10):** the Markdown editing mode was removed — the block
 > editor is the only editing surface. `install(...)` no longer computes
