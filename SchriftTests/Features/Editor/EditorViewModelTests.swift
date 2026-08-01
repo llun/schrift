@@ -368,12 +368,25 @@ final class EditorViewModelTests: XCTestCase {
             draftStore.draft(for: documentID)?.markdown.contains("Edited offline") ?? false,
             "the offline edit is on disk before any network attempt")
 
+        // The offline flush already attempted (and failed) a content PATCH, and the stub
+        // records it — so `count > 0` would be true before the replay even runs. Snapshot
+        // the count and assert it *increases*, or this proves nothing.
+        let patchesBeforeReconnect = log.count(ofMethod: "PATCH", urlContaining: "/content/")
+
         // Network returns: the reconnect/foreground funnel replays the queued draft.
+        // The replay's decision is rule 2's *content* tiebreak — the cached baseline
+        // carries `serverUpdatedAt == nil`, and this fixture's body is the one the
+        // baseline recorded — so a fixture change here could silently move which rule fires.
         stubLoadAndSavePipeline(content: "# Cached", log: log)
         await coordinator.syncPendingDrafts()
 
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") > 0 }
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") > patchesBeforeReconnect }
         await waitUntil { draftStore.draft(for: documentID) == nil }
+        // A draft is also removed when the replay's GET 404s, so the disappearance above
+        // does not by itself distinguish "pushed" from "discarded". This does.
+        XCTAssertEqual(
+            coordinator.lastConfirmedPush(documentID: documentID)?.contains("Edited offline"), true,
+            "the offline edit is what reached the server, not a discard")
     }
 
     func testFirstFetchWritesCacheSoNextOpenIsInstant() async {
