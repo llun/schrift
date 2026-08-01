@@ -1248,7 +1248,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             relaunched.drafts.draft(for: local.id)?.markdown, "# Only copy",
             "and the body came back to the id a fresh create will look for")
-        XCTAssertNil(relaunched.drafts.draft(for: serverID), "nothing left under the dead server id")
+        // Deliberately *not* asserting the server-id draft is gone. It would be — but not
+        // necessarily because the take-back removed it: `runSyncPass` runs next in this same
+        // pass, is not gated by the pending-create hold (keyed on the local id), GETs that
+        // draft, meets the same 404 and reaps it. So the assertion passes even with the
+        // take-back's `remove` deleted, which makes it a claim the test cannot establish.
+        // Pinning move-versus-copy here would need that draft's own GET to succeed, and it
+        // cannot: it names the id that just 404'd.
     }
 
     /// With a local draft still present this is *not* the partial-migration window, so a draft
@@ -1354,7 +1360,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "released — otherwise every later save for this document is parked behind it")
     }
 
-    /// The promote path's own write-back guard — the third of the trio, and the one with two
+    /// The promote path's own write-back guard — the last of the three that guard a *stale*
+    /// `record` copy behind a separately-deletable line (the `.decoding` stamp has a fourth,
+    /// but there the re-read **is** the binding that produces the value, so it cannot be
+    /// deleted without breaking the build). This is the one with two
     /// awaits in front of it (the POST *and* the parent probe). A delete landing in either
     /// window has already removed the record, and `updatePendingCreate` writes through to
     /// disk, so without the guard the record comes back with `parentID` rewritten to nil and
@@ -1562,6 +1571,68 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await pass.value
 
         XCTAssertNil(relaunched.creates.create(for: local.id), "the delete stands")
+    }
+
+    /// The conflict check compares **canonically**, because the local body has been through
+    /// the parser and the server's has not. Without that, a formatting-only difference in the
+    /// export records a conflict against a document nothing is wrong with — and the pill then
+    /// parks every future save for it behind a question with no real answer.
+    func testAFormattingOnlyDifferenceIsNotAConflict() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Heading\n\nBody")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Same document, spelled with trailing whitespace and an extra blank line.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Heading  \\n\\n\\nBody\\n",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { request in
+            if request.url?.absoluteString.contains("formatted-content") == true {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "a formatting-only export difference is not a divergence to ask about")
+    }
+
+    /// The list-cache inserts dedupe by id. A migration deferred behind an open editor can run
+    /// after an ordinary list fetch has already cached the real document, and a second copy
+    /// would be a duplicate `Identifiable` row in Home.
+    func testTheRecentsInsertDoesNotDuplicateAnAlreadyCachedRow() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        // The list fetch already brought the real document back under its server id.
+        env.lists.saveRecentDocuments([
+            Document(
+                id: serverID, title: "Untitled document", excerpt: nil,
+                abilities: DocumentAbilities(), linkReach: .restricted, linkRole: .reader,
+                computedLinkReach: nil, computedLinkRole: nil, isFavorite: false, depth: 1,
+                numchild: 0, path: "00000A", createdAt: Date(), updatedAt: Date(), userRole: .owner,
+                creator: nil)
+        ])
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(env.creates.create(for: local.id), "it migrated")
+        XCTAssertEqual(
+            env.lists.loadRecentDocuments()?.filter { $0.id == self.serverID }.count, 1,
+            "one row, not two")
     }
 
     // MARK: - Helpers
