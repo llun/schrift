@@ -1,0 +1,21 @@
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_351b5e522a97a5::t_a55c943144a706 1-174
+SchriftTests/Features/Editor/PendingDocumentCreateStoreTests.swift
+  s_351b5e522a97a5::t_2f320f3a2b228f 1-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "d3224e37b587f56d541050f143fc5d85bda3c32a",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
