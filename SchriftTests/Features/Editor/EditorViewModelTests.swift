@@ -350,15 +350,29 @@ final class EditorViewModelTests: XCTestCase {
     func testStartEditingWorksOfflineFromTheCachedCopy() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(cachedEntry())
-        MockURLProtocol.stubHandler = { _ in
-            MockURLProtocol.Stub(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
-        }
+        stubOffline()
         await viewModel.load()
 
+        XCTAssertTrue(viewModel.canStartEditing, "the toolbar's Edit button reads this")
         viewModel.startEditing()
 
         XCTAssertTrue(viewModel.isEditing, "a cached copy is loaded content, so editing may begin offline")
         XCTAssertFalse(viewModel.blocks.isEmpty)
+    }
+
+    /// Offline with nothing cached is the state this change makes common, and it is where
+    /// the load error also suppresses "Start writing" — so Edit would be the only thing on
+    /// screen, doing nothing. The button disables against the same predicate the guard
+    /// uses, so an affordance that would silently decline is never offered.
+    func testEditIsWithheldOfflineWhenNothingIsCachedToEdit() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubOffline()
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.canStartEditing, "nothing loaded, so the Edit button is disabled")
+        viewModel.startEditing()
+        XCTAssertFalse(viewModel.isEditing, "and the guard declines even if something did tap it")
     }
 
     /// End-to-end offline edit: the write-ahead draft is on disk before the PATCH is

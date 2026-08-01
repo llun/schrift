@@ -1145,8 +1145,15 @@ final class EditorViewModel {
 
     // MARK: - Editing session
 
+    /// Whether an editing session may begin — the single predicate `startEditing` guards
+    /// on *and* the toolbar's Edit button disables against, so the affordance and the guard
+    /// cannot drift into offering a tap that silently does nothing. Deliberately not a
+    /// connectivity check: editing offline is supported (the edit is queued as a draft),
+    /// and a document whose content never loaded is the case this exists for, on or off.
+    var canStartEditing: Bool { hasLoadedContent }
+
     func startEditing(focusing blockID: UUID? = nil) {
-        guard hasLoadedContent else { return }
+        guard canStartEditing else { return }
         clearError()
         // Hide the banner while the caret is in the document (`applyPendingUpdate` is guarded
         // on `!isEditing` anyway) — but **keep the stash, and record nothing**. Entering edit

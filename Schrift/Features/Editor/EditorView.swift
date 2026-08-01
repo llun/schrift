@@ -873,9 +873,10 @@ struct EditorView: View {
             // nothing cached that is now the common case — where the load error also
             // suppresses "Start writing", leaving Edit as the only affordance on screen
             // doing nothing at all. Mirror the formatting bar's rule: if the view model
-            // would decline, don't invite the tap. This is deliberately keyed to loaded
-            // content, not to connectivity — the parameter this resolver dropped.
-            .disabled(!viewModel.hasLoadedContent)
+            // would decline, don't invite the tap. `canStartEditing` is the very predicate
+            // the guard uses, so the two cannot drift; it is keyed to loaded content, not
+            // to connectivity — the parameter this resolver dropped.
+            .disabled(!viewModel.canStartEditing)
             .accessibilityLabel(loc[.editor_action_edit])
 
         case .done:
