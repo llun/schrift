@@ -90,6 +90,22 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(coordinator.state(for: document.id), .pendingSync)
     }
 
+    /// Once the replay has POSTed it, the server owns the document — the fetched list is
+    /// where it belongs. Surfacing it here as well would show the row twice, under an id
+    /// the fetched list cannot match (local vs server), which no de-duplication can fix.
+    func testACheckpointedRecordIsNoLongerListedAsLocal() {
+        let (coordinator, _, createStore) = makeCoordinator()
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+        var record = createStore.create(for: document.id)!
+
+        record.syncedServerID = UUID()
+        createStore.save(record)
+        let (resumed, _, _) = makeCoordinatorSharing(createStore)
+
+        XCTAssertTrue(resumed.pendingLocalDocuments(parentID: nil).isEmpty)
+        XCTAssertTrue(resumed.isPendingCreate(documentID: document.id), "still protected until migration finishes")
+    }
+
     func testPendingLocalDocumentsAreScopedToTheirParent() {
         let (coordinator, _, _) = makeCoordinator()
         let parent = UUID()
@@ -100,20 +116,95 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: parent).map(\.id), [child.id])
     }
 
-    /// Records minted against another server stay dormant: drafts and metadata caches
-    /// deliberately survive sign-out, so without this a create could be replayed into a
-    /// different account — POSTing the user's content somewhere they never wrote it.
-    /// Dormant, never deleted: they come back if the user signs back in.
-    func testARecordFromAnotherOriginIsNeitherPendingHereNorListed() {
+    /// A record minted against another server is not *listed* here — you should not see
+    /// documents belonging to a server you are not signed in to.
+    func testARecordFromAnotherOriginIsNotListed() {
         let (first, _, createStore) = makeCoordinator()
         let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil)
-        XCTAssertNotNil(createStore.create(for: document.id))
 
         let (elsewhere, _, _) = makeCoordinatorSharing(createStore, serverOrigin: "https://other.example.org")
 
-        XCTAssertFalse(elsewhere.isPendingCreate(documentID: document.id))
         XCTAssertTrue(elsewhere.pendingLocalDocuments(parentID: nil).isEmpty)
+    }
+
+    /// …but it **is** still protected. This is the difference between "may we send it"
+    /// and "may anything address it", and conflating them cost the content: the holds
+    /// were origin-scoped while `runSyncPass` walks *every* draft, so signing in to
+    /// another server left a foreign record's draft with no hold at all — the pass GET
+    /// 404ed and deleted it. The record survived pointing at nothing, and a later replay
+    /// would have POSTed an empty document under the original title. Dormant has to mean
+    /// no requests *and* no deletion.
+    func testARecordFromAnotherOriginIsStillProtectedFromTheSyncPass() async {
+        let log = RequestRecorder()
+        let (first, draftStore, createStore) = makeCoordinator()
+        let document = first.createLocalDocument(title: "Written elsewhere", parentID: nil)
+        first.enqueue(documentID: document.id, title: "Written elsewhere", markdown: "# Body typed on server A")
+
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let (elsewhere, _, _) = makeCoordinatorSharing(
+            createStore, draftStore: draftStore, serverOrigin: "https://other.example.org")
+        await elsewhere.recoverDrafts()
+
+        XCTAssertTrue(elsewhere.isPendingCreate(documentID: document.id), "protection is not origin-scoped")
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
+        XCTAssertEqual(
+            draftStore.draft(for: document.id)?.markdown, "# Body typed on server A",
+            "the content survives signing in elsewhere")
         XCTAssertNotNil(createStore.create(for: document.id), "dormant, not deleted — the user may sign back in")
+    }
+
+    /// Origin identifies the *server*, not the *account*, and records survive sign-out —
+    /// so a second user on the same server must not inherit the first user's unsynced
+    /// documents and POST them into their own account. The replay is what checks this
+    /// (it can await `/users/me/`; the coordinator is built before that returns).
+    func testARecordIsOnlyReplayableByTheUserWhoCreatedIt() {
+        let (coordinator, _, createStore) = makeCoordinator()
+        let author = UUID()
+        let someoneElse = UUID()
+        coordinator.createLocalDocument(title: "Mine", parentID: nil, ownerUserID: author)
+        let record = createStore.allCreates()[0]
+
+        XCTAssertTrue(coordinator.isReplayable(record, currentUserID: author))
+        XCTAssertFalse(coordinator.isReplayable(record, currentUserID: someoneElse))
+        XCTAssertFalse(coordinator.isReplayable(record, currentUserID: nil))
+    }
+
+    func testARecordIsNeverReplayableAgainstAnotherServer() {
+        let (coordinator, _, createStore) = makeCoordinator()
+        let author = UUID()
+        coordinator.createLocalDocument(title: "Mine", parentID: nil, ownerUserID: author)
+        let record = createStore.allCreates()[0]
+
+        let (elsewhere, _, _) = makeCoordinatorSharing(createStore, serverOrigin: "https://other.example.org")
+
+        XCTAssertFalse(elsewhere.isReplayable(record, currentUserID: author))
+    }
+
+    /// A record predating the owner field is origin-checked only — it must not become
+    /// permanently unreplayable just because it was written before the field existed.
+    func testALegacyRecordWithNoOwnerIsStillReplayable() {
+        let (coordinator, _, createStore) = makeCoordinator()
+        createStore.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "Legacy", createdAt: Date(timeIntervalSince1970: 1_000),
+                serverOrigin: origin))
+        let record = createStore.allCreates()[0]
+
+        XCTAssertTrue(coordinator.isReplayable(record, currentUserID: UUID()))
+    }
+
+    /// The title shown in a list is the one the user last typed, not the one the document
+    /// was minted with — otherwise every list says "Untitled document" until the replay.
+    func testAListedLocalDocumentShowsTheRenamedTitle() {
+        let (coordinator, _, _) = makeCoordinator()
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+
+        coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
+
+        XCTAssertEqual(coordinator.pendingLocalDocuments(parentID: nil).first?.title, "Notes")
     }
 
     /// The record outlives the process that minted it, so a relaunch still knows the
@@ -205,7 +296,31 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// existing catch removes the draft — which for a document that exists nowhere else
     /// is the user's only copy. Without this guard the first launch, foreground, or
     /// reconnect after creating a document offline silently deletes it.
-    func testASyncPassNeitherFetchesNorDeletesAPendingCreate() async {
+    /// Deliberately does **not** enqueue first: a queued save would make the pre-existing
+    /// `queued[…] == nil` guard `continue` on the next line, so the test would stay green
+    /// with hold 2 deleted and would be pinning machinery that predates this change.
+    /// A freshly-minted document with only its seed draft reaches the new guard directly.
+    func testASyncPassNeverFetchesAPendingCreate() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
+
+        await coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0, "hold 2: no GET at all")
+        XCTAssertNotNil(draftStore.draft(for: document.id))
+        XCTAssertNotNil(createStore.create(for: document.id))
+    }
+
+    /// The same protection has to survive a *relaunch*, because that is when
+    /// `recoverDrafts()` runs — the pass most likely to meet a local document first. The
+    /// relaunched coordinator has an empty `queued`, so this reaches the guard even with
+    /// content typed.
+    func testLaunchRecoveryNeitherFetchesNorDiscardsAPendingCreate() async {
         let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
             log.record(request)
@@ -215,26 +330,24 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
         coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
-        await coordinator.syncPendingDrafts()
+        let (relaunched, _, _) = makeCoordinatorSharing(createStore, draftStore: draftStore)
+        await relaunched.recoverDrafts()
 
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
         XCTAssertEqual(draftStore.draft(for: document.id)?.markdown, "# Typed offline")
         XCTAssertNotNil(createStore.create(for: document.id))
     }
 
-    /// The same protection has to survive a *relaunch*, because that is when
-    /// `recoverDrafts()` runs — the pass most likely to meet a local document first.
-    func testLaunchRecoveryDoesNotDiscardAPendingCreate() async {
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+    /// The state has to survive a relaunch too: `states` is in-memory while the record is
+    /// on disk, so without seeding it the reading surface would show "Edited just now"
+    /// for a document that exists nowhere but this device.
+    func testAPendingCreateStillReportsPendingSyncAfterARelaunch() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
         let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil)
-        coordinator.enqueue(documentID: document.id, title: "Notes", markdown: "# Typed offline")
 
         let (relaunched, _, _) = makeCoordinatorSharing(createStore, draftStore: draftStore)
-        await relaunched.recoverDrafts()
 
-        XCTAssertEqual(draftStore.draft(for: document.id)?.markdown, "# Typed offline")
-        XCTAssertNotNil(createStore.create(for: document.id))
+        XCTAssertEqual(relaunched.state(for: document.id), .pendingSync)
     }
 
     /// A real server document is unaffected: its 404 still means "deleted elsewhere",

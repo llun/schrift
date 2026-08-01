@@ -22,16 +22,26 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// The **server** id of the parent, or nil for a root document. v1 never creates
     /// under a parent that is itself pending (the synthetic document's
     /// `abilities.childrenCreate` is false), so this is always a real server id and the
-    /// replay needs no dependency ordering.
+    /// replay needs no dependency ordering. `var` because the replay rewrites it to nil
+    /// when the parent turns out to be gone or forbidden, retrying as a root create —
+    /// degrading the document's *placement* rather than stranding its content.
     var parentID: UUID?
     /// Replay order, and the synthetic document's dates.
     let createdAt: Date
-    /// The server this record was minted against (`siteOrigin`). Drafts and metadata
-    /// caches deliberately survive sign-out, so without this a record could be replayed
-    /// into a *different* account or server — POSTing the user's content somewhere they
-    /// never wrote it. A record whose origin doesn't match the session stays dormant; it
-    /// is never deleted, because the user may sign back in.
+    /// The server this record was minted against (`siteOrigin`), which decides whether it
+    /// may be **sent** — never whether it is protected (see `isPendingCreate`).
     let serverOrigin: String
+    /// The user who created it, when known. Origin alone identifies the *server*, not the
+    /// *account*, and records deliberately survive sign-out — so user B signing in to the
+    /// same server would otherwise inherit user A's unsynced documents and POST them into
+    /// B's account. Checked by the replay, which can await `/users/me/`; the coordinator is
+    /// built before that returns, so it cannot gate on this at mirror time.
+    ///
+    /// Optional, and every field added here must stay Optional-on-decode: the store decodes
+    /// the whole blob in one `try?`, so a single undecodable record silently drops **all**
+    /// of them — which, with the holds keyed off those records, would turn a schema slip
+    /// into content loss rather than degraded behavior.
+    let ownerUserID: UUID?
     /// Set the instant the create POST lands, **before** anything is migrated. It is the
     /// two-phase checkpoint that keeps a relaunch from POSTing a second copy: a record
     /// found with this set skips straight to migration. Nothing else can close that
@@ -44,6 +54,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         parentID: UUID? = nil,
         createdAt: Date,
         serverOrigin: String,
+        ownerUserID: UUID? = nil,
         syncedServerID: UUID? = nil
     ) {
         self.localID = localID
@@ -51,6 +62,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         self.parentID = parentID
         self.createdAt = createdAt
         self.serverOrigin = serverOrigin
+        self.ownerUserID = ownerUserID
         self.syncedServerID = syncedServerID
     }
 }
@@ -96,9 +108,11 @@ final class PendingDocumentCreateStore {
     }
 
     /// Oldest first — the order a replay must POST them in, so a document created after
-    /// another never reaches the server before it.
+    /// another never reaches the server before it. The `localID` tie-break makes that a
+    /// real guarantee rather than an approximate one: `values` has no defined order,
+    /// Swift's `sorted` is not stable, and `Date()` is not monotonic across a clock change.
     func allCreates() -> [PendingDocumentCreate] {
-        loadAll().values.sorted { $0.createdAt < $1.createdAt }
+        loadAll().values.sorted { orderedByCreation($0, $1) }
     }
 
     private func loadAll() -> [String: PendingDocumentCreate] {
@@ -116,6 +130,14 @@ final class PendingDocumentCreateStore {
     }
 }
 
+/// Replay order: `createdAt`, then `localID` so equal timestamps still order the same way
+/// on every run. Shared by the store's ascending listing and the coordinator's descending
+/// (newest-first) one, so the two can never disagree about what "same instant" means.
+func orderedByCreation(_ lhs: PendingDocumentCreate, _ rhs: PendingDocumentCreate) -> Bool {
+    if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+    return lhs.localID.uuidString < rhs.localID.uuidString
+}
+
 /// The `Document` value the UI navigates to and renders rows for, for a document that
 /// exists only on this device.
 ///
@@ -127,15 +149,24 @@ final class PendingDocumentCreateStore {
 /// afterwards be indistinguishable from a real one. Lists merge it in at read time
 /// instead (`mergedWithLocalDocuments`).
 ///
-/// The abilities are the honest set: it can be edited and deleted locally, and nothing
-/// else — sharing, favoriting and duplicating are all server calls against an id the
-/// server has never seen. `childrenCreate` is false, which is what holds
-/// children-of-local-parents out of scope until a replay can order them.
+/// The abilities are the honest set: editing is local and works, and **nothing else does
+/// yet**. Sharing, favoriting and duplicating are server calls against an id the server has
+/// never seen. `destroy` is false too, even though deleting such a document *should*
+/// eventually be a local no-network operation: today `OptionsViewModel.delete()` only ever
+/// calls the server, which would 404, so advertising the ability would promise a delete
+/// that cannot happen — and, because `discardPendingWork` is reached only from a
+/// *successful* delete, would leave the record un-removable. It flips to true with the
+/// local-delete branch in the UI change. `childrenCreate` is false for the same
+/// discipline: it holds children-of-local-parents out of scope until a replay can order
+/// them.
+///
+/// `title` is the record's, i.e. the title at creation time. Callers that can see the
+/// draft should prefer the draft's — the user may have renamed the document since, and
+/// `DocumentSaveCoordinator.pendingLocalDocuments` does exactly that overlay.
 func localDocument(from create: PendingDocumentCreate) -> Document {
     var abilities = DocumentAbilities()
     abilities.update = true
     abilities.partialUpdate = true
-    abilities.destroy = true
     return Document(
         id: create.localID,
         title: create.title,
@@ -155,20 +186,27 @@ func localDocument(from create: PendingDocumentCreate) -> Document {
         creator: nil)
 }
 
-/// Fold documents that exist only on this device into a fetched list, newest first.
+/// Fold documents that exist only on this device into a fetched list, local ones first.
 ///
 /// Applied at **read** time, never persisted. A list load replaces its array and its cache
 /// entry wholesale, so a locally-inserted row would simply vanish on the next successful
-/// fetch; merging on read is what survives that. The id de-duplication is defence in depth
-/// for the window where a replay has landed and the fetched list already carries the real
-/// document while its record is still being torn down — the server's row wins.
-func mergedWithLocalDocuments(fetched: [Document], local: [PendingDocumentCreate]) -> [Document] {
+/// fetch; merging on read is what survives that.
+///
+/// Takes `[Document]` on both sides so it composes directly with
+/// `DocumentSaveCoordinator.pendingLocalDocuments(parentID:)`, which is what already
+/// applies the parent filter, the origin scoping and the newest-first order. Taking records
+/// instead left the only reachable source `createStore.allCreates()` — every origin and
+/// every parent — which would have leaked other servers' documents into a list.
+///
+/// The id de-duplication is a cheap guard against the caller handing overlapping lists; it
+/// is **not** a solution to the replay window, and an earlier comment here wrongly claimed
+/// it was. After a replay the fetched row carries the *server* id while a not-yet-torn-down
+/// record still surfaces under its `localID`, so no id-based filter can match the two. That
+/// window belongs to the replay, which must stop surfacing a record once its
+/// `syncedServerID` is set — the id a document is *known by* changes there, and nothing on
+/// this side can infer it.
+func mergedWithLocalDocuments(fetched: [Document], local: [Document]) -> [Document] {
     guard !local.isEmpty else { return fetched }
     let fetchedIDs = Set(fetched.map(\.id))
-    let pending =
-        local
-        .filter { !fetchedIDs.contains($0.localID) }
-        .sorted { $0.createdAt > $1.createdAt }
-        .map(localDocument(from:))
-    return pending + fetched
+    return local.filter { !fetchedIDs.contains($0.id) } + fetched
 }

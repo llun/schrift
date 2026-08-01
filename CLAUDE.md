@@ -1327,9 +1327,13 @@ markdown write endpoint**. Understand this before touching the save path:
   (`PendingDocumentCreate`: `localID`, `title`, `parentID`, `createdAt`,
   `serverOrigin`, `syncedServerID`), the coordinator mirrors the records whose
   origin matches this session, and `isPendingCreate(documentID:)` is the predicate
-  everything keys off. **Invariant: no network request may ever name a
-  pending-create id.** It is enforced at three funnels, and each is load-bearing
-  rather than defensive:
+  everything keys off. **Invariant: no *save* may ever name a pending-create id.**
+  It is enforced at three funnels in the coordinator, each load-bearing rather
+  than defensive. (Scoped to saves deliberately: opening a local document names
+  its id from places the coordinator does not own — `formattedContent`, the
+  children fetch, the collaboration room, Options' delete and version history —
+  and gating those is the create UI's job. Until then the invariant is *broader
+  than its enforcement*, which is why nothing may mint a record yet.)
   1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
      Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
      404, and — a 404 being non-retryable — lands on `.failed`, which
@@ -1359,10 +1363,30 @@ markdown write endpoint**. Understand this before touching the save path:
   array *and* its cache entry wholesale, and a cached synthetic would afterwards
   be indistinguishable from a real document. `abilities.childrenCreate` is false,
   which is what holds children-of-local-parents out of scope until a replay can
-  order them. Records are **origin-scoped**: drafts and metadata caches
-  deliberately survive sign-out, so a record minted against another server stays
-  dormant (never deleted — the user may sign back in) rather than being POSTed
-  into the wrong account.
+  order them; `destroy` is false for the same reason, until the UI has a
+  no-network delete branch (advertising it today would promise a delete that
+  404s, and leave the record un-removable — `discardPendingWork` is reached only
+  from a *successful* delete).
+  **Protection and permission are separate, and conflating them cost content.**
+  `isPendingCreate` is deliberately **not** origin-scoped — a record minted
+  against another server still names an id that would 404 here — while
+  `isReplayable(_:currentUserID:)` (origin **and** owning user) decides what may
+  be sent, and `pendingLocalDocuments` decides what is listed. Scoping the holds
+  by origin instead left a foreign record's draft unguarded, because
+  `runSyncPass` walks *every* draft: signing in elsewhere 404ed and **deleted**
+  it, so "dormant" destroyed the content it claimed to preserve. Dormant means no
+  requests *and* no deletion. The owning-user half matters because origin
+  identifies the server, not the account, and records survive sign-out — without
+  it, user B inherits user A's unsynced documents on the same server.
+  **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
+  Nil is the only honest value at mint time (there is no server state yet), but a
+  baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
+  the moment a create POST lands, the new document's `updated_at` is *now* while
+  the draft's is hours old, which is the point of creating offline. Rule 3 would
+  answer `.discardServerWins` and the launch pass would delete the body, leaving
+  the empty document the POST just made. Migration must write
+  `DraftBaseline(serverUpdatedAt: <POST response>, markdown: "", title:)` before
+  the draft is replayed.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via

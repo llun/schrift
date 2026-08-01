@@ -1042,8 +1042,13 @@ title and body, but it is removed by several legitimate paths, and a document
 created but never typed into has no draft content at all — yet still has to be
 POSTed. The record says *this exists*, separately from *this has unsaved text*.
 
-**The invariant: no network request may ever name a pending-create id.** Three
-funnels enforce it, and each is load-bearing:
+**The invariant: no *save* may ever name a pending-create id.** Three funnels in
+the coordinator enforce it, and each is load-bearing. It is scoped to saves
+deliberately: opening a local document names its id from places the coordinator
+does not own — `formattedContent`, the children fetch, the collaboration room,
+Options' delete, version history — and gating those belongs to the create UI.
+Until then the invariant is broader than its enforcement, which is precisely why
+nothing may mint a record yet.
 
 1. **`enqueue` holds the save.** The same park-the-save branch the conflict hold
    uses. Without it a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
@@ -1063,11 +1068,23 @@ funnels enforce it, and each is load-bearing:
    above. Its guard returns *before* `queued.removeValue`, so the held save is
    kept rather than dropped on the floor.
 
-**`createLocalDocument(title:parentID:)`** mints the record, writes a **seed
-draft** (so the editor's existing `restoreLocalContent` precedence renders it with
-no editor changes at all), and sets `.pendingSync` — nothing is syncing, but the
-work is on the device, so the caption's "syncs when online" wording is already
-correct. `discardPendingWork` drops the record with the draft: deleting a local
+**`createLocalDocument(title:parentID:ownerUserID:)`** mints the record, writes a
+**seed draft** (so the editor's existing `restoreLocalContent` precedence renders
+it with no editor changes at all), and sets `.pendingSync` — nothing is syncing,
+but the work is on the device, so the caption's "syncs when online" wording is
+already correct. That state is re-seeded on launch, because `states` is in-memory
+while the record is on disk.
+
+**The seed draft carries no `DraftBaseline`, and migration must stamp one.** Nil
+is the only honest value at mint time — there is no server state to descend from
+— but a baseline-less draft routes to `draftSyncDecision` rule 3, the 120 s clock
+tolerance. The instant the create POST lands, the new document's `updated_at` is
+*now* while the draft's is however long ago the user last typed, which offline is
+the entire point. Rule 3 would answer `.discardServerWins`, and the launch pass
+would **delete the body**, leaving the empty document the POST had just created.
+The create response *is* the known server state, so migration must write
+`DraftBaseline(serverUpdatedAt: <response updatedAt>, markdown: "", title:)`
+before the draft is replayed. `discardPendingWork` drops the record with the draft: deleting a local
 document is purely local, and a surviving record would let a replay resurrect it.
 
 **Synthetic `Document`s never enter a persisted metadata cache.**
@@ -1081,11 +1098,22 @@ fetched list already carries the real document. `abilities.childrenCreate` is
 false, which is what holds children-of-local-parents out of scope until a replay
 can order them.
 
-**Records are origin-scoped.** Drafts and metadata caches deliberately survive
-sign-out, so a record minted against one server could otherwise be replayed into a
-different account — POSTing the user's content somewhere they never wrote it. A
-record whose `serverOrigin` doesn't match the session is not mirrored and not
-treated as pending; it stays on disk, dormant, because the user may sign back in.
+**Protection and permission are separate things, and conflating them cost the
+content.** `isPendingCreate` is deliberately *not* origin-scoped: a record minted
+against another server still names an id that would 404 here, and the holds exist
+to stop anything addressing it. What origin decides is what may be **listed**
+(`pendingLocalDocuments`) and, with the owning user, what may be **sent**
+(`isReplayable`). The first cut scoped the holds themselves by origin — and
+because `runSyncPass` walks *every* draft, a foreign record's draft had no hold
+at all: the pass GET 404ed and deleted it, so signing in elsewhere destroyed the
+content while leaving the record pointing at nothing. Dormant has to mean no
+requests *and* no deletion.
+
+The owning-user half exists because origin identifies the **server**, not the
+**account**, and records survive sign-out by design: without it, user B signing
+in to the same server inherits user A's unsynced documents and POSTs them into
+B's account. It is checked by the replay, which can await `/users/me/` — the
+coordinator is built before that returns.
 
 Still to come: the create replay (POST → checkpoint → migrate the draft, caches
 and coordinator maps onto the server id → push the content through the normal

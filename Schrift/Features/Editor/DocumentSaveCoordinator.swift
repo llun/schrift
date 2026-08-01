@@ -90,9 +90,8 @@ final class DocumentSaveCoordinator {
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
     /// The server this session is signed in to (`siteOrigin`). Create records carry the
-    /// origin they were minted against, and only matching ones are treated as pending
-    /// here — drafts and metadata caches deliberately survive sign-out, so a record from
-    /// another account must never be POSTed into this one.
+    /// origin they were minted against; it decides what may be **listed and sent**, never
+    /// what is protected — see `isPendingCreate` vs `isReplayable`.
     private let serverOrigin: String
     private let backgroundTasks: BackgroundTaskProvider
 
@@ -145,11 +144,6 @@ final class DocumentSaveCoordinator {
     /// lookup rather than a UserDefaults decode. Only records matching `serverOrigin`
     /// are mirrored; the rest stay on disk, dormant.
     private var pendingCreates: [UUID: PendingDocumentCreate] = [:]
-    /// Bumped whenever `pendingCreates` changes, so `@Observable` readers (the Home list,
-    /// a parent's sub-page list) re-render when a document is created locally or stops
-    /// being local. Reading a dictionary through `@Observable` would track it too, but a
-    /// version counter states the dependency explicitly at the call site.
-    private(set) var pendingCreatesVersion = 0
 
     init(
         client: DocsAPIClient,
@@ -171,8 +165,23 @@ final class DocumentSaveCoordinator {
         // runs. A local document whose record was forgotten would be PATCHed at an id the
         // server has never seen, land on `.failed`, and be skipped by the very sync pass
         // meant to create it.
-        for create in createStore.allCreates() where create.serverOrigin == serverOrigin {
+        //
+        // **Every record is mirrored, whatever origin it was minted against.** The holds
+        // are about "this id does not exist on any server we can talk to", which is true
+        // regardless of *which* server minted it — and `runSyncPass` walks
+        // `draftStore.allDrafts()`, which is not origin-scoped either. Mirroring only the
+        // matching ones left a foreign record's draft with no hold at all: the pass GET
+        // 404ed and **deleted it**, so signing in elsewhere destroyed the content while
+        // leaving the record pointing at nothing. Dormant has to mean *no requests and no
+        // deletion*. Origin decides what is **listed** (below) and, once the replay lands,
+        // what may be **POSTed** — never whether the content is protected.
+        for create in createStore.allCreates() {
             pendingCreates[create.localID] = create
+            // `states` is in-memory, so without this every local document reads `.idle`
+            // after a relaunch until something enqueues — i.e. the reading surface would
+            // show "Edited just now" for a document that exists nowhere but here. The
+            // truthful state is the one `createLocalDocument` set.
+            states[create.localID] = .pendingSync
         }
         // **Rehydrate the holds before anything can enqueue.** The coordinator is built once,
         // at app start, before any editor exists — so a conflict persisted by a previous
@@ -216,11 +225,32 @@ final class DocumentSaveCoordinator {
 
     // MARK: - Documents created on this device
 
-    /// Whether this id names a document the server has never seen — the predicate the two
-    /// holds below key off, and the one the editor uses to skip revalidating a document
-    /// that would 404 by construction.
+    /// Whether this id names a document no server has ever seen — the predicate the holds
+    /// key off. Deliberately **not** origin-scoped: a record minted elsewhere still names
+    /// an id that would 404 here, and the holds exist to keep anything from addressing it.
+    ///
+    /// Not yet consulted by the editor: opening a local document names its id from several
+    /// places this coordinator does not own (`formattedContent`, the children fetch, the
+    /// collaboration room, Options' delete and version history). Those are the create UI's
+    /// to gate — the invariant is broader than the enforcement in this file.
     func isPendingCreate(documentID: UUID) -> Bool {
         pendingCreates[documentID] != nil
+    }
+
+    /// Whether this record may be **sent** to the server this session is signed in to.
+    /// Separate from `isPendingCreate` on purpose: protection is unconditional, but
+    /// POSTing someone else's content into the wrong place is the thing scoping prevents.
+    ///
+    /// `serverOrigin` alone is necessary but **not sufficient** — it identifies the server,
+    /// not the account, and records survive sign-out, so user B signing in to the same
+    /// server would otherwise inherit user A's unsynced documents. `ownerUserID` closes
+    /// that, and is checked by the replay (which can await `/users/me/`; this coordinator
+    /// is built before that returns). A record predating the field, or minted before the
+    /// user was known, carries nil and is origin-checked only.
+    func isReplayable(_ create: PendingDocumentCreate, currentUserID: UUID?) -> Bool {
+        guard create.serverOrigin == serverOrigin else { return false }
+        guard let owner = create.ownerUserID else { return true }
+        return owner == currentUserID
     }
 
     /// Mint a document locally: a create record (so it is POSTed even if never typed
@@ -231,41 +261,78 @@ final class DocumentSaveCoordinator {
     /// pending, so a replay needs no dependency ordering (`localDocument`'s
     /// `abilities.childrenCreate` is false, which is what enforces that).
     ///
+    /// `ownerUserID` is who created it, when the session knows (see `isReplayable`) —
+    /// callers that have the current user should pass it.
+    ///
     /// Dormant until the UI calls it: nothing in the app does yet.
     @discardableResult
-    func createLocalDocument(title: String, parentID: UUID?) -> Document {
+    func createLocalDocument(title: String, parentID: UUID?, ownerUserID: UUID? = nil) -> Document {
         let record = PendingDocumentCreate(
-            localID: UUID(), title: title, parentID: parentID, createdAt: Date(), serverOrigin: serverOrigin)
+            localID: UUID(), title: title, parentID: parentID, createdAt: Date(), serverOrigin: serverOrigin,
+            ownerUserID: ownerUserID)
         createStore.save(record)
         pendingCreates[record.localID] = record
-        pendingCreatesVersion += 1
         // The seed draft is what makes the document readable after the editor is dismissed:
         // `DocumentContentCacheStore` is only ever written by a confirmed save or a fetch,
         // so a document that has never been to the server has no entry there — and must not
         // get one, since that store is backup-excluded and cleared on sign-out.
+        //
+        // **It carries no `DraftBaseline`, and the replay must stamp one.** There is no
+        // server state to descend from yet, so nil is the only honest value here — but a
+        // baseline-less draft routes to `draftSyncDecision` rule 3, the 120 s clock
+        // tolerance. The instant the create POST lands, the new document's `updated_at` is
+        // *now* while this draft's `updatedAt` is whenever the user last typed — hours ago,
+        // which is the whole point of creating offline. Rule 3 would answer
+        // `.discardServerWins` and the launch pass would **delete the body**, leaving the
+        // empty document the POST just made. Migration must write
+        // `DraftBaseline(serverUpdatedAt: <POST response updatedAt>, markdown: "", title:)`
+        // — the create response *is* the known server state — before the draft is replayed.
         draftStore.save(
             PendingDraft(documentID: record.localID, title: title, markdown: "", updatedAt: record.createdAt))
         states[record.localID] = .pendingSync
         return localDocument(from: record)
     }
 
-    /// Documents created on this device under `parentID` (nil = root), newest first —
-    /// what a list merges in at read time via `mergedWithLocalDocuments`.
+    /// Documents created on this device under `parentID` (nil = root), newest first — what
+    /// a list merges in at read time via `mergedWithLocalDocuments`.
+    ///
+    /// Origin-scoped, unlike the holds: you should not see documents belonging to a server
+    /// you are not signed in to. A record checkpointed by the replay
+    /// (`syncedServerID != nil`) is also withheld — the server has it now, so the fetched
+    /// list is where it belongs, and surfacing it here too would duplicate the row under an
+    /// id nothing can reconcile.
+    ///
+    /// The title comes from the **draft** when there is one: the record's is the title at
+    /// creation time, and a document renamed since would otherwise show "Untitled document"
+    /// in every list until the replay landed.
     func pendingLocalDocuments(parentID: UUID?) -> [Document] {
         pendingCreates.values
-            .filter { $0.parentID == parentID }
-            .sorted { $0.createdAt > $1.createdAt }
-            .map(localDocument(from:))
+            .filter { $0.serverOrigin == serverOrigin && $0.syncedServerID == nil && $0.parentID == parentID }
+            .sorted { orderedByCreation($1, $0) }
+            .map { create in
+                var document = localDocument(from: create)
+                if let draftTitle = draftStore.draft(for: create.localID)?.title {
+                    document.title = draftTitle
+                }
+                return document
+            }
     }
 
-    /// Drop a local document's record. Private because the only sanctioned route is
-    /// `discardPendingWork` (the delete flow), which clears the draft and the queued slot
-    /// with it — a record removed on its own would strand both.
+    /// Drop a local document's record. **A record may only be removed together with a
+    /// decision about its draft**: discard it (the delete flow, via `discardPendingWork`)
+    /// or migrate it (the replay, once the POST has landed and the draft has been rewritten
+    /// under the server id). A record dropped on its own strands the draft — the holds key
+    /// off the record, so the very next sync pass would GET the dead id and delete the only
+    /// copy of the content.
+    ///
+    /// Private for now because `discardPendingWork` is the only route that exists; the
+    /// replay will need its own, alongside a seam for *updating* a mirrored record (the
+    /// `syncedServerID` checkpoint and the parent fallback both write one), which must keep
+    /// `createStore` and `pendingCreates` in lockstep or `isPendingCreate` goes stale.
     private func removePendingCreate(documentID: UUID) {
         guard pendingCreates[documentID] != nil else { return }
         pendingCreates[documentID] = nil
         createStore.remove(localID: documentID)
-        pendingCreatesVersion += 1
     }
 
     /// Content handed to the coordinator this session that the server hasn't
@@ -779,9 +846,20 @@ final class DocumentSaveCoordinator {
         knownServerTitles[documentID] = nil
         // A locally-created document is deleted purely locally (there is no server object
         // to DELETE), so its record must go with its draft — otherwise the create replay
-        // would resurrect a document the user threw away.
-        removePendingCreate(documentID: documentID)
-        states[documentID] = .idle
+        // would resurrect a document the user threw away. Its `.pendingSync` goes with it:
+        // nothing is on the device to sync any more, and unlike a server document there is
+        // no `finish` coming to reset it (the hold means no save was ever started).
+        //
+        // Scoped to that case deliberately. Resetting unconditionally *looks* tidier and
+        // silently broke `testSaveLandingAfterADeleteNeverRecreatesTheCacheEntry`, which
+        // synchronizes on `state != .saving` to wait out an in-flight PATCH: with the state
+        // cleared synchronously the wait returned instantly and the assertions ran while
+        // the save was still on the wire. The test stayed green while no longer pinning
+        // invariant 0b at all. A server document's state stays `finish`'s to settle.
+        if isPendingCreate(documentID: documentID) {
+            removePendingCreate(documentID: documentID)
+            states[documentID] = .idle
+        }
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {
             discardedDuringSave.insert(documentID)
@@ -970,7 +1048,12 @@ final class DocumentSaveCoordinator {
             // **The queued restart calls `start` directly, so it bypasses `enqueue`'s hold.**
             // Re-apply it here, or a conflict detected while this save was failing (just above,
             // or by a sync pass) would be pushed straight over the moment the save settled.
-            guard conflicts[documentID] == nil else {
+            // The pending-create half is unreachable today — `start` is only reached from
+            // `enqueue`, `releaseHeldSave` and here, and the first two refuse, so no save can
+            // be in flight for a local id — but this is the fourth path to `start` and the
+            // only one where the invariant would otherwise be asserted asymmetrically. The
+            // id migration is exactly the change that could make it reachable.
+            guard conflicts[documentID] == nil, !isPendingCreate(documentID: documentID) else {
                 queued[documentID] = next
                 states[documentID] = .pendingSync
                 return

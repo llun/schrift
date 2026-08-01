@@ -84,6 +84,21 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
         XCTAssertEqual(store.allCreates().map(\.title), ["First", "Second"])
     }
 
+    /// `values` has no defined order and Swift's `sorted` is not stable, so equal
+    /// timestamps would otherwise order arbitrarily between runs — and `Date()` is not
+    /// monotonic across a clock change, which makes ties reachable in practice.
+    func testCreatesWithTheSameInstantStillOrderDeterministically() {
+        let store = makeStore()
+        let sameInstant = Date(timeIntervalSince1970: 1_000)
+        let a = record(localID: UUID(uuidString: "AAAAAAAA-0000-4000-8000-000000000000")!, createdAt: sameInstant)
+        let b = record(localID: UUID(uuidString: "BBBBBBBB-0000-4000-8000-000000000000")!, createdAt: sameInstant)
+        store.save(b)
+        store.save(a)
+
+        XCTAssertEqual(store.allCreates().map(\.localID), [a.localID, b.localID])
+        XCTAssertEqual(makeStore().allCreates().map(\.localID), [a.localID, b.localID], "stable across reloads")
+    }
+
     func testCorruptDataReadsAsEmptyRatherThanThrowing() {
         defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingCreates")
 
@@ -120,16 +135,20 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
         XCTAssertFalse(document.isFavorite, "nothing server-side exists to favorite yet")
     }
 
-    /// Abilities are the honest set for a document that exists only here: it can be
-    /// edited and deleted locally, and nothing else — every other ability is a server
-    /// call against an id the server has never seen. `childrenCreate` false is also what
-    /// keeps children-of-local-parents out of scope until the replay can order them.
+    /// Abilities are the honest set for a document that exists only here: editing works,
+    /// and nothing else does yet — every other ability is a server call against an id the
+    /// server has never seen. `childrenCreate` false is also what keeps
+    /// children-of-local-parents out of scope until the replay can order them.
     func testTheSyntheticDocumentClaimsOnlyLocallyTrueAbilities() {
         let document = localDocument(from: record())
 
         XCTAssertTrue(document.abilities.update)
         XCTAssertTrue(document.abilities.partialUpdate)
-        XCTAssertTrue(document.abilities.destroy)
+        // False until the UI has a local-delete branch: `OptionsViewModel.delete()` only
+        // ever calls the server, which would 404, so advertising it promises a delete that
+        // cannot happen — and leaves the record un-removable, since `discardPendingWork` is
+        // reached only from a *successful* delete.
+        XCTAssertFalse(document.abilities.destroy)
         XCTAssertFalse(document.abilities.childrenCreate)
         XCTAssertFalse(document.abilities.favorite)
         XCTAssertFalse(document.abilities.accessesManage)
@@ -152,12 +171,15 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
 
     // MARK: - Merging into a fetched list
 
-    func testLocalDocumentsAreMergedNewestFirstAheadOfFetchedRows() {
+    /// Local rows lead, in the order the caller supplied — `pendingLocalDocuments` is what
+    /// applies the newest-first sort along with the parent and origin filters, so this
+    /// function is only responsible for the prepend and the de-dup.
+    func testLocalDocumentsAreMergedAheadOfFetchedRowsInTheGivenOrder() {
         let fetched = [serverDocument(title: "From the server")]
-        let older = record(title: "Older", createdAt: Date(timeIntervalSince1970: 1_000))
-        let newer = record(title: "Newer", createdAt: Date(timeIntervalSince1970: 2_000))
+        let newer = localDocument(from: record(title: "Newer", createdAt: Date(timeIntervalSince1970: 2_000)))
+        let older = localDocument(from: record(title: "Older", createdAt: Date(timeIntervalSince1970: 1_000)))
 
-        let merged = mergedWithLocalDocuments(fetched: fetched, local: [older, newer])
+        let merged = mergedWithLocalDocuments(fetched: fetched, local: [newer, older])
 
         XCTAssertEqual(merged.map(\.title), ["Newer", "Older", "From the server"])
     }
@@ -168,13 +190,14 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
         XCTAssertEqual(mergedWithLocalDocuments(fetched: fetched, local: []), fetched)
     }
 
-    /// Defence in depth for the window between a create replay landing and the next list
-    /// fetch: the real document may already be in `fetched` while the record is still being
-    /// torn down, and the list must not show it twice.
-    func testAFetchedRowWinsOverALocalRecordWithTheSameID() {
+    /// A cheap guard against overlapping lists — the server's row wins. Note this cannot
+    /// solve the replay window: there the fetched row carries the *server* id while a
+    /// not-yet-torn-down record still surfaces under its local one, so no id filter can
+    /// match them. Withholding a checkpointed record is `pendingLocalDocuments`' job.
+    func testAFetchedRowWinsOverALocalDocumentWithTheSameID() {
         let shared = UUID()
         let fetched = [serverDocument(id: shared, title: "Server copy")]
-        let local = record(localID: shared, title: "Local copy")
+        let local = localDocument(from: record(localID: shared, title: "Local copy"))
 
         let merged = mergedWithLocalDocuments(fetched: fetched, local: [local])
 
