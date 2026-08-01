@@ -24,23 +24,17 @@ final class StringsCompletenessTests: XCTestCase {
         .editor_presence_count_few: .editor_presence_count_other,
     ]
 
-    /// Count of `%@` / `%d` / `%lld` placeholders (ignoring escaped `%%`).
-    private func placeholderCount(_ s: String) -> Int {
-        var count = 0
-        var i = s.startIndex
-        while i < s.endIndex {
-            if s[i] == "%" {
-                let next = s.index(after: i)
-                guard next < s.endIndex else { break }
-                if s[next] == "%" {
-                    i = s.index(after: next)
-                    continue
-                }  // escaped %%
-                count += 1
-            }
-            i = s.index(after: i)
-        }
-        return count
+    /// The argument list a string implies — which position takes an object, an
+    /// integer, a double. See `formatSpecifiers(in:)`.
+    ///
+    /// This used to be a *count* of `%` occurrences with the conversion
+    /// character thrown away, which made the gate blind to the one mismatch that
+    /// actually crashes: a table writing `%d` where English has `%@` passed,
+    /// and `String(format:)` then dereferenced an integer as an object pointer.
+    /// Counting also cannot tell a reordered positional translation (correct)
+    /// from a reordered plain one (not).
+    private func argumentList(_ s: String) -> [Int: FormatArgumentKind] {
+        formatArgumentList(of: s)
     }
 
     func testEveryLanguageHasEveryBaseKey() {
@@ -77,28 +71,46 @@ final class StringsCompletenessTests: XCTestCase {
     }
 
     func testFormatSpecifierParityWithEnglish() {
-        // Same placeholder count per key across languages, so String(format:)
-        // can't crash on a mismatched arg list.
+        // Same arguments per key across languages — same positions, same kinds —
+        // so String(format:) can't be handed an arg list the string won't take.
         let en = Strings_en.table
         for language in AppLanguage.allCases where language != .english {
             let table = Strings.table(for: language)
             for key in L10nKey.allCases where !Self.extendedPluralKeys.contains(key) {
                 XCTAssertEqual(
-                    placeholderCount(table[key] ?? ""), placeholderCount(en[key] ?? ""),
-                    "\(language.code) placeholder mismatch on \(key.rawValue)")
+                    argumentList(table[key] ?? ""), argumentList(en[key] ?? ""),
+                    "\(language.code) format-argument mismatch on \(key.rawValue)")
+            }
+        }
+    }
+
+    func testNoStringUsesOnePositionWithTwoArgumentKinds() {
+        // Independent of the English comparison, and that is the point: a
+        // self-contradictory string (`"%1$d … %1$@"`) renders garbage whatever
+        // it is compared against, and if the contradiction were in *English*
+        // every parity test would happily agree with it.
+        for language in AppLanguage.allCases {
+            let table = Strings.table(for: language)
+            for key in L10nKey.allCases {
+                guard let string = table[key] else { continue }
+                for (position, kind) in argumentList(string) {
+                    XCTAssertNotEqual(
+                        kind, .conflicted,
+                        "\(language.code) uses argument \(position) with two kinds in \(key.rawValue): \(string)")
+                }
             }
         }
     }
 
     func testSloveneExtendedPluralPlaceholderParity() {
-        // Extended forms carry the same placeholders as their English `other`
+        // Extended forms take the same arguments as their English `other`
         // sibling (English has no dual/few form of its own to compare against).
         let en = Strings_en.table
         let sl = Strings.table(for: .slovene)
         for (key, sibling) in Self.extendedPluralOtherSibling {
             XCTAssertEqual(
-                placeholderCount(sl[key] ?? ""), placeholderCount(en[sibling] ?? ""),
-                "sl placeholder mismatch on \(key.rawValue)")
+                argumentList(sl[key] ?? ""), argumentList(en[sibling] ?? ""),
+                "sl format-argument mismatch on \(key.rawValue)")
         }
     }
 }
