@@ -1328,7 +1328,7 @@ markdown write endpoint**. Understand this before touching the save path:
   `serverOrigin`, `ownerUserID`, `syncedServerID`), the coordinator mirrors
   **every** record — protection is unconditional — and
   `isPendingCreate(documentID:)` is the predicate the holds key off. **Invariant: no *save* may ever name a pending-create id.**
-  It is enforced at three funnels in the coordinator, each load-bearing rather
+  It is enforced at four gates in the coordinator, each load-bearing rather
   than defensive. (Scoped to saves deliberately: opening a local document names
   its id from places the coordinator does not own — `formattedContent`, the
   children fetch, the collaboration room, Options' delete and version history —
@@ -1345,7 +1345,7 @@ markdown write endpoint**. Understand this before touching the save path:
      skip the first launch/foreground/reconnect after creating offline silently
      deletes it. The 404 catch re-checks the same predicate, because that is the
      line that would do the deleting.
-  3. **`releaseHeldSave` refuses** — it is the **only** path that calls `start`
+  3. **`releaseHeldSave` refuses** — one of two paths that call `start`
      without passing through `enqueue`'s hold, reached from
      `clearResolvedConflict`, which the editor calls from five places. Releasing
      a hold on a local document would PATCH a nonexistent id straight into the
@@ -1394,8 +1394,14 @@ markdown write endpoint**. Understand this before touching the save path:
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.
   `holdsUnreadableData` detects it and suppresses `runSyncPass`'s delete branch
-  outright: cleaning up nothing is recoverable, that is not. Every field added to
-  the record must stay Optional-on-decode for the same reason.
+  outright: cleaning up nothing is recoverable, that is not. Two details make that
+  real rather than nominal — the unreadable bytes are **quarantined** to
+  `…pendingCreates.unreadable` before the live key is reused (every
+  read-modify-write here reads through a `loadAll` that answers empty for a corrupt
+  blob and would `persist` over it), and the flag is **sticky** while a quarantine
+  exists, because a clean live key next launch would re-arm the delete and take the
+  drafts anyway. Every field added to the record must stay Optional-on-decode for
+  the same reason.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and

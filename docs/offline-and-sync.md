@@ -1042,7 +1042,7 @@ title and body, but it is removed by several legitimate paths, and a document
 created but never typed into has no draft content at all — yet still has to be
 POSTed. The record says *this exists*, separately from *this has unsaved text*.
 
-**The invariant: no *save* may ever name a pending-create id.** Three funnels in
+**The invariant: no *save* may ever name a pending-create id.** Four gates in
 the coordinator enforce it, and each is load-bearing. It is scoped to saves
 deliberately: opening a local document names its id from places the coordinator
 does not own — `formattedContent`, the children fetch, the collaboration room,
@@ -1061,12 +1061,18 @@ nothing may mint a record yet.
    first launch, foreground, or reconnect after creating offline silently deletes
    the document. The catch re-checks the same predicate, because that is the line
    that would do the deleting.
-3. **`releaseHeldSave` refuses.** It is the only path that calls `start` without
+3. **`releaseHeldSave` refuses.** One of the two paths that call `start` without
    passing through `enqueue`'s hold — reached from `clearResolvedConflict`, which
    the editor calls from five places — so releasing a hold on a local document
    would PATCH a nonexistent id straight into the `.failed`-then-skipped trap
    above. Its guard returns *before* `queued.removeValue`, so the held save is
    kept rather than dropped on the floor.
+4. **`finish`'s queued restart refuses.** The other such path: when a settled save
+   drains its queued slot it calls `start` directly, re-applying the conflict hold
+   — and now the pending-create one, for the same reason. Unreachable today (no
+   save can be in flight for a local id), but it is the one place the invariant
+   would otherwise be asserted asymmetrically, and the id migration is exactly the
+   change that could make it reachable.
 
 **`createLocalDocument(title:parentID:ownerUserID:)`** mints the record, writes a
 **seed draft** (so the editor's existing `restoreLocalContent` precedence renders
@@ -1131,6 +1137,19 @@ the next sync pass delete every offline-created document's only copy.
 `holdsUnreadableData` detects that case and suppresses the pass's delete branch
 entirely — cleaning up nothing is recoverable; that is not.
 
+Two things make that suppression real rather than nominal. The unreadable bytes
+are **quarantined** to `dev.llun.Schrift.pendingCreates.unreadable` before the
+live key is reused, because every read-modify-write here (`save`, `remove`) reads
+through a `loadAll` that answers empty for a corrupt blob and would otherwise
+`persist` straight over it. And the flag is **sticky**: it stays true while a
+quarantine exists, since a clean live key on the next launch would re-arm the 404
+branch and delete the drafts those unknown records owned — which is the loss the
+whole mechanism exists to prevent. The cost is that drafts for genuinely-deleted
+server documents stop being cleaned up on that device until the quarantine is
+cleared; a stale draft is inert where a deleted one is gone, and clearing it
+belongs with the recovery affordance below. Nothing reads or clears the
+quarantine key today.
+
 Still to come, and each is an obligation this change creates rather than a
 nice-to-have:
 
@@ -1147,7 +1166,9 @@ nice-to-have:
   content is protected, but they are invisible, unsendable, and not deletable
   through any UI, and they hold a full document body in UserDefaults indefinitely.
   Note this is a *change*: before the holds, such a draft was eventually reaped by
-  the sync pass's 404/403 branch.
+  the sync pass's 404/403 branch. The same affordance owes a way to clear a
+  **quarantined** blob, which is likewise written once and never read or removed —
+  and which, while it exists, keeps draft cleanup suppressed on that device.
 
 ## Data flow
 

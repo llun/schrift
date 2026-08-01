@@ -143,7 +143,25 @@ final class PendingDocumentCreateStore {
     /// interaction with that id — a landed PATCH, a 200 `formattedContent`, a successful
     /// DELETE — and a client-minted id can never get one. Under corruption a local document
     /// degrades to `.failed` with its draft intact, never to deletion.
+    /// **Sticky across launches, deliberately.** Quarantining preserves the record *bytes*,
+    /// but on its own it buys nothing for the thing that matters: the live key comes back
+    /// clean, so the next launch re-arms the 404 branch and deletes the drafts belonging to
+    /// those unknown records — exactly the loss the suppression exists to prevent. So a
+    /// surviving quarantine keeps answering true.
+    ///
+    /// The cost is that drafts for genuinely-deleted server documents stop being cleaned up
+    /// on this device until the quarantine is cleared, which nothing does yet. That is the
+    /// right side to err on — a stale draft is inert, a deleted one is gone — and clearing
+    /// it belongs with the recovery affordance the docs already record as owed.
     var holdsUnreadableData: Bool {
+        userDefaults.data(forKey: Self.quarantineKey) != nil || liveDataIsUnreadable
+    }
+
+    /// Whether the **live** key currently holds something that won't decode. Distinct from
+    /// `holdsUnreadableData`, which is sticky: this one drives *quarantining*, and reading
+    /// the sticky answer here would make the first write after a quarantine move the new,
+    /// healthy blob aside as well.
+    private var liveDataIsUnreadable: Bool {
         guard let data = userDefaults.data(forKey: Self.createsKey) else { return false }
         return (try? decoder.decode([String: PendingDocumentCreate].self, from: data)) == nil
     }
@@ -157,7 +175,7 @@ final class PendingDocumentCreateStore {
     /// fail-safe was protecting. Quarantining makes the recovery non-destructive: the bytes
     /// survive under a separate key for inspection, and the live key starts clean.
     private func quarantineUnreadableDataIfNeeded() {
-        guard holdsUnreadableData, let data = userDefaults.data(forKey: Self.createsKey) else { return }
+        guard liveDataIsUnreadable, let data = userDefaults.data(forKey: Self.createsKey) else { return }
         // First corruption wins. A second one would mean the store was already rebuilt after
         // the first, so the earlier blob is the one still holding records nothing else has —
         // and overwriting it to save a copy of a store we know was reset is the wrong trade.

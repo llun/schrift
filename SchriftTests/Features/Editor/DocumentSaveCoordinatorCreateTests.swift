@@ -424,8 +424,32 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(
             defaults.data(forKey: "dev.llun.Schrift.pendingCreates.unreadable"), corrupt,
             "the bytes survive for inspection")
-        XCTAssertFalse(store.holdsUnreadableData, "and the live key is usable again")
-        XCTAssertEqual(store.allCreates().count, 1)
+        XCTAssertEqual(store.allCreates().count, 1, "and the live key is usable again")
+        XCTAssertTrue(
+            store.holdsUnreadableData,
+            "but the suppression sticks: quarantining saves the bytes, and without this the next "
+                + "launch would see a clean store and delete the drafts those unknown records owned")
+    }
+
+    /// The sticky flag must not make the *next* write quarantine the healthy blob it just
+    /// wrote — quarantining keys off the live data, the suppression keys off the flag.
+    func testQuarantiningOnceDoesNotMoveTheReplacementStoreAside() {
+        let suiteName = "CoordinatorCreateTests.quarantineOnce.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingCreates")
+        let store = PendingDocumentCreateStore(userDefaults: defaults)
+        let first = PendingDocumentCreate(
+            localID: UUID(), title: "First", createdAt: Date(timeIntervalSince1970: 1_000),
+            serverOrigin: origin, ownerUserID: user)
+        store.save(first)
+
+        store.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "Second", createdAt: Date(timeIntervalSince1970: 2_000),
+                serverOrigin: origin, ownerUserID: user))
+
+        XCTAssertEqual(store.allCreates().map(\.title), ["First", "Second"])
     }
 
     /// `remove` is a read-modify-write too, so on a corrupt blob its `loadAll` reads empty
