@@ -1441,7 +1441,11 @@ markdown write endpoint**. Understand this before touching the save path:
   (and write the draft under the
   new id *before* removing the old one — in between, the body exists only in
   memory); insert into the list caches so
-  the document doesn't vanish from Home before the next fetch; **remove the record
+  the document doesn't vanish from Home before the next fetch — **roots only, and
+  never fabricating a level**, since `nil` (never fetched) and `[]` (fetched, empty)
+  are read as different by the lists' "is this known" logic, and Home's feed is
+  fetched without a parent filter so a sub-page's place there is the server's answer
+  to give; **remove the record
   last**, because it is what keeps the holds in force; then enqueue the content.
   **A replay never runs while an editor is open** on that document
   (`retainOpenEditor`/`releaseOpenEditor`): migration re-keys everything, and

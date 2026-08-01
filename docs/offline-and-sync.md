@@ -1270,8 +1270,15 @@ for a sub-page, `createDocument` for a root.
    instant exists where the content is on disk nowhere.
 4. **Insert into the list caches** under the real id, so the document does not
    drop out of Home between the POST landing and the next successful list fetch.
-   A sub-page joins its parent's cached level only if that level was actually
-   fetched — the same rule `addSubpage` follows.
+   **Neither cache is ever fabricated**: `nil` (never fetched) is deliberately
+   distinct from `[]` (fetched and empty) — `HomeViewModel` and the tree read
+   exactly that to decide whether the list is *known* — so an insert happens only
+   into a level that has actually been fetched. Fabricating one would make a
+   sign-in whose first fetch failed render a single row, no skeleton, and
+   `isCurrentListKnown = true`, as though the server held one document. And the
+   recents insert is **roots only**: a sub-page belongs to its parent's level,
+   while Home's list is fetched without a parent filter, so whether a sub-page
+   appears there is the server's answer to give, not ours to assume.
 5. **Remove the record last**, because it is what keeps the holds in force.
    Dropping it first and dying would leave a draft under a dead local id that the
    very next sync pass GETs, 404s, and deletes.
@@ -1465,7 +1472,15 @@ self-healing (record still checkpointed, local draft back, so the next resume ju
 clears), while clear-then-move reproduces exactly the loss the move exists to close.
 Guarded on the local draft being absent — the discriminator `finishMigration` uses —
 since with one present this is not the partial-migration window and the `serverID`
-draft is the user's own work against a real document.
+draft is the user's own separate work, which must not overwrite the local body. (Not
+"work against a real document" — that is `finishMigration`'s reasoning, where the
+fetch succeeded; here it 404'd, so the document is gone.) The accepted consequence:
+`runSyncPass`, next in the same pass and no longer gated by `isPendingCreate`, GETs
+that draft, takes the same 404 and removes it — so the newer server-id body is dropped
+while the older local one is re-POSTed. It needs a checkpointed record, an edit under
+the server id whose save failed transiently, *and* a server-side delete; and it is the
+conservative direction, since the branch declines to overwrite and the loss is the
+ordinary 404-draft rule acting on a document that really is gone.
 
 **`.notFound` only, never `.forbidden`** — a bare 403
 is not evidence a document is gone (an ancestor access recompute can 403

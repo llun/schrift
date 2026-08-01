@@ -686,6 +686,12 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNotNil(env.creates.create(for: local.id))
         XCTAssertTrue(env.coordinator.isPendingCreate(documentID: local.id))
         XCTAssertNil(env.creates.create(for: local.id)?.syncedServerID, "no checkpoint from a failed POST")
+        // The property the name actually claims. Without the retryable arm this lands on
+        // `.failed`, which `runCreatePass` skips for the rest of the process — the record
+        // survives either way, so the three assertions above cannot tell the two apart.
+        if case .failed = env.coordinator.state(for: local.id) {
+            XCTFail("offline is retryable — parking at .failed strands it until relaunch")
+        }
     }
 
     /// Offline, `/users/me/` fails — so no record is replayable, which is the right answer
@@ -1242,8 +1248,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     }
 
     /// With a local draft still present this is *not* the partial-migration window, so a draft
-    /// under the server id is the user's own work against a real document — the take-back must
-    /// leave it alone rather than overwriting the local body with it.
+    /// under the server id is the user's own separate work — the take-back must not overwrite
+    /// the local body with it. Note what this does *not* claim: that draft is not preserved.
+    /// `runSyncPass`, next in the same pass, GETs it, takes the same 404 and removes it. The
+    /// branch's job is only to leave the local body alone.
     func testAStartOverLeavesAUserDraftUnderTheServerIDAlone() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -1459,6 +1467,68 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(creates(log), before + 1, "exactly one POST — the healthy record's")
         XCTAssertNil(relaunched.creates.create(for: healthy.id), "which migrated")
         XCTAssertNotNil(relaunched.creates.create(for: blocked.id), "while the blocked one stayed put")
+    }
+
+    /// The children cache follows the same never-fabricate rule as the recents list: `nil`
+    /// (level never fetched) is deliberately distinct from `[]` (fetched, empty), because the
+    /// tree reads exactly that to decide whether it knows the level. The sibling test
+    /// pre-fetches the level, so it cannot see this.
+    func testASubpageNeverFabricatesAnUnfetchedParentLevel() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let parent = UUID()
+        // Deliberately no `env.children.save(…, for: parent)` — the level was never fetched.
+        env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 1, "it still replays")
+        XCTAssertNil(env.children.children(for: parent), "but the level stays unknown, not a one-row list")
+    }
+
+    /// A record nothing can attribute must not cost a `/users/me/` either — the gate's other
+    /// conjunct. The sibling test uses a foreign origin with a known owner, so it cannot see
+    /// this one.
+    func testAnUnattributableRecordCostsNoRequestAtAll() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        env.creates.save(
+            PendingDocumentCreate(
+                localID: UUID(), title: "Whose?", createdAt: Date(), serverOrigin: origin,
+                ownerUserID: nil))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.count, 0, "not even /users/me/")
+    }
+
+    /// The resume's own write-back guard, the twin of the one on the POST path: a delete
+    /// landing during the `formattedContent` await has already removed the record, and
+    /// `updatePendingCreate` writes through to disk — so without the guard it comes back.
+    func testADeleteDuringTheResumeDoesNotResurrectTheRecord() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        let coordinator = relaunched.coordinator
+        // Hold the resume GET open, delete during it, then let the 404 land.
+        stubUsersMeThen(log: log) { _ in
+            .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.3)
+        }
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+        coordinator.discardPendingWork(documentID: serverID)
+        await pass.value
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the delete stands")
     }
 
     // MARK: - Helpers

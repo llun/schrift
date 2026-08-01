@@ -610,8 +610,17 @@ final class DocumentSaveCoordinator {
             // applies one function above: write under the new id before taking it off the old.
             //
             // The guard is on the local draft being absent, the discriminator `finishMigration`
-            // uses: with one present this is not the partial-migration window, so a draft under
-            // `serverID` is the user's own work against a real document and must not be moved.
+            // uses: with one present this is not the partial-migration window, so the `serverID`
+            // draft is the user's own separate work and must not overwrite the local body.
+            // (Not "work against a real document" — that clause is `finishMigration`'s, where
+            // the fetch *succeeded*. Here it 404'd, so the document is gone.) The accepted
+            // consequence: `runSyncPass`, next in this same pass and no longer gated by
+            // `isPendingCreate`, will GET that draft, take the same 404 and remove it — so the
+            // newer server-id body is dropped while the older local one is re-POSTed. Rare
+            // (it needs a checkpointed record, an edit under the server id whose save failed
+            // transiently, and then a server-side delete) and it is the conservative direction:
+            // this branch declines to overwrite, and the loss is the ordinary 404-draft rule
+            // acting on a document that really is gone.
             if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID) {
                 draftStore.save(
                     PendingDraft(
@@ -1545,10 +1554,17 @@ final class DocumentSaveCoordinator {
             states[documentID] = .idle
         } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
             // Clear it under the id it is actually keyed by, and take the local draft with it
-            // — that draft is what a later pass would rebuild the document from.
+            // — that draft is what a later pass would rebuild the document from. The rest is
+            // the same id-keyed sweep `migrateCreatedDocument` does for the same transition:
+            // unreachable today (no save can be in flight for a pending-create id), kept
+            // symmetric so the asymmetry cannot become load-bearing once the create UI lands.
             removePendingCreate(documentID: checkpointed.localID)
             states[checkpointed.localID] = .idle
             draftStore.remove(documentID: checkpointed.localID)
+            queued[checkpointed.localID] = nil
+            settledSaves[checkpointed.localID] = nil
+            lastConfirmedPushMarkdown[checkpointed.localID] = nil
+            knownServerTitles[checkpointed.localID] = nil
         }
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {
