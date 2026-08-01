@@ -1,0 +1,43 @@
+Schrift/DesignSystem/Components/Avatar.swift
+  s_7b8db48b6506c1::t_0d123573e2f361 96
+  s_7b8db48b6506c1::t_96eb408a8512c6 62-71,84
+Schrift/Features/Editor/BlockEditorView.swift
+  s_7b8db48b6506c1::t_55a696013682f0 158-166
+Schrift/Features/Home/DocumentListView.swift
+  s_7b8db48b6506c1::t_021da072cc258e 42-50
+Schrift/Features/Editor/EditorView.swift
+  s_7b8db48b6506c1::t_a4cad0c028141a 550-554
+Schrift/DesignSystem/Components/AvatarGroup.swift
+  s_7b8db48b6506c1::t_660d1f30a1d8f0 43-48
+  s_7b8db48b6506c1::t_70362a5328e8e0 18-37
+  s_7b8db48b6506c1::t_19586bbc154af5 51-52,60,63
+SchriftTests/DesignSystem/Components/AvatarGroupTests.swift
+  s_7b8db48b6506c1::t_fb213c22c8f331 5-32
+CLAUDE.md
+  s_7b8db48b6506c1::t_42cf145c54c6ba 882-904
+docs/design-system.md
+  s_7b8db48b6506c1::t_aca5b9acf6bdac 906-936
+Schrift/Features/Editor/SaveStatusIndicator.swift
+  s_7b8db48b6506c1::t_b4338f08c121d0 117-121
+  s_7b8db48b6506c1::t_a057bed7aa31d7 69-74
+Schrift/DesignSystem/Components/ListRow.swift
+  s_7b8db48b6506c1::t_1fdb2ccfbbb24e 29-38
+Schrift/Features/Profile/ProfileRows.swift
+  s_7b8db48b6506c1::t_dcffe49216cdc7 38-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "e42caa561dbf85b3c348d71401eb53e6de84d8b2",
+  "prompts": {},
+  "sessions": {
+    "s_7b8db48b6506c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb12eff8-fdea-42a0-aa9c-8067c32dbef1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
