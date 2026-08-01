@@ -595,10 +595,14 @@ final class DocumentSaveCoordinator {
             // process death inside the migration can leave the only copy under `serverID` —
             // that draft is written before the local one is removed, precisely so no instant
             // exists with the content nowhere. The checkpoint is the last thing associating it
-            // with this record, so once that is gone two individually-correct rules combine
-            // into content loss: `runSyncPass` no longer sees a pending-create id, so it GETs
-            // that draft, takes the same 404, and deletes it — after which the re-POST finds an
-            // all-nil body chain and creates an *empty* document in place of the user's text.
+            // with this record, so once that is gone the body is **orphaned**: the re-POST
+            // mints a different server id and its body chain looks under the local id and the
+            // *new* one, never the old, so it builds an *empty* document in place of the
+            // user's text — and the stranded draft is separately reaped by `runSyncPass`, which
+            // GETs it and takes the same 404. (Note the draft under `serverID` is never covered
+            // by the pending-create hold in *either* ordering — that guard is keyed on the
+            // local id. What the ordering decides is whether the body is still reachable at
+            // all, not whether it is protected from that sweep.)
             //
             // **Order is the whole point, and getting it backwards reproduces exactly that.**
             // These are two independent UserDefaults keys, so a kill between them is a real
@@ -614,8 +618,8 @@ final class DocumentSaveCoordinator {
             // draft is the user's own separate work and must not overwrite the local body.
             // (Not "work against a real document" — that clause is `finishMigration`'s, where
             // the fetch *succeeded*. Here it 404'd, so the document is gone.) The accepted
-            // consequence: `runSyncPass`, next in this same pass and no longer gated by
-            // `isPendingCreate`, will GET that draft, take the same 404 and remove it — so the
+            // consequence: `runSyncPass`, next in this same pass, will GET that draft, take the
+            // same 404 and remove it — so the
             // newer server-id body is dropped while the older local one is re-POSTed. Rare
             // (it needs a checkpointed record, an edit under the server id whose save failed
             // transiently, and then a server-side delete) and it is the conservative direction:
@@ -1554,10 +1558,15 @@ final class DocumentSaveCoordinator {
             states[documentID] = .idle
         } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
             // Clear it under the id it is actually keyed by, and take the local draft with it
-            // — that draft is what a later pass would rebuild the document from. The rest is
-            // the same id-keyed sweep `migrateCreatedDocument` does for the same transition:
-            // unreachable today (no save can be in flight for a pending-create id), kept
-            // symmetric so the asymmetry cannot become load-bearing once the create UI lands.
+            // — that draft is what a later pass would rebuild the document from. The rest
+            // mirrors `migrateCreatedDocument`'s id-keyed sweep for the same transition, minus
+            // the two it does that are inert here (`conflicts[localID]`, which a client-minted
+            // id can never acquire since `recordConflict` needs a *successful* server
+            // interaction, and the content cache, which a local document never reaches). Of
+            // the four, only `queued` is actually writable — by `enqueue`'s own pending-create
+            // hold; the other three need `start`, which the four gates make unreachable for a
+            // pending-create id. Cleared anyway so the asymmetry cannot become load-bearing
+            // once the create UI lands.
             removePendingCreate(documentID: checkpointed.localID)
             states[checkpointed.localID] = .idle
             draftStore.remove(documentID: checkpointed.localID)

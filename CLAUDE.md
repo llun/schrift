@@ -1461,9 +1461,12 @@ markdown write endpoint**. Understand this before touching the save path:
   **A resume whose document is gone takes the body back before it drops the
   checkpoint.** A death inside the migration can leave the only copy under the
   *server* id, and the checkpoint is the last thing tying it to the record — so
-  clearing first would let `runSyncPass` (which no longer sees a pending-create id)
-  GET that draft, 404, and delete it, after which the re-POST creates an **empty**
-  document. Move-then-clear is self-healing across a kill between the two writes;
+  clearing first **orphans** the body: the re-POST mints a different server id and
+  its body chain never looks under the old one, so it builds an **empty** document,
+  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
+  draft is never covered by the pending-create hold in either ordering — the hold is
+  keyed on the local id. The ordering decides whether the body is still *reachable*,
+  not whether it is protected from that sweep.) Move-then-clear is self-healing across a kill between the two writes;
   clear-then-move reproduces the very loss it closes. Guarded on the local draft
   being absent, or a `serverID` draft that is the *user's* work would overwrite it.
   **Both of those re-checks are keyed on the *local* id, and the migration writes under the

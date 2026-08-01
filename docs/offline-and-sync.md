@@ -1207,6 +1207,13 @@ nice-to-have:
   *server* id clears the record and the local draft itself, since that path is
   reachable through today's Options sheet and would otherwise resurrect the
   document on the next replay.)
+- **Reconciling `HomeViewModel.createDocument`'s work-offline branch with the
+  never-fabricate rule.** It does `cache.loadRecentDocuments() ?? []` and saves the
+  result, which is exactly the one-row fabrication the replay's own insert refuses —
+  a first fetch that failed then renders one row, no skeleton, and
+  `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
+  is scoped to the replay), but PR 4 rewrites that method for the local-create
+  fallback, so it should be fixed in the same change rather than propagated.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch — but *within* a build nothing clears
@@ -1462,11 +1469,15 @@ is nothing left to duplicate.
 **But it takes the body back to the local id *first*.** A death inside the migration
 can leave the only copy under `serverID` — the draft is written there before the local
 one is removed, so that no instant exists with the content nowhere — and the
-checkpoint is the last thing tying it to the record. Clear it first and two
-individually-correct rules combine into loss: `runSyncPass` no longer sees a
-pending-create id, so it GETs that draft, takes the same 404 and deletes it, after
-which the re-POST finds an all-nil body chain and creates an **empty** document in
-place of the user's text. **Order is the whole point.** These are two independent
+checkpoint is the last thing tying it to the record. Clear it first and the body is
+**orphaned**: the re-POST mints a *different* server id and its body chain looks under
+the local id and the new one, never the old, so it builds an empty document — and the
+stranded draft is separately reaped by `runSyncPass`, which GETs it and takes the same
+404. (That draft is never covered by the pending-create hold in either ordering — the
+hold is keyed on the local id. The ordering decides whether the body is still
+*reachable*, not whether it is protected from that sweep.)
+
+**Order is the whole point.** These are two independent
 UserDefaults keys, so a kill between them is a real state: move-then-clear is
 self-healing (record still checkpointed, local draft back, so the next resume just
 clears), while clear-then-move reproduces exactly the loss the move exists to close.
