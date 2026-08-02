@@ -661,8 +661,9 @@ final class DocumentSaveCoordinator {
             // `runSyncPass` will not delete the draft while the record is checkpointed — and
             // it is bounded by the recovery affordance recorded as owed in the docs.
             //
-            // The take-back carries the same three conjuncts as the start-over, for the same
-            // reason and one more. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
+            // The take-back carries the concurrency conjuncts for its own reason — the
+            // start-over below has a single one (`draft(serverID) == nil`), so this is not a
+            // copy of it. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
             // so this branch can run with a live editor — or an in-flight save — on `serverID`,
             // and removing that draft yanks the disk backing out from under it; the editor's
             // next flush would recreate it while the re-POST mints a *second* document holding
@@ -946,6 +947,11 @@ final class DocumentSaveCoordinator {
         settledSaves[localID] = nil
         lastConfirmedPushMarkdown[localID] = nil
         knownServerTitles[localID] = nil
+        // Note this *removes* the entry when the resume's fetch omitted a title — assigning
+        // nil to a dictionary key is a delete, not a no-op. That is deliberate rather than
+        // sloppy: this is `adoptQueuedTitleIfUnseen`'s backstop, and "the server's title is
+        // unknown" is the honest state after a fetch that did not carry one. It must not be
+        // changed to a conditional write without checking that caller first.
         knownServerTitles[serverID] = serverTitle
         // `conflicts` is provably nil for a local id today — every `recordConflict` caller
         // needs a *successful* server interaction with it, which a client-minted id cannot

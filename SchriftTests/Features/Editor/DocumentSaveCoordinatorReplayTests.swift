@@ -1287,12 +1287,70 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
-    /// A death inside the migration can leave the only copy of the body under `serverID`.
-    /// Dropping the checkpoint severs the last thing tying it to the record, **orphaning** the
-    /// body: the re-POST mints a different server id and its body chain looks under the local
-    /// id and the new one, never the old, so it builds an *empty* document in place of the
-    /// text — and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
-    /// draft is never covered by the pending-create hold in either ordering; the hold is keyed
+    /// The take-back's third conjunct, `!mayPredateSave(marker)` — the one cell neither
+    /// sibling reaches. `inFlight` catches a save still on the wire and `hasOpenEditor` a live
+    /// screen; this catches a save that both **started and settled** inside the resume's fetch
+    /// window, which leaves no witness in either. The marker's settled-save counter is the
+    /// only thing that still remembers it.
+    ///
+    /// Why it matters: the fetched 404 may have been answered from a state that predates that
+    /// save, so it is no evidence the document is gone. Without the conjunct the take-back
+    /// moves the draft off the server id and the start-over then clears the checkpoint,
+    /// re-POSTing a document that may still exist — a duplicate, from a save the pass itself
+    /// raced.
+    func testTheTakeBackDeclinesWhenASaveSettledInsideTheFetchWindow() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The partial-migration window: the server-id draft is the only copy.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Only copy", updatedAt: Date(),
+                baseline: nil))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            // The save fails transiently, so it settles fast and *keeps* its draft — which is
+            // what leaves the take-back looking at an orphan with `inFlight` already nil.
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 503, headers: [:], body: Data(), error: nil)
+            }
+            if request.url?.absoluteString.contains("formatted-content") == true {
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 1.5)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        let starter = Task { @MainActor in
+            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            relaunched.coordinator.enqueue(
+                documentID: serverID, title: "Notes", markdown: "# Typed during the fetch")
+            // Settled before the 404 lands: `inFlight` is nil again, so only the marker knows.
+            await waitUntil { relaunched.coordinator.pendingSave(documentID: serverID) == nil }
+        }
+
+        await relaunched.coordinator.syncPendingDrafts()
+        _ = await starter.value
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Typed during the fetch",
+            "the settled save's body stays under the id it was written for")
+        XCTAssertNil(relaunched.drafts.draft(for: local.id), "not taken back")
+        XCTAssertEqual(
+            relaunched.creates.create(for: local.id)?.syncedServerID, serverID,
+            "and the checkpoint survives, so nothing is re-POSTed")
+    }
+
     /// **The start-over's discharge, reached with something to discharge.** Round 34 inverted
     /// the two tests that used to cover these lines — correctly, since they asserted a
     /// discharge that costs content — but that left `queued[serverID] = nil` and
@@ -1336,6 +1394,12 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await waitAndConfirmNever { self.savesInFlight(log) > 0 }
     }
 
+    /// A death inside the migration can leave the only copy of the body under `serverID`.
+    /// Dropping the checkpoint severs the last thing tying it to the record, **orphaning** the
+    /// body: the re-POST mints a different server id and its body chain looks under the local
+    /// id and the new one, never the old, so it builds an *empty* document in place of the
+    /// text — and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
+    /// draft is never covered by the pending-create hold in either ordering; the hold is keyed
     /// on the local id.)
     func testAStartOverTakesTheOrphanedBodyBackToTheLocalID() async {
         let log = RequestRecorder()
@@ -1423,7 +1487,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "the write-ahead copy of the save on the wire is not moved out from under it")
         XCTAssertNil(relaunched.drafts.draft(for: local.id), "not taken back under a live save")
         XCTAssertEqual(relaunched.creates.create(for: local.id)?.syncedServerID, serverID)
-        XCTAssertEqual(savesInFlight(log), 1, "the save was still on the wire when it declined")
+        // The counter is monotonic, so this only shows a content PATCH was *issued*. What
+        // establishes it was still open is the pair above: the draft was neither moved nor
+        // removed, and the checkpoint survived.
+        XCTAssertEqual(savesInFlight(log), 1, "the save reached the network")
     }
 
     /// With a local draft still present this is *not* the partial-migration window, so a draft

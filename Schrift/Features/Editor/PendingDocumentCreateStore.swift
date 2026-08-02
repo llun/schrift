@@ -197,10 +197,15 @@ final class PendingDocumentCreateStore {
         persist(creates)
     }
 
-    /// Oldest first — the order a replay must POST them in, so a document created after
-    /// another never reaches the server before it. The `localID` tie-break makes that a
-    /// real guarantee rather than an approximate one: `values` has no defined order,
-    /// Swift's `sorted` is not stable, and `Date()` is not monotonic across a clock change.
+    /// Oldest first — the order a replay POSTs them in. The `localID` tie-break makes that
+    /// order *deterministic* rather than approximate: `values` has no defined order, Swift's
+    /// `sorted` is not stable, and `Date()` is not monotonic across a clock change.
+    ///
+    /// It is deterministic, not a guarantee about arrival: `runCreatePass` `continue`s past a
+    /// record that is skipped, blocked or failed, so a newer record can still reach the server
+    /// before an older one that was passed over. Harmless in v1, where records carry no
+    /// inter-record dependencies — sub-pages of *local* parents are out of scope precisely
+    /// because a replay cannot order them — but do not build ordering on this.
     func allCreates() -> [PendingDocumentCreate] {
         loadAll().values.sorted { orderedByCreation($0, $1) }
     }
