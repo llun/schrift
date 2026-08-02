@@ -99,6 +99,24 @@ final class PendingDraftStore {
         loadAll().values.sorted { $0.updatedAt < $1.updatedAt }
     }
 
+    /// There is stored draft data and it does not decode — so the drafts are **unknown**,
+    /// not absent.
+    ///
+    /// `loadAll` is all-or-nothing, so one undecodable blob makes every `draft(for:)` answer
+    /// nil. Read as "there is no draft" that is merely invisible, which is how the app behaved
+    /// before the create replay existed. The replay is the first caller that acts
+    /// *irreversibly* on that read: it POSTs a document whose body it believes empty and then
+    /// deletes the create record, which is the only thing that could have driven a recovery
+    /// after a shipped decode fix. So it asks this first.
+    ///
+    /// Detection only — there is no quarantine here yet, unlike `PendingDocumentCreateStore`.
+    /// That asymmetry is recorded as owed; this flag is the guard that stops the one caller
+    /// that can turn a schema slip into destroyed content.
+    var holdsUnreadableData: Bool {
+        guard let data = userDefaults.data(forKey: Self.draftsKey) else { return false }
+        return (try? decoder.decode([String: PendingDraft].self, from: data)) == nil
+    }
+
     private func loadAll() -> [String: PendingDraft] {
         guard let data = userDefaults.data(forKey: Self.draftsKey),
             let drafts = try? decoder.decode([String: PendingDraft].self, from: data)

@@ -468,6 +468,19 @@ final class DocumentSaveCoordinator {
     /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
     /// returns before issuing any request at all.
     private func runCreatePass() async {
+        // **Never replay while the drafts are unknown.** `PendingDraftStore.loadAll` is
+        // all-or-nothing, so one undecodable blob makes every `draft(for:)` answer nil — and
+        // this pass reads that as "the body is empty". It would then POST each record under
+        // its mint title, sail through `finishMigration`'s both-drafts guard (which reads the
+        // same nil), enqueue `""`, and `removePendingCreate` — deleting the one thing that
+        // could have driven a recovery after a shipped decode fix. N unrecoverable empty
+        // documents from a single schema slip.
+        //
+        // Before the replay existed, an undecodable blob merely made unsaved work invisible.
+        // This is the first caller that acts irreversibly on it, so it is the caller that has
+        // to ask. Same discipline as `createStoreUnreadable`: a schema slip must degrade to
+        // "nothing is sent", never to "everything is committed empty".
+        guard !draftStore.holdsUnreadableData else { return }
         let records = createStore.allCreates()
         // Cheap gate before the round trip: a record from another server, or one nothing can
         // attribute, can never be replayed here (see `belongsToSession`) and nothing deletes
@@ -685,26 +698,24 @@ final class DocumentSaveCoordinator {
                         updatedAt: orphan.updatedAt, baseline: nil))
                 draftStore.remove(documentID: serverID)
             }
-            // **Discharge any conflict against the dead id, or the reap above never runs.**
-            // The "the ordinary 404-draft rule will collect it" argument has a hole: a
-            // server-id draft can be carrying a conflict (the user met the document under that
-            // id, typed, and `runSyncPass` recorded a divergence before it was deleted), and
-            // `runSyncPass` *skips a conflicted draft* — so the 404 branch it defers to is
-            // unreachable for exactly that draft, and `init` rehydrates the stamp from disk, so
-            // the skip outlives relaunches. The document is gone: there is nothing left to ask
-            // about, and this is the third server-id transition that has to discharge the
-            // record, alongside the adopt branch and `discardPendingWork`'s checkpointed sweep.
+            // **Discharge whatever is left, now that nothing is left to protect.** The guards
+            // below establish exactly that: no save may predate the fetch, no screen is
+            // writing under this id, and no draft survives it. So a conflict record still
+            // sitting here — rehydrated by `init`, or left in memory by the take-back that
+            // just moved its draft away — protects nothing, and a `queued` slot holds a copy
+            // of a body now on disk under the local id.
             //
-            // **Drop the held work first, then clear unconditionally** — the pattern
-            // `discardPendingWork`, `resolveConflictKeepingServer` and
-            // `suppressLocalWriteThrough` all use for this same "the document is gone" shape.
-            // Gating the clear on `queued[serverID] == nil` instead would skip the one cell
-            // that needs it: a queued slot with nothing in flight *is* the conflict hold
-            // (`enqueue` fills it only for a pending-create id, a recorded conflict, or an
-            // in-flight save, and the first is keyed on the local id), and nothing settles it —
-            // `releaseHeldSave` is its only drainer, reached only from the call being skipped.
-            // Dropping it makes `releaseHeldSave` a provable no-op, so no PATCH can start at an
-            // id that just 404'd, and the ordinary 404 rule can finally reap the draft.
+            // The reachable shape is the take-back path: it removes the draft that mirrored
+            // the conflict, so `persistConflictOnDraft` can no longer repair the record, which
+            // would otherwise outlive its draft and park every future save behind a pill
+            // nothing can answer. Drop `queued` first, or `clearResolvedConflict` →
+            // `releaseHeldSave` pops the parked save and PATCHes the id that just 404'd.
+            //
+            // An earlier revision discharged here *unconditionally*, arguing that
+            // `runSyncPass` skips a conflicted draft, so the reap it defers to could never run
+            // and the record would strand permanently. True, and beside the point: it ranked
+            // stranding above losing the body, which is backwards. The guards below are the
+            // correction, and this discharge now runs only once they have all passed.
             // **Do not start over while work survives under the server id.** The checkpoint is
             // the *only* thing protecting that draft: `isPendingCreate` is keyed on the local
             // id, so `runSyncPass`'s delete branch skips it solely because

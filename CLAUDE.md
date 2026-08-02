@@ -1413,7 +1413,14 @@ markdown write endpoint**. Understand this before touching the save path:
   at sign-in: without that, launching offline (the entire point) yields no user id,
   local documents are not listed, and none can be minted. Failing closed is right;
   the gap is that nothing supplies the value yet.
-  **The store's `try?` decode is all-or-nothing, so an undecodable blob means the
+  **The replay also refuses to run while the *drafts* store cannot decode.**
+  `PendingDraftStore.loadAll` is all-or-nothing too, so one bad blob makes every
+  `draft(for:)` answer nil — and `runCreatePass` would read that as "every body is empty",
+  POST each record under its mint title, pass `finishMigration`'s both-drafts guard on the
+  same nil, enqueue `""`, and `removePendingCreate`. It is the first caller anywhere that
+  acts irreversibly on that read, so it is the one that has to ask
+  (`holdsUnreadableData`); quarantine on that store is still owed.
+  **The create store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.
   `holdsUnreadableData` detects it and suppresses `runSyncPass`'s delete branch

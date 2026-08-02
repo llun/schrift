@@ -1255,12 +1255,17 @@ nice-to-have:
   the conflict is discharged, and the pending autosave full-overwrites the co-author. The
   retain/release wiring below is what closes it; recorded separately because the consequence
   named there is mid-swap edit loss, which is not this.
-- **`PendingDraftStore` has no quarantine, where `PendingDocumentCreateStore` now does.**
-  Its `loadAll` is the same all-or-nothing `try?` decode, so a single undecodable draft
-  silently drops **every** draft on the device — the exact failure class the create store
-  treats as content loss (quarantine the bytes, set a sticky `holdsUnreadableData`, suppress
-  every delete). Pre-existing and untouched here, but the asymmetry is newly conspicuous:
-  drafts are full document bodies, so the blast radius is larger than the records'.
+- **`PendingDraftStore` still has no quarantine, where `PendingDocumentCreateStore` does.**
+  Its `loadAll` is the same all-or-nothing `try?` decode, so one undecodable blob makes every
+  draft on the device read as absent. It now at least *detects* that (`holdsUnreadableData`),
+  and `runCreatePass` returns on it — because the replay was the first caller anywhere that
+  acted **irreversibly** on a nil draft read: it would POST each record under its mint title,
+  pass `finishMigration`'s both-drafts guard (which reads the same nil), enqueue `""`, and then
+  `removePendingCreate`, destroying the one thing that could have driven a recovery after a
+  shipped decode fix. What is still owed is the other half the create store has: quarantining
+  the bytes before a read-modify-write reuses the key, and making the flag sticky. Until then a
+  `save` after the corruption overwrites the damaged blob and the bodies are gone for good —
+  and drafts are full document bodies, so the blast radius is larger than the records'.
 - **An escape for a checkpoint that keeps 404ing with work under its server id.** The
   start-over now declines while a `serverID` draft survives, so a genuinely deleted
   document leaves the record checkpointed indefinitely: three GETs plus a `/users/me/` per trigger — four, once `runSyncPass` also fetches the surviving draft's document, the body on

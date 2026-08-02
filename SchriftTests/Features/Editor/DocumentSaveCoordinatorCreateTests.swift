@@ -370,6 +370,49 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(relaunched.state(for: document.id), .pendingSync)
     }
 
+    /// **An unreadable *drafts* store must stop the replay, not be read as "every body is
+    /// empty".** `PendingDraftStore.loadAll` is all-or-nothing, so one undecodable blob makes
+    /// every `draft(for:)` answer nil. Before the replay existed that only made unsaved work
+    /// invisible; the replay is the first caller that acts irreversibly on it — it would POST
+    /// each record under its mint title, pass `finishMigration`'s both-drafts guard (which
+    /// reads the same nil), enqueue `""`, and then `removePendingCreate`, deleting the one
+    /// thing that could have driven a recovery after a shipped decode fix.
+    func testAnUnreadableDraftStoreStopsTheReplayEntirely() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(
+                statusCode: 200, headers: [:],
+                body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+        }
+        let suiteName = "CoordinatorCreateTests.corruptDrafts.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let createStore = PendingDocumentCreateStore(userDefaults: defaults)
+        // A perfectly readable record — only the drafts are unknown.
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let seed = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: createStore, serverOrigin: origin, backgroundTasks: .noop)
+        let local = seed.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: origin, backgroundTasks: .noop)
+        await coordinator.recoverDrafts()
+
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: "documents/"), 0,
+            "nothing is POSTed while the bodies are unknown")
+        XCTAssertNotNil(
+            createStore.create(for: local.id),
+            "and the record survives, so a shipped decode fix can still recover the body")
+    }
+
     /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —
     /// carries the same `!createStoreUnreadable` guard, and its sibling below cannot cover it:
     /// that test drives a 404, which reaches the *catch*. Getting here needs a draft whose
