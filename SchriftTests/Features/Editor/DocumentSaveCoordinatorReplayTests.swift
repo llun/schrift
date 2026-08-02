@@ -302,11 +302,25 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         let parent = UUID()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
-        // Django's own missing-route page: an HTML 404, which maps to `.routeNotFound`.
-        stubUsersMeThen(log: log) { _ in
-            .init(
-                statusCode: 404, headers: ["Content-Type": "text/html; charset=utf-8"],
-                body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
+        // Django's own missing-route page on the create — an HTML 404, mapping to
+        // `.routeNotFound` — while the parent itself is perfectly healthy. That combination is
+        // what discriminates: stubbing the *probe* 404 too would let the pre-fix code reach its
+        // generic catch and retry for the wrong reason, so this test would pass either way.
+        let parentBody = Data(
+            """
+            {"id": "\(parent.uuidString.lowercased())", "title": "Parent",
+             "abilities": {"children_create": true},
+             "content": "", "created_at": "2026-03-01T12:00:00Z",
+             "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+             "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
+            """.utf8)
+        stubUsersMeThen(log: log) { request in
+            if request.httpMethod == "POST" {
+                return .init(
+                    statusCode: 404, headers: ["Content-Type": "text/html; charset=utf-8"],
+                    body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: parentBody, error: nil)
         }
 
         await env.coordinator.syncPendingDrafts()
@@ -314,6 +328,11 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         XCTAssertEqual(creates(log), 2, "not parked after the first attempt")
         XCTAssertEqual(env.creates.create(for: local.id)?.parentID, parent, "and never re-parented")
+        // The probe must never even be reached — `.routeNotFound` returns before it, since the
+        // probe tests a different path and can say nothing about the one that 404'd.
+        XCTAssertEqual(
+            log.count(ofMethod: "GET", urlContaining: parent.uuidString.lowercased()), 0,
+            "and the parent was never probed")
     }
 
     // MARK: - Idempotency
@@ -1977,6 +1996,37 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         guard case .failed = env.coordinator.state(for: local.id) else {
             return XCTFail("a non-retryable create with an indecisive probe must still terminate")
         }
+    }
+
+    /// The migration writes the body under `serverID` before removing the local draft, so a
+    /// death in that window leaves it as the **only copy** — and `isPendingCreate` is keyed on
+    /// the *local* id, so `runSyncPass`'s 404/403 sweep does not see it as protected. The
+    /// `.notFound` start-over rescues it by moving it back; a `.forbidden` resume has no such
+    /// branch and would land here, as would any pass where the record simply is not replayable
+    /// this session. Deleting it makes the later migration build an empty document.
+    func testTheSweepNeverDeletesTheOnlyCopyUnderACheckpointedServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The partial-migration window: local draft gone, body only under the server id.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# The only copy",
+                updatedAt: Date(), baseline: nil))
+        // Everything 403s — the resume takes the transient branch and does not rescue it.
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
+            "the sweep must not delete the body of a checkpointed record")
     }
 
     // MARK: - Helpers

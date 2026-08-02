@@ -1531,15 +1531,7 @@ markdown write endpoint**. Understand this before touching the save path:
   — a missing route is a fact about the server, and the probe tests `documents/{p}/`, a
   different path from the one that 404'd. `abilities.childrenCreate` is deliberately not
   consulted: it decodes `?? false`, so absent and denied are indistinguishable, and both
-  reach the same terminal outcome anyway. A reachable parent whose `abilities.childrenCreate` is false gets a terminal
-  `.failed` instead — never a re-parent, because `Document` decodes that key
-  `decodeIfPresent(...) ?? false`, so *absent* and *denied* are indistinguishable, this
-  is the app's only consumer of the field, and re-parenting is irreversible (the old
-  parent is stored nowhere and there is no move feature) — a bare 403 is also what Django returns for a
-  bad `Origin`, and an HTML 404 is not proof a route is absent, so promoting on
-  either alone would silently re-parent every sub-page. A `.routeNotFound` on a **root**
-  create retries instead of parking — a missing route is a fact about the server, not
-  this document, the same reading the resume path gives it. Anything else rejected
+  reach the same terminal outcome anyway. Anything else rejected
   on the merits goes `.failed`, which stops the retry loop but is **not** reachable
   by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
   non-nil, which a local document with content always has), so a relaunch is the

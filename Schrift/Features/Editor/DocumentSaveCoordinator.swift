@@ -308,8 +308,12 @@ final class DocumentSaveCoordinator {
     /// changes), and `.pendingSync` — nothing is syncing, but the work *is* on the device.
     ///
     /// `parentID` is a **server** id or nil; v1 never creates under a parent that is itself
-    /// pending, so a replay needs no dependency ordering (`localDocument`'s
-    /// `abilities.childrenCreate` is false, which is what enforces that).
+    /// pending, so a replay needs no dependency ordering. **Nothing gates on that
+    /// yet**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
+    /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
+    /// denied are indistinguishable), and the sub-page affordance gates on `isOffline` alone.
+    /// So the create UI must not offer a sub-page under a pending parent; a record minted that
+    /// way would POST `documents/{local-uuid}/children/`, 404, probe, 404, and silently re-root.
     ///
     /// `ownerUserID` is **required, not defaulted**: an unattributable record can be neither
     /// listed nor replayed (see `belongsToSession`), so a caller that could not name the
@@ -1448,6 +1452,20 @@ final class DocumentSaveCoordinator {
                 // is a recoverable failure; deleting every offline-created document's only
                 // copy because a schema slip read as "there are no local documents" is not.
                 guard !createStoreUnreadable else { continue }
+                // **And never the server-id half of a checkpointed record.** `isPendingCreate`
+                // is keyed on the *local* id, so it does not cover the draft the migration
+                // writes under `serverID` before removing the local one — and in that window
+                // that draft is the **only copy** of the body. The `.notFound` start-over
+                // rescues it by moving it back; `.forbidden` has no such branch and would land
+                // here, as would any pass where the record is simply not replayable this
+                // session (another account signed in, a build-scoped block), since
+                // `runCreatePass` skips those before the take-back can run. Deleting it makes
+                // the later migration find an all-nil body chain and build an *empty* document
+                // in place of the user's text — the same loss the take-back exists to prevent,
+                // reached one error over. Only the **delete** is withheld: the push path above
+                // must keep running, since it is what clears `finishMigration`'s both-drafts
+                // guard.
+                guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
                 draftStore.remove(documentID: draft.documentID)
             } catch {
                 // Leave the draft for a later sync (e.g. offline right now).

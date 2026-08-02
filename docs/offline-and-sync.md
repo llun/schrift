@@ -1219,12 +1219,6 @@ nice-to-have:
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
-- **A retry or discard for a sub-page whose parent probe answers with an `abilities`
-  object that omits `children_create`.** Since the replay refuses to re-parent on that
-  ambiguous value, such a record is terminal every launch: one POST plus one probe per
-  trigger, the body only in the local draft, and a "Couldn't save changes" retry that
-  `saveNow` no-ops. The trade ("`.failed` is recoverable") holds only while the server's
-  answer can change, so this owes the same affordance as its two siblings below.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it

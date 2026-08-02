@@ -20,8 +20,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// which is what the replay actually POSTs — this is the fallback.
     let title: String
     /// The **server** id of the parent, or nil for a root document. v1 never creates
-    /// under a parent that is itself pending (the synthetic document's
-    /// `abilities.childrenCreate` is false), so this is always a real server id and the
+    /// under a parent that is itself pending, so this is always a real server id and the
     /// replay needs no dependency ordering. `var` because the replay rewrites it to nil and
     /// retries as a root create — degrading the document's *placement* rather than stranding
     /// its content — but **only on the one answer that justifies it**: the probe finding the
