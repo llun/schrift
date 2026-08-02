@@ -1180,9 +1180,12 @@ checkpointed record via `syncedServerID(forLocalID:)`. What remains:
 **Local documents reach the screen through two read-time merges, not one.** Home's root
 list merges `pendingLocalDocuments(parentID: nil)`; the editor's Subpages section merges
 `pendingLocalDocuments(parentID: documentID)`. The second is not symmetry for its own
-sake: `appendChild` writes the new sub-page into `subpages` *and* the children cache
-optimistically, and a successful `loadChildren` replaces **both** wholesale with the
-server's answer, which cannot contain a document the server has never seen. Without the
+sake: `appendChild` puts the new sub-page into the in-memory `subpages` — **never** the
+children cache, which is neither account-scoped nor cleared on sign-out, so a synthetic
+persisted there reaches the next account's session (`load()` seeds `subpages` from it
+synchronously, and `mergedSubpages` can only add, never withhold). A successful
+`loadChildren` replaces `subpages` wholesale with the server's answer, which cannot
+contain a document the server has never seen. Without the
 merge the sub-page disappears on the next fetch — and if its replay parks (`.failed`, or
 blocked for this build) it is unreachable from every list in the app while its body sits
 on disk. The Pages drawer renders from the same cache and inherits the gap; it is
@@ -1248,7 +1251,10 @@ already-recorded ghost residual below, not a new one.
   means either promoting to root on a *terminal* parent failure (not just a 404) or giving
   the stranded record a visible affordance — the same recovery this list already owes for
   `replayBlockedAt` and a permanently-`.forbidden` resume.
-- **The Pages drawer has no read-time merge.** The editor's Subpages section merges local
+- **The Pages drawer has no read-time merge**, and since synthetics are no longer
+  persisted its local page now vanishes on any view-model recreation, not merely on the
+  next successful level fetch.
+  <!-- continues --> The editor's Subpages section merges local
   children; `PagesTreeViewModel` renders from `children`/the shared cache and does not, so a
   local sub-page vanishes from the drawer on the next successful level fetch even though it
   is still listed one screen over. Same fix shape as the editor's `mergedSubpages`.

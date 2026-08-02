@@ -547,6 +547,7 @@ struct EditorView: View {
                             if let query = viewModel.slashQueryText {
                                 SlashMenuView(
                                     query: query, isOffline: isOffline,
+                                    isLocalDocument: viewModel.isLocalDocument,
                                     onSelect: { viewModel.applySlashSelection($0) })
                             }
                             EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)

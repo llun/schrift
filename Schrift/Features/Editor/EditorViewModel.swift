@@ -1141,8 +1141,8 @@ final class EditorViewModel {
     /// The sub-pages the screen renders: the fetched list with this device's unsynced
     /// children merged in at read time.
     ///
-    /// Same rule, and the same reason, as Home's root list. `appendChild` optimistically
-    /// writes a synthetic child into `subpages` and the children cache, but a successful
+    /// Same rule, and the same reason, as Home's root list. `appendChild` puts a synthetic
+    /// child into the in-memory `subpages` (never the cache), and a successful
     /// `loadChildren` replaces **both** wholesale with the server's answer — which cannot
     /// contain a document the server has never seen. Without a read-time merge the local
     /// sub-page simply disappears, and if its replay is parked (`.failed`, or blocked for
@@ -1177,10 +1177,13 @@ final class EditorViewModel {
     /// (fetched or cached): appending to a nil (unknown) list would persist a fabricated
     /// one-element "complete" result that hides the document's real children.
     ///
-    /// A *local* child is written into the children cache like any other, which is safe in a
-    /// way a synthetic row in Home's list cache is not: this cache is keyed by parent and is
-    /// purged wholesale on the parent's own 404/403, and the replay inserts the real child
-    /// here when it migrates. The row the user just created must survive leaving the screen.
+    /// A *local* child is deliberately **not** written into the children cache. An earlier
+    /// version argued it was safe there — keyed by parent, purged on the parent's own 404/403,
+    /// and re-inserted by the replay — and that carve-out is what let a locally-created
+    /// sub-page reach the *next* account: the cache is neither account-scoped nor cleared on
+    /// sign-out, and `load()` seeds `subpages` from it synchronously. `mergedSubpages` supplies
+    /// the row on every read instead, from the account-scoped `pendingLocalDocuments`, so it
+    /// still survives leaving the screen — for its owner only.
     private func appendChild(_ child: Document) {
         // Any in-flight children fetch predates this child — invalidate it.
         childrenGeneration += 1

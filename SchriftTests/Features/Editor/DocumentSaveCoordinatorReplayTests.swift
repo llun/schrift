@@ -1679,9 +1679,6 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         // cannot: it names the id that just 404'd.
     }
 
-    /// The registry the deferrals key off is now wired from `EditorView`, so a balanced
-    /// appear/disappear pair must actually defer a migration and then let it complete. This
-    /// pins the coordinator half of that contract — the view owns the balance, the view model
     /// **Deleting the empty server stray must not take a live editor's body.** An editor
     /// reopened during the POST leaves the record checkpointed-but-unmigrated, so Home shows
     /// the server document — empty, since the body is enqueued only at migration — and the
@@ -1709,6 +1706,9 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "starting over, since the document it was checkpointed onto is gone")
     }
 
+    /// The registry the deferrals key off is now wired from `EditorView`, so a balanced
+    /// appear/disappear pair must actually defer a migration and then let it complete. This
+    /// pins the coordinator half of that contract — the view owns the balance, the view model
     /// only forwards.
     func testAnEditorRegistrationDefersTheMigrationAndReleasingCompletesIt() async {
         let log = RequestRecorder()

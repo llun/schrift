@@ -83,10 +83,13 @@ func slashQuery(text: String, kind: BlockKind) -> String? {
 /// and the Pages drawer's "New page" stay gated: it POSTs, so it can't be offered.
 /// (Editing itself is *not* gated — its edits are durable the moment the flush writes
 /// the draft.)
-func filteredSlashItems(query: String, isOffline: Bool = false, items: [SlashMenuItem] = allSlashMenuItems)
-    -> [SlashMenuItem]
-{
-    let available = isOffline ? items.filter { $0.action != .insertPhoto } : items
+func filteredSlashItems(
+    query: String, isOffline: Bool = false, isLocalDocument: Bool = false,
+    items: [SlashMenuItem] = allSlashMenuItems
+) -> [SlashMenuItem] {
+    // A local document has no server id to upload against — see `canOfferPhotoInsertion`.
+    let available =
+        isOffline || isLocalDocument ? items.filter { $0.action != .insertPhoto } : items
     let trimmed = query.trimmingCharacters(in: .whitespaces).lowercased()
     guard !trimmed.isEmpty else { return available }
     return available.filter { item in

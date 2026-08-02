@@ -147,7 +147,16 @@ final class HomeViewModel {
         if userDefaults.bool(forKey: "schrift.workOffline") {
             pinnedDocuments = cache.loadPinnedDocuments()
             let cachedRecents = cache.loadRecentDocuments()
-            fetchedRecentDocuments = cachedRecents ?? []
+            // Don't clobber a just-migrated in-memory row with a nil cache. `runCreatePass`
+            // reads no `workOffline` gate, so a replay *does* run in this mode — and on a
+            // fresh install `insertIntoListCaches` correctly declines to write a cache that
+            // was never fetched, so this assignment would drop the document that just synced
+            // out of every list, with no way back while the toggle is on.
+            if let cachedRecents {
+                fetchedRecentDocuments = cachedRecents
+            } else if fetchedRecentDocuments.isEmpty {
+                fetchedRecentDocuments = []
+            }
             hasKnownFetchedList = cachedRecents != nil
             isOffline = true
             isLoading = false

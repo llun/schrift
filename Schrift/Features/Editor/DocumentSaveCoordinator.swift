@@ -911,7 +911,11 @@ final class DocumentSaveCoordinator {
         // document they threw away. Note bailing here is **not** free the way the guard above
         // is: the POST landed, so an empty document is left on the server that nothing on this
         // device now references — see the delete-branch obligation in `docs/offline-and-sync.md`.
-        guard pendingCreates[record.localID] != nil else { return }
+        // The *checkpoint*, not merely the record. `discardPendingWork`'s open-editor branch
+        // creates a state that did not previously exist — record present, checkpoint cleared —
+        // and migrating on a captured `syncedServerID` would re-key onto a server id the user
+        // has just deleted.
+        guard pendingCreates[record.localID]?.syncedServerID == serverID else { return }
         // **The two guards above are keyed on `localID`; the rest are keyed on `serverID` —
         // except the last, which reads both, since it fires on the complement of the
         // partial-migration window: the local draft gone while the server-id one remains.**
@@ -1149,8 +1153,10 @@ final class DocumentSaveCoordinator {
         // A local document never reached the content cache (only a confirmed save or a fetch
         // writes one), but purge defensively so a stale entry can never outlive the id.
         contentCache.remove(documentID: localID)
-        // And the synthetic row the editor/drawer optimistically wrote into its parent's
-        // cached level. `insertIntoListCaches` appends the *real* child below, and its
+        // Historical: the editor/drawer used to persist a synthetic row into the parent's
+        // cached level, and no longer do (that carve-out leaked a local sub-page into the next
+        // account). Kept because a cache written by an older build still holds one, and
+        // because `insertIntoListCaches` appends the *real* child below, and its
         // de-dupe is by id — a different id — so without this the level holds both: two rows
         // in Subpages and the Pages drawer, one of which reports "no longer available" for a
         // document that has just synced. Same API `handleDidDelete` uses for the same ghost.
@@ -2129,20 +2135,27 @@ final class DocumentSaveCoordinator {
             // Clear only the checkpoint instead. The record starts over, so the document the
             // user actually has open re-POSTs as a fresh create carrying its body — which is
             // what they meant by deleting an empty stray, not "throw away what I am typing".
-            guard !hasOpenEditor(documentID: checkpointed.localID) else {
+            if hasOpenEditor(documentID: checkpointed.localID) {
                 var restarted = checkpointed
                 restarted.syncedServerID = nil
                 restarted.postedTitle = nil
                 updatePendingCreate(restarted)
-                return
+                // Deliberately an `if`, not an early `return`. The statements after this
+                // branch are about the document being **deleted** — the server id — not about
+                // the record, and returning cancelled them: the `serverID` draft survived, and
+                // `discardedDuringSave` never learned about an in-flight save, so `finish`
+                // took its success path and re-created the content cache entry for a document
+                // that had just been DELETEd. That is invariant 0b, reintroduced by a guard
+                // scoped to one concern that also swallowed another.
+            } else {
+                removePendingCreate(documentID: checkpointed.localID)
+                states[checkpointed.localID] = .idle
+                draftStore.remove(documentID: checkpointed.localID)
+                queued[checkpointed.localID] = nil
+                settledSaves[checkpointed.localID] = nil
+                lastConfirmedPushMarkdown[checkpointed.localID] = nil
+                knownServerTitles[checkpointed.localID] = nil
             }
-            removePendingCreate(documentID: checkpointed.localID)
-            states[checkpointed.localID] = .idle
-            draftStore.remove(documentID: checkpointed.localID)
-            queued[checkpointed.localID] = nil
-            settledSaves[checkpointed.localID] = nil
-            lastConfirmedPushMarkdown[checkpointed.localID] = nil
-            knownServerTitles[checkpointed.localID] = nil
         }
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {
