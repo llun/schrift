@@ -1,0 +1,27 @@
+CLAUDE.md
+  s_351b5e522a97a5::t_387c6766df58a8 1899-1900,1902,1916
+  s_351b5e522a97a5::t_4cbe3804f3e74f 1917-1926,1929-1931,1938-1939
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_351b5e522a97a5::t_fbb6c4006398b4 82-83
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTests.swift
+  s_351b5e522a97a5::t_fbb6c4006398b4 7
+docs/offline-and-sync.md
+  s_351b5e522a97a5::t_1b2553c19aa53b 68-71
+  s_351b5e522a97a5::t_0d2094183f84f6 162-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "65ad50d60305883416c8c774bfb215a1faf554d0",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
