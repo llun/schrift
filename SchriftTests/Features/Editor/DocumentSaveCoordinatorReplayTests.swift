@@ -1878,7 +1878,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// a conflicted draft**, so the 404 branch it defers to is unreachable for exactly that
     /// draft — and `init` rehydrates the stamp from disk, so the skip outlives relaunches. No
     /// process kill is needed to reach it.
-    func testAStartOverDischargesAConflictAgainstTheDeadServerID() async {
+    func testAStartOverKeepsAConflictAgainstTheDeadServerID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
@@ -1900,9 +1900,17 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         await relaunched.coordinator.syncPendingDrafts()
 
-        XCTAssertNil(
+        // Round 33 asserted the opposite here, on the reasoning that a discharged conflict
+        // stops the record stranding. That was wrong in the direction that costs content: a
+        // bare 404 is not proof the document is gone, and discharging drops the held
+        // keystrokes *and* the checkpoint protecting this draft, after which `runSyncPass` —
+        // next in the same pass, on the same 404 — deletes it. Stranding is recoverable;
+        // deleting the only copy is not.
+        XCTAssertNotNil(
             relaunched.coordinator.conflict(for: serverID),
-            "the document is gone — nothing left to ask about, and the record must not strand")
+            "kept — the 404 is not evidence, and the body it holds is the only copy")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Typed under the server id")
     }
 
     /// The partial-migration draft's push evidence must be **carried forward** when the body
@@ -1951,7 +1959,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// discharge. Gating the clear on `queued == nil` (as an earlier revision did) leaves the
     /// record stranded permanently, with `runSyncPass` skipping the draft on both `queued` and
     /// `conflicts`, and `init` rehydrating the stamp across relaunches.
-    func testAStartOverDischargesAConflictEvenWithASaveParked() async {
+    func testAStartOverKeepsAConflictEvenWithASaveParked() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
@@ -1969,9 +1977,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         await relaunched.coordinator.syncPendingDrafts()
 
-        XCTAssertNil(
-            relaunched.coordinator.conflict(for: serverID),
-            "discharged — otherwise the record strands with no reaper and no user escape")
+        // Inverted for the same reason as the test above: the parked save *is* the user's
+        // work, and discharging it here is the loss, not the cleanup.
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "kept")
+        XCTAssertEqual(relaunched.drafts.draft(for: serverID)?.markdown, "# Parked")
     }
 
     /// A bare 403 on the probe must **not** promote — the same rule the resume path states
@@ -2223,6 +2232,64 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// The loss path with no conflict anywhere. A checkpointed record, a local draft, and the
+    /// user's own work under the server id whose save failed transiently. The take-back
+    /// declines by design (a local draft is present, so that body is not ours to move), and
+    /// before the start-over was gated, clearing `syncedServerID` disarmed the only thing
+    /// stopping `runSyncPass` — next in the same pass, on the same 404 — from deleting it.
+    func testASpuriousNotFoundKeepsADraftTheTakeBackDeclinesToMove() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Untitled document"
+        env.creates.save(record)
+        // Both bodies exist: the seed draft under the local id, the user's under the server id.
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Their own work",
+                updatedAt: Date(), baseline: nil))
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        // Relaunch, so the coordinator's in-memory mirror actually carries the checkpoint —
+        // writing it straight to the store leaves the mirror stale, and every guard that keys
+        // off `checkpointedRecord(forServerID:)` reads the mirror.
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "# Their own work")
+        XCTAssertNotNil(env.drafts.draft(for: local.id))
+        XCTAssertEqual(env.creates.create(for: local.id)?.syncedServerID, serverID)
+    }
+
+    /// The take-back moves an orphaned body off the server id — but it must not do that under a
+    /// live editor, which would yank the disk backing out from under the screen and let the
+    /// re-POST mint a second document holding the same text.
+    func testTheTakeBackDeclinesWhileAnEditorHoldsTheServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# Live", updatedAt: Date(), baseline: nil))
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: serverID)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "# Live")
+        XCTAssertNil(env.drafts.draft(for: local.id))
+        XCTAssertEqual(env.creates.create(for: local.id)?.syncedServerID, serverID)
+    }
+
     /// A spurious 404 must not void a persisted conflict hold. The start-over's premise is
     /// "the document is gone", but a proxy hiccup maps to `.notFound` too — and discharging on
     /// one drops the held keystrokes, erases the hold in memory and on disk, and removes the
@@ -2240,8 +2307,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
-        // A live editing session under the server id, with a recorded conflict holding its push.
-        relaunched.coordinator.retainOpenEditor(documentID: serverID)
+        // The user typed under the server id, a conflict held the push — and they navigated
+        // away, so no editor is open and no save is in flight. That is the whole point: the
+        // work at stake leaves no witness of *concurrent* activity, so a gate that only asks
+        // about concurrency lets the discharge through and reaps the draft.
         relaunched.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
         relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Held")
 

@@ -1246,6 +1246,14 @@ nice-to-have:
   scope: a title PATCH from that branch is an unowned `Task` outside the coordinator's
   ordering bookkeeping, which is what made the first attempt a defect. The residual is that
   a provably-newer rename is dropped for a document whose body is being adopted wholesale.
+- **An escape for a checkpoint that keeps 404ing with work under its server id.** The
+  start-over now declines while a `serverID` draft survives, so a genuinely deleted
+  document leaves the record checkpointed indefinitely: two GETs per trigger, the body on
+  disk, nothing reaping it and no way to see it. That is deliberate — the alternative
+  deleted the only copy on a proxy hiccup — but it is the same shape as the `.forbidden`
+  resume below and wants the same affordance: surface the stranded body and let the user
+  keep or discard it. Until then the escape is manual (resolve the conflict, or discard the
+  document once the create UI can).
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it
@@ -1458,11 +1466,13 @@ the stored document, and it would be the app's only full-overwrite of content no
 local user authored. A title-only PATCH avoids that but fails differently: **nothing
 here can show our title is the newer one.** It falls back through the draft to the
 server's own title for a never-typed-into document, so there is nothing local to
-assert, and the branch only fires once the server has acquired a *body* — after
-real elapsed time in the checkpointed state, during which a rename on the web is at
-least as likely as one on the device. So the accepted residual is that a rename made
-here on a document with no local body is lost when the server has moved on;
-recovering it needs evidence this branch does not have.
+assert **for a document that was never typed into**. That last clause is what the
+first draft of this section missed, and the code comment on the adopt branch now
+says so outright: once `postedTitle` records what the POST actually sent, a local
+title differing from it *is* evidence of a rename made here, and the branch has it.
+So the residual is narrower than "recovering it needs evidence this branch does not
+have" — the evidence exists, the adopt branch simply does not act on it yet, and
+carrying a provably-newer local rename through the adopt is recorded as owed below.
 
 **Failures never strand content.** Transport/5xx/rate-limit and `.sessionExpired`
 leave everything for the next trigger. A sub-page whose parent is gone or no
@@ -1591,16 +1601,35 @@ can leave the only copy under `serverID` — the draft is written there before t
 one is removed, so that no instant exists with the content nowhere — and the
 checkpoint is the last thing tying it to the record. Clear it first and the body is
 **orphaned**: the re-POST mints a *different* server id and its body chain looks under
-the local id and the new one, never the old, so it builds an empty document — and the
-stranded draft is separately reaped by `runSyncPass` — which is why the start-over must
-first **discharge any conflict** against that id, since `runSyncPass` skips a conflicted
-draft and the reap would otherwise never run, stranding the record permanently (`init`
-rehydrates the stamp, so the skip outlives relaunches). It GETs the draft and takes the same
-404. (That draft is never covered by the pending-create hold in either ordering — the
-hold is keyed on the local id. The ordering decides whether the body is still
-*reachable*, not whether it is protected from that sweep — the checkpointed window has its own
-server-id suppression there, and this branch is about the state after the checkpoint is
-cleared.)
+the local id and the new one, never the old, so it builds an empty document, and the
+stranded draft is separately reaped by `runSyncPass`, which GETs it and takes the same 404.
+
+**And it starts over only when nothing is left under that id.** The premise of the whole
+branch is "the checkpointed document is gone", and a bare `.notFound` does not establish
+that — a proxy hiccup maps to it too (`CLAUDE.md` invariant 0c). Two effects hang off that
+premise, and both are destructive: discharging the conflict drops the held keystrokes, and
+clearing `syncedServerID` disarms the server-id suppression above — after which
+`runSyncPass`, next in the *same* pass and on the *same* 404, deletes the draft. So one
+spurious 404 could take the user's only copy, with no process death and no editor open.
+
+Gating that on evidence of *concurrent* activity (a live save, an open editor,
+`mayPredateSave`) is not enough, because the user who typed under `serverID` and then
+navigated away leaves no such witness — and theirs is exactly the work at stake. The
+sufficient question is not "is anyone busy?" but "is anything still there to lose?", so the
+start-over requires `draftStore.draft(for: serverID) == nil`: take the body back if this is
+the partial-migration window, and otherwise leave the checkpoint in place and re-ask next
+pass. The take-back carries the concurrency conjuncts for its own reason — it can run with a
+live editor on `serverID` (`runCreatePass` only guards the *local* id), and removing that
+draft would yank the screen's disk backing and split the conflict mirror
+`persistConflictOnDraft` keeps whole.
+
+This does mean a genuinely deleted document can strand: checkpointed forever, two GETs per
+trigger, its body on disk but unreachable. That is the same stuck-but-lossless outcome the
+`.forbidden` resume already accepts, and it is bounded by the same owed recovery affordance —
+recorded below. An earlier revision discharged instead, reasoning that `runSyncPass` skips a
+conflicted draft so the reap would never run and the record would strand permanently. True,
+but it ranked the harms backwards: stranding is recoverable and deleting the only copy is
+not, which is the hierarchy the rest of this file already applies.
 
 **Order is the whole point.** These are two independent
 UserDefaults keys, so a kill between them is a real state: move-then-clear is

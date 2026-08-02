@@ -71,8 +71,17 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// body created nothing. Retrying is therefore not a free retry: it very likely POSTs a
     /// second document and abandons the first.
     ///
-    /// This is the one failure that has to survive the process. Every other merits
-    /// rejection (a validation 400) proves nothing was created, so it stays the in-memory
+    /// This is the one failure that has to survive the process — but not the only one that
+    /// is ambiguous about whether the server built the document. `performRequest` wraps a
+    /// dropped or timed-out response into `.network`, which can equally hide a POST the
+    /// server applied (`start`'s catch records the same ambiguity for saves). That one is
+    /// deliberately left retryable: a create that never reached the server must retry, and
+    /// there is no idempotency key to tell the two apart, so the accepted cost is one
+    /// orphaned empty document per lost response. What separates `.decoding` is that it
+    /// arrives *after* a 2xx, so a retry is very likely a duplicate rather than possibly
+    /// one — which is what earns it a persistent block instead of a free retry.
+    ///
+    /// Every failure on the merits (a validation 400) proves nothing was created, so it stays the in-memory
     /// `.failed` state that `init` deliberately re-seeds to `.pendingSync` — a relaunch
     /// retries and costs nothing. A decode failure is the opposite: `CLAUDE.md` records
     /// this having happened here for real (`is_favorite` decoded as a required `Bool`

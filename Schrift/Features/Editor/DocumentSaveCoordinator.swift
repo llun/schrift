@@ -646,15 +646,24 @@ final class DocumentSaveCoordinator {
             // uses: with one present this is not the partial-migration window, so the `serverID`
             // draft is the user's own separate work and must not overwrite the local body.
             // (Not "work against a real document" — that clause is `finishMigration`'s, where
-            // the fetch *succeeded*. Here it 404'd, so the document is gone.) The accepted
-            // consequence: `runSyncPass`, next in this same pass, will GET that draft, take the
-            // same 404 and remove it — so the
-            // newer server-id body is dropped while the older local one is re-POSTed. Rare
-            // (it needs a checkpointed record, an edit under the server id whose save failed
-            // transiently, and then a server-side delete) and it is the conservative direction:
-            // this branch declines to overwrite, and the loss is the ordinary 404-draft rule
-            // acting on a document that really is gone.
-            if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID) {
+            // the fetch *succeeded*. Here it 404'd, so the document is probably gone.) That
+            // case is no longer a loss: with both drafts present the start-over below declines,
+            // the checkpoint stays, and the checkpoint is what stops `runSyncPass` reaping the
+            // `serverID` draft. Both bodies survive; the record simply retries next pass.
+            //
+            // The take-back carries the same three conjuncts as the start-over, for the same
+            // reason and one more. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
+            // so this branch can run with a live editor — or an in-flight save — on `serverID`,
+            // and removing that draft yanks the disk backing out from under it; the editor's
+            // next flush would recreate it while the re-POST mints a *second* document holding
+            // the same body. It would also split the conflict mirror
+            // `persistConflictOnDraft` exists to keep whole: the persisted
+            // `conflictServerUpdatedAt` dies with the draft while `conflicts[serverID]` lives
+            // on in memory, unrepairable (that method needs a draft to write to), so the hold
+            // is silently lost at the next relaunch.
+            if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID),
+                !mayPredateSave(marker), inFlight[serverID] == nil, !hasOpenEditor(documentID: serverID)
+            {
                 draftStore.save(
                     PendingDraft(
                         documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
@@ -681,32 +690,37 @@ final class DocumentSaveCoordinator {
             // `releaseHeldSave` is its only drainer, reached only from the call being skipped.
             // Dropping it makes `releaseHeldSave` a provable no-op, so no PATCH can start at an
             // id that just 404'd, and the ordinary 404 rule can finally reap the draft.
-            // **Only on the same evidence the success path uses.** This branch's premise is
-            // "the document is gone", and `CLAUDE.md`'s invariant 0c refuses that reading of a
-            // bare 404 elsewhere — a proxy hiccup maps to `.notFound` too. Discharging on a
-            // spurious one drops the held keystrokes, erases a persisted conflict hold both in
-            // memory and on the draft, and removes the `checkpointedRecord` suppression that
-            // was protecting the draft from the sweep — after which a keystroke landing before
-            // `runSyncPass` re-detects (it awaits a fetch first) reaches `enqueue` with nothing
-            // holding it and full-overwrites the diverged server body, unasked. The
-            // duplicate-document cost of a spurious 404 is accepted and documented; silently
-            // voiding a hold is not, and is strictly worse. So skip the discharge when a save
-            // is live or an editor is open under that id, or when one settled inside the
-            // fetches — the checkpoint clear below is still safe, and the next pass re-asks.
-            if !mayPredateSave(marker), inFlight[serverID] == nil, !hasOpenEditor(documentID: serverID) {
-                queued[serverID] = nil
-                clearResolvedConflict(documentID: serverID)
-            }
+            // **Do not start over while work survives under the server id.** The checkpoint is
+            // the *only* thing protecting that draft: `isPendingCreate` is keyed on the local
+            // id, so `runSyncPass`'s delete branch skips it solely because
+            // `checkpointedRecord(forServerID:)` answers non-nil. Clearing `syncedServerID`
+            // disarms that — and `runSyncPass` runs next in the same pass, takes the same 404,
+            // and removes the draft. That is content loss from one bare 404, with no process
+            // death and no editor open.
+            //
+            // Gating on *concurrent* activity (a live save, an open editor) is not enough,
+            // because the user who typed under `serverID` and then navigated away leaves no
+            // such witness — and theirs is exactly the work at stake. The only sufficient
+            // evidence is whether anything is still there to lose.
+            //
+            // So: take the body back if this is the partial-migration window (above), and
+            // otherwise start over only when nothing remains under `serverID`. If something
+            // does, leave the checkpoint — the record stays protected and the next pass
+            // re-asks. A genuinely gone document then sticks in that state, which is the same
+            // stuck-but-lossless outcome the `.forbidden` branch already accepts and the same
+            // recovery the create UI owes; a spurious 404 simply resolves next pass.
+            guard draftStore.draft(for: serverID) == nil else { return }
+            // Nothing is left under that id, so the conflict record and any parked save are
+            // moot by construction — there is no work left for them to protect.
+            queued[serverID] = nil
+            clearResolvedConflict(documentID: serverID)
             record.syncedServerID = nil
-            // The block belongs to the create attempt that failed to decode, and this record is
-            // about to start over with a fresh POST — carrying a spent stamp forward would wedge
-            // the record for any build that matches it.
-            record.replayBlockedAt = nil
-            record.replayBlockedBuild = nil
             // Cleared with the checkpoint it was stamped beside, or a persisted record would
             // carry a `postedTitle` with no `syncedServerID` — which is what its own doc
             // comment says cannot happen.
             record.postedTitle = nil
+            record.replayBlockedAt = nil
+            record.replayBlockedBuild = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             return
         } catch {

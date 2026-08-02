@@ -1473,10 +1473,21 @@ markdown write endpoint**. Understand this before touching the save path:
   *server* id, and the checkpoint is the last thing tying it to the record — so
   clearing first **orphans** the body: the re-POST mints a different server id and
   its body chain never looks under the old one, so it builds an **empty** document,
-  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule — which is why the
-  start-over first discharges any conflict against that id: `runSyncPass` **skips a
-  conflicted draft**, so the reap it defers to would never run and the record would
-  strand permanently (`init` rehydrates the stamp, so the skip outlives relaunches). (That
+  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule.
+  **And it starts over only when nothing is left under that id.** A bare `.notFound` is not
+  proof the document is gone (invariant 0c), yet two destructive effects hang off that
+  premise: discharging the conflict drops the held keystrokes, and clearing `syncedServerID`
+  disarms the server-id suppression — after which `runSyncPass`, next in the *same* pass on
+  the *same* 404, deletes the draft. Gating on *concurrent* activity is insufficient, because
+  the user who typed under `serverID` and navigated away leaves no such witness and theirs is
+  the work at stake; the sufficient question is whether anything remains to lose, so the
+  start-over requires `draftStore.draft(for: serverID) == nil` and the take-back carries the
+  concurrency conjuncts for its own reason (it can run under a live editor on the server id,
+  where removing the draft yanks the screen's backing and splits the conflict mirror). A
+  genuinely deleted document then strands — checkpointed, unreachable, lossless — which is
+  the `.forbidden` resume's accepted outcome and wants the same owed affordance. An earlier
+  revision discharged instead, to stop exactly that strand; it ranked the harms backwards.
+  (That
   draft is never covered by the pending-create hold in either ordering — the hold is
   keyed on the local id. The ordering decides whether the body is still *reachable*,
   not whether it is protected from that sweep — the checkpointed window has its own
