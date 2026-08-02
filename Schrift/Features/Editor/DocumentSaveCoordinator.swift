@@ -353,7 +353,7 @@ final class DocumentSaveCoordinator {
     /// changes), and `.pendingSync` — nothing is syncing, but the work *is* on the device.
     ///
     /// `parentID` is a **server** id or nil; v1 never creates under a parent that is itself
-    /// pending, so a replay needs no dependency ordering. **Nothing gates on that
+    /// pending, so a replay needs no dependency ordering. **That is enforced by the affordances
     /// yet**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
     /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
     /// denied are indistinguishable), and the sub-page affordance gates on the parent being local.

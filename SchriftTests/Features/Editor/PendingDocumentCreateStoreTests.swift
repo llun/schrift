@@ -145,10 +145,11 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
 
         XCTAssertTrue(document.abilities.update)
         XCTAssertTrue(document.abilities.partialUpdate)
-        // False until the UI has a local-delete branch: `OptionsViewModel.delete()` only
-        // ever calls the server, which would 404, so advertising it promises a delete that
-        // cannot happen — and leaves the record un-removable, since `discardPendingWork` is
-        // reached only from a *successful* delete.
+        // False even though deleting one now works. `OptionsViewModel.delete()` takes a
+        // local branch for a pending-create id, but it asks `isLocalDocument` — nothing
+        // consults these abilities to decide what to offer — so flipping this would change
+        // no behaviour while costing the dictionary its one meaning: what the *server*
+        // would allow for this id, which is nothing, because it does not know the id.
         XCTAssertFalse(document.abilities.destroy)
         XCTAssertFalse(document.abilities.childrenCreate)
         XCTAssertFalse(document.abilities.favorite)

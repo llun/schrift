@@ -21,10 +21,12 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   is also **editable** offline: the edit is written to `PendingDraftStore` before
   any network attempt, parks at `.pendingSync` ("Saved on this device · syncs
   when online"), and replays on reconnect/foreground/launch. Offline *creation*
-  is still out of scope, though its storage and safety holds
+  has landed too — Home's `+`, "Add a subpage" and the drawer's "New page" mint a
+  client-minted-id record when the network cannot take the POST, and a replay POSTs it
+  and migrates the draft onto the server's id. Its storage and safety holds
   (`PendingDocumentCreateStore`, the gates that keep any *save* from naming a
   client-minted id, and the replay that POSTs such a document and migrates it onto
-  the server's id) have landed dormant. See
+  the server's id) landed first. See
   [`offline-and-sync.md`](offline-and-sync.md).
 - **Persistent sessions.** Session cookies persist in the Keychain (as
   `…WhenUnlockedThisDeviceOnly`, so a restored backup can't carry a live session
@@ -68,7 +70,8 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
   drafts, `.pendingSync`, conflict-checked replay on reconnect/foreground/launch)
   landed with the offline-sync work, and 2026-08-01 removed the view gates that
   kept it unreachable from a cold offline open. Offline **creation** of a
-  document is still a non-goal.
+  document landed 2026-08-02; only a child of an *unsynced* parent remains out of
+  scope, because the replay cannot order two dependent creates.
 - Comments/threads.
 - AI features (proxy/transform/translate endpoints exist server-side but are out of scope).
 - ~~Document version history browsing/restore.~~ **Superseded for browsing**: a

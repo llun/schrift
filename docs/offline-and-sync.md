@@ -63,13 +63,13 @@
 > itself: every block transformation is a local edit the draft pipeline queues,
 > but **inserting a photo** uploads a multipart attachment for which there is no
 > queue, so it is withheld offline too (disabled in `EditorFormattingBar`,
-> dropped from the slash menu by `filteredSlashItems(query:isOffline:)`) —
+> dropped from the slash menu by `filteredSlashItems(query:isOffline:isLocalDocument:)`) —
 > otherwise it would open the picker and re-encode the chosen image only to
 > fail. Offline **creation** was out of scope in *this* change — the "Add a subpage"
 > and Pages-drawer "New page" buttons stayed gated here — and is **superseded**: it
 > landed 2026-08-02, and those buttons now fall back to a local document rather than
 > gating on `isOffline`. See "Documents created on this device". That rule describes the
-> editor, **not the whole app**: Home's `+` POSTs ungated and simply errors, and
+> editor, **not the whole app**: Home's `+` now creates locally when the network cannot take the POST, and
 > the Options/Share sheets stay reachable offline throughout. Both predate this
 > change. Two decisions ride along:
 > the editor's `isOffline` stays a **chrome-only** signal derived from the Home
@@ -1301,13 +1301,13 @@ already-recorded ghost residual below, not a new one.
   reachable through today's Options sheet and would otherwise resurrect the
   document on the next replay.)
 - **Reconciling `HomeViewModel.createDocument`'s work-offline branch with the
-  never-fabricate rule.** It does `cache.loadRecentDocuments() ?? []` and saves the
+  never-fabricate rule.** **[LANDED]** It used to do `cache.loadRecentDocuments() ?? []` and save the
   result, which is exactly the one-row fabrication the replay's own insert refuses —
   a first fetch that failed then renders one row, no skeleton, and
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
-- **Repopulating a *live* Home after a migration.** The replay's list-cache insert feeds
+- **[LANDED — `onDocumentMigrated`]** Repopulating a *live* Home after a migration.** The replay's list-cache insert feeds
   the next Home construction and the work-offline read — the only two places
   `HomeViewModel` re-seeds from the cache — but an online `load()` overwrites from the
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
@@ -1334,7 +1334,7 @@ already-recorded ghost residual below, not a new one.
   a provably-newer rename is dropped for a document whose body is being adopted wholesale.
 - **The adopt branch can discharge a conflict a live, dirty editor recorded.** Its
   justification is that it "has just removed every local trace for that id" — false when the
-  local trace is an unflushed dirty screen. With `retainOpenEditor` unwired, a user can open
+  local trace is an unflushed dirty screen. **[LANDED — `EditorView` retains for every document]** Before that wiring, a user could open
   the checkpointed document under its *server* id, type, have `apply`'s dirty branch record a
   conflict in memory (no draft yet, so nothing on disk), and then have a reconnect run the
   migration straight through every guard: the seed draft's empty body sets `willAdoptServer`,
@@ -1369,7 +1369,7 @@ already-recorded ghost residual below, not a new one.
   deleted the only copy on a proxy hiccup — but it is the same shape as the `.forbidden`
   resume below and wants the same affordance: surface the stranded body and let the user
   keep or discard it. Until then the escape is manual (resolve the conflict, or discard the
-  document once the create UI can).
+  document, which the create UI now can).
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it
