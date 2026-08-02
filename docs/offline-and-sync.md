@@ -1442,29 +1442,38 @@ the user, a lost body is not — but only on *evidence*. A `403` on a POST is no
 only "the parent isn't yours": it is also what Django answers for a bad `Origin`
 (the capitalised-host bug), and an HTML `404` is not proof a route is absent,
 since a proxy can serve one for a path it swallowed. So the parent is **probed**,
-and its answer decides — **gone ⇒ promote** (not a bare 403: an ancestor-access
-recompute 403s transiently and would 403 the create too, the same reason the resume path
-drops a checkpoint only on `.notFound`, and promotion is irreversible); reachable but
-`abilities.childrenCreate` false ⇒ **terminal `.failed`, not a promote** (without
-something here a permission downgrade between minting and replaying had *no terminal
-state at all*: it never promoted, never failed, and paid a POST plus a probe on every
-trigger forever — but promoting on that value is not available to us, since `Document`
-decodes it `decodeIfPresent(...) ?? false`, so an `abilities` object that merely omits
-the key is indistinguishable from one denying it; this is the app's first and only
-consumer of the field, on a route whose serializer it has never depended on before, and
-the repo has already been bitten by exactly that variance with `is_favorite`.
-Re-parenting is irreversible, so it must not rest on a value that cannot say "the server
-didn't answer"); reachable and willing ⇒ the create itself was rejected, so **terminal
-`.failed`** — the same treatment the root path gives that error. Leaving it retryable was an
-asymmetry with teeth: a capitalised host makes Django answer `403 CSRF Failed` on the POST
-while the probe, a GET, succeeds — so a root create parked immediately while a sub-page paid
-a POST plus a probe on every trigger forever, caption still reading "syncs when online". A
-probe that cannot
-answer leaves the record alone — "I couldn't ask" must never read as "it isn't
-there". A `.routeNotFound` on a **root** create retries rather than parking — a missing route
-is a fact about the server, not this document, the same reading the resume path gives
-it. Anything else rejected on the merits sets `.failed`, which the
-pass skips and a relaunch retries once — note that is *not* the reading surface's
+and its answer decides. Every outcome has exactly one end state, and root and sub-page
+now differ in **zero** cells:
+
+- **gone (404) ⇒ promote.** The one answer that justifies re-parenting, which is
+  irreversible — the old parent is stored nowhere and there is no move feature. Never a
+  bare 403: an ancestor-access recompute 403s transiently and would 403 the create too,
+  so the pair is one transient seen twice rather than corroboration — the same rule the
+  resume path states for the same evidence.
+- **403 ⇒ terminal `.failed`.** The server answered, just not dispositively, and the
+  create error is non-retryable, so it still owes an end state. Without this the record
+  paid a POST plus a probe on every reconnect, foreground and launch, forever, with the
+  caption reading "syncs when online".
+- **reachable ⇒ terminal `.failed`.** The failure was about the create itself, which is
+  how the root path treats the same error. `abilities.childrenCreate` is deliberately
+  **not** consulted: `Document` decodes it `decodeIfPresent(...) ?? false`, so an
+  `abilities` object that merely omits the key is indistinguishable from one denying it
+  — this would be the app's only read of that field, on a route whose serializer it has
+  never depended on, and the repo has already been bitten by exactly that variance with
+  `is_favorite`. Both readings reach the same terminal outcome anyway, so consulting it
+  would buy a distinction the code does not act on.
+- **unanswerable (transport, 5xx) ⇒ retry.** "I couldn't ask" must never read as "it
+  isn't there".
+
+**`.routeNotFound` returns before the probe, root or sub-page.** A missing route is a
+fact about the server, not this document, and the probe cannot speak to it either — it
+tests `documents/{p}/`, a different path from the one that 404'd. Scoping that return to
+roots parked every offline sub-page for the session whenever a proxy swallowed the
+children route during a deploy, while an identically-affected root recovered on the next
+trigger.
+
+Anything else rejected on the merits sets `.failed`, which the pass skips and a relaunch
+retries once — note that is *not* the reading surface's
 "tap to retry", which cannot reach a local document whose content is parked in
 `queued`; a create-specific affordance belongs with the UI.
 
