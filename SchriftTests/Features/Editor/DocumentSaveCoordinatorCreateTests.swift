@@ -373,7 +373,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// **An unreadable *drafts* store must stop the replay, not be read as "every body is
     /// empty".** `PendingDraftStore.loadAll` is all-or-nothing, so one undecodable blob makes
     /// every `draft(for:)` answer nil. Before the replay existed that only made unsaved work
-    /// invisible; the replay is the first caller that acts irreversibly on it — it would POST
+    /// invisible; the replay is what turns it into destroyed content — it would POST
     /// each record under its mint title, pass `finishMigration`'s both-drafts guard (which
     /// reads the same nil), enqueue `""`, and then `removePendingCreate`, deleting the one
     /// thing that could have driven a recovery after a shipped decode fix.

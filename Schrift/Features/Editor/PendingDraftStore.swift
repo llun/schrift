@@ -104,10 +104,13 @@ final class PendingDraftStore {
     ///
     /// `loadAll` is all-or-nothing, so one undecodable blob makes every `draft(for:)` answer
     /// nil. Read as "there is no draft" that is merely invisible, which is how the app behaved
-    /// before the create replay existed. The replay is the first caller that acts
-    /// *irreversibly* on that read: it POSTs a document whose body it believes empty and then
-    /// deletes the create record, which is the only thing that could have driven a recovery
-    /// after a shipped decode fix. So it asks this first.
+    /// before the create replay existed. The replay is what turns that read into *destroyed*
+    /// content: it POSTs a document whose body it believes empty and then deletes the create
+    /// record, which is the only thing that could have driven a recovery after a shipped
+    /// decode fix. So it asks this first. (Not the only irreversible consumer, though —
+    /// `DocumentSaveCoordinator.init`'s conflict rehydration reads the same empty answer and
+    /// silently drops every persisted hold, after which the next `enqueue` full-overwrites a
+    /// server body the user was warned about. That one predates the replay.)
     ///
     /// **Detection only, and not sticky** — unlike `PendingDocumentCreateStore`, whose
     /// equivalent ORs in a quarantine key and is read once at init. Every mutating method here

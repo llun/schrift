@@ -161,8 +161,8 @@ final class DocumentSaveCoordinator {
     /// **That is the design, not the current state.** `retainOpenEditor`/`releaseOpenEditor`
     /// have zero production callers — every call site today is a test — so this stays empty,
     /// `hasOpenEditor` always answers false, and none of its five readers — four `guard`
-    /// deferrals plus the take-back's conjunct — ever fires. Wiring it from `EditorView`, for *every* document rather than only
-    /// locally-created ones, is owed with the create UI.
+    /// deferrals plus the take-back's conjunct — ever fires. Wiring it from `EditorView`, for
+    /// *every* document rather than only locally-created ones, is owed with the create UI.
     private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
@@ -469,9 +469,7 @@ final class DocumentSaveCoordinator {
     /// replay. Runs **before** `runSyncPass` inside the same coalesced pass, so that a
     /// migration *deferred* by the server-id guards has the draft blocking it cleared within
     /// the same pass. (Not that this saves a trigger — the migration itself waits for the next
-    /// one either way, as `finishMigration` and `syncPendingDrafts` both note. What the order
-    /// buys is that a create's content reaches the ordinary draft replay in the pass that
-    /// created it.)
+    /// one either way, as `finishMigration` and `syncPendingDrafts` both note.)
     ///
     /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
     /// returns before issuing any request at all.
@@ -839,8 +837,10 @@ final class DocumentSaveCoordinator {
         // device now references — see the delete-branch obligation in `docs/offline-and-sync.md`.
         guard pendingCreates[record.localID] != nil else { return }
         // **The two guards above are keyed on `localID`; the rest are keyed on `serverID` —
-        // except the last, which reads both, since the window it detects is defined by the
-        // local draft being gone while the server-id one is present.** That asymmetry is a content-loss path on its own. Once a record is
+        // except the last, which reads both, since it fires on the complement of the
+        // partial-migration window: the local draft gone while the server-id one remains.**
+        //
+        // That asymmetry is a content-loss path on its own. Once a record is
         // checkpointed, `pendingLocalDocuments` withholds it, so the local row disappears and
         // the *server* document comes back in an ordinary list fetch — indistinguishable from
         // any other document. The user can open it, type, and have a save on the wire, all
