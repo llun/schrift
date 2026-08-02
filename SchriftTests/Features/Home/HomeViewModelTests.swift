@@ -78,6 +78,11 @@ final class HomeViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            // And the two list caches: this suite now drives real migrations, which reach
+            // `insertIntoListCaches`/`childrenCache.save`. Same hazard the comment above
+            // describes for drafts and creates.
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         return HomeViewModel(
             client: client,

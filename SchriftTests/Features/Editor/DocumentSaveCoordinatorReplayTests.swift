@@ -1694,7 +1694,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         env.creates.save(record)
         MockURLProtocol.stubHandler = { request in
             log.record(request)
-            return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 0.2)
         }
         let relaunched = makeEnvironment(sharing: env.defaults)
         relaunched.coordinator.retainOpenEditor(documentID: local.id)
@@ -1707,11 +1707,18 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(
             relaunched.drafts.draft(for: serverID),
             "the deleted document's own draft goes, whatever happens to the record")
+        // Wait for the save to actually settle before asserting the cache.
+        // `waitAndConfirmNever` defaults to 0.3 s, so against the old 2 s stub the assertion
+        // could not have failed however the code behaved — vacuous, which is the one thing
+        // this PR's review keeps finding. `finish` sets `.idle` on the discarded path and
+        // `.saved` otherwise, so this synchronises for both.
+        await waitUntil { relaunched.coordinator.state(for: self.serverID) != .saving }
         let cache = DocumentContentCacheStore(directory: cacheDirectory)
-        await waitAndConfirmNever { cache.content(for: self.serverID) != nil }
-        XCTAssertEqual(
-            relaunched.drafts.draft(for: local.id)?.markdown ?? "", "",
-            "and the live editor's record still exists to be created")
+        XCTAssertNil(
+            cache.content(for: serverID),
+            "the settled save must not re-create a cache entry for a DELETEd document")
+        XCTAssertNotNil(
+            relaunched.drafts.draft(for: local.id), "and the live editor's body is untouched")
         XCTAssertNotNil(relaunched.creates.create(for: local.id))
     }
 

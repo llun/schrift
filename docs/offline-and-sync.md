@@ -164,7 +164,7 @@ amendment above; when this was written, editing offline was still blocked.)
   buttons ("Add a subpage", the Pages drawer's "New page") therefore stay gated
   on `!isOffline`. **In progress**: the storage, the safety gates and the replay
   all landed 2026-08-01 (see "Documents created on this device" below), but
-  nothing mints a record yet — so the gates and this non-goal stand until the UI
+  the create UI now mints records — so the gates and this non-goal stand until the UI
   lands alongside them.
 - ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
   amendment at the top). Editing a previously-opened document offline is
@@ -1024,7 +1024,8 @@ to what the Home list passes (still a `Document` / id).
 ## Documents created on this device (2026-08-01, storage + gates + replay)
 
 Offline *creation* is still a non-goal above, but its **storage, its safety gates
-and its replay have landed, dormant** — nothing mints a record yet. They land first and
+and its replay have landed, and the create UI with them** — Home's `+`, the editor's
+"Add a subpage" and the drawer's "New page" all mint records. They landed first and
 separately because without them the existing pipeline does not merely fail to
 create a local document, it **destroys** one.
 
@@ -1128,7 +1129,8 @@ minted does not read "Untitled document" in every list.
 `abilities.childrenCreate` is false — but **nothing reads it**, so that records the
 intent rather than enforcing it: children-of-local-parents are out of scope until a
 replay can order them, and it is the create UI that must not offer the affordance
-(today it gates on `isOffline` alone).
+(the affordances enforce it: the button is hidden for a local parent, and `addSubpage`
+carries the guard).
 
 **Protection and permission are separate things, and conflating them cost the
 content.** `isPendingCreate` is deliberately *not* origin-scoped: a record minted
@@ -1251,6 +1253,14 @@ already-recorded ghost residual below, not a new one.
   means either promoting to root on a *terminal* parent failure (not just a 404) or giving
   the stranded record a visible affordance — the same recovery this list already owes for
   `replayBlockedAt` and a permanently-`.forbidden` resume.
+- **`finishMigration`'s checkpoint re-check ships unverified.** `guard
+  pendingCreates[localID]?.syncedServerID == serverID` distinguishes itself from the older
+  existence check only in one shape — a resume in flight, `discardPendingWork`'s open-editor
+  branch clearing the checkpoint mid-await, and the editor released before the fetch returns
+  — which no test stages. Accepted rather than blocked because the asymmetry runs the safe
+  way: the guard can only cause an *earlier return*, and every early return in that function
+  is lossless by construction (record survives, both bodies stay on disk, the next trigger
+  resumes or starts over). A bug *in* the guard cannot lose content; only its absence can.
 - **The Pages drawer has no read-time merge**, so since synthetics are no longer persisted
   its local page vanishes on any view-model recreation. It stays reachable one screen over,
   in the parent's Subpages section, which does merge.
@@ -1819,7 +1829,8 @@ visible and dischargeable is owed with the create UI.
 **"Checkpointed but not migrated" is a state to design for**, though today it still
 requires a process death: the checkpoint-to-migration stretch has no suspension point,
 so the server-id guards can only *prolong* it, and the editor re-check that would
-create it has no production callers yet. It becomes ordinary once they land, because
+create it is `EditorView.onAppear` → `noteEditorAppeared`, wired for every document. It is
+ordinary now that it is wired, because
 those guards bail after the checkpoint, as will the editor re-check. (The *delete*
 re-check is the one exception: there the record is gone, so nothing is left to resume and
 the server document is simply orphaned.) In it the server holds an empty document, the record is withheld from the
