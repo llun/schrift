@@ -546,6 +546,7 @@ final class DocumentSaveCoordinator {
             // The local `record` copy still carries the id, which is what lets
             // `finishMigration` run its own re-checks rather than deciding here.
             record.syncedServerID = created.id
+            record.postedTitle = title
             // A successful POST proves any earlier block spent, and **this** is where the wedge
             // is created — the start-over path is reachable only on a build the stamp does not
             // match, i.e. never for the record it actually wedges. Carried forward, a
@@ -572,6 +573,15 @@ final class DocumentSaveCoordinator {
         // pass off to POST a *second* document, orphaning the first along with anything
         // written into it. `try?`: the document just doesn't join the cached list until the
         // next ordinary fetch.
+        // **Snapshot before reading, because a save can start *and settle* inside the await.**
+        // `finishMigration`'s `inFlight`/`queued` check is the boolean this coordinator
+        // already documents as insufficient: a save for `serverID` that completes during the
+        // fetch leaves both nil *and* removes its draft, so all three guards pass and the
+        // migration decides from a body the server no longer holds — pushing the older local
+        // one straight over content the user just saw confirmed as saved. `mayPredateSave`
+        // is the instrument for exactly this, and the sibling read-then-act in `runSyncPass`
+        // already re-checks its draft after the await for the same reason.
+        let marker = saveMarker(documentID: serverID)
         let document = try? await client.document(documentID: serverID)
         let formatted: FormattedDocumentContent
         do {
@@ -685,6 +695,9 @@ final class DocumentSaveCoordinator {
             // Transient — leave it for the next pass.
             return
         }
+        // Bailing is free: the checkpoint is persisted, so the next trigger re-fetches and
+        // decides from a body that is actually current.
+        guard !mayPredateSave(marker) else { return }
         finishMigration(
             record, serverID: serverID, serverTitle: formatted.title,
             serverUpdatedAt: formatted.updatedAt, serverMarkdown: formatted.content ?? "",
@@ -771,36 +784,29 @@ final class DocumentSaveCoordinator {
         // with "".
         let migrated = draftStore.draft(for: serverID)
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
-        // The **local** title wins on both paths, for the same reason the body does: it is the
-        // newer one. On a resume the server's is the pre-death title while the draft may hold
-        // a rename from the intervening launch; on a fresh POST the server's is what we sent
-        // moments ago, which a rename landing *during* the POST has already superseded. Either
-        // way nothing downstream would flag the difference — the baseline carries the server's
-        // title on both paths, so `draftTitleOutcome` answers `.keepDraft` either way:
-        // undiverged by the `serverUpdatedAt <= baselineDate` short-circuit, before comparing
-        // anything; diverged (nil clock) by `serverTitle == baselineTitle`, which is reached
-        // after the draft-versus-baseline test but cannot be preceded by it, since a differing
-        // draft title is the only way to get past that line.
+        // **The title is a merge, not a race.** The body's "newest wins" rule does not carry
+        // over: on a resume the document has been an ordinary Home row under its server id for
+        // the whole deferral, so a rename made there is newer than anything the local draft
+        // holds — while a local rename made after the POST is newer than the server's. The
+        // discriminator below is which side moved *since the server learned the name*.
         //
-        // The trade this accepts: a rename made *elsewhere* while the document sat
-        // checkpointed is reverted. "This device made it, so there is no co-author" is the
-        // tempting justification and it is too strong — accesses are ancestor-aware, so a
-        // sub-page under a shared parent has co-authors from birth, and the same user on
-        // another client is not a co-author at all. What makes it acceptable is scope: only
-        // the *title* is decided this way, and only across a window that is normally
-        // microseconds; the **body** is protected properly, by the conflict recorded below.
-        // **The local title wins only when the local side actually renamed.** A draft still
-        // carrying the *mint* title has contributed nothing, so the server's is the newer one
-        // — and on a resume that is not hypothetical: once checkpointed, the local row is
-        // withheld and the user meets the document under `serverID` in an ordinary list, where
-        // a rename lands, `finish` removes the server-id draft, and the seed draft is left
-        // holding "Untitled document". Without this discriminator the migration PATCHes that
-        // back over their rename, silently. The window is the whole deferral, not the
-        // microseconds the fresh-POST path takes.
+        // What this does not attempt: if **both** sides renamed, local wins and the remote one
+        // is lost. That is the accepted residual — scope is only the title, the body is
+        // protected by the conflict below, and `draftTitleOutcome` (which does escalate a
+        // two-sided rename to a conflict) is not reachable here, since the migration owns the
+        // draft outright at this point.
         let localTitle = queued[localID]?.title ?? draft?.title ?? migrated?.title
+        // Compared against **what the POST sent**, not the mint title. A rename made before
+        // the POST is already the server's name, so treating it as a local rename would push
+        // it back over a newer one made under the server id — the same loss this
+        // discriminator exists to prevent, one step over. On the fresh-POST path it is already
+        // stamped and equals what the draft holds, so the `else` arm takes `serverTitle` —
+        // the same value, since the POST just set it. Nil only for records written before the
+        // field existed, where the mint title is the right fallback.
+        let knownToServer = record.postedTitle ?? record.title
         let title: String
-        if let localTitle, localTitle != record.title {
-            title = localTitle  // a real local rename, and the newer one
+        if let localTitle, localTitle != knownToServer {
+            title = localTitle  // renamed since the server learned the name, so the newer one
         } else {
             title = serverTitle ?? localTitle ?? record.title
         }
@@ -923,7 +929,7 @@ final class DocumentSaveCoordinator {
 
         // **If the server already holds a body, ask — do not push over it.** Reachable only
         // on a resume: between the checkpoint and here the document has been live on the web,
-        // and "checkpointed but not migrated" is a routine state, so a co-author (or the same
+        // and "checkpointed but not migrated" is a state to design for (crash-only today), so a co-author (or the same
         // user on another client) can have written to it. The enqueue below goes straight to
         // `start` — the record is gone, so nothing holds it — which would silently
         // full-overwrite that body. Recording a conflict first engages the ordinary
@@ -975,8 +981,9 @@ final class DocumentSaveCoordinator {
             // where a co-author's table is an `.unknown` block that round-trips as literal
             // paragraphs — flattening their document to carry our name. A title-only PATCH
             // avoids that but fails for a different reason: **nothing here can show our title
-            // is the newer one.** `title` falls back through the draft to the mint title, so a
-            // never-typed-into document offers the name we POSTed, and the branch only fires
+            // is the newer one.** for a never-typed-into document `title` now
+            // *resolves to the server's own*, so there is nothing local to assert; and the
+            // branch only fires
             // once the server has acquired a *body* — i.e. after real elapsed time in the
             // checkpointed state, during which a rename on the web is at least as likely as
             // one here. Writing it would silently revert a co-author, unasked, and it would do

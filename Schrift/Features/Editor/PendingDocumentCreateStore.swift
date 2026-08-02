@@ -50,6 +50,20 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// found with this set skips straight to migration. Nothing else can close that
     /// window — the backend supports no idempotency key.
     var syncedServerID: UUID?
+    /// The title the create POST actually **sent**, stamped beside `syncedServerID`.
+    ///
+    /// The migration needs to know whether the local side has renamed *since the server
+    /// learned the name*, and neither of the two obvious proxies answers that. `title` is the
+    /// **mint** title and never moves, so a rename made before the POST reads as "renamed"
+    /// forever — and the resume would then push that now-stale title over a newer rename made
+    /// under the server id, which is the loss the discriminator exists to prevent, one step
+    /// over. `serverTitle` is the server's *current* title, which is the thing being compared
+    /// against. Only what was sent settles it.
+    ///
+    /// Optional-on-decode like every field here; nil means "not checkpointed, or a record
+    /// written before this field existed", and the migration falls back to the mint title,
+    /// which is the pre-existing behaviour.
+    var postedTitle: String?
     /// Set when a create POST failed in a way that leaves us **unable to tell whether the
     /// server created the document** — in practice a `.decoding` failure, which arrives
     /// *after a 2xx* — so the server very likely built the document, though not certainly:
@@ -98,6 +112,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         serverOrigin: String,
         ownerUserID: UUID? = nil,
         syncedServerID: UUID? = nil,
+        postedTitle: String? = nil,
         replayBlockedAt: Date? = nil,
         replayBlockedBuild: String? = nil
     ) {
@@ -108,6 +123,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         self.serverOrigin = serverOrigin
         self.ownerUserID = ownerUserID
         self.syncedServerID = syncedServerID
+        self.postedTitle = postedTitle
         self.replayBlockedAt = replayBlockedAt
         self.replayBlockedBuild = replayBlockedBuild
     }

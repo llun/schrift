@@ -2106,6 +2106,123 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "the launch discard must not delete a checkpointed record's only copy")
     }
 
+    /// **Both sides renamed.** A rename made *before* the POST is already the server's name,
+    /// so comparing against the mint title reads it as a local rename forever — and the resume
+    /// then pushes that now-stale title over the newer one made under the server id. Comparing
+    /// against what the POST actually sent is what settles it.
+    func testARenameMadeBeforeThePostDoesNotOutrankOneMadeAfterIt() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        // Renamed before the replay, so this is the title the POST sent.
+        env.coordinator.enqueue(documentID: local.id, title: "Recipes", markdown: "# Body")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Recipes"
+        env.creates.save(record)
+        // Then renamed again under the server id, which is where the user meets it.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes", "content": "# Body",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.title, "Notes",
+            "the rename made after the server learned the name is the newer one")
+    }
+
+    /// The mirror cell: a rename made *after* the POST must still win. Comparing against the
+    /// POSTed title must not weaken the case the discriminator was built for.
+    func testARenameMadeAfterThePostStillWins() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Untitled document"
+        env.creates.save(record)
+        env.drafts.save(
+            PendingDraft(
+                documentID: local.id, title: "Renamed locally", markdown: "# Body",
+                updatedAt: Date(), baseline: nil))
+        // The server still holds the POSTed title — nobody renamed it there.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+             "content": "# Body",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.title, "Renamed locally",
+            "a local rename after the POST is still the newer one")
+    }
+
+    /// A save under the server id that starts **and settles inside the resume's fetch** leaves
+    /// `inFlight`/`queued` nil and removes its own draft — so all three of `finishMigration`'s
+    /// guards pass and the migration decides from a body the server no longer holds, pushing
+    /// the older local one over content the user just saw confirmed as saved. That is the
+    /// boolean this coordinator documents as insufficient; `mayPredateSave` is the instrument.
+    func testAMigrationNeverActsOnABodyASaveOvertookMidFetch() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Untitled document"
+        env.creates.save(record)
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        let coordinator = relaunched.coordinator
+        // The resume's `formatted-content` GET is held open; everything else answers at once.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+             "content": "",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, delay: 0.6)
+            }
+            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+        }
+
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        // Inside that window the user types under the server id and the save lands.
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+        coordinator.enqueue(documentID: serverID, title: "Untitled document", markdown: "# World")
+        await waitUntil { coordinator.lastConfirmedPush(documentID: self.serverID) == "# World" }
+        await pass.value
+
+        XCTAssertNotNil(
+            relaunched.creates.create(for: local.id),
+            "the migration bailed rather than deciding from a body the save had overtaken")
+        await waitAndConfirmNever {
+            relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == ""
+        }
+    }
+
     // MARK: - Helpers
 
     /// `/users/me/` answers this user; everything else is the caller's to decide.

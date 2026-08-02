@@ -1444,7 +1444,8 @@ line — so "pushes the body back unchanged" is true of the markdown text and fa
 the stored document, and it would be the app's only full-overwrite of content no
 local user authored. A title-only PATCH avoids that but fails differently: **nothing
 here can show our title is the newer one.** It falls back through the draft to the
-mint title, and the branch only fires once the server has acquired a *body* — after
+server's own title for a never-typed-into document, so there is nothing local to
+assert, and the branch only fires once the server has acquired a *body* — after
 real elapsed time in the checkpointed state, during which a rename on the web is at
 least as likely as one on the device. So the accepted residual is that a rename made
 here on a document with no local body is lost when the server has moved on;
@@ -1536,7 +1537,7 @@ document waits for the next ordinary list fetch.
 
 **And a resume that finds a body does not push over it.** Between the checkpoint
 and the migration the document is live and editable on the web, and
-"checkpointed but not migrated" is a routine state — so a co-author, or the same
+"checkpointed but not migrated" is a state to design for (crash-only today) — so a co-author, or the same
 user on another client, can have written to it. The migration's `enqueue` goes
 **straight to `start`** (the record is gone by then, so nothing holds it), which
 would silently full-overwrite that body. So when the server's markdown differs
@@ -1545,7 +1546,11 @@ server's has not — the migration records a conflict first, and the ordinary
 enqueue-hold and pill ask the user. Inert on the fresh-POST path and on the
 overwhelmingly common empty-server resume.
 
-(Local-title-wins is **not** justified by "this device made it, so there are no
+(**Local-title-wins is now conditional** — it applies only when the local side renamed
+*since the server learned the name* (`postedTitle`), so a rename made under the server id
+during a deferral is kept rather than reverted. The residual is the both-renamed cell,
+where local still wins. What follows is why the *scope* of that residual is acceptable.
+It is **not** justified by "this device made it, so there are no
 co-authors" — that was the tempting argument and it is wrong: accesses are
 ancestor-aware, so a sub-page under a shared parent has co-authors from birth, and
 the same user on another client is not a co-author at all. It is justified by

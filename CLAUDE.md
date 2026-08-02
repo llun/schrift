@@ -1520,7 +1520,8 @@ markdown write endpoint**. Understand this before touching the save path:
   table is an `.unknown` block that round-trips as literal paragraphs (the app's
   only full-overwrite of content no local user authored); and a title-only PATCH
   writes a name **nothing here can show is the newer one** — it falls back to the
-  mint title, and the branch only fires once the server has a body, i.e. after
+  server's own for a never-typed-into document, and the branch only fires once the
+  server has a body, i.e. after
   elapsed time in which a web rename is at least as likely. Accepted residual: a
   rename made here on a body-less document is lost when the server has moved on.
   **No failure strands content**: transport/5xx/
