@@ -1287,6 +1287,132 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// A conflict stamp persisted by an earlier session is rehydrated by `init` for the
+    /// *server* id. If the migration then finds the server holding our own body, that record
+    /// protects nothing — and leaving it parks the enqueue below, makes `runSyncPass` skip the
+    /// document, and self-perpetuates until the user happens to open the editor.
+    func testAnUndivergedMigrationReleasesAConflictItProvesIsMoot() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The partial-migration window, with a stamp on the surviving draft — the shape `init`
+        // rehydrates a conflict from. Its body is empty, matching the stubbed server copy, so
+        // the migration takes the undiverged arm.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Untitled document", markdown: "", updatedAt: Date(),
+                baseline: nil, lastPushedMarkdown: nil,
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 1)))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "rehydrated from the draft")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "released — the server holds our own body, so nothing is left to protect")
+        XCTAssertNil(relaunched.creates.create(for: local.id), "and the migration completed")
+    }
+
+    /// The probe is for a parent that might be **gone**, so it is entered only on 403/404.
+    /// Widening it to any non-retryable sub-page failure looks harmless and is not: a
+    /// `.decoding` create whose parent happens to 404 would take the promote arm and `return`
+    /// *before* the `.decoding` block, so `replayBlockedAt` is never stamped and the record
+    /// re-POSTs on every launch — abandoning a document each time. That is the `is_favorite`
+    /// incident on a loop, which is the whole reason the build-scoped block exists.
+    func testASubpageWhoseCreateResponseCannotBeReadIsBlockedRatherThanPromoted() async {
+        let log = RequestRecorder()
+        let parent = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: parent, ownerUserID: user)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            // A 201 the client cannot decode: the server very likely built the document.
+            if request.httpMethod == "POST" {
+                return .init(statusCode: 201, headers: [:], body: Data("{}".utf8), error: nil)
+            }
+            // And the parent 404s, which is what would send a widened probe down the
+            // promote arm and skip the block entirely.
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+
+        let record = env.creates.create(for: local.id)
+        XCTAssertNotNil(record?.replayBlockedAt, "the unreadable response is blocked for this build")
+        XCTAssertEqual(record?.parentID, parent, "and the parent is not rewritten on that evidence")
+        XCTAssertEqual(creates(log), 1, "exactly one POST")
+    }
+
+    /// **A save that lands inside the fetch window must not be read as "nothing to lose".**
+    /// The start-over's draft-absence gate asks whether work survives under the server id —
+    /// but a save that started *and settled successfully* during the resume's fetches has
+    /// `finish` remove its draft on the way out, manufacturing exactly the emptiness the gate
+    /// reads as safe. The 404 that came back may have been answered from before that save.
+    ///
+    /// Without the marker check the checkpoint is cleared and the next trigger POSTs a second
+    /// document, orphaning the one holding the body the user just watched save. Note the
+    /// take-back's identical conjunct cannot cover this: a local draft is present here, so the
+    /// take-back is skipped before its conjuncts are ever evaluated.
+    func testAStartOverDoesNotFireWhenASaveLandedInsideTheFetchWindow() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The seed draft under the local id stays, so the take-back is skipped outright.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            // The save SUCCEEDS — that is the whole point. `finish` then removes its draft,
+            // which is what opens the draft-absence gate.
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 1.5)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        let starter = Task { @MainActor in
+            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            relaunched.coordinator.enqueue(
+                documentID: serverID, title: "Notes", markdown: "# Saved during the fetch")
+            await waitUntil { relaunched.drafts.draft(for: serverID) == nil }
+        }
+
+        await relaunched.coordinator.syncPendingDrafts()
+        _ = await starter.value
+
+        XCTAssertEqual(
+            relaunched.creates.create(for: local.id)?.syncedServerID, serverID,
+            "the checkpoint survives a 404 that may predate the save that just landed")
+        XCTAssertEqual(creates(log), 0, "and nothing is re-POSTed")
+    }
+
     /// The take-back's third conjunct, `!mayPredateSave(marker)` — the one cell neither
     /// sibling reaches. `inFlight` catches a save still on the wire and `hasOpenEditor` a live
     /// screen; this catches a save that both **started and settled** inside the resume's fetch

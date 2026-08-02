@@ -1616,6 +1616,18 @@ clearing `syncedServerID` disarms the server-id suppression above — after whic
 `runSyncPass`, next in the *same* pass and on the *same* 404, deletes the draft. So one
 spurious 404 could take the user's only copy, with no process death and no editor open.
 
+**And a missing draft is not evidence there never was one.** The gate below asks whether
+work survives under the server id — but a save that started *and settled successfully*
+inside the resume's own fetch window has `finish` remove its draft on the way out, so it
+manufactures the very emptiness the gate reads as "nothing to lose", while the 404 that
+came back may have been answered from the state before it. Starting over there re-POSTs a
+document that exists and holds the body the user just watched save. So the start-over
+carries `!mayPredateSave(marker)` as well: concurrency evidence is *insufficient* on its
+own, which is why the draft-absence gate exists, but insufficient is not unnecessary — the
+two guards close different harms (the draft-absence one, losing the body; the marker one,
+duplicating the document). The take-back's identical conjunct cannot stand in for it,
+since the take-back is skipped outright whenever a local draft is present.
+
 Gating that on evidence of *concurrent* activity (a live save, an open editor,
 `mayPredateSave`) is not enough, because the user who typed under `serverID` and then
 navigated away leaves no such witness — and theirs is exactly the work at stake. The

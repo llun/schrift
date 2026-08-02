@@ -1481,7 +1481,11 @@ markdown write endpoint**. Understand this before touching the save path:
   the *same* 404, deletes the draft. Gating on *concurrent* activity is insufficient, because
   the user who typed under `serverID` and navigated away leaves no such witness and theirs is
   the work at stake; the sufficient question is whether anything remains to lose, so the
-  start-over requires `draftStore.draft(for: serverID) == nil` and the take-back carries the
+  start-over requires `draftStore.draft(for: serverID) == nil` — **and `!mayPredateSave(marker)`
+  beside it**, because a save that started *and settled* inside the resume's fetch window has
+  `finish` remove its draft, manufacturing the very emptiness the first gate reads as safe while
+  the 404 may predate it (that one duplicates the document; the draft-absence gate closes the
+  different harm of losing the body) — and the take-back carries the
   concurrency conjuncts for its own reason (it can run under a live editor on the server id,
   where removing the draft yanks the screen's backing and splits the conflict mirror). A
   genuinely deleted document then strands — checkpointed, unreachable, lossless — which is

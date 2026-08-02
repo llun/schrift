@@ -373,6 +373,56 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// The whole hold rests on the create store decoding. If it ever doesn't, the records
     /// are *unknown* — not absent — so any draft might belong to a local document, and the
     /// 404 branch would delete every offline-created document's only copy at once. Cleaning
+    /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —
+    /// carries the same `!createStoreUnreadable` guard, and its sibling above cannot cover it:
+    /// that test drives a 404, which reaches the *catch*. Getting here needs a draft whose
+    /// baseline is nil (rule 3) against a server that has moved past it, on a launch pass.
+    /// The line's own comment calls it unreachable today, since every writer of a draft under
+    /// a freshly-minted server id stamps a baseline — but a hand-built baseline-less draft is
+    /// exactly what that shape looks like, and it is the one create-related deleting line the
+    /// suite otherwise never executes.
+    func testAnUnreadableCreateStoreSuppressesTheLaunchDiscardToo() async {
+        let log = RequestRecorder()
+        let stale = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(
+                statusCode: 200, headers: [:],
+                body: Data(
+                    """
+                    {"id": "\(stale.uuidString.lowercased())", "title": "Server copy",
+                     "content": "# Server moved on",
+                     "created_at": "2026-03-01T12:00:00Z", "updated_at": "2030-01-01T00:00:00Z"}
+                    """.utf8), error: nil)
+        }
+        let suiteName = "CoordinatorCreateTests.corruptDiscard.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
+        // Baseline-less and long stale, so `draftSyncDecision` reaches rule 3's tolerance and
+        // answers `.discardServerWins`.
+        draftStore.save(
+            PendingDraft(
+                documentID: stale, title: "Doc", markdown: "# Written offline",
+                updatedAt: Date(timeIntervalSince1970: 1), baseline: nil))
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingCreates")
+
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: origin, backgroundTasks: .noop)
+        await coordinator.recoverDrafts()
+
+        XCTAssertGreaterThan(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0,
+            "the pass must actually reach the decision — otherwise this proves nothing")
+        XCTAssertEqual(
+            draftStore.draft(for: stale)?.markdown, "# Written offline",
+            "unknown records must not read as 'no local documents exist' here either")
+    }
+
     /// up nothing is recoverable; that is not.
     func testAnUnreadableCreateStoreSuppressesTheSyncPassDeleteEntirely() async {
         let log = RequestRecorder()

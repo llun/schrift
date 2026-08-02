@@ -720,6 +720,19 @@ final class DocumentSaveCoordinator {
             // re-asks. A genuinely gone document then sticks in that state, which is the same
             // stuck-but-lossless outcome the `.forbidden` branch already accepts and the same
             // recovery the create UI owes; a spurious 404 simply resolves next pass.
+            //
+            // **And the absence of a draft is not, by itself, evidence there was none.** A
+            // save for `serverID` that started *and settled successfully* inside the fetch
+            // window has `finish` remove its draft on the way out — so it manufactures the
+            // very emptiness this gate reads as "nothing to lose", while the 404 that reached
+            // us may well have been answered from the state before it. Starting over there
+            // re-POSTs a document that exists and holds the body the user just watched save.
+            // The marker is the only thing that still remembers, which is why it is snapshotted
+            // before both fetches; bailing is free, since the checkpoint is persisted and the
+            // next trigger re-asks with a fresh one. (The take-back above carries this same
+            // conjunct, but it is skipped entirely whenever a local draft is present, so it
+            // cannot stand in for this one.)
+            guard !mayPredateSave(marker) else { return }
             guard draftStore.draft(for: serverID) == nil else { return }
             // Nothing is left under that id, so the conflict record and any parked save are
             // moot by construction — there is no work left for them to protect.
@@ -1071,6 +1084,22 @@ final class DocumentSaveCoordinator {
             lastConfirmedPushMarkdown[serverID] = nil
             recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
         }
+
+        // **Undiverged, release any conflict `init` rehydrated for this id.** Nothing above
+        // clears it — `recordConflict` only fires on the diverged arm and `clearResolvedConflict`
+        // only on the adopt one — so a stamp persisted by an earlier session would park the
+        // enqueue below, `runSyncPass` would then skip the document on that same record, and it
+        // would self-perpetuate until the user happened to open the editor (where
+        // `releaseConflictIfProven` clears it on rule 0). The lifecycle invariant is stated
+        // absolutely: a record is meaningful only while local work would overwrite the observed
+        // server body, and here we have just observed a server that either equals our body or
+        // holds nothing — so there is nothing left for it to protect.
+        //
+        // Safe precisely because `finishMigration` proved `queued[serverID] == nil` before this
+        // ran: `clearResolvedConflict` → `releaseHeldSave` therefore has no parked save to
+        // start, and this is a pure clear plus the draft-stamp rewrite the enqueue below
+        // redoes anyway.
+        if !diverged { clearResolvedConflict(documentID: serverID) }
 
         // Undiverged, this is an ordinary document with an ordinary queued edit: rule 2 sees a
         // server no newer than the baseline we just stamped and answers `.push`. Diverged, the
