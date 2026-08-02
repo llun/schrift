@@ -890,6 +890,12 @@ final class DocumentSaveCoordinator {
         // exists to prevent.
         let canonicalBody = canonicalMarkdown(body)
         let canonicalServer = canonicalMarkdown(serverMarkdown)
+        // The `!canonicalServer.isEmpty` conjunct has an arm worth naming, since its mirror
+        // image is spelled out above: a co-author who *empties* the document does not count as
+        // diverged, so the offline body is pushed over their deletion without asking. That is
+        // the same accepted trade — an emptied server holds nothing, so there is nothing to
+        // lose by writing, whereas treating it as a divergence would raise a conflict against
+        // a document with no content in it.
         let diverged = !canonicalServer.isEmpty && canonicalServer != canonicalBody
         let baseline =
             diverged
@@ -917,6 +923,13 @@ final class DocumentSaveCoordinator {
         // removes the draft and the record together — so the mirror never splits today. Any
         // early return inserted between here and those exits would silently drop a persisted
         // conflict hold.
+        // No test can observe this write. Deleting it leaves the whole replay suite green,
+        // because every assertion that reads the server-id draft is satisfied by a later
+        // write — the terminal `enqueue`, or the adopt branch's removal. That is not a
+        // coverage gap to be papered over with a contrived test: the write exists so that no
+        // *instant* has the body on disk nowhere, and an in-process test cannot sample an
+        // instant between two synchronous statements. What it guards against is a process
+        // death here, which is exactly what the suite cannot stage.
         draftStore.save(
             PendingDraft(
                 documentID: serverID, title: title, markdown: body, updatedAt: Date(),

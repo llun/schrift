@@ -629,6 +629,10 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         await env.coordinator.syncPendingDrafts()
 
+        // Positive control first. Both assertions here are negative, so without it any
+        // mutation that stops the replay running at all — the pre-flight gate, `/users/me/`,
+        // the record loop — leaves the test green while proving nothing.
+        XCTAssertEqual(creates(log), 1, "the replay ran")
         XCTAssertNil(env.lists.loadRecentDocuments(), "and the replay must not invent one")
     }
 
@@ -1289,6 +1293,49 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// id and the new one, never the old, so it builds an *empty* document in place of the
     /// text — and the stranded draft is separately reaped by `runSyncPass`'s 404 rule. (That
     /// draft is never covered by the pending-create hold in either ordering; the hold is keyed
+    /// **The start-over's discharge, reached with something to discharge.** Round 34 inverted
+    /// the two tests that used to cover these lines — correctly, since they asserted a
+    /// discharge that costs content — but that left `queued[serverID] = nil` and
+    /// `clearResolvedConflict(documentID: serverID)` with no discriminating test: every
+    /// remaining test that reaches them arrives with both already nil.
+    ///
+    /// The reachable shape is the take-back path. A conflicted, parked save under the server
+    /// id, whose draft the take-back moves back to the local id — after which the start-over
+    /// gate passes (nothing is left under that id) and the discharge fires with the conflict
+    /// and the queued save still live. Without the clear, `conflicts[serverID]` outlives its
+    /// draft and can never be repaired (`persistConflictOnDraft` needs a draft to write to),
+    /// so a spurious 404 parks every future save for that document behind a pill nothing can
+    /// answer. Without the `queued` drop first, `clearResolvedConflict` → `releaseHeldSave`
+    /// pops the parked save and PATCHes the id that just 404'd.
+    func testAStartOverDischargesAConflictItLeavesNothingToProtect() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // A recorded conflict, then an edit that parks rather than starts — so the take-back's
+        // `inFlight` conjunct holds and it is free to move the body back.
+        relaunched.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Parked")
+        XCTAssertEqual(savesInFlight(log), 0, "held, not sent")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: local.id)?.markdown, "# Parked",
+            "the body came back rather than being discharged along with the hold")
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "discharged — nothing is left under that id for it to protect")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
     /// on the local id.)
     func testAStartOverTakesTheOrphanedBodyBackToTheLocalID() async {
         let log = RequestRecorder()
@@ -1348,18 +1395,35 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             if request.httpMethod == "PATCH" {
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
             }
+            if request.url?.absoluteString.contains("formatted-content") == true {
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil, delay: 0.6)
+            }
             return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
-        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# On the wire")
-        await waitUntil { self.savesInFlight(log) == 1 }
+        // The save must START AFTER the resume takes its marker. Enqueuing first makes
+        // `marker.hadPendingSave` true, and the take-back is then blocked by `!mayPredateSave`
+        // — a *different* conjunct — leaving the one this test names with no coverage at all.
+        // That is what the first version of this test did. Launch it from inside the resume's
+        // fetch window instead: the recorder logs a request when it is issued, so once the
+        // `formatted-content` GET appears the marker is taken, and that GET is held open long
+        // enough for the PATCH to still be on the wire when the take-back runs.
+        let starter = Task { @MainActor in
+            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            relaunched.coordinator.enqueue(
+                documentID: serverID, title: "Notes", markdown: "# On the wire")
+        }
 
         await relaunched.coordinator.syncPendingDrafts()
+        _ = await starter.value
 
-        XCTAssertEqual(relaunched.drafts.draft(for: serverID)?.markdown, "# On the wire")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# On the wire",
+            "the write-ahead copy of the save on the wire is not moved out from under it")
         XCTAssertNil(relaunched.drafts.draft(for: local.id), "not taken back under a live save")
         XCTAssertEqual(relaunched.creates.create(for: local.id)?.syncedServerID, serverID)
+        XCTAssertEqual(savesInFlight(log), 1, "the save was still on the wire when it declined")
     }
 
     /// With a local draft still present this is *not* the partial-migration window, so a draft
@@ -1932,11 +1996,15 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
-    /// A start-over must discharge any conflict against the dead server id. The take-back's
-    /// "the ordinary 404-draft rule will collect it" argument has a hole: `runSyncPass` **skips
-    /// a conflicted draft**, so the 404 branch it defers to is unreachable for exactly that
-    /// draft — and `init` rehydrates the stamp from disk, so the skip outlives relaunches. No
-    /// process kill is needed to reach it.
+    /// A start-over must **keep** a conflict whose draft still holds the user's work. This
+    /// docstring used to argue the opposite — that discharging is required, because
+    /// `runSyncPass` skips a conflicted draft so the 404 rule it defers to never collects it,
+    /// stranding the record. True, and beside the point: discharging drops the held keystrokes
+    /// and then the draft with them, and stranding is recoverable where that is not.
+    ///
+    /// The line this actually pins is `guard draftStore.draft(for: serverID) == nil` — the
+    /// start-over gate — not the discharge, which it never reaches. `init` rehydrating the
+    /// stamp from disk is what makes the state survive relaunches; no process kill is needed.
     func testAStartOverKeepsAConflictAgainstTheDeadServerID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -2012,12 +2080,16 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "the evidence rides along, so rule 1 can still recognise our own landed write")
     }
 
-    /// The start-over must discharge the conflict **even with a save parked** — that cell is
-    /// the whole point. A queued slot with nothing in flight *is* the conflict hold, and
-    /// nothing settles it: `releaseHeldSave` is its only drainer and is reached only from the
-    /// discharge. Gating the clear on `queued == nil` (as an earlier revision did) leaves the
-    /// record stranded permanently, with `runSyncPass` skipping the draft on both `queued` and
-    /// `conflicts`, and `init` rehydrating the stamp across relaunches.
+    /// The start-over must **keep** the conflict when a save is parked behind it, because the
+    /// parked save *is* the user's work. An earlier revision of this docstring argued the
+    /// reverse — that a queued slot with nothing in flight is the conflict hold, `releaseHeldSave`
+    /// its only drainer, and the discharge its only reach, so declining strands the record
+    /// permanently. All true; it simply ranks stranding above losing the body, which is
+    /// backwards.
+    ///
+    /// Like its sibling above, this pins the start-over **gate**, not the discharge —
+    /// `testAStartOverDischargesAConflictItLeavesNothingToProtect` covers the discharge, on
+    /// the one path that reaches it with anything to discharge.
     func testAStartOverKeepsAConflictEvenWithASaveParked() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
