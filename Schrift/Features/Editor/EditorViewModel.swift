@@ -86,6 +86,9 @@ final class EditorViewModel {
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
+    /// hold — see `noteEditorAppeared`.
+    private var openEditorRegistration: OpenEditorRegistration?
     /// Whose local documents may be minted here — see `SignedInUserStore`. Nil withholds the
     /// sub-page fallback entirely, which fails closed rather than minting an unattributable
     /// record nothing would ever list or replay.
@@ -287,18 +290,35 @@ final class EditorViewModel {
     }
 
     /// A screen is now writing under this document's id — defer any create replay that would
-    /// re-key it. Balanced by `noteEditorDisappeared`; the coordinator reference-counts, so
-    /// the *view* owns the balance (SwiftUI can re-run `onAppear` without an intervening
-    /// `onDisappear`).
+    /// re-key it. Idempotent, and **held for this view model's lifetime rather than the
+    /// view's visibility.**
+    ///
+    /// Releasing on `onDisappear` is wrong, and the bug it causes is silent. `onDisappear`
+    /// means "not visible" — a tab switch, a pushed sub-document, an iPad detail swap — but
+    /// `documentID` is a `let` that survives all of those, and the screen comes back. Release
+    /// there and the replay runs in exactly that window: it POSTs, migrates the draft onto the
+    /// server id, and drops the record. On return, `isLocalDocument` is now false, so the
+    /// editor's fetch gates open, `GET documents/{dead-local-id}/…` 404s, and
+    /// `becomeUnavailable` reports "no longer available" for a document that just synced and
+    /// is sitting in Home. Anything typed after the return is flushed into an `enqueue` for
+    /// that dead id, which no hold covers — it PATCHes, 404s, lands `.failed`, and the next
+    /// launch's sweep removes the draft. Those keystrokes are gone.
+    ///
+    /// So the hold is owned by a token released in `deinit`, which is the closest thing to
+    /// "the screen is actually gone": the view model is `@State`-owned, so it is deallocated
+    /// when the view leaves the hierarchy and not before. The release still kicks the sync
+    /// funnel, so a migration this screen deferred completes on close rather than waiting for
+    /// the next foreground or reconnect.
     func noteEditorAppeared() {
+        guard openEditorRegistration == nil else { return }
         saveCoordinator.retainOpenEditor(documentID: documentID)
-    }
-
-    /// The screen is gone. `releaseOpenEditor` also kicks the coalesced sync funnel when a
-    /// checkpointed record is waiting on this id, so a migration deferred by this screen
-    /// completes on close rather than waiting for the next foreground or reconnect.
-    func noteEditorDisappeared() {
-        saveCoordinator.releaseOpenEditor(documentID: documentID)
+        let coordinator = saveCoordinator
+        let id = documentID
+        openEditorRegistration = OpenEditorRegistration {
+            // `deinit` is nonisolated, so hop rather than call directly. A turn's delay is
+            // harmless: the only consumer is the replay, which is itself trigger-driven.
+            Task { @MainActor in coordinator.releaseOpenEditor(documentID: id) }
+        }
     }
 
     func load() async {
@@ -1161,8 +1181,14 @@ final class EditorViewModel {
             // a 400) keeps the error — minting there would promise a replay the server will
             // decline again. `.sessionExpired` likewise stays an error; the re-login sheet is
             // already up.
+            // The parent must itself be synced. Unreachable from the UI (the button is
+            // hidden for a local parent), but stated here rather than left to the view: a
+            // local child of a local parent POSTs `documents/{local-uuid}/children/`, 404s,
+            // probes the parent, 404s again, and is **silently re-rooted** — an irreversible
+            // placement change on evidence that proves nothing. Its sibling in
+            // `PagesTreeViewModel` carries the same conjunct.
             if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
-                let ownerUserID = signedInUser.userID
+                !isLocalDocument, let ownerUserID = signedInUser.userID
             {
                 let local = saveCoordinator.createLocalDocument(
                     title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
@@ -2384,4 +2410,20 @@ final class EditorViewModel {
             return .paragraph
         }
     }
+}
+
+/// Releases a `DocumentSaveCoordinator` open-editor hold when it is deallocated.
+///
+/// The hold must last as long as the *screen*, not as long as the screen is visible — see
+/// `EditorViewModel.noteEditorAppeared` for what goes wrong otherwise. Tying it to an object
+/// owned by the view model turns "the view left the hierarchy" into the release, which is the
+/// event actually wanted and the one SwiftUI gives no direct hook for.
+private final class OpenEditorRegistration {
+    private let onRelease: @Sendable () -> Void
+
+    init(onRelease: @escaping @Sendable () -> Void) {
+        self.onRelease = onRelease
+    }
+
+    deinit { onRelease() }
 }

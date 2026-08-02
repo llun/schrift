@@ -32,9 +32,6 @@ private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
     let serverURL: URL
-    /// The one shared client, kept so the identity fetch below can reuse it rather than
-    /// building a second one (a hook-less client would not raise the re-login sheet on 401).
-    let client: DocsAPIClient
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
     /// against (see `imageLoadPolicy`). Threaded alongside `serverHost`.
@@ -81,16 +78,10 @@ private struct AuthenticatedHomeContainer: View {
                 },
                 socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
-        self.client = client
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
         self.sessionStore = sessionStore
         self.onSignOut = onSignOut
-    }
-
-    private func rememberSignedInUser() async {
-        guard let user = try? await client.currentUser() else { return }
-        SignedInUserStore().remember(user.id)
     }
 
     var body: some View {
@@ -114,7 +105,13 @@ private struct AuthenticatedHomeContainer: View {
                 sessionStore: sessionStore,
                 onAuthenticated: {
                     let homeViewModel = viewModel
-                    Task { await homeViewModel.load() }
+                    Task {
+                        // The sheet can be answered by a *different* account, so re-learn who
+                        // this session belongs to before anything reads it. A stale id would
+                        // list the previous user's unsynced documents to the new one.
+                        await homeViewModel.refreshSignedInUser()
+                        await homeViewModel.load()
+                    }
                 },
                 onCancel: { sessionStore.cancelReauthentication() }
             )
@@ -154,10 +151,10 @@ private struct AuthenticatedHomeContainer: View {
             async let awareness: Void = collaboration.refreshLocalAwareness()
             // And remember who is signed in. Offline document creation mints records
             // carrying a non-optional `ownerUserID`, and that id is only ever learned from
-            // `/users/me/` — so without persisting it here, launching in airplane mode (the
-            // point of the feature) leaves nothing able to mint or list a local document.
-            // Best-effort by design: a failure leaves whatever a previous session stored.
-            async let identity: Void = rememberSignedInUser()
+            // `/users/me/` — so without persisting it, launching in airplane mode (the point
+            // of the feature) leaves nothing able to mint or list a local document. On the
+            // view model, not here: a view does no networking or persistence of its own.
+            async let identity: Void = viewModel.refreshSignedInUser()
             _ = await (support, awareness, identity)
         }
     }

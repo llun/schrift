@@ -193,10 +193,6 @@ struct EditorView: View {
     /// so the request/release stays one-shot and balanced even as availability
     /// flips (a session opened only once, released exactly once).
     @State private var holdsCollaborationSession = false
-    /// Balances `retainOpenEditor`/`releaseOpenEditor` the same way. SwiftUI may call
-    /// `onAppear` without a matching `onDisappear` having run, and the registry is
-    /// reference-counted, so an unbalanced retain would pin the document forever.
-    @State private var holdsEditorRegistration = false
     /// C1's live-write coordinator. `nil` until the first collaboration-session
     /// request, because it needs the `collaboration` manager, which only becomes
     /// available from `@Environment` once the view has been installed — not in
@@ -312,10 +308,7 @@ struct EditorView: View {
                 // is an ordinary document opened from Home whose id a checkpointed record is
                 // about to migrate *onto*: that screen writes under the server id, and the
                 // guards protecting it are keyed on the server id too.
-                if !holdsEditorRegistration {
-                    viewModel.noteEditorAppeared()
-                    holdsEditorRegistration = true
-                }
+                viewModel.noteEditorAppeared()
             }
             // Availability can resolve *after* the editor is already on screen — the
             // `/config/` fetch that decides server support runs concurrently with
@@ -341,14 +334,11 @@ struct EditorView: View {
                 }
             }
             .onDisappear {
-                // Flush *before* releasing. The flush is what puts the newest keystrokes on
-                // disk as a draft, and releasing kicks the sync funnel — so this order lets
-                // the deferred migration see the work rather than run a pass behind it.
+                // The editor registration is deliberately *not* released here: `onDisappear`
+                // means "not visible" (a tab switch, a pushed sub-document), and the replay
+                // must not re-key a document whose screen is about to come back. It is
+                // released when the view model is deallocated — see `noteEditorAppeared`.
                 viewModel.flushPendingChanges()
-                if holdsEditorRegistration {
-                    viewModel.noteEditorDisappeared()
-                    holdsEditorRegistration = false
-                }
                 if holdsCollaborationSession {
                     collaboration.release(viewModel.documentID)
                     holdsCollaborationSession = false

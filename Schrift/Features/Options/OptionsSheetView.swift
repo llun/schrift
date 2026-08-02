@@ -54,27 +54,39 @@ struct OptionsSheetView: View {
 
             ScrollView {
                 VStack(spacing: 0) {
-                    ListRow(
-                        icon: .push_pin,
-                        title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
-                        value: viewModel.isFavorite ? loc[.options_pinned] : nil,
-                        action: { Task { await viewModel.toggleFavorite() } }
-                    )
-
-                    ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })
-
-                    if onShare != nil {
+                    // Everything above Delete addresses the *server's* copy, and a document
+                    // created on this device has none: Pin POSTs to `…/favorite/` and 404s,
+                    // Copy link yields a URL nobody can open (and says "Link copied" about
+                    // it), Share lists accesses that do not exist, and Version history asks
+                    // for versions of an id the server has never seen. The toolbar already
+                    // drops Share for these; this sheet is the other way in, and would put
+                    // all four back.
+                    //
+                    // Delete stays, and is exactly what a local document needs — it is the
+                    // only way to throw one away.
+                    if !viewModel.isLocalDocument {
                         ListRow(
-                            icon: .group, title: loc[.options_share], showsChevron: true,
-                            action: {
-                                onShare?()
-                                dismiss()
-                            })
-                    }
+                            icon: .push_pin,
+                            title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
+                            value: viewModel.isFavorite ? loc[.options_pinned] : nil,
+                            action: { Task { await viewModel.toggleFavorite() } }
+                        )
 
-                    ListRow(
-                        icon: .history, title: loc[.versions_title], showsChevron: true,
-                        action: { isPresentingVersionHistory = true })
+                        ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })
+
+                        if onShare != nil {
+                            ListRow(
+                                icon: .group, title: loc[.options_share], showsChevron: true,
+                                action: {
+                                    onShare?()
+                                    dismiss()
+                                })
+                        }
+
+                        ListRow(
+                            icon: .history, title: loc[.versions_title], showsChevron: true,
+                            action: { isPresentingVersionHistory = true })
+                    }
 
                     ListRow(
                         icon: .delete, title: loc[.options_delete_document], isDestructive: true,

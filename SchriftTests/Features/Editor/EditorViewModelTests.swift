@@ -65,6 +65,16 @@ final class EditorViewModelTests: XCTestCase {
         return (viewModel, coordinator, draftStore, contentCache)
     }
 
+    private func makeSignedInUser(userID: UUID? = UUID(uuidString: "11111111-1111-4111-8111-111111111111"))
+        -> SignedInUserStore
+    {
+        let name = "EditorViewModelTests.signedIn.\(UUID().uuidString)"
+        draftSuiteNames.append(name)
+        let store = SignedInUserStore(userDefaults: UserDefaults(suiteName: name)!)
+        store.remember(userID)
+        return store
+    }
+
     /// A local document's editor: the coordinator holds a real create record, and the view
     /// model is keyed on the *minted* id rather than the suite's fixed one.
     private func makeLocalEnvironment() -> (
@@ -85,11 +95,65 @@ final class EditorViewModelTests: XCTestCase {
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,
             ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
         let viewModel = EditorViewModel(
             client: client, documentID: document.id, title: document.title ?? "Untitled document",
-            saveCoordinator: coordinator, contentCache: contentCache, childrenCache: childrenCache,
+            saveCoordinator: coordinator, signedInUser: signedIn,
+            contentCache: contentCache, childrenCache: childrenCache,
             autosaveInterval: .seconds(10), remoteChangeDebounce: .milliseconds(600))
         return (viewModel, coordinator, document, draftStore)
+    }
+
+    /// A transport failure on "Add a subpage" keeps the page on the device rather than
+    /// reporting an error, exactly as Home's create does.
+    func testAddSubpageFallsBackToALocalChildOnATransportError() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let env = makeEnvironment()
+        let signedIn = makeSignedInUser()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNotNil(child)
+        XCTAssertNil(viewModel.errorKey, "kept on the device, not reported")
+        XCTAssertTrue(env.coordinator.isPendingCreate(documentID: child!.id))
+    }
+
+    /// A rejection on the merits still errors: minting there would promise a replay the
+    /// server will decline again.
+    func testAddSubpageStillReportsARejectionOnTheMerits() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser())
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_subpage)
+    }
+
+    /// And a child of a **local** parent is never minted: the POST would name a client-minted
+    /// id, 404, probe the parent, 404 again, and silently re-root the child — an irreversible
+    /// placement change on evidence that proves nothing. Out of v1 scope by design.
+    func testAddSubpageNeverMintsAChildOfALocalParent() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let env = makeLocalEnvironment()
+
+        let child = await env.viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(env.viewModel.errorKey, .editor_error_add_subpage)
     }
 
     /// Opening a locally-created document must issue **no** request. Its id is client-minted,

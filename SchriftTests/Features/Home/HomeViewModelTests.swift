@@ -447,6 +447,34 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
+    /// A fresh install in airplane mode that has created a document must render that row, not
+    /// the never-fetched placeholder. `isCurrentListKnown` gates the empty state, and a local
+    /// document *is* a real answer about what this device holds.
+    func testALocalDocumentMakesTheListKnownWithoutAnyFetch() async {
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser())
+        preferences.set(true, forKey: "schrift.workOffline")
+        XCTAssertFalse(viewModel.isCurrentListKnown, "nothing fetched, nothing local")
+
+        _ = await viewModel.createDocument()
+
+        XCTAssertTrue(viewModel.isCurrentListKnown)
+    }
+
+    /// The row must leave a live Home the moment the replay migrates it — not at the next
+    /// successful fetch. That is what reading `pendingCreatesVersion` in the computed property
+    /// buys, and what the coordinator's counter exists for.
+    func testAMigratedRowLeavesTheListWithoutARefetch() async {
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser())
+        preferences.set(true, forKey: "schrift.workOffline")
+        let document = await viewModel.createDocument()
+        XCTAssertEqual(viewModel.recentDocuments.count, 1)
+
+        // What the migration ends with: the record is dropped.
+        viewModel.saveCoordinator.discardPendingWork(documentID: document!.id)
+
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty, "no fetch needed")
+    }
+
     /// **Work Offline now creates locally, and issues no request at all.** It used to POST
     /// even with the toggle on, which made a preference named "Work offline" emit traffic and
     /// left the user with nothing when the POST failed. The mode is a strict no-network

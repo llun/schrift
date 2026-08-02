@@ -18,12 +18,32 @@ final class HomeViewModel {
     /// that every fetch 404s on. Reading `pendingCreatesVersion` here is what makes the row
     /// disappear on its own once the replay migrates it, without a list fetch.
     var recentDocuments: [Document] {
-        _ = saveCoordinator.pendingCreatesVersion
-        return mergedWithLocalDocuments(
+        // Memoised, because this is read several times per `DocumentListView` body — the list
+        // itself, `isCurrentListKnown`, the empty-state branch — and the body re-runs on every
+        // search-field keystroke. Uncached, each read costs a **full decode of every draft on
+        // the device, document bodies included**, on the main actor: `pendingLocalDocuments`
+        // goes through `PendingDraftStore.allDrafts()`, whose `loadAll` is all-or-nothing.
+        //
+        // The key is the pair that can change the answer — the fetched array and the
+        // coordinator's record version. Reading `pendingCreatesVersion` here is also what
+        // registers the `@Observable` dependency, so a migrated row leaves a live Home the
+        // moment `removePendingCreate` runs rather than at the next successful fetch.
+        let version = saveCoordinator.pendingCreatesVersion
+        if let cached = mergedRecents, cached.version == version, cached.fetched == fetchedRecentDocuments {
+            return cached.merged
+        }
+        let merged = mergedWithLocalDocuments(
             fetched: fetchedRecentDocuments,
             local: saveCoordinator.pendingLocalDocuments(
                 parentID: nil, currentUserID: signedInUser.userID))
+        mergedRecents = (version, fetchedRecentDocuments, merged)
+        return merged
     }
+
+    /// Memo for `recentDocuments`. `@ObservationIgnored` so writing it from a *getter* does
+    /// not register a mutation and re-invalidate the very view that just read it.
+    @ObservationIgnored
+    private var mergedRecents: (version: Int, fetched: [Document], merged: [Document])?
     var searchResults: [Document] = []
     var isLoading = false
     var errorKey: L10nKey?
@@ -195,6 +215,23 @@ final class HomeViewModel {
             errorKey = .home_error_search
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
         }
+    }
+
+    /// Learn (or re-learn) which account this session belongs to, and persist it.
+    ///
+    /// Offline creation needs the id when there is no network to ask for it, so it is stored
+    /// rather than fetched on demand. **Re-run it after re-authentication**, not only at
+    /// launch: the sheet can be answered by a *different* account, and a stale id would list
+    /// the previous user's unsynced documents to the new one — who could then type into them,
+    /// with the edits eventually POSTed into the first user's account when they sign back in.
+    /// That is exactly the disclosure `belongsToSession` exists to prevent, reached through
+    /// the one writer that was not being refreshed.
+    ///
+    /// Best-effort: a failure leaves whatever the last successful fetch stored, which is the
+    /// conservative direction — the *send* half re-checks against a live `/users/me/` anyway.
+    func refreshSignedInUser() async {
+        guard let user = try? await client.currentUser() else { return }
+        signedInUser.remember(user.id)
     }
 
     /// Whether this row is a document created here that the server has not seen yet.

@@ -39,6 +39,11 @@ final class OptionsViewModel {
         }
     }
 
+    /// This document exists only on this device — every server-addressed row must be hidden.
+    var isLocalDocument: Bool {
+        saveCoordinator?.isPendingCreate(documentID: documentID) ?? false
+    }
+
     func delete() async {
         isDeleting = true
         errorKey = nil
