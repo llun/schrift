@@ -1679,6 +1679,42 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         // cannot: it names the id that just 404'd.
     }
 
+    /// The tail of `discardPendingWork` belongs to the document being **deleted**, not to the
+    /// record — so the open-editor branch must not cancel it. Written as an early `return` it
+    /// did: the `serverID` draft survived, and `discardedDuringSave` never learned about the
+    /// in-flight save, so `finish` took its success path and re-created the content cache
+    /// entry for a document that had just been DELETEd. Invariant 0b, introduced once already.
+    func testDeletingTheServerStrayStillPurgesItsOwnDraftAndSuppressesTheWriteThrough() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
+        }
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: local.id)
+        // The user opened the server stray, typed, and a save is on the wire for it.
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Stray", markdown: "# Typed")
+        await waitUntil { self.savesInFlight(log) == 1 }
+
+        relaunched.coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertNil(
+            relaunched.drafts.draft(for: serverID),
+            "the deleted document's own draft goes, whatever happens to the record")
+        let cache = DocumentContentCacheStore(directory: cacheDirectory)
+        await waitAndConfirmNever { cache.content(for: self.serverID) != nil }
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: local.id)?.markdown ?? "", "",
+            "and the live editor's record still exists to be created")
+        XCTAssertNotNil(relaunched.creates.create(for: local.id))
+    }
+
     /// **Deleting the empty server stray must not take a live editor's body.** An editor
     /// reopened during the POST leaves the record checkpointed-but-unmigrated, so Home shows
     /// the server document — empty, since the body is enqueued only at migration — and the

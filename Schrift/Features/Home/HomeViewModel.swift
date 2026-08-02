@@ -120,6 +120,12 @@ final class HomeViewModel {
             // `insertIntoListCaches` correctly declines to fabricate one and a refetch that
             // then fails would leave the document in no list at all. In-memory only — the
             // cache stays the server's to fill.
+            // **Not roots-only, unlike `insertIntoListCaches`.** That rule exists because
+            // Home's feed is fetched without a parent filter, so a sub-page's place in it is
+            // the server's answer to give — and `Document` carries no `parentID`, so this
+            // subscriber cannot tell. The divergence is bounded: this is in-memory only and
+            // the `load()` on the next line replaces it with the server's own list, so a
+            // wrongly-placed sub-page row survives only until the first successful fetch.
             if let migrated, !self.fetchedRecentDocuments.contains(where: { $0.id == migrated.id }) {
                 self.fetchedRecentDocuments.insert(migrated, at: 0)
                 self.hasKnownFetchedList = true
@@ -152,11 +158,7 @@ final class HomeViewModel {
             // fresh install `insertIntoListCaches` correctly declines to write a cache that
             // was never fetched, so this assignment would drop the document that just synced
             // out of every list, with no way back while the toggle is on.
-            if let cachedRecents {
-                fetchedRecentDocuments = cachedRecents
-            } else if fetchedRecentDocuments.isEmpty {
-                fetchedRecentDocuments = []
-            }
+            if let cachedRecents { fetchedRecentDocuments = cachedRecents }
             hasKnownFetchedList = cachedRecents != nil
             isOffline = true
             isLoading = false

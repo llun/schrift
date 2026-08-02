@@ -509,6 +509,48 @@ final class HomeViewModelTests: XCTestCase {
         await waitUntil { log.count(ofMethod: "GET", urlContaining: "documents/?") > 0 }
     }
 
+    /// Work Offline must not clobber a just-migrated in-memory row with a nil cache. The
+    /// replay reads no `workOffline` gate, so it runs in that mode — and on a fresh install
+    /// `insertIntoListCaches` correctly declines to write a cache that was never fetched, so
+    /// a bare `fetchedRecentDocuments = cachedRecents ?? []` dropped the document that had
+    /// just synced out of every list, with no way back while the toggle stayed on.
+    func testWorkOfflineDoesNotClobberAJustMigratedRow() async {
+        let serverID = "99999999-9999-4999-8999-999999999999"
+        let cache = makeCache()
+        let viewModel = makeViewModel(cache: cache, signedInUser: makeSignedInUser())
+        preferences.set(true, forKey: "schrift.workOffline")
+        let local = await viewModel.createDocument()
+        XCTAssertNil(cache.loadRecentDocuments(), "never fetched")
+
+        // The toggle stays ON, and the network is actually up.
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "POST" {
+                return .init(
+                    statusCode: 201, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(serverID)", "title": "Untitled document",
+                         "abilities": {"destroy": true, "partial_update": true}, "content": "",
+                         "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z",
+                         "depth": 1, "numchild": 0, "path": "00000A", "link_reach": "restricted",
+                         "link_role": "reader", "user_role": "owner"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.syncPendingDrafts()
+        await waitUntil { viewModel.saveCoordinator.isPendingCreate(documentID: local!.id) == false }
+
+        await waitUntil { viewModel.recentDocuments.map { $0.id.uuidString.lowercased() } == [serverID] }
+    }
+
     /// The case the refetch alone cannot cover: a fresh install used offline first has **no**
     /// recents cache, so `insertIntoListCaches` correctly declines to fabricate one — and if
     /// the refetch that follows fails, the document is in no list at all. The real row is

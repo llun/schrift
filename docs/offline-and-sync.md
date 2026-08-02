@@ -1251,9 +1251,9 @@ already-recorded ghost residual below, not a new one.
   means either promoting to root on a *terminal* parent failure (not just a 404) or giving
   the stranded record a visible affordance — the same recovery this list already owes for
   `replayBlockedAt` and a permanently-`.forbidden` resume.
-- **The Pages drawer has no read-time merge**, and since synthetics are no longer
-  persisted its local page now vanishes on any view-model recreation, not merely on the
-  next successful level fetch.
+- **The Pages drawer has no read-time merge**, so since synthetics are no longer persisted
+  its local page vanishes on any view-model recreation. It stays reachable one screen over,
+  in the parent's Subpages section, which does merge.
   <!-- continues --> The editor's Subpages section merges local
   children; `PagesTreeViewModel` renders from `children`/the shared cache and does not, so a
   local sub-page vanishes from the drawer on the next successful level fetch even though it
