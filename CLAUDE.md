@@ -1413,7 +1413,7 @@ markdown write endpoint**. Understand this before touching the save path:
   **That makes the signed-in user id a prerequisite for the whole feature**, and it is
   only ever learned from `client.currentUser()` — so `SignedInUserStore`
   (`dev.llun.Schrift.signedInUserID`) persists it, written through from the root task and
-  Profile and cleared on sign-out. Without it, launching offline (the entire point) yields
+  Profile and cleared at sign-in (the moment a possibly-different account takes over) and sign-out. Without it, launching offline (the entire point) yields
   no user id, local documents are not listed, and none can be minted. It is a read-through
   struct rather than a caching `@Observable`, so a reader built before the first write
   cannot answer nil forever; not in the Keychain, because it is an identifier rather than a

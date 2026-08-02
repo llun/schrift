@@ -161,6 +161,17 @@ final class DocumentSaveCoordinator {
     /// a migrated row vanish from a live Home the moment `removePendingCreate` runs, rather
     /// than at the next successful fetch.
     private(set) var pendingCreatesVersion = 0
+    /// Fired after a locally-created document has been re-keyed onto its server id.
+    ///
+    /// The list that was showing it needs to *refetch*, not merely re-derive: the local row is
+    /// correctly withheld the instant the record is dropped, but the real row exists only in a
+    /// server response, and the one the list is holding predates the create. Pinning that
+    /// refetch to particular sync triggers does not work — the pass is also started by
+    /// `recoverDrafts` at launch and by `releaseOpenEditor` when an editor closes (the
+    /// designed completion path, and the *only* one on iPad), and an overlapping trigger is
+    /// coalesced into a no-op that returns before the migration happens. So it hangs off the
+    /// migration itself, which is the event that actually invalidates the list.
+    var onDocumentMigrated: (@MainActor () -> Void)?
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
@@ -1145,6 +1156,7 @@ final class DocumentSaveCoordinator {
         if let document { insertIntoListCaches(document, parentID: record.parentID) }
 
         removePendingCreate(documentID: localID)
+        onDocumentMigrated?()
 
         // **If the server already holds a body, ask — do not push over it.** Reachable only
         // on a resume: between the checkpoint and here the document has been live on the web,

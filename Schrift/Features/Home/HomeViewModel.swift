@@ -108,6 +108,13 @@ final class HomeViewModel {
             saveCoordinator ?? DocumentSaveCoordinator(client: client, serverOrigin: serverOrigin)
         self.userDefaults = userDefaults
         self.diagnostics = diagnostics
+        // A migration re-keys a document onto its server id, after which the local row is
+        // correctly withheld and the real one exists only in a server response this view model
+        // has not made yet. Refetch on the event itself — see `onDocumentMigrated`.
+        self.saveCoordinator.onDocumentMigrated = { [weak self] in
+            guard let self else { return }
+            Task { await self.load() }
+        }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
             fetchedRecentDocuments = recents
@@ -171,6 +178,16 @@ final class HomeViewModel {
             isOffline = false
         } catch {
             guard generation == loadGeneration else { return }
+            // **Re-seed from the cache.** A migration writes the real document into it
+            // (`insertIntoListCaches`) and then drops the record, so if the refetch that
+            // follows fails — a flaky reconnect being exactly the profile here — the row is in
+            // neither list and pull-to-refresh fails too, leaving it invisible until relaunch.
+            // The cache already holds the answer; the only reason it was not being read is
+            // that the online path re-seeds nowhere but `init`.
+            if let cachedRecents = cache.loadRecentDocuments() {
+                fetchedRecentDocuments = cachedRecents
+                hasKnownFetchedList = true
+            }
             // A real 401 is not "offline": the client's onSessionExpired hook
             // has already raised the app-level re-login sheet, so keep serving
             // cached rows silently. Everything else keeps the offline
@@ -203,9 +220,6 @@ final class HomeViewModel {
     /// inside the view model (like `load()`'s `recoverDrafts()`), so the view never
     /// drives networking/persistence directly.
     func syncPendingDrafts() async {
-        let hadLocalDocuments = !saveCoordinator.pendingLocalDocuments(
-            parentID: nil, currentUserID: signedInUser.userID
-        ).isEmpty
         await saveCoordinator.syncPendingDrafts()
         // **A migrated document must not vanish from a live Home.** The replay drops the
         // record, so the local row is correctly withheld the instant it migrates — but the
@@ -215,10 +229,11 @@ final class HomeViewModel {
         // the list's own `.task` does not re-run on pop-back. So the user watches their
         // document disappear from the screen, until a pull-to-refresh brings it back.
         //
-        // Refetch only when this device actually had something to replay, so an ordinary
-        // reconnect on an account with no local documents costs nothing extra.
-        guard hadLocalDocuments else { return }
-        await load()
+        // The refetch itself hangs off `onDocumentMigrated`, not off this call: two of the
+        // four things that start a create pass never come through here (`recoverDrafts` at
+        // launch, and `releaseOpenEditor` when an editor closes — the designed completion
+        // path, and the only one on iPad), and an overlapping trigger is coalesced into a
+        // no-op that returns before the migration happens.
     }
 
     func search() async {

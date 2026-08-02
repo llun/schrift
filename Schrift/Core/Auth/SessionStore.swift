@@ -15,7 +15,7 @@ final class SessionStore {
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
     private let cookieStorage: CookieStoring
-    /// Cleared the moment a session is known to be over — see `noteSessionExpired`.
+    /// Cleared at sign-in and sign-out — see `signIn`. Deliberately *not* on a mere expiry.
     private let signedInUser: SignedInUserStore
 
     private(set) var serverURL: URL?

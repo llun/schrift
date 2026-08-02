@@ -465,25 +465,52 @@ final class HomeViewModelTests: XCTestCase {
             "the previous user's unsynced documents are not listed to the new one")
     }
 
-    /// And a migrated document must not vanish from a live Home: the record is dropped, so
-    /// the local row is correctly withheld — but the *real* row only exists in a fetch made
-    /// before the document was created, and nothing else reloads on the reconnect edge.
-    func testSyncingRefetchesSoAMigratedDocumentDoesNotDisappear() async {
+    /// A migrated document must not vanish from a live Home. The record is dropped, so the
+    /// local row is correctly withheld — but the *real* row exists only in a server response
+    /// this view model has not made yet, and the fetch it is holding predates the create.
+    ///
+    /// The create must actually **land** here: a failed replay leaves the record in place and
+    /// the row on screen, which is the shape an earlier version of this test had — it passed
+    /// with the refetch deleted, with the gate inverted, and with `load()` swapped for
+    /// `refresh()`, because no migration ever happened.
+    func testAMigratedDocumentIsRefetchedRatherThanDisappearing() async {
         let log = RequestRecorder()
+        let serverID = "66666666-6666-4666-8666-666666666666"
         let viewModel = makeViewModel(signedInUser: makeSignedInUser())
         preferences.set(true, forKey: "schrift.workOffline")
-        _ = await viewModel.createDocument()
+        let local = await viewModel.createDocument()
+        XCTAssertEqual(viewModel.recentDocuments.count, 1)
         preferences.set(false, forKey: "schrift.workOffline")
+
         MockURLProtocol.stubHandler = { request in
             log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "POST" {
+                return .init(
+                    statusCode: 201, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(serverID)", "title": "Untitled document",
+                         "abilities": {"destroy": true, "partial_update": true}, "content": "",
+                         "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z",
+                         "depth": 1, "numchild": 0, "path": "00000A", "link_reach": "restricted",
+                         "link_role": "reader", "user_role": "owner"}
+                        """.utf8), error: nil)
+            }
             return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
         }
 
         await viewModel.syncPendingDrafts()
+        await waitUntil { viewModel.saveCoordinator.isPendingCreate(documentID: local!.id) == false }
 
-        XCTAssertGreaterThan(
-            log.count(ofMethod: "GET", urlContaining: "documents/"), 0,
-            "the list is refetched, so the real row can come back")
+        // The migration itself must have driven a refetch — not the caller, since two of the
+        // four things that start a create pass never come through `syncPendingDrafts()`.
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "documents/") > 0 }
     }
 
     /// A fresh install in airplane mode that has created a document must render that row, not

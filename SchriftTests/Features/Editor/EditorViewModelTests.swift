@@ -51,10 +51,10 @@ final class EditorViewModelTests: XCTestCase {
         // must never read from or write to UserDefaults.standard in tests.
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
         // Isolate the create store too. Defaulted it is `UserDefaults.standard`, and a test
-        // whose create stub fails retryably now mints a *real* record there — which persists
-        // on the simulator across runs and makes every later `syncPendingDrafts` issue a
-        // genuine `/users/me/` that escapes `MockURLProtocol` and stalls the suite on a 60 s
-        // timeout. It presents as an unrelated test hanging, not failing. Same fix as
+        // whose create stub fails retryably now mints a *real* record there, which persists on
+        // the simulator across runs and contaminates later tests — a coordinator built by an
+        // unrelated suite finds a replayable record and issues requests nothing set up,
+        // recording phantom entries into that test's `RequestRecorder`. Same fix as
         // `HomeViewModelTests.makeViewModel`.
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache,

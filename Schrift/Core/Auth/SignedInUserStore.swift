@@ -48,7 +48,7 @@ struct SignedInUserStore {
         userDefaults.set(id.uuidString, forKey: Self.key)
     }
 
-    /// Sign-out only. Records outlive a sign-out on purpose — for a document that exists
+    /// Sign-in and sign-out. Records outlive a sign-out on purpose — for a document that exists
     /// nowhere else, the record and its draft are the only copies — and what makes that safe is
     /// the record's *own* `ownerUserID`, which is compared against whoever signs in next. This
     /// store answering nil afterwards is exactly right: the next session must learn the id from
