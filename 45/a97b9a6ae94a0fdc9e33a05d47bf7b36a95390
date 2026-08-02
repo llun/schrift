@@ -1,0 +1,51 @@
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_351b5e522a97a5::t_9264c48ffa9df0 148-174
+CLAUDE.md
+  s_351b5e522a97a5::t_2a5a324bc177e5 1474,1477-1482
+  s_351b5e522a97a5::t_5b1037d582aa70 1336,1391-1394
+  s_351b5e522a97a5::t_903bee05ce1dee 1395
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_351b5e522a97a5::t_b9f0255fbdcd44 158-162
+Schrift/Features/Editor/EditorViewModel.swift
+  s_351b5e522a97a5::t_ceda25365803c5 312-314
+docs/offline-and-sync.md
+  s_351b5e522a97a5::t_2a5a324bc177e5 1196-1198,1405-1406,1409-1414
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_351b5e522a97a5::t_84b694e2cb3d05 121,123,125-128,131,135-137
+  s_351b5e522a97a5::t_2527c7fdc61c20 108,116-120,129,133-134
+  s_351b5e522a97a5::t_169a5890d78453 122,124,130,132
+  s_351b5e522a97a5::t_ceda25365803c5 109-115
+Schrift/Features/Options/OptionsViewModel.swift
+  s_351b5e522a97a5::t_9264c48ffa9df0 66-75,77-79
+Schrift/Core/Auth/SessionStore.swift
+  s_351b5e522a97a5::t_59414566ac7892 18-19,80-89
+  s_351b5e522a97a5::t_ee8b42893c6679 32-33,38-40
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_351b5e522a97a5::t_903bee05ce1dee 2030
+  s_351b5e522a97a5::t_fa56cf889b8416 1133-1134,2031-2033
+  s_351b5e522a97a5::t_b965a10d6f1bd6 171,174-182
+  s_351b5e522a97a5::t_84b694e2cb3d05 438-444
+  s_351b5e522a97a5::t_06ad5ccdb3c727 534
+  s_351b5e522a97a5::t_eab81bb97e30c9 1118-1123,1568-1573
+Schrift/Features/Editor/EditorView.swift
+  s_351b5e522a97a5::t_b9f0255fbdcd44 733-735
+Schrift/Features/Home/HomeViewModel.swift
+  s_351b5e522a97a5::t_b965a10d6f1bd6 277-284
+  s_351b5e522a97a5::t_ee8b42893c6679 31-33,35-38,43-44,51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "45a97b9a6ae94a0fdc9e33a05d47bf7b36a95390",
+  "prompts": {},
+  "sessions": {
+    "s_351b5e522a97a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8d6f6b7-b42e-4ac5-b72e-2d79185786d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
