@@ -1369,8 +1369,9 @@ markdown write endpoint**. Understand this before touching the save path:
   and a real server object exists, while `isPendingCreate` is still true, so the
   local-id branch runs for exactly the case where it is false. `OptionsViewModel.delete()`
   issues the server `DELETE` there, via `syncedServerID(forLocalID:)`; without it the document survives and reappears in Home on
-  the next list fetch with nothing on the device that knows about it. (That needs an
-  accessor the coordinator does not expose yet — land it *with* the delete branch.)
+  the next list fetch with nothing on the device that knows about it. (`syncedServerID(forLocalID:)`
+  is that accessor; `isPendingCreate` alone cannot answer it, since it stays true for a
+  checkpointed record.)
   **The other direction is handled here, and must stay so**: once checkpointed,
   `pendingLocalDocuments` withholds the local row, so the **server** id is the only
   one the user is offered — and `isPendingCreate`, keyed on the local id, answers

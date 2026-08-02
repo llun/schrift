@@ -288,7 +288,7 @@ final class DocumentSaveCoordinator {
     /// key off. Deliberately **not** origin-scoped: a record minted elsewhere still names
     /// an id that would 404 here, and the holds exist to keep anything from addressing it.
     ///
-    /// Not yet consulted by the editor: opening a local document names its id from several
+    /// Consulted by the editor via `EditorViewModel.isLocalDocument`: opening a local document names its id from several
     /// places this coordinator does not own (`formattedContent`, the children fetch, the
     /// collaboration room, Options' delete and version history). Those are the create UI's
     /// to gate — the invariant is broader than the enforcement in this file.
@@ -327,7 +327,7 @@ final class DocumentSaveCoordinator {
     /// pending, so a replay needs no dependency ordering. **Nothing gates on that
     /// yet**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
     /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
-    /// denied are indistinguishable), and the sub-page affordance gates on `isOffline` alone.
+    /// denied are indistinguishable), and the sub-page affordance gates on the parent being local.
     /// So the create UI must not offer a sub-page under a pending parent; a record minted that
     /// way would POST `documents/{local-uuid}/children/`, 404, probe, 404, and silently re-root.
     ///
@@ -337,7 +337,8 @@ final class DocumentSaveCoordinator {
     /// parameter mandatory forces that problem to the surface at the mint site, where the
     /// session exists to answer it.
     ///
-    /// Dormant until the UI calls it: nothing in the app does yet.
+    /// Called from Home's `+` and from the two sub-page affordances, whenever a create
+    /// cannot reach the server (or Work Offline forbids trying).
     @discardableResult
     func createLocalDocument(title: String, parentID: UUID?, ownerUserID: UUID) -> Document {
         let record = PendingDocumentCreate(
@@ -499,7 +500,7 @@ final class DocumentSaveCoordinator {
     /// the same pass. (Not that this saves a trigger — the migration itself waits for the next
     /// one either way, as `finishMigration` and `syncPendingDrafts` both note.)
     ///
-    /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
+    /// Costs nothing on a device with no local documents: `allCreates()` is empty, so the gate
     /// returns before issuing any request at all.
     private func runCreatePass() async {
         let records = createStore.allCreates()

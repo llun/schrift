@@ -1177,7 +1177,7 @@ and releases the editor registry for *every* document; the editor's fetches are 
 `isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
 checkpointed record via `syncedServerID(forLocalID:)`. What remains:
 
-- **Persisting the signed-in user id.** Listing and minting both require it, and
+- **[LANDED — `SignedInUserStore`]** Persisting the signed-in user id. Listing and minting both require it, and
   it is only ever learned from `/users/me/` and stored nowhere — so launching
   offline currently yields no user id at all, which is precisely the case the
   feature exists for. Failing closed is the right default; supplying the value is
@@ -1185,7 +1185,7 @@ checkpointed record via `syncedServerID(forLocalID:)`. What remains:
   `ProfileViewModel`, and the create pass) and none persists it; once one does,
   the pass's per-pass fetch should read the persisted value instead — which also
   makes the replay work against a server that omits `id`.
-- **Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
+- **[LANDED — `EditorView` retains for every document, released on view-model `deinit` so a tab switch cannot trigger the swap]** Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
   create UI — from `EditorView` itself, for *every* document, not only
   locally-created ones.** The "+" case is the obvious one: it opens an editor
   immediately, so a missed retain makes the very first reconnect-while-typing the
@@ -1199,22 +1199,24 @@ checkpointed record via `syncedServerID(forLocalID:)`. What remains:
   cannot double-count or leak. A leaked retain is not harmless *within* a
   session: that document never replays while the caption says "syncs when
   online".
-- **Deleting a local document**, which is two changes that must land together:
-  `localDocument(from:)`'s `abilities.destroy` flipping to true, and
+- **[LANDED — all three states] Deleting a local document**, which is two changes that must land together:
   `OptionsViewModel.delete()` short-circuiting for a pending-create id (it
-  currently always calls the server, which 404s). One without the other gives
-  either a Delete row that always errors or a record nothing can remove — and
+  previously always called the server, which 404s) and the Options sheet hiding the
+  rows that address a server copy. `abilities.destroy` was expected to flip to true
+  alongside, and deliberately did not: nothing consults those abilities to decide
+  whether to offer Delete — the sheet asks `isLocalDocument` — so flipping it would
+  change no behaviour while costing the dictionary its one meaning, *what the server
+  would let you do with this id*, which is nothing. And
   that branch is load-bearing, since `discardPendingWork` is what makes the
   replay's mid-POST delete guard fire. **And it needs a third piece: when the
   record carries a `syncedServerID`, the branch must issue the server `DELETE`
   too.** The checkpoint means the document *exists* server-side, so a purely local
   delete leaves it there — it reappears in Home on the next list fetch, with
-  nothing on the device that knows about it. **This needs a seam that does not
-  exist yet**: `pendingCreates`, `createStore` and `removePendingCreate` are
-  private and `isPendingCreate` returns only a `Bool`, so no caller can read a
-  record's `syncedServerID` to know whether a `DELETE` is owed. Add the accessor
-  *with* the delete branch — an unused public getter landed early is speculative
-  API. (The **inbound** direction is already handled: a delete arriving under the
+  nothing on the device that knows about it. That is what
+  `syncedServerID(forLocalID:)` is for: `isPendingCreate` returns a `Bool` and stays
+  true for a checkpointed record, so it cannot answer "is there anything on the
+  server to delete". A failed server `DELETE` leaves the record intact, since it
+  still names a live document and discarding the local trace would strand it. (The **inbound** direction is already handled: a delete arriving under the
   *server* id clears the record and the local draft itself, since that path is
   reachable through today's Options sheet and would otherwise resurrect the
   document on the next replay.)
@@ -1231,7 +1233,7 @@ checkpointed record via `syncedServerID(forLocalID:)`. What remains:
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
   read-time merge is wired, a live Home loses the row when `removePendingCreate` runs and
   regains it only on the next successful fetch.
-- **Gating the editor's fetch on a pending-create id.** `EditorViewModel.revalidate`
+- **[LANDED — `EditorViewModel.isLocalDocument` gates all four fetch paths]** Gating the editor's fetch on a pending-create id. `EditorViewModel.revalidate`
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen
   reads "no longer available". Nothing is lost (the teardown flushes first, the draft

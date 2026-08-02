@@ -309,17 +309,18 @@ func orderedByCreation(_ lhs: PendingDocumentCreate, _ rhs: PendingDocumentCreat
 /// afterwards be indistinguishable from a real one. Lists merge it in at read time
 /// instead (`mergedWithLocalDocuments`).
 ///
-/// The abilities are the honest set: editing is local and works, and **nothing else does
-/// yet**. Sharing, favoriting and duplicating are server calls against an id the server has
-/// never seen. `destroy` is false too, even though deleting such a document *should*
-/// eventually be a local no-network operation: today `OptionsViewModel.delete()` only ever
-/// calls the server, which would 404, so advertising the ability would promise a delete
-/// that cannot happen — and, because `discardPendingWork` is reached only from a
-/// *successful* delete, would leave the record un-removable. It flips to true with the
-/// local-delete branch in the UI change. `childrenCreate` is false for the same
-/// discipline — though **nothing reads it**, so it records the intent rather than
-/// enforcing it: children-of-local-parents stay out of scope until a replay can order
-/// them, and it is the create UI that must not offer the affordance.
+/// The abilities are the honest set: editing is local and works, and sharing, favoriting
+/// and duplicating are server calls against an id the server has never seen.
+///
+/// **`destroy` stays false even though deleting one now works**, which reads as a
+/// contradiction and is not. Nothing consults these abilities to decide whether to offer
+/// Delete — the Options sheet asks `isLocalDocument` and takes the local branch — so
+/// flipping it would change no behaviour, while leaving it false keeps this dictionary
+/// meaning one thing throughout: *what the server would let you do with this id*, which is
+/// nothing, because it does not know the id. `childrenCreate` is false for the same reason
+/// and likewise reads by nobody: children-of-local-parents are out of v1 scope because the
+/// replay cannot order the two creates, and the affordances enforce that themselves (the
+/// button is hidden, and `addSubpage` carries the guard).
 ///
 /// `title` is the record's, i.e. the title at creation time. Callers that can see the
 /// draft should prefer the draft's — the user may have renamed the document since, and
