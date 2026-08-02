@@ -266,6 +266,20 @@ final class EditorViewModel {
 
     // MARK: - Loading
 
+    /// This document exists only on this device — it has a client-minted id the server has
+    /// never seen. **Every network path keyed on `documentID` must return before issuing**, or
+    /// the request 404s: content and children fetches would tear the screen down through
+    /// `becomeUnavailable`, which clears `hasLoadedContent` and leaves a document the user is
+    /// actively writing in reading "no longer available".
+    ///
+    /// Nothing is lost when that happens — the teardown flushes first, the draft survives, and
+    /// `releaseHeldSave` refuses for a pending-create id — but the screen is unusable, which is
+    /// the whole feature. The save path needs no gate here: the coordinator's four holds
+    /// already park every save that would name such an id.
+    var isLocalDocument: Bool {
+        saveCoordinator.isPendingCreate(documentID: documentID)
+    }
+
     /// A screen is now writing under this document's id — defer any create replay that would
     /// re-key it. Balanced by `noteEditorDisappeared`; the coordinator reference-counts, so
     /// the *view* owns the balance (SwiftUI can re-run `onAppear` without an intervening
@@ -354,6 +368,8 @@ final class EditorViewModel {
     /// 404/proxy hiccup, or a co-author's own permission flap) and must never eject
     /// an active editing session over another user's activity.
     private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
+        // A client-minted id 404s, and this is the path whose catch calls `becomeUnavailable`.
+        guard !isLocalDocument else { return }
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -439,6 +455,9 @@ final class EditorViewModel {
             return
         }
         clearError()
+        // A local document has nothing to ask the server about, and asking would 404
+        // into the same teardown `revalidate` guards against.
+        guard !isLocalDocument else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
@@ -1091,6 +1110,9 @@ final class EditorViewModel {
     }
 
     func loadChildren() async {
+        // A local document has no children on the server to list — and cannot: nothing may be
+        // created under it until it has a server id (v1 scope), so the empty list stands.
+        guard !isLocalDocument else { return }
         childrenGeneration += 1
         let generation = childrenGeneration
         guard let results = try? await client.listChildren(documentID: documentID) else { return }
@@ -1957,6 +1979,10 @@ final class EditorViewModel {
         // copy the user had explicitly chosen to keep. The draft may only be destroyed
         // once the body that replaces it is actually in hand.
         clearError()
+        // Unreachable for a local document — no conflict can be recorded against an id the
+        // server has never seen — but this is a *discarding* path, so it states the invariant
+        // rather than relying on that. Returning keeps both the record and the draft.
+        guard !isLocalDocument else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()

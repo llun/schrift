@@ -65,6 +65,74 @@ final class EditorViewModelTests: XCTestCase {
         return (viewModel, coordinator, draftStore, contentCache)
     }
 
+    /// A local document's editor: the coordinator holds a real create record, and the view
+    /// model is keyed on the *minted* id rather than the suite's fixed one.
+    private func makeLocalEnvironment() -> (
+        viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, document: Document,
+        draftStore: PendingDraftStore
+    ) {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let suiteName = "EditorViewModelTests.local.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
+        let document = coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil,
+            ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let viewModel = EditorViewModel(
+            client: client, documentID: document.id, title: document.title ?? "Untitled document",
+            saveCoordinator: coordinator, contentCache: contentCache, childrenCache: childrenCache,
+            autosaveInterval: .seconds(10), remoteChangeDebounce: .milliseconds(600))
+        return (viewModel, coordinator, document, draftStore)
+    }
+
+    /// Opening a locally-created document must issue **no** request. Its id is client-minted,
+    /// so every fetch 404s — and `revalidate`'s catch calls `becomeUnavailable`, which clears
+    /// `hasLoadedContent` and leaves a document the user is writing in reading "no longer
+    /// available". Nothing is lost when that happens, but the screen is unusable, which is the
+    /// whole feature.
+    func testOpeningALocalDocumentRendersItsDraftAndIssuesNoRequest() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        env.coordinator.enqueue(documentID: env.document.id, title: "Notes", markdown: "# Written offline")
+
+        await env.viewModel.load()
+
+        XCTAssertEqual(log.methods.count, 0, "no request may name a client-minted id")
+        XCTAssertTrue(env.viewModel.hasLoadedContent, "and the screen is usable")
+        XCTAssertFalse(env.viewModel.isUnavailable)
+        XCTAssertEqual(env.viewModel.currentMarkdown(), "# Written offline")
+    }
+
+    /// Pull-to-refresh is the other way in, and it must not tear the screen down either.
+    func testRefreshingALocalDocumentDoesNotTearTheScreenDown() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        env.coordinator.enqueue(documentID: env.document.id, title: "Notes", markdown: "# Written offline")
+        await env.viewModel.load()
+
+        await env.viewModel.refresh()
+        await env.viewModel.loadChildren()
+
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertFalse(env.viewModel.isUnavailable)
+        XCTAssertEqual(env.viewModel.currentMarkdown(), "# Written offline")
+    }
+
     private func cachedEntry(markdown: String = "# Cached", syncedAt: Date = Date(timeIntervalSince1970: 1_000_000))
         -> CachedDocumentContent
     {
