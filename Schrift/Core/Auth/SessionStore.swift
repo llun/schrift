@@ -61,9 +61,27 @@ final class SessionStore {
         self.isAuthenticated = true
         // Serves both a fresh login and a completed re-login sheet.
         self.needsReauthentication = false
+        // **Forget who was signed in, here rather than at expiry.** This is the moment a
+        // possibly-different account takes over the session, which is exactly when a kept id
+        // becomes a disclosure: it would list the previous user's unsynced documents to the
+        // new one, who could open and type into them — and the record still carries the first
+        // user's `ownerUserID`, so those edits would eventually be POSTed into *their*
+        // account. Refreshing after re-auth is not enough on its own, because that fetch can
+        // fail; nil fails closed, and nothing local is listed until the server says whose
+        // session this is.
+        //
+        // Clearing at `noteSessionExpired` instead would close the same window and also empty
+        // the local section for a user who merely hit a transient 401 — or who dismissed the
+        // sheet, whose documented contract is that cached data keeps showing — with no
+        // message and nothing to re-fetch it until a Profile visit. Same safety, strictly more
+        // collateral, so it is done here.
+        signedInUser.clear()
     }
 
     func signOut() throws {
+        // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
+        // should not have to remember this one.
+        signedInUser.clear()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()
@@ -77,16 +95,6 @@ final class SessionStore {
     func noteSessionExpired() {
         guard isAuthenticated else { return }
         needsReauthentication = true
-        // **Forget who was signed in, immediately.** The sheet can be answered by a
-        // *different* account, and until the next `/users/me/` succeeds nothing here can tell
-        // which. A stale id lists the previous user's unsynced documents to the new one, who
-        // can open and type into them — and the record still carries the first user's
-        // `ownerUserID`, so those edits are eventually POSTed into *their* account. Refreshing
-        // after re-auth is not enough on its own: that fetch can fail, and "keep the last
-        // known id" is the wrong direction for listing even though it is the right one for
-        // sending. Nil fails closed — no local document is listed until the server says whose
-        // it is — which costs a brief empty section and discloses nothing.
-        signedInUser.clear()
     }
 
     /// User dismissed the re-login sheet without signing in. Cached data keeps

@@ -1172,7 +1172,7 @@ or clears the key — its mere existence is what keeps the suppression on.
 
 **Four of these landed with the create UI** and are recorded here as done rather than
 deleted, because the reasoning is what the next change needs: the signed-in user id is
-persisted (`SignedInUserStore`, read-through, cleared on sign-out); `EditorView` retains
+persisted (`SignedInUserStore`, read-through, cleared on sign-*in* and sign-out — sign-in being the moment a possibly-different account takes over, and a mere expiry deliberately keeping it so a transient 401 does not silently empty the local section); `EditorView` retains
 and releases the editor registry for *every* document; the editor's fetches are gated on
 `isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
 checkpointed record via `syncedServerID(forLocalID:)`. What remains:
