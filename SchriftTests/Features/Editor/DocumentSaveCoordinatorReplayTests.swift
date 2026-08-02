@@ -4,7 +4,7 @@ import XCTest
 
 /// The create replay: POST a document this device made, move everything keyed by its
 /// client-minted id onto the one the server assigned, and hand the content to the ordinary
-/// draft replay. Dormant — nothing mints a record yet — so these drive the coordinator
+/// draft replay. These drive the coordinator
 /// directly.
 @MainActor
 final class DocumentSaveCoordinatorReplayTests: XCTestCase {

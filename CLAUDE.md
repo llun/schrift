@@ -1896,10 +1896,10 @@ markdown write endpoint**. Understand this before touching the save path:
   The coordinator write-throughs the cache on save success; delete and 404/403
   revalidation purge the entry; sign-out clears the store. See
   [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
-- **Offline is editable, not read-only — but only for a document that already
-  exists on the server.** The three reading-surface edit gates (the block tap,
+- **Offline is editable, and since the create UI landed a document can be created
+  offline too.** The three reading-surface edit gates (the block tap,
   "Start writing", and the toolbar's Edit action) were lifted 2026-08-01;
-  `editorToolbarActions(isEditing:)` deliberately no longer *takes* `isOffline`,
+  `editorToolbarActions(isEditing:isLocal:)` deliberately no longer *takes* `isOffline`,
   so the gate cannot quietly return. What makes this safe is that the save
   pipeline was already built for it: `enqueue` persists the draft **before** it
   attempts the PATCH, `retryableSaveFailure` routes a transport failure to
@@ -1913,23 +1913,30 @@ markdown write endpoint**. Understand this before touching the save path:
   photo** uploads a multipart attachment that has no queue, so it stays gated
   offline in *both* entry points — disabled in `EditorFormattingBar` (via
   `canOfferPhotoInsertion`), and dropped from the slash menu by the pure
-  `filteredSlashItems(query:isOffline:)`. Offering it would open the picker and
-  re-encode the chosen image only to fail. The editor's two **create** buttons
-  are gated for the same reason: "Add a subpage" (`EditorView`) and the Pages
-  drawer's "New page" POST, and a document that does not exist server-side has
-  no id for the draft pipeline to PATCH.
+  `filteredSlashItems(query:isOffline:isLocalDocument:)`. Offering it would open the picker and
+  re-encode the chosen image only to fail. **Photo now also gates on
+  `isLocalDocument`** at both entry points, because `isOffline` is derived from Home's
+  last *list* fetch rather than reachability — a create that 500s with the network fine
+  mints a local document while `isOffline` reads false, and the upload would POST a
+  client-minted id for a 404 and an impossible retry.
+  The editor's two **create** buttons are no longer gated on `isOffline` — a failed POST
+  now falls back to a local document the replay sends later. Their remaining gate is the
+  *parent*: "Add a subpage" is hidden for a local parent (`EditorView`) and the Pages
+  drawer's "New page" for a local root, because a child of an unsynced parent is out of
+  v1 scope (the replay cannot order the two creates).
   **This is a rule about the editor's surfaces, not an app-wide invariant — do
   not read it as an inventory.** Several POSTing affordances elsewhere are
-  deliberately ungated and simply fail loudly: Home's **`+`**
-  (`DocumentListView`, which errors with `home_error_create`), and the Options
+  deliberately ungated: Home's **`+`** now creates *locally* under Work Offline or on a
+  retryable failure, and errors with `home_error_create` only on a rejection the server
+  actually made (or when no account id is known). Also the Options
   and Share sheets' actions (pin, delete, invite, role changes), which stay
   reachable offline because `editorToolbarActions` never gated `.share` or
   `.options`. All of that predates offline editing; it is listed here so the
   paragraph above isn't mistaken for a complete one.
   Two decisions ride with this. (a) **`isOffline` never gates durability or a save
   decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
-  the presence badge) plus the POST-only affordances above (photo, the two create
-  buttons). Nothing about whether an edit is kept, queued, or replayed reads it.
+  the presence badge) plus the one POST-only affordance above that still reads it (photo).
+  Nothing about whether an edit is kept, queued, or replayed reads it.
   It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
   *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the
   **list** endpoint sets it with the network perfectly healthy. It is deliberately

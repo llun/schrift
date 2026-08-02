@@ -79,7 +79,8 @@ final class HomeViewModelTests: XCTestCase {
             client: client, draftStore: draftStore,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             // And the two list caches: this suite now drives real migrations, which reach
-            // `insertIntoListCaches`/`childrenCache.save`. Same hazard the comment above
+            // `insertIntoListCaches` (and `childrenCache.removeDocument` — Home
+            // creates roots, so the children *write* is not on this path). Same hazard the comment above
             // describes for drafts and creates.
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),

@@ -65,10 +65,10 @@
 > queue, so it is withheld offline too (disabled in `EditorFormattingBar`,
 > dropped from the slash menu by `filteredSlashItems(query:isOffline:)`) —
 > otherwise it would open the picker and re-encode the chosen image only to
-> fail. Offline **creation** remains out of scope here for the same reason (the
-> "Add a subpage" and Pages-drawer "New page" buttons stay gated: they POST, and
-> a document that does not exist server-side has nothing for the draft pipeline
-> to save to) — it is the subject of its own change. That rule describes the
+> fail. Offline **creation** was out of scope in *this* change — the "Add a subpage"
+> and Pages-drawer "New page" buttons stayed gated here — and is **superseded**: it
+> landed 2026-08-02, and those buttons now fall back to a local document rather than
+> gating on `isOffline`. See "Documents created on this device". That rule describes the
 > editor, **not the whole app**: Home's `+` POSTs ungated and simply errors, and
 > the Options/Share sheets stay reachable offline throughout. Both predate this
 > change. Two decisions ride along:
@@ -159,13 +159,13 @@ amendment above; when this was written, editing offline was still blocked.)
 
 ## Non-goals
 
-- **Offline *creation*** — a document that does not exist server-side has no id
-  to PATCH, so the draft pipeline has nothing to save to. The two create
-  buttons ("Add a subpage", the Pages drawer's "New page") therefore stay gated
-  on `!isOffline`. **In progress**: the storage, the safety gates and the replay
-  all landed 2026-08-01 (see "Documents created on this device" below), but
-  the create UI now mints records — so the gates and this non-goal stand until the UI
-  lands alongside them.
+- ~~**Offline *creation***~~ — **withdrawn 2026-08-02.** The premise (a document with
+  no server id has nothing for the draft pipeline to PATCH) was answered by giving such
+  a document a client-minted id, a record, and a replay that POSTs it and migrates the
+  draft onto the real id. Home's `+`, "Add a subpage" and the drawer's "New page" all
+  create locally when the network cannot take the POST; the only remaining gate is the
+  *parent* being unsynced, which stays out of scope because the replay cannot order two
+  dependent creates. See "Documents created on this device" below.
 - ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
   amendment at the top). Editing a previously-opened document offline is
   supported: the edit is written to `PendingDraftStore` before any network
