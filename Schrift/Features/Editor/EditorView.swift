@@ -814,9 +814,9 @@ struct EditorView: View {
                     MaterialSymbol(.account_tree, size: 16)
                         .accessibilityHidden(true)
                     Text(
-                        (viewModel.subpages?.isEmpty ?? true)
+                        (viewModel.mergedSubpages?.isEmpty ?? true)
                             ? loc[.editor_subpages_title]
-                            : loc.format(.editor_subpages_title_count, viewModel.subpages?.count ?? 0)
+                            : loc.format(.editor_subpages_title_count, viewModel.mergedSubpages?.count ?? 0)
                     )
                     .font(DocsFont.footnote.weight(.semibold))
                     .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
@@ -827,7 +827,7 @@ struct EditorView: View {
                 // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
                 .padding(.bottom, DocsSpacing.space3xs)
 
-                if let subpages = viewModel.subpages {
+                if let subpages = viewModel.mergedSubpages {
                     if subpages.isEmpty {
                         Text(loc[.editor_subpages_empty])
                             .font(DocsFont.footnote)

@@ -203,7 +203,22 @@ final class HomeViewModel {
     /// inside the view model (like `load()`'s `recoverDrafts()`), so the view never
     /// drives networking/persistence directly.
     func syncPendingDrafts() async {
+        let hadLocalDocuments = !saveCoordinator.pendingLocalDocuments(
+            parentID: nil, currentUserID: signedInUser.userID
+        ).isEmpty
         await saveCoordinator.syncPendingDrafts()
+        // **A migrated document must not vanish from a live Home.** The replay drops the
+        // record, so the local row is correctly withheld the instant it migrates — but the
+        // *real* row only exists in `fetchedRecentDocuments`, which still holds the fetch from
+        // before the document was created. Nothing else reloads: the reconnect and foreground
+        // edges call this and not `load()`, `insertIntoListCaches` writes only the cache, and
+        // the list's own `.task` does not re-run on pop-back. So the user watches their
+        // document disappear from the screen, until a pull-to-refresh brings it back.
+        //
+        // Refetch only when this device actually had something to replay, so an ordinary
+        // reconnect on an account with no local documents costs nothing extra.
+        guard hadLocalDocuments else { return }
+        await load()
     }
 
     func search() async {

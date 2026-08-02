@@ -1138,6 +1138,25 @@ final class EditorViewModel {
         }
     }
 
+    /// The sub-pages the screen renders: the fetched list with this device's unsynced
+    /// children merged in at read time.
+    ///
+    /// Same rule, and the same reason, as Home's root list. `appendChild` optimistically
+    /// writes a synthetic child into `subpages` and the children cache, but a successful
+    /// `loadChildren` replaces **both** wholesale with the server's answer — which cannot
+    /// contain a document the server has never seen. Without a read-time merge the local
+    /// sub-page simply disappears, and if its replay is parked (`.failed`, or blocked for
+    /// this build) it is unreachable from every list in the app while its body sits on disk.
+    var mergedSubpages: [Document]? {
+        _ = saveCoordinator.pendingCreatesVersion
+        let local = saveCoordinator.pendingLocalDocuments(
+            parentID: documentID, currentUserID: signedInUser.userID)
+        guard !local.isEmpty else { return subpages }
+        // A nil (never-fetched) level stays distinguishable from an empty one: local children
+        // are a real answer about this device, so they make the level known.
+        return mergedWithLocalDocuments(fetched: subpages ?? [], local: local)
+    }
+
     func loadChildren() async {
         // A local document has no children on the server to list — and cannot: nothing may be
         // created under it until it has a server id (v1 scope), so the empty list stands.

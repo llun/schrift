@@ -1177,6 +1177,25 @@ and releases the editor registry for *every* document; the editor's fetches are 
 `isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
 checkpointed record via `syncedServerID(forLocalID:)`. What remains:
 
+**Local documents reach the screen through two read-time merges, not one.** Home's root
+list merges `pendingLocalDocuments(parentID: nil)`; the editor's Subpages section merges
+`pendingLocalDocuments(parentID: documentID)`. The second is not symmetry for its own
+sake: `appendChild` writes the new sub-page into `subpages` *and* the children cache
+optimistically, and a successful `loadChildren` replaces **both** wholesale with the
+server's answer, which cannot contain a document the server has never seen. Without the
+merge the sub-page disappears on the next fetch — and if its replay parks (`.failed`, or
+blocked for this build) it is unreachable from every list in the app while its body sits
+on disk. The Pages drawer renders from the same cache and inherits the gap; it is
+recorded below rather than fixed here.
+
+**And a migrated document must not vanish from a live Home.** The replay drops the record,
+so the local row is correctly withheld the instant it migrates — but the *real* row exists
+only in the fetched array, which still holds the list from before the document was created.
+Nothing else reloads: the reconnect and foreground edges call `syncPendingDrafts()` and not
+`load()`, `insertIntoListCaches` writes only the cache, and the list's own `.task` does not
+re-run on pop-back. So `HomeViewModel.syncPendingDrafts()` refetches — but only when this
+device actually had something to replay, so an ordinary reconnect costs nothing extra.
+
 - **[LANDED — `SignedInUserStore`]** Persisting the signed-in user id. Listing and minting both require it, and
   it is only ever learned from `/users/me/` and stored nowhere — so launching
   offline currently yields no user id at all, which is precisely the case the
@@ -1198,6 +1217,19 @@ checkpointed record via `syncedServerID(forLocalID:)`. What remains:
   visibility is the wrong signal. A leaked retain is not harmless *within* a
   session: that document never replays while the caption says "syncs when
   online".
+- **The Pages drawer has no read-time merge.** The editor's Subpages section merges local
+  children; `PagesTreeViewModel` renders from `children`/the shared cache and does not, so a
+  local sub-page vanishes from the drawer on the next successful level fetch even though it
+  is still listed one screen over. Same fix shape as the editor's `mergedSubpages`.
+- **The replay's own child insert does not invalidate an in-flight fetch.**
+  `insertIntoListCaches` bumps neither `childrenGeneration` nor `PagesTreeViewModel
+  .mutations`, so a `listChildren` issued before the migration can land after it and
+  overwrite the level — losing the *real* child, the mirror of the guard `appendChild`
+  already carries for a local one.
+- **A live parent editor keeps the ghost child row after migration.** The cache is purged,
+  but the parent's in-memory `subpages` is not, and nothing refetches while it stays on
+  screen. Tapping the stale row opens a dead local id and reports "no longer available" for
+  a document that just synced.
 - **[LANDED — all three states] Deleting a local document**, which is two changes that must land together:
   `OptionsViewModel.delete()` short-circuiting for a pending-create id (it
   previously always called the server, which 404s) and the Options sheet hiding the

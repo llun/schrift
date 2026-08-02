@@ -302,4 +302,21 @@ final class SessionStoreTests: XCTestCase {
 
         XCTAssertFalse(store.needsReauthentication)
     }
+    /// The stale-account disclosure. Until a fresh `/users/me/` says whose session this now
+    /// is, nothing local may be listed — the sheet can be answered by a *different* account,
+    /// and a kept id lists the previous user's unsynced documents to the new one, who can
+    /// type into them, with the edits eventually POSTed into the first user's account.
+    func testExpiringASessionForgetsWhoWasSignedIn() throws {
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: URL(string: "https://docs.example.org")!)
+        XCTAssertNotNil(signedIn.userID)
+
+        store.noteSessionExpired()
+
+        XCTAssertNil(signedIn.userID, "fails closed until the server says whose session this is")
+    }
+
 }

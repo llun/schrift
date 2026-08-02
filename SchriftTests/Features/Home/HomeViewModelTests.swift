@@ -447,6 +447,45 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
+    /// The memo must re-derive when the *account* changes. Re-auth swaps who may be listed
+    /// without touching the fetched array or the record version, so a memo keyed only on
+    /// those two would keep serving the previous user's documents to the new one.
+    func testTheMergedListReDerivesWhenTheAccountChanges() async {
+        let signedIn = makeSignedInUser()
+        let viewModel = makeViewModel(signedInUser: signedIn)
+        preferences.set(true, forKey: "schrift.workOffline")
+        _ = await viewModel.createDocument()
+        XCTAssertEqual(viewModel.recentDocuments.count, 1)
+
+        // A different account answers the re-login sheet.
+        signedIn.remember(UUID(uuidString: "22222222-2222-4222-8222-222222222222")!)
+
+        XCTAssertTrue(
+            viewModel.recentDocuments.isEmpty,
+            "the previous user's unsynced documents are not listed to the new one")
+    }
+
+    /// And a migrated document must not vanish from a live Home: the record is dropped, so
+    /// the local row is correctly withheld — but the *real* row only exists in a fetch made
+    /// before the document was created, and nothing else reloads on the reconnect edge.
+    func testSyncingRefetchesSoAMigratedDocumentDoesNotDisappear() async {
+        let log = RequestRecorder()
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser())
+        preferences.set(true, forKey: "schrift.workOffline")
+        _ = await viewModel.createDocument()
+        preferences.set(false, forKey: "schrift.workOffline")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.syncPendingDrafts()
+
+        XCTAssertGreaterThan(
+            log.count(ofMethod: "GET", urlContaining: "documents/"), 0,
+            "the list is refetched, so the real row can come back")
+    }
+
     /// A fresh install in airplane mode that has created a document must render that row, not
     /// the never-fetched placeholder. `isCurrentListKnown` gates the empty state, and a local
     /// document *is* a real answer about what this device holds.

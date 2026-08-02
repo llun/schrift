@@ -50,8 +50,16 @@ final class EditorViewModelTests: XCTestCase {
         // Isolated: load()/delete/404 paths touch the children cache, which
         // must never read from or write to UserDefaults.standard in tests.
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        // Isolate the create store too. Defaulted it is `UserDefaults.standard`, and a test
+        // whose create stub fails retryably now mints a *real* record there — which persists
+        // on the simulator across runs and makes every later `syncPendingDrafts` issue a
+        // genuine `/users/me/` that escapes `MockURLProtocol` and stalls the suite on a 60 s
+        // timeout. It presents as an unrelated test hanging, not failing. Same fix as
+        // `HomeViewModelTests.makeViewModel`.
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,
@@ -133,6 +141,37 @@ final class EditorViewModelTests: XCTestCase {
         // `deinit` hops to the main actor to release, so let that turn run. Timing out here
         // means either the token was never created or the retain was counted twice.
         await waitUntil { !env.coordinator.hasOpenEditorForTesting(documentID: env.document.id) }
+    }
+
+    /// A local sub-page must survive a successful children fetch. `appendChild` writes it
+    /// into `subpages` and the cache optimistically, but `loadChildren` replaces **both**
+    /// wholesale with the server's answer — which cannot contain a document the server has
+    /// never seen. Without the read-time merge it simply disappears, and if its replay parks
+    /// it is unreachable from every list in the app while its body sits on disk.
+    func testALocalSubpageSurvivesASuccessfulChildrenFetch() async {
+        let env = makeEnvironment()
+        let signedIn = makeSignedInUser()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let child = await viewModel.addSubpage()
+        XCTAssertNotNil(child)
+
+        // The server answers with a level that knows nothing about it.
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+
+        XCTAssertEqual(viewModel.subpages?.count, 0, "the fetched list is the server's, unchanged")
+        XCTAssertEqual(
+            viewModel.mergedSubpages?.map(\.id), [child!.id],
+            "but the screen still shows the local child")
     }
 
     /// A transport failure on "Add a subpage" keeps the page on the device rather than
