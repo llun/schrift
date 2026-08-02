@@ -1187,7 +1187,20 @@ final class EditorViewModel {
         if var updated = subpages {
             updated.append(child)
             subpages = updated
-            childrenCache.save(updated, for: documentID)
+            // **Never persist a synthetic.** `DocumentChildrenCacheStore` is neither
+            // account-scoped nor cleared on sign-out, so a locally-created child written here
+            // survives into the *next* user's session: `load()` seeds `subpages` from it
+            // synchronously, `mergedSubpages` can only add and never withhold, and
+            // `isPendingCreate` is deliberately unscoped — so the row renders, the editor's
+            // fetch gates all return, and the previous user's draft (title and full body) is
+            // installed for a stranger to read, edit, or delete. `belongsToSession` gates the
+            // two surfaces it was written for; this cache was a third.
+            //
+            // Nothing is lost by withholding it: `mergedSubpages` merges the *scoped*
+            // `pendingLocalDocuments` on every read, which is what puts the row back after a
+            // pop-back, offline included.
+            childrenCache.save(
+                updated.filter { !saveCoordinator.isPendingCreate(documentID: $0.id) }, for: documentID)
         }
     }
 

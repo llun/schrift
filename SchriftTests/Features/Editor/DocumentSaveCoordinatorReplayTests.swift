@@ -1682,6 +1682,33 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// The registry the deferrals key off is now wired from `EditorView`, so a balanced
     /// appear/disappear pair must actually defer a migration and then let it complete. This
     /// pins the coordinator half of that contract — the view owns the balance, the view model
+    /// **Deleting the empty server stray must not take a live editor's body.** An editor
+    /// reopened during the POST leaves the record checkpointed-but-unmigrated, so Home shows
+    /// the server document — empty, since the body is enqueued only at migration — and the
+    /// user deletes it as a duplicate. That path removed the record *and the local draft*,
+    /// which is the only copy of what they are still typing.
+    func testDeletingTheServerStrayKeepsALiveEditorsBody() async {
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Still typing")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: local.id)
+
+        relaunched.coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: local.id)?.markdown, "# Still typing",
+            "the body the open screen is showing is still on disk")
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "and it can still be created")
+        XCTAssertNil(
+            relaunched.creates.create(for: local.id)?.syncedServerID,
+            "starting over, since the document it was checkpointed onto is gone")
+    }
+
     /// only forwards.
     func testAnEditorRegistrationDefersTheMigrationAndReleasingCompletesIt() async {
         let log = RequestRecorder()

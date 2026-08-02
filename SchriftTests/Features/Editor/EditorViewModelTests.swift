@@ -143,6 +143,37 @@ final class EditorViewModelTests: XCTestCase {
         await waitUntil { !env.coordinator.hasOpenEditorForTesting(documentID: env.document.id) }
     }
 
+    /// **A local sub-page must never be readable by the next account.** The children cache is
+    /// neither account-scoped nor cleared on sign-out, and `load()` seeds `subpages` from it
+    /// synchronously — so persisting a synthetic there hands the previous user's draft, title
+    /// and body, to whoever signs in next, who can then edit or delete it.
+    func testALocalSubpageIsNeverPersistedIntoTheSharedChildrenCache() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        // A known level, so `appendChild` writes through at all.
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNotNil(child)
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [child!.id], "still on screen")
+        let cache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        XCTAssertEqual(
+            cache.children(for: documentID)?.map(\.id), [],
+            "but nothing a stranger's session could read")
+    }
+
     /// A local sub-page must survive a successful children fetch. `appendChild` writes it
     /// into `subpages` and the cache optimistically, but `loadChildren` replaces **both**
     /// wholesale with the server's answer — which cannot contain a document the server has

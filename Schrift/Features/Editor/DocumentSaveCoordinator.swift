@@ -2116,6 +2116,26 @@ final class DocumentSaveCoordinator {
             // `mayPredateLocalSave` on a *successful* fetch, which a client-minted id can never
             // get. Cleared anyway so the asymmetry cannot become load-bearing once the create
             // UI lands.
+            // **Not while a screen is writing under the local id.** Every other record remover
+            // defers to an open editor (`runCreatePass`, `finishMigration`); this one did not,
+            // and it is the only one that also deletes the local draft. Reachable without a
+            // process death: an editor reopened *during* the POST leaves the record
+            // checkpointed-but-unmigrated, so Home shows the server document — empty, since
+            // the body is enqueued only at migration — and deleting that stray as a duplicate
+            // took the live editor's only copy with it. The screen kept rendering a body that
+            // no longer existed on disk, and the next launch's sweep removed what its flush
+            // rewrote.
+            //
+            // Clear only the checkpoint instead. The record starts over, so the document the
+            // user actually has open re-POSTs as a fresh create carrying its body — which is
+            // what they meant by deleting an empty stray, not "throw away what I am typing".
+            guard !hasOpenEditor(documentID: checkpointed.localID) else {
+                var restarted = checkpointed
+                restarted.syncedServerID = nil
+                restarted.postedTitle = nil
+                updatePendingCreate(restarted)
+                return
+            }
             removePendingCreate(documentID: checkpointed.localID)
             states[checkpointed.localID] = .idle
             draftStore.remove(documentID: checkpointed.localID)

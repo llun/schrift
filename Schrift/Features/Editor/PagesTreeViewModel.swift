@@ -221,7 +221,12 @@ final class PagesTreeViewModel {
         if var updated = children[parent] {
             updated.append(child)
             children[parent] = updated
-            cache.save(updated, for: parent)
+            // Never persist a synthetic — see `EditorViewModel.appendChild`. This cache is
+            // shared with the editor's Subpages list and outlives sign-out, so a local child
+            // written here is readable, editable and deletable by whoever signs in next.
+            cache.save(
+                updated.filter { saveCoordinator?.isPendingCreate(documentID: $0.id) != true },
+                for: parent)
             // Bumped *here*, not on every create: the stamp exists to defend an
             // append we actually made. Bumping it when we declined to append
             // would block the in-flight fetch as well, and then neither writer
