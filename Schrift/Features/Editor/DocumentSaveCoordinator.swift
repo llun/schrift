@@ -427,6 +427,18 @@ final class DocumentSaveCoordinator {
         createStore.remove(localID: documentID)
     }
 
+    /// The server id a locally-created document has already been POSTed under, if any.
+    ///
+    /// The delete path needs this and cannot infer it: `isPendingCreate` stays true for a
+    /// **checkpointed** record — the POST has landed and a real server document exists — so
+    /// "this is a local document" is not the same question as "is there anything on the server
+    /// to delete". Without it, deleting a checkpointed document would drop the record and the
+    /// draft while leaving the server copy alive, and it would reappear in Home on the next
+    /// list fetch with nothing on the device that knows about it.
+    func syncedServerID(forLocalID localID: UUID) -> UUID? {
+        pendingCreates[localID]?.syncedServerID
+    }
+
     /// The one way to rewrite a mirrored record. Both the disk copy and the in-memory mirror
     /// move together, because `isPendingCreate` — the predicate every gate keys off — reads
     /// the mirror while the replay's resume path reads the disk. Letting them drift means a

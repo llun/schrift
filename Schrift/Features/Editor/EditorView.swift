@@ -217,7 +217,10 @@ struct EditorView: View {
         self.onOpenDocument = onOpenDocument
         _optionsViewModel = State(
             initialValue: OptionsViewModel(
-                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite))
+                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
+                // So Delete can tell a document that exists only here from one the replay has
+                // already POSTed, and issue the server DELETE for the latter.
+                saveCoordinator: viewModel.saveCoordinator))
         _shareViewModel = State(
             initialValue: ShareViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
