@@ -340,7 +340,7 @@ Schrift/
 │                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
 │                        ConflictSheetView), documents created on-device
-│                        (PendingDocumentCreateStore — dormant until the create UI),
+│                        (PendingDocumentCreateStore + the replay; Home/editor create UI),
 │                        photo insert (ImagePreparation),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
@@ -1334,7 +1334,8 @@ markdown write endpoint**. Understand this before touching the save path:
   its id from places the coordinator does not own — `formattedContent`, the
   children fetch, the collaboration room, Options' delete and version history —
   and gating those is the create UI's job. Until then the invariant is *broader
-  than its enforcement*, which is why nothing may mint a record yet.)
+  than its enforcement*. The create UI mints records now, so a *save* is fully guarded while
+  those other paths are guarded by `EditorViewModel.isLocalDocument` instead.)
   1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
      Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
      404, and — a 404 being non-retryable — lands on `.failed`, which
@@ -1366,8 +1367,8 @@ markdown write endpoint**. Understand this before touching the save path:
   what the user threw away. **But "a local delete is purely local" holds only while
   the record is un-checkpointed** — once `syncedServerID` is set the POST has landed
   and a real server object exists, while `isPendingCreate` is still true, so the
-  local-id branch runs for exactly the case where it is false. The create UI owes the
-  server `DELETE` there; without it the document survives and reappears in Home on
+  local-id branch runs for exactly the case where it is false. `OptionsViewModel.delete()`
+  issues the server `DELETE` there, via `syncedServerID(forLocalID:)`; without it the document survives and reappears in Home on
   the next list fetch with nothing on the device that knows about it. (That needs an
   accessor the coordinator does not expose yet — land it *with* the delete branch.)
   **The other direction is handled here, and must stay so**: once checkpointed,
@@ -1407,12 +1408,14 @@ markdown write endpoint**. Understand this before touching the save path:
   `createLocalDocument(title:parentID:ownerUserID:)` takes a **non-optional**
   `ownerUserID` so nil can only come from a future or damaged schema, and "I don't
   know whose this is" must never resolve to "anyone may send it".
-  **That makes the signed-in user id a prerequisite for the whole feature, and the
-  app does not have one offline yet** — it is only ever learned from
-  `client.currentUser()` and persisted nowhere. So the create UI owes persisting it
-  at sign-in: without that, launching offline (the entire point) yields no user id,
-  local documents are not listed, and none can be minted. Failing closed is right;
-  the gap is that nothing supplies the value yet.
+  **That makes the signed-in user id a prerequisite for the whole feature**, and it is
+  only ever learned from `client.currentUser()` — so `SignedInUserStore`
+  (`dev.llun.Schrift.signedInUserID`) persists it, written through from the root task and
+  Profile and cleared on sign-out. Without it, launching offline (the entire point) yields
+  no user id, local documents are not listed, and none can be minted. It is a read-through
+  struct rather than a caching `@Observable`, so a reader built before the first write
+  cannot answer nil forever; not in the Keychain, because it is an identifier rather than a
+  credential and `…WhenUnlockedThisDeviceOnly` would hide it from a background launch.
   **The replay also refuses to run while the *drafts* store cannot decode.**
   `PendingDraftStore.loadAll` is all-or-nothing too, so one bad blob makes every
   `draft(for:)` answer nil — and `runCreatePass` would read that as "every body is empty",
@@ -1466,12 +1469,12 @@ markdown write endpoint**. Understand this before touching the save path:
   to give; **remove the record
   last**, because it is what keeps the holds in force; then enqueue the content.
   **A replay never runs while an editor is open** on that document
-  (`retainOpenEditor`/`releaseOpenEditor`) — **once those are wired, which they are
-  not: both have zero production callers today, so the guards are statically true and
-  this invariant is, like the pending-create one above, broader than its enforcement.**
-  The create UI owes the wiring, from `EditorView` and for *every* document rather than
-  only locally-created ones (the server-id guard's motivating case is an ordinary
-  document opened from Home). Why it matters: migration re-keys everything, and
+  (`retainOpenEditor`/`releaseOpenEditor`), wired from `EditorView`'s appear/disappear for
+  **every** document rather than only locally-created ones — the server-id guard's
+  motivating case is an ordinary document opened from Home whose id a checkpointed record
+  is about to migrate *onto*. The *view* owns the balance (the registry reference-counts,
+  and SwiftUI may re-run `onAppear` without an intervening `onDisappear`), and the flush
+  runs before the release so the deferred migration sees the work. Why it matters: migration re-keys everything, and
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap

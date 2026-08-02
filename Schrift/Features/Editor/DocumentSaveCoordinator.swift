@@ -168,11 +168,12 @@ final class DocumentSaveCoordinator {
     /// id and would keep writing drafts under one the holds no longer cover. Deferring is meant
     /// to make mid-swap edit loss unrepresentable rather than merely unlikely.
     ///
-    /// **That is the design, not the current state.** `retainOpenEditor`/`releaseOpenEditor`
-    /// have zero production callers — every call site today is a test — so this stays empty,
-    /// `hasOpenEditor` always answers false, and none of its five readers — four `guard`
-    /// deferrals plus the take-back's conjunct — ever fires. Wiring it from `EditorView`, for
-    /// *every* document rather than only locally-created ones, is owed with the create UI.
+    /// Wired from `EditorView`'s appear/disappear, for **every** document rather than only
+    /// locally-created ones — the server-id guards' motivating case is an ordinary document
+    /// opened from Home whose id a checkpointed record is about to migrate *onto*. The view
+    /// owns the balance, because this reference-counts and SwiftUI may re-run `onAppear`
+    /// without an intervening `onDisappear`; an unbalanced retain would pin a document
+    /// forever. Five readers: four `guard` deferrals plus the take-back's conjunct.
     private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s

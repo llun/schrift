@@ -1170,8 +1170,12 @@ cleared; a stale draft is inert where a deleted one is gone, and clearing it
 belongs with the recovery affordance below. Nothing reads the quarantined *bytes*
 or clears the key — its mere existence is what keeps the suppression on.
 
-Still to come, and each is an obligation this change creates rather than a
-nice-to-have:
+**Four of these landed with the create UI** and are recorded here as done rather than
+deleted, because the reasoning is what the next change needs: the signed-in user id is
+persisted (`SignedInUserStore`, read-through, cleared on sign-out); `EditorView` retains
+and releases the editor registry for *every* document; the editor's fetches are gated on
+`isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
+checkpointed record via `syncedServerID(forLocalID:)`. What remains:
 
 - **Persisting the signed-in user id.** Listing and minting both require it, and
   it is only ever learned from `/users/me/` and stored nowhere — so launching
@@ -1397,10 +1401,12 @@ Deferring makes mid-swap edit loss *unrepresentable* rather than merely unlikely
 Releasing the last hold kicks the funnel — for a pending-create id or a checkpointed
 server id — so popping back on iPhone syncs immediately. The accepted cost: an iPad
 split-view editor left selected defers that document until it is deselected or the app
-relaunches. **None of this is live yet**: `retainOpenEditor`/`releaseOpenEditor` have
-zero production callers, so both `finishMigration` editor guards are statically true
-and this invariant, like the pending-create one, is broader than its enforcement. The
-create UI owes the wiring — see "What the create UI still owes".
+relaunches. `EditorView` retains on appear and releases on disappear, for **every**
+document rather than only locally-created ones — the server-id guards' motivating case
+is an ordinary document opened from Home whose id a checkpointed record is about to
+migrate *onto*. The view owns the balance (the registry reference-counts and SwiftUI may
+re-run `onAppear` without a matching `onDisappear`), and the flush runs before the
+release so the deferred migration sees the work rather than running a pass behind it.
 
 **Everything that can change during the await is re-checked after it — and a boolean is
 not enough.** The fourth thing that can change is a save for the *server* id that starts
