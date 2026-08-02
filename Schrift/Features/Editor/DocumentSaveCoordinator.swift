@@ -665,7 +665,9 @@ final class DocumentSaveCoordinator {
             // `!mayPredateSave(marker)` with the start-over below, but the two are not
             // redundant: this one is skipped outright whenever a local draft is present, and
             // that is exactly the shape in which the start-over still runs — so neither can
-            // stand in for the other. `inFlight` and `hasOpenEditor` are this guard's alone. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
+            // stand in for the other. It shares `!hasOpenEditor(serverID)` with the
+            // start-over too; `inFlight[serverID] == nil` is the one conjunct that is this
+            // guard's alone. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
             // so this branch can run with a live editor — or an in-flight save — on `serverID`,
             // and removing that draft yanks the disk backing out from under it; the editor's
             // next flush would recreate it while the re-POST mints a *second* document holding
@@ -1131,8 +1133,17 @@ final class DocumentSaveCoordinator {
         // start, and this is a pure clear plus the draft-stamp rewrite the enqueue below
         // redoes anyway.
         //
-        // **Equality, not `!diverged`.** `!diverged` is two arms and only one of them proves
-        // anything. On `canonicalServer == canonicalBody` a conflict is moot by construction:
+        // **Non-empty equality, not `!diverged`.** `!diverged` is two arms and only one of
+        // them proves anything — and the emptiness check is part of that arm, not a leftover
+        // from the other. `willAdoptServer` above requires `!canonicalServer.isEmpty`, so a
+        // *both*-canonically-empty state falls through to here, where `"" == ""` would release
+        // on exactly the `formatted.content ?? ""` fallback the next paragraph calls
+        // insufficient evidence — and then push an empty body unheld, which is more
+        // destructive than the arm this condition was narrowed to exclude. Nobody made
+        // anything match there; the fallback did.
+        //
+        // On a *non-empty* `canonicalServer == canonicalBody` a conflict is moot by
+        // construction:
         // it was recorded because local and server differed, so equality now means someone
         // made the server match us, and the enqueue below is a content no-op. The other arm —
         // an *empty* server with a non-empty body — proves nothing of the sort, and releasing
@@ -1142,9 +1153,22 @@ final class DocumentSaveCoordinator {
         // observed `updated_at` against the stamp the conflict was recorded with. The
         // empty-server carve-out in `diverged` is an accepted trade for *detection*; extending
         // it to discharging a persisted hold and starting a destructive write is a strictly
-        // stronger claim, and one this branch cannot make. That arm keeps its hold and waits
-        // for the user.
-        if canonicalServer == canonicalBody { clearResolvedConflict(documentID: serverID) }
+        // stronger claim, and one this branch cannot make.
+        //
+        // **But be honest about what keeping it buys: a delay, not a decision.** The
+        // empty-server arm is undiverged, so the baseline stamped above is the undiverged one
+        // — `serverUpdatedAt: <observed>` — and the next revalidation hands
+        // `draftSyncBodyDecision` rule 2 a proof that is trivially true of the state it was
+        // copied from, answering `.push(.descendsFromBaseline)`; `releaseConflictIfProven`
+        // then clears the record and the held save goes. No baseline fixes that: a
+        // `(nil, "")` one, as the diverged path uses, meets rule 2's body tiebreak against an
+        // empty server and releases too. So the hold survives this pass and not much longer.
+        // It is still worth keeping — this branch has no business spending evidence it does
+        // not have, and the release it declines to make is the one that would push
+        // *immediately*, unheld, from inside a background pass with no screen open.
+        if !canonicalServer.isEmpty, canonicalServer == canonicalBody {
+            clearResolvedConflict(documentID: serverID)
+        }
 
         // Undiverged, this is an ordinary document with an ordinary queued edit: rule 2 sees a
         // server no newer than the baseline we just stamped and answers `.push`. Diverged, the

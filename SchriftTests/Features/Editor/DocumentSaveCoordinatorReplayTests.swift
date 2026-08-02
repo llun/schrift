@@ -1315,6 +1315,38 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             "the checkpoint is not retracted while a screen is still writing under that id")
     }
 
+    /// Both sides canonically empty satisfies `==`, but proves nothing: `serverMarkdown` is
+    /// `formatted.content ?? ""`, so the equality is manufactured by the fallback rather than
+    /// by anyone making the server match us. `willAdoptServer` requires a non-empty server, so
+    /// this state falls through to the release — and releasing here would push an empty body
+    /// unheld, which is more destructive than the arm the condition was narrowed to exclude.
+    func testABothEmptyComparisonDoesNotReleaseAConflict() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Empty local body against the stub's empty server copy, with a persisted stamp.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Untitled document", markdown: "  \n\n ",
+                updatedAt: Date(), baseline: nil, lastPushedMarkdown: nil,
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 1)))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "rehydrated from the draft")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "kept — an equality manufactured by the `?? \"\"` fallback is not evidence")
+    }
+
     /// The other arm of `!diverged`, which must **not** release. An empty server with a
     /// non-empty local body is not proof the conflict is moot: `serverMarkdown` is
     /// `formatted.content ?? ""`, so a response carrying no body is indistinguishable from an
@@ -1353,26 +1385,48 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
     /// A conflict stamp persisted by an earlier session is rehydrated by `init` for the
     /// *server* id. If the migration then finds the server holding our own body — the
-    /// **equality** arm, the only one that proves anything — that record protects nothing — and leaving it parks the enqueue below, makes `runSyncPass` skip the
+    /// **equality** arm, the only one that proves anything — that record protects nothing —
+    /// and leaving it parks the enqueue below, makes `runSyncPass` skip the
     /// document, and self-perpetuates until the user happens to open the editor.
     func testAnUndivergedMigrationReleasesAConflictItProvesIsMoot() async {
         let log = RequestRecorder()
-        stubReplayPipeline(log: log)
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil, ownerUserID: user)
         var record = env.creates.create(for: local.id)!
         record.syncedServerID = serverID
         env.creates.save(record)
-        // The partial-migration window, with a stamp on the surviving draft — the shape `init`
-        // rehydrates a conflict from. Its body is empty, matching the stubbed server copy, so
-        // the migration takes the undiverged arm.
+        // A **non-empty** body that the server also holds. Both-empty would satisfy `==` too,
+        // but only via `formatted.content ?? ""` — no one made anything match there, so it
+        // proves nothing and is deliberately excluded.
+        let shared = "# Shared body"
+        let serverID = self.serverID
         env.drafts.remove(documentID: local.id)
         env.drafts.save(
             PendingDraft(
-                documentID: serverID, title: "Untitled document", markdown: "", updatedAt: Date(),
+                documentID: serverID, title: "Untitled document", markdown: shared, updatedAt: Date(),
                 baseline: nil, lastPushedMarkdown: nil,
                 conflictServerUpdatedAt: Date(timeIntervalSince1970: 1)))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(serverID.uuidString.lowercased())", "title": "Untitled document",
+                         "content": "\(shared)", "created_at": "2026-03-01T12:00:00Z",
+                         "updated_at": "2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
 
         let relaunched = makeEnvironment(sharing: env.defaults)
         XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "rehydrated from the draft")
@@ -1381,7 +1435,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
         XCTAssertNil(
             relaunched.coordinator.conflict(for: serverID),
-            "released — the server holds our own body, so nothing is left to protect")
+            "released — the server holds our own non-empty body, so nothing is left to protect")
         XCTAssertNil(relaunched.creates.create(for: local.id), "and the migration completed")
     }
 

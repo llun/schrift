@@ -1246,6 +1246,15 @@ nice-to-have:
   scope: a title PATCH from that branch is an unowned `Task` outside the coordinator's
   ordering bookkeeping, which is what made the first attempt a defect. The residual is that
   a provably-newer rename is dropped for a document whose body is being adopted wholesale.
+- **The adopt branch can discharge a conflict a live, dirty editor recorded.** Its
+  justification is that it "has just removed every local trace for that id" — false when the
+  local trace is an unflushed dirty screen. With `retainOpenEditor` unwired, a user can open
+  the checkpointed document under its *server* id, type, have `apply`'s dirty branch record a
+  conflict in memory (no draft yet, so nothing on disk), and then have a reconnect run the
+  migration straight through every guard: the seed draft's empty body sets `willAdoptServer`,
+  the conflict is discharged, and the pending autosave full-overwrites the co-author. The
+  retain/release wiring below is what closes it; recorded separately because the consequence
+  named there is mid-swap edit loss, which is not this.
 - **`PendingDraftStore` has no quarantine, where `PendingDocumentCreateStore` now does.**
   Its `loadAll` is the same all-or-nothing `try?` decode, so a single undecodable draft
   silently drops **every** draft on the device — the exact failure class the create store
@@ -1611,6 +1620,17 @@ indistinguishable from an emptied document) and nothing compares the observed `u
 against the stamp. Releasing there would discharge a pill the user was already shown and then
 immediately full-overwrite the co-author. `diverged`'s empty-server carve-out is a trade
 accepted for *detection*; it does not extend to discharging a persisted hold.
+
+Two honest qualifications. **Equality means non-empty equality** — `willAdoptServer` above
+requires a non-empty server, so a *both*-canonically-empty state reaches this line, where
+`"" == ""` holds only because of the same `?? ""` fallback, and releasing there would push an
+empty body unheld. And **keeping the hold on the empty-server arm buys a delay, not a
+decision**: that arm is undiverged, so the baseline stamped is the undiverged one, and the
+next revalidation hands rule 2 a proof trivially true of the state it was copied from,
+releasing the record and the save with it. No baseline avoids that — a `(nil, "")` one meets
+rule 2's body tiebreak against an empty server too. It is still the right call here, because
+the release this branch declines is the one that would push *immediately*, unheld, from a
+background pass with no screen open.
 
 **A third suppression protects the server-id half.** `isPendingCreate` is keyed on the
 *local* id, so it does not cover the draft the migration writes under `serverID` before

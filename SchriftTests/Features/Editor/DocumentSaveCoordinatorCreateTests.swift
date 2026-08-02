@@ -371,7 +371,7 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     }
 
     /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —
-    /// carries the same `!createStoreUnreadable` guard, and its sibling above cannot cover it:
+    /// carries the same `!createStoreUnreadable` guard, and its sibling below cannot cover it:
     /// that test drives a 404, which reaches the *catch*. Getting here needs a draft whose
     /// baseline is nil (rule 3) against a server that has moved past it, on a launch pass.
     /// The line's own comment calls it unreachable today, since every writer of a draft under

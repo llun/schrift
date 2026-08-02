@@ -1530,7 +1530,10 @@ markdown write endpoint**. Understand this before touching the save path:
   never the content.
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
-  migration adopts the server — **title included, writing nothing back.** The test is
+  migration adopts the server — **title included, writing nothing back.** (Its discharge of
+  any conflict for that id rests on having removed every local trace, which is false while
+  `retainOpenEditor` is unwired and the trace is an unflushed dirty screen — see the owed list
+  in `docs/offline-and-sync.md`.) The test is
   **canonical** emptiness, not absence and not a raw `isEmpty`: the seed draft is
   present-and-empty, so a nil check lets a created-renamed-never-typed document through,
   and a raw check lets a `" "` body through — both arming the very "Keep my version"
