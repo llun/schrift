@@ -32,6 +32,9 @@ private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
     let serverURL: URL
+    /// The one shared client, kept so the identity fetch below can reuse it rather than
+    /// building a second one (a hook-less client would not raise the re-login sheet on 401).
+    let client: DocsAPIClient
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
     /// against (see `imageLoadPolicy`). Threaded alongside `serverHost`.
@@ -78,10 +81,16 @@ private struct AuthenticatedHomeContainer: View {
                 },
                 socketFactory: URLSessionWebSocket.factory()))
         self.serverURL = serverURL
+        self.client = client
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
         self.sessionStore = sessionStore
         self.onSignOut = onSignOut
+    }
+
+    private func rememberSignedInUser() async {
+        guard let user = try? await client.currentUser() else { return }
+        SignedInUserStore().remember(user.id)
     }
 
     var body: some View {
@@ -143,7 +152,13 @@ private struct AuthenticatedHomeContainer: View {
             // networking directly — and are independent, so run concurrently.
             async let support: Void = collaboration.refreshServerSupport()
             async let awareness: Void = collaboration.refreshLocalAwareness()
-            _ = await (support, awareness)
+            // And remember who is signed in. Offline document creation mints records
+            // carrying a non-optional `ownerUserID`, and that id is only ever learned from
+            // `/users/me/` — so without persisting it here, launching in airplane mode (the
+            // point of the feature) leaves nothing able to mint or list a local document.
+            // Best-effort by design: a failure leaves whatever a previous session stored.
+            async let identity: Void = rememberSignedInUser()
+            _ = await (support, awareness, identity)
         }
     }
 }
@@ -165,6 +180,12 @@ struct RootView: View {
                     // recorded decision, see the 2026-07-03 spec and the
                     // instant-local-doc-lists plan.
                     DocumentContentCacheStore().removeAll()
+                    // The account id goes with the session. Pending-create records
+                    // deliberately survive — for a document that exists nowhere else the
+                    // record and its draft are the only copies — and what keeps that safe is
+                    // the record's own `ownerUserID` being compared against whoever signs in
+                    // next, which requires this to answer nil until the server says otherwise.
+                    SignedInUserStore().clear()
                     try? sessionStore.signOut()
                 })
         } else {
