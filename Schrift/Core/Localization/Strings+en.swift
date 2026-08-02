@@ -63,6 +63,7 @@ enum Strings_en {
         .docrow_shared_with_organization: "Shared with organization",
         .docrow_public: "Public",
         .docrow_available_offline: "Available offline",
+        .docrow_on_this_device: "On this device, waiting to sync",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Only invited people",

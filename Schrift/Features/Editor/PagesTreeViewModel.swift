@@ -100,16 +100,25 @@ final class PagesTreeViewModel {
     /// before a create can't overwrite the level the create just added to.
     private var mutations: [UUID: Int] = [:]
 
+    /// Optional: nil simply means "no offline-create fallback here", which is what every
+    /// existing caller and `#Preview` gets.
+    private let saveCoordinator: DocumentSaveCoordinator?
+    private let signedInUser: SignedInUserStore
+
     init(
         rootID: UUID,
         client: DocsAPIClient,
         cache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        signedInUser: SignedInUserStore = SignedInUserStore()
     ) {
         self.rootID = rootID
         self.client = client
         self.cache = cache
         self.userDefaults = userDefaults
+        self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
     }
 
     var rows: [PagesTreeRow] {
@@ -183,8 +192,19 @@ final class PagesTreeViewModel {
         do {
             child = try await client.createChild(documentID: parent, title: "Untitled subpage")
         } catch {
-            createErrorKey = .pages_error_create
-            return nil
+            // Same split as the editor's own "Add a subpage": a failure that could not have
+            // created anything falls back to a local page the replay sends later; a rejection
+            // on the merits keeps the error. The parent must itself be synced — a child of an
+            // unsynced parent is out of v1 scope, since the replay cannot order the two.
+            guard let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
+                let coordinator = saveCoordinator, !coordinator.isPendingCreate(documentID: parent),
+                let ownerUserID = signedInUser.userID
+            else {
+                createErrorKey = .pages_error_create
+                return nil
+            }
+            child = coordinator.createLocalDocument(
+                title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
         }
         expanded.insert(parent)
         // Only when the level is actually known (fetched or cached). Appending

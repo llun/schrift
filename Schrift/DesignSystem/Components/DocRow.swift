@@ -56,6 +56,11 @@ struct DocRow: View {
     var reach: LinkReach = .restricted
     var date: String = ""
     var offlineAvailable: Bool = false
+    /// Created on this device and not yet on the server. Distinct from `offlineAvailable`,
+    /// which means the opposite direction of travel: a *server* document whose body is
+    /// cached here. Both can never be true at once — a local document has no server copy to
+    /// have cached — and this one wins in the layout because it is the more actionable fact.
+    var pendingSync: Bool = false
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
@@ -121,7 +126,11 @@ struct DocRow: View {
 
     @ViewBuilder
     private var offlineIndicator: some View {
-        if offlineAvailable {
+        if pendingSync {
+            MaterialSymbol(.cloud_off, size: 16)
+                .foregroundStyle(DocsColor.gray350)
+                .accessibilityLabel(loc[.docrow_on_this_device])
+        } else if offlineAvailable {
             MaterialSymbol(.cloud_done, size: 16)
                 .foregroundStyle(DocsColor.gray350)
                 .accessibilityLabel(loc[.docrow_available_offline])

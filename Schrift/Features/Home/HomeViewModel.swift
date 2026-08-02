@@ -197,6 +197,11 @@ final class HomeViewModel {
         }
     }
 
+    /// Whether this row is a document created here that the server has not seen yet.
+    func isLocalDocument(_ document: Document) -> Bool {
+        saveCoordinator.isPendingCreate(documentID: document.id)
+    }
+
     /// Mint a document that exists only on this device. Nil when nobody is known to own it —
     /// `createLocalDocument` takes a non-optional owner, and a record nothing can attribute is
     /// kept and protected but listed to nobody and replayed never, so minting one would create

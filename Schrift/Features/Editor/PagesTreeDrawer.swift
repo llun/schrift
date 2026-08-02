@@ -27,6 +27,9 @@ struct PagesTreeDrawer: View {
     @Bindable var viewModel: PagesTreeViewModel
     let rootTitle: String
     var isOffline: Bool = false
+    /// The drawer's root document exists only on this device, so nothing may be created
+    /// under it yet.
+    var isRootLocal: Bool = false
     var onOpen: (Document) -> Void
     var onClose: () -> Void
 
@@ -191,10 +194,11 @@ struct PagesTreeDrawer: View {
 
     @ViewBuilder
     private var newPageButton: some View {
-        // Still gated offline, unlike the editing entry points: creating a page POSTs,
-        // and a document that does not exist server-side has nothing for the draft
-        // pipeline to save to. Offline creation is its own change.
-        if !isOffline {
+        // No longer gated on `isOffline` — a failed POST falls back to a local page the
+        // replay sends later. The remaining constraint is the *parent*: a child of an
+        // unsynced page is out of v1 scope (the replay cannot order the two creates), which
+        // `addPage` enforces per-parent, and the drawer's root is gated here.
+        if !isRootLocal {
             Divider().overlay(DocsColor.borderDefault)
             Button {
                 Task {

@@ -71,6 +71,7 @@ enum Strings_sl {
         .docrow_public: "Javno",
         .docrow_available_offline: "Na voljo brez povezave",
 
+        .docrow_on_this_device: "V tej napravi, čaka na sinhronizacijo",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Samo povabljeni",
         .linkreach_hint_authenticated: "Vsakdo v organizaciji",

@@ -61,6 +61,7 @@ enum Strings_zhHans {
         .docrow_public: "公开",
         .docrow_available_offline: "可离线使用",
 
+        .docrow_on_this_device: "在此设备上，等待同步",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "仅受邀请的人",
         .linkreach_hint_authenticated: "组织内的任何人",

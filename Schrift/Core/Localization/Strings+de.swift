@@ -65,6 +65,7 @@ enum Strings_de {
         .docrow_public: "Öffentlich",
         .docrow_available_offline: "Offline verfügbar",
 
+        .docrow_on_this_device: "Auf diesem Gerät, wartet auf Synchronisierung",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Nur eingeladene Personen",
         .linkreach_hint_authenticated: "Alle in der Organisation",

@@ -238,7 +238,9 @@ struct EditorView: View {
         // both an isolated one.
         _pagesTreeViewModel = State(
             initialValue: PagesTreeViewModel(
-                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache))
+                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache,
+                // So "New page" can fall back to a local page when the POST cannot land.
+                saveCoordinator: viewModel.saveCoordinator))
     }
 
     var body: some View {
@@ -423,6 +425,7 @@ struct EditorView: View {
                     viewModel: pagesTreeViewModel,
                     rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
                     isOffline: isOffline,
+                    isRootLocal: viewModel.isLocalDocument,
                     onOpen: { document in
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
