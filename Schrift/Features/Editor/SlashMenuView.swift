@@ -6,6 +6,8 @@ struct SlashMenuView: View {
     let query: String
     /// Drops the Photo item — it POSTs an attachment, which has no offline queue.
     var isOffline: Bool = false
+    /// No server id to upload against — see `canOfferPhotoInsertion`.
+    var isLocalDocument: Bool = false
     var onSelect: (SlashMenuItem) -> Void
 
     @Environment(LocalizationStore.self) private var loc
@@ -14,7 +16,7 @@ struct SlashMenuView: View {
     @ScaledMetric(relativeTo: .body) private var maxHeight: CGFloat = 4 * DocsSpacing.rowMinHeight
 
     var body: some View {
-        let items = filteredSlashItems(query: query, isOffline: isOffline)
+        let items = filteredSlashItems(query: query, isOffline: isOffline, isLocalDocument: isLocalDocument)
         if !items.isEmpty {
             ScrollView {
                 VStack(spacing: 0) {

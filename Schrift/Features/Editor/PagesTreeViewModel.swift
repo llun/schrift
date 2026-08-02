@@ -100,16 +100,25 @@ final class PagesTreeViewModel {
     /// before a create can't overwrite the level the create just added to.
     private var mutations: [UUID: Int] = [:]
 
+    /// Optional: nil simply means "no offline-create fallback here", which is what every
+    /// existing caller and `#Preview` gets.
+    private let saveCoordinator: DocumentSaveCoordinator?
+    private let signedInUser: SignedInUserStore
+
     init(
         rootID: UUID,
         client: DocsAPIClient,
         cache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        signedInUser: SignedInUserStore = SignedInUserStore()
     ) {
         self.rootID = rootID
         self.client = client
         self.cache = cache
         self.userDefaults = userDefaults
+        self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
     }
 
     var rows: [PagesTreeRow] {
@@ -146,6 +155,11 @@ final class PagesTreeViewModel {
         if children[parentID] == nil, let cached = cache.children(for: parentID) {
             children[parentID] = cached
         }
+        // A client-minted id 404s, which would land this level in `failedLoads` — a retry
+        // affordance for something that can never load. The editor's own `loadChildren`
+        // carries the same guard; this sibling was missed, so opening the drawer on a
+        // locally-created document issued a doomed request.
+        if saveCoordinator?.isPendingCreate(documentID: parentID) == true { return }
         // "Work offline" (Profile > Preferences): serve the cached tree and
         // never hit the network, the same contract the document lists honour.
         // Read through the injected defaults, never the singleton.
@@ -183,8 +197,20 @@ final class PagesTreeViewModel {
         do {
             child = try await client.createChild(documentID: parent, title: "Untitled subpage")
         } catch {
-            createErrorKey = .pages_error_create
-            return nil
+            // Same split as the editor's own "Add a subpage": a failure worth retrying falls
+            // back to a local page (a `.network` timeout can hide an applied POST — the
+            // accepted cost is one orphaned *empty* child) the replay sends later; a rejection
+            // on the merits keeps the error. The parent must itself be synced — a child of an
+            // unsynced parent is out of v1 scope, since the replay cannot order the two.
+            guard let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
+                let coordinator = saveCoordinator, !coordinator.isPendingCreate(documentID: parent),
+                let ownerUserID = signedInUser.userID
+            else {
+                createErrorKey = .pages_error_create
+                return nil
+            }
+            child = coordinator.createLocalDocument(
+                title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
         }
         expanded.insert(parent)
         // Only when the level is actually known (fetched or cached). Appending
@@ -195,7 +221,12 @@ final class PagesTreeViewModel {
         if var updated = children[parent] {
             updated.append(child)
             children[parent] = updated
-            cache.save(updated, for: parent)
+            // Never persist a synthetic — see `EditorViewModel.appendChild`. This cache is
+            // shared with the editor's Subpages list and outlives sign-out, so a local child
+            // written here is readable, editable and deletable by whoever signs in next.
+            cache.save(
+                updated.filter { saveCoordinator?.isPendingCreate(documentID: $0.id) != true },
+                for: parent)
             // Bumped *here*, not on every create: the stamp exists to defend an
             // append we actually made. Bumping it when we declined to append
             // would block the in-flight fetch as well, and then neither writer

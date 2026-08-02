@@ -105,7 +105,13 @@ private struct AuthenticatedHomeContainer: View {
                 sessionStore: sessionStore,
                 onAuthenticated: {
                     let homeViewModel = viewModel
-                    Task { await homeViewModel.load() }
+                    Task {
+                        // The sheet can be answered by a *different* account, so re-learn who
+                        // this session belongs to before anything reads it. A stale id would
+                        // list the previous user's unsynced documents to the new one.
+                        await homeViewModel.refreshSignedInUser()
+                        await homeViewModel.load()
+                    }
                 },
                 onCancel: { sessionStore.cancelReauthentication() }
             )
@@ -143,7 +149,13 @@ private struct AuthenticatedHomeContainer: View {
             // networking directly — and are independent, so run concurrently.
             async let support: Void = collaboration.refreshServerSupport()
             async let awareness: Void = collaboration.refreshLocalAwareness()
-            _ = await (support, awareness)
+            // And remember who is signed in. Offline document creation mints records
+            // carrying a non-optional `ownerUserID`, and that id is only ever learned from
+            // `/users/me/` — so without persisting it, launching in airplane mode (the point
+            // of the feature) leaves nothing able to mint or list a local document. On the
+            // view model, not here: a view does no networking or persistence of its own.
+            async let identity: Void = viewModel.refreshSignedInUser()
+            _ = await (support, awareness, identity)
         }
     }
 }
@@ -165,6 +177,12 @@ struct RootView: View {
                     // recorded decision, see the 2026-07-03 spec and the
                     // instant-local-doc-lists plan.
                     DocumentContentCacheStore().removeAll()
+                    // The account id goes with the session. Pending-create records
+                    // deliberately survive — for a document that exists nowhere else the
+                    // record and its draft are the only copies — and what keeps that safe is
+                    // the record's own `ownerUserID` being compared against whoever signs in
+                    // next, which requires this to answer nil until the server says otherwise.
+                    SignedInUserStore().clear()
                     try? sessionStore.signOut()
                 })
         } else {

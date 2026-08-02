@@ -136,9 +136,11 @@ final class EditorUnavailableDetailTests: XCTestCase {
         await viewModel.load()
         XCTAssertEqual(viewModel.errorDetail, "HTTP 404: Not found.")
 
-        // A different failure, from a code path that carries no detail of its own.
+        // A different failure, from a code path that carries no detail of its own. It must be
+        // a rejection **on the merits** — a 500 now falls back to a local sub-page rather than
+        // erroring at all, since a transport-class failure could not have created anything.
         MockURLProtocol.stubHandler = { _ in
-            .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            .init(statusCode: 403, headers: [:], body: Data(), error: nil)
         }
         _ = await viewModel.addSubpage()
 

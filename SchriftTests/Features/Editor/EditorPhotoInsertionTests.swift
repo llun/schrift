@@ -734,4 +734,23 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .image(alt: "", url: expectedMediaURL))
         XCTAssertEqual(viewModel.blocks[1].kind, .paragraph)
     }
+    /// A local document has no server id to upload against, and `isOffline` cannot stand in:
+    /// it is derived from Home's last *list* fetch, so a create that 500s while the network is
+    /// fine mints a local document with `isOffline` false. The upload would POST a
+    /// client-minted uuid, 404, and offer a retry that can never succeed.
+    func testPhotoInsertionIsWithheldForALocalDocument() {
+        XCTAssertFalse(
+            canOfferPhotoInsertion(
+                hasTarget: true, canInsertPhoto: true, isOffline: false, isLocalDocument: true))
+        XCTAssertTrue(
+            canOfferPhotoInsertion(
+                hasTarget: true, canInsertPhoto: true, isOffline: false, isLocalDocument: false))
+        XCTAssertFalse(
+            filteredSlashItems(query: "", isOffline: false, isLocalDocument: true)
+                .contains { $0.action == .insertPhoto })
+        XCTAssertTrue(
+            filteredSlashItems(query: "", isOffline: false, isLocalDocument: false)
+                .contains { $0.action == .insertPhoto })
+    }
+
 }

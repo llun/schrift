@@ -151,6 +151,39 @@ final class DocumentSaveCoordinator {
     /// lookup rather than a UserDefaults decode. **Every** record is mirrored, whatever
     /// origin or user minted it — protection is unconditional; see `isPendingCreate`.
     private var pendingCreates: [UUID: PendingDocumentCreate] = [:]
+    /// Bumped on every mutation of `pendingCreates`, so an `@Observable` consumer can track
+    /// "the set of local documents changed" without the dictionary itself being visible.
+    ///
+    /// `HomeViewModel.recentDocuments` merges local documents in at *read* time — a synthetic
+    /// `Document` must never enter a persisted metadata cache, since a list load replaces its
+    /// array and its cache entry wholesale and a cached synthetic would afterwards be
+    /// indistinguishable from a real one. Reading this in that computed property is what makes
+    /// a migrated row vanish from a live Home the moment `removePendingCreate` runs, rather
+    /// than at the next successful fetch.
+    private(set) var pendingCreatesVersion = 0
+    /// Fired after a locally-created document has been re-keyed onto its server id.
+    ///
+    /// The list that was showing it needs to *refetch*, not merely re-derive: the local row is
+    /// correctly withheld the instant the record is dropped, but the real row exists only in a
+    /// server response, and the one the list is holding predates the create. Pinning that
+    /// refetch to particular sync triggers does not work — the pass is also started by
+    /// `recoverDrafts` at launch and by `releaseOpenEditor` when an editor closes (the
+    /// designed completion path, and the *only* one on iPad), and an overlapping trigger is
+    /// coalesced into a no-op that returns before the migration happens. So it hangs off the
+    /// migration itself, which is the event that actually invalidates the list.
+    ///
+    /// Carries the **created document**, because a refetch alone is not enough: a fresh
+    /// install used offline first has no recents cache for `insertIntoListCaches` to write
+    /// into (it refuses to fabricate one), so if the refetch then fails the row is in no list
+    /// at all. The subscriber can put the real document straight into its in-memory list —
+    /// never into the cache, which stays the server's to fill.
+    ///
+    /// Fired **last**, after the terminal `enqueue`, so a subscriber sees a fully settled
+    /// state. Firing mid-function would expose a diverged resume with its draft on disk, its
+    /// state `.idle` and *no conflict recorded yet* — a synchronous handler that enqueued
+    /// there would go straight to `start` and full-overwrite the co-author.
+    @ObservationIgnored
+    var onDocumentMigrated: (@MainActor (Document?) -> Void)?
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
@@ -158,11 +191,19 @@ final class DocumentSaveCoordinator {
     /// id and would keep writing drafts under one the holds no longer cover. Deferring is meant
     /// to make mid-swap edit loss unrepresentable rather than merely unlikely.
     ///
-    /// **That is the design, not the current state.** `retainOpenEditor`/`releaseOpenEditor`
-    /// have zero production callers — every call site today is a test — so this stays empty,
-    /// `hasOpenEditor` always answers false, and none of its five readers — four `guard`
-    /// deferrals plus the take-back's conjunct — ever fires. Wiring it from `EditorView`, for
-    /// *every* document rather than only locally-created ones, is owed with the create UI.
+    /// Wired from `EditorView`'s `onAppear`, for **every** document rather than only
+    /// locally-created ones — the server-id guards' motivating case is an ordinary document
+    /// opened from Home whose id a checkpointed record is about to migrate *onto*. The view
+    /// hold is released when the *view model* is deallocated, not on `onDisappear` — that
+    /// fires on mere invisibility (a tab switch), and the replay must not re-key a document
+    /// whose screen is about to return. Six readers: four `guard` deferrals, the take-back's conjunct, and
+    /// `discardPendingWork`'s checkpointed branch — the one that is *not* a deferral, since
+    /// it clears the checkpoint and restarts the record instead of returning.
+    ///
+    /// The cost is broader than an iPad split view: any editor left pushed in a tab's
+    /// navigation stack holds its document until the user pops back, so a create-type-switch-
+    /// tabs flow leaves it unreplayed while the indicator reads "syncs when online". Bounded
+    /// by user action rather than by connectivity, and popping back kicks the funnel.
     private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
@@ -277,10 +318,9 @@ final class DocumentSaveCoordinator {
     /// key off. Deliberately **not** origin-scoped: a record minted elsewhere still names
     /// an id that would 404 here, and the holds exist to keep anything from addressing it.
     ///
-    /// Not yet consulted by the editor: opening a local document names its id from several
+    /// Consulted by the editor via `EditorViewModel.isLocalDocument`: opening a local document names its id from several
     /// places this coordinator does not own (`formattedContent`, the children fetch, the
-    /// collaboration room, Options' delete and version history). Those are the create UI's
-    /// to gate — the invariant is broader than the enforcement in this file.
+    /// collaboration room, Options' delete and version history). Those are gated in `EditorViewModel`/`EditorView`/`OptionsSheetView`, not here.
     func isPendingCreate(documentID: UUID) -> Bool {
         pendingCreates[documentID] != nil
     }
@@ -313,11 +353,11 @@ final class DocumentSaveCoordinator {
     /// changes), and `.pendingSync` — nothing is syncing, but the work *is* on the device.
     ///
     /// `parentID` is a **server** id or nil; v1 never creates under a parent that is itself
-    /// pending, so a replay needs no dependency ordering. **Nothing gates on that
-    /// yet**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
+    /// pending, so a replay needs no dependency ordering. **That is enforced by the
+    /// affordances**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
     /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
-    /// denied are indistinguishable), and the sub-page affordance gates on `isOffline` alone.
-    /// So the create UI must not offer a sub-page under a pending parent; a record minted that
+    /// denied are indistinguishable), and the sub-page affordance gates on the parent being local.
+    /// So the create UI does not offer a sub-page under a pending parent; a record minted that
     /// way would POST `documents/{local-uuid}/children/`, 404, probe, 404, and silently re-root.
     ///
     /// `ownerUserID` is **required, not defaulted**: an unattributable record can be neither
@@ -326,7 +366,8 @@ final class DocumentSaveCoordinator {
     /// parameter mandatory forces that problem to the surface at the mint site, where the
     /// session exists to answer it.
     ///
-    /// Dormant until the UI calls it: nothing in the app does yet.
+    /// Called from Home's `+` and from the two sub-page affordances, whenever a create
+    /// cannot reach the server (or Work Offline forbids trying).
     @discardableResult
     func createLocalDocument(title: String, parentID: UUID?, ownerUserID: UUID) -> Document {
         let record = PendingDocumentCreate(
@@ -334,6 +375,7 @@ final class DocumentSaveCoordinator {
             ownerUserID: ownerUserID)
         createStore.save(record)
         pendingCreates[record.localID] = record
+        pendingCreatesVersion += 1
         // The seed draft is what makes the document readable after the editor is dismissed:
         // `DocumentContentCacheStore` is only ever written by a confirmed save or a fetch,
         // so a document that has never been to the server has no entry there — and must not
@@ -412,7 +454,38 @@ final class DocumentSaveCoordinator {
     private func removePendingCreate(documentID: UUID) {
         guard pendingCreates[documentID] != nil else { return }
         pendingCreates[documentID] = nil
+        pendingCreatesVersion += 1
         createStore.remove(localID: documentID)
+    }
+
+    /// Test seams for staging a *checkpointed* record, which only the replay can otherwise
+    /// produce. Both go through the same mirror+disk pair every other writer uses, so a test
+    /// cannot construct a state the production code could not.
+    func pendingCreateForTesting(localID: UUID) -> PendingDocumentCreate? {
+        pendingCreates[localID]
+    }
+
+    func savePendingCreateForTesting(_ record: PendingDocumentCreate) {
+        updatePendingCreate(record)
+    }
+
+    /// Test seam: whether any screen currently holds this document. The registration is
+    /// released from a `deinit` that hops to the main actor, so a test needs to observe the
+    /// hop rather than assume it.
+    func hasOpenEditorForTesting(documentID: UUID) -> Bool {
+        hasOpenEditor(documentID: documentID)
+    }
+
+    /// The server id a locally-created document has already been POSTed under, if any.
+    ///
+    /// The delete path needs this and cannot infer it: `isPendingCreate` stays true for a
+    /// **checkpointed** record — the POST has landed and a real server document exists — so
+    /// "this is a local document" is not the same question as "is there anything on the server
+    /// to delete". Without it, deleting a checkpointed document would drop the record and the
+    /// draft while leaving the server copy alive, and it would reappear in Home on the next
+    /// list fetch with nothing on the device that knows about it.
+    func syncedServerID(forLocalID localID: UUID) -> UUID? {
+        pendingCreates[localID]?.syncedServerID
     }
 
     /// The one way to rewrite a mirrored record. Both the disk copy and the in-memory mirror
@@ -422,6 +495,9 @@ final class DocumentSaveCoordinator {
     private func updatePendingCreate(_ record: PendingDocumentCreate) {
         createStore.save(record)
         pendingCreates[record.localID] = record
+        // A rewrite counts: the checkpoint being stamped is what withholds the local row from
+        // `pendingLocalDocuments`, so a live Home must re-read.
+        pendingCreatesVersion += 1
     }
 
     // MARK: - The open-editor registry
@@ -471,7 +547,7 @@ final class DocumentSaveCoordinator {
     /// the same pass. (Not that this saves a trigger — the migration itself waits for the next
     /// one either way, as `finishMigration` and `syncPendingDrafts` both note.)
     ///
-    /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
+    /// Costs nothing on a device with no local documents: `allCreates()` is empty, so the gate
     /// returns before issuing any request at all.
     private func runCreatePass() async {
         let records = createStore.allCreates()
@@ -489,7 +565,7 @@ final class DocumentSaveCoordinator {
         // Placed **after** the cheap gate above deliberately: this reads and decodes every
         // draft on the device, bodies included, on the main actor. Nothing below reads a
         // draft until `replayCreate`, so deferring it past the gate costs no safety and
-        // keeps the dormant case — no replayable records, which is every device today —
+        // keeps the no-local-documents case —
         // free of a full draft decode on every launch, foreground and reconnect.
         // **Never replay while the drafts are unknown.** `PendingDraftStore.loadAll` is
         // all-or-nothing, so one undecodable blob makes every `draft(for:)` answer nil — and
@@ -543,7 +619,7 @@ final class DocumentSaveCoordinator {
             // A save the *server* rejected on the merits is left to the user, exactly as
             // `runSyncPass` does. Note the caption is visible but the affordance is inert here:
             // `saveNow` no-ops while `pendingSave` is non-nil, which a local document with
-            // content always has — so a relaunch is the escape until the create UI offers one.
+            // content always has — so a relaunch is the escape until a create-specific affordance offers one.
             if case .failed = state(for: record.localID) { continue }
             // Never migrate under a live screen — see `openEditors`.
             guard !hasOpenEditor(documentID: record.localID) else { continue }
@@ -630,10 +706,8 @@ final class DocumentSaveCoordinator {
             // a document that had *acquired* a body would be silently full-overwritten, and
             // the lying baseline would mislead every later `draftSyncDecision` too. That is no
             // longer only a theoretical path: "checkpointed but not migrated" is a state the
-            // document is visible and editable on the web in. (Today it still needs a process
-            // death — the checkpoint-to-migration stretch has no suspension point, so the
-            // server-id guards cannot *create* it, only prolong it once the editor registry
-            // has production callers.)
+            // document is visible and editable on the web in. (It no longer needs a process death — the checkpoint-to-migration stretch has no suspension point, so the
+            // server-id guards cannot *create* it, only prolong it.)
             formatted = try await client.formattedContent(documentID: serverID)
         } catch let error as DocsAPIError where error == .notFound {
             // The checkpointed document is gone, so resuming can never succeed — and silently
@@ -660,8 +734,7 @@ final class DocumentSaveCoordinator {
             // ends up in exactly the state the branch below calls unreachable — withheld from
             // `pendingLocalDocuments`, never pushed, two GETs per trigger, forever — with its
             // body alive only in the local draft. The trade is deliberate (unrecoverable
-            // duplicate vs. recoverable invisibility), and making such a record visible and
-            // dischargeable is owed with the create UI.
+            // duplicate vs. recoverable invisibility), and making such a record visible and dischargeable is still owed.
             // **Take the body back to the local id *before* clearing the checkpoint.** A
             // process death inside the migration can leave the only copy under `serverID` —
             // that draft is written before the local one is removed, precisely so no instant
@@ -764,8 +837,7 @@ final class DocumentSaveCoordinator {
             // otherwise start over only when nothing remains under `serverID`. If something
             // does, leave the checkpoint — the record stays protected and the next pass
             // re-asks. A genuinely gone document then sticks in that state, which is the same
-            // stuck-but-lossless outcome the `.forbidden` branch already accepts and the same
-            // recovery the create UI owes; a spurious 404 simply resolves next pass.
+            // stuck-but-lossless outcome the `.forbidden` branch already accepts and the same recovery still owed; a spurious 404 simply resolves next pass.
             //
             // **And the absence of a draft is not, by itself, evidence there was none.** A
             // save for `serverID` that started *and settled successfully* inside the fetch
@@ -835,7 +907,11 @@ final class DocumentSaveCoordinator {
         // document they threw away. Note bailing here is **not** free the way the guard above
         // is: the POST landed, so an empty document is left on the server that nothing on this
         // device now references — see the delete-branch obligation in `docs/offline-and-sync.md`.
-        guard pendingCreates[record.localID] != nil else { return }
+        // The *checkpoint*, not merely the record. `discardPendingWork`'s open-editor branch
+        // creates a state that did not previously exist — record present, checkpoint cleared —
+        // and migrating on a captured `syncedServerID` would re-key onto a server id the user
+        // has just deleted.
+        guard pendingCreates[record.localID]?.syncedServerID == serverID else { return }
         // **The two guards above are keyed on `localID`; the rest are keyed on `serverID` —
         // except the last, which reads both, since it fires on the complement of the
         // partial-migration window: the local draft gone while the server-id one remains.**
@@ -912,10 +988,10 @@ final class DocumentSaveCoordinator {
         // remover that leaves `queued` populated, and it is already wired in production:
         // `discardStoredDraft`, from `EditorViewModel.reconcileDraft`. What makes it
         // unreachable is narrower: `reconcileDraft` is only ever entered past `apply`'s
-        // `pendingSave != nil` divert, so `queued` is provably nil there — and no editor opens
-        // on a local id at all today. So the site to watch is not "if a second remover is
-        // wired" (one is) but **the create UI putting an editor on a local id**, which is
-        // exactly what it is for.
+        // `pendingSave != nil` divert, so `queued` is provably nil there — and, now that the
+        // create UI does open editors on local ids, `revalidate` and `refresh` both guard on
+        // `!isLocalDocument`, which makes `reconcileDraft` unreachable for one. The site to
+        // watch is a change to either of those two guards.
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
         // **The title is a merge, not a race.** The body's "newest wins" rule does not carry
         // over: on a resume the document has been an ordinary Home row under its server id for
@@ -1073,6 +1149,14 @@ final class DocumentSaveCoordinator {
         // A local document never reached the content cache (only a confirmed save or a fetch
         // writes one), but purge defensively so a stale entry can never outlive the id.
         contentCache.remove(documentID: localID)
+        // Historical: the editor/drawer used to persist a synthetic row into the parent's
+        // cached level, and no longer do (that carve-out leaked a local sub-page into the next
+        // account). Kept because a cache written by an older build still holds one, and
+        // because `insertIntoListCaches` appends the *real* child below, and its
+        // de-dupe is by id — a different id — so without this the level holds both: two rows
+        // in Subpages and the Pages drawer, one of which reports "no longer available" for a
+        // document that has just synced. Same API `handleDidDelete` uses for the same ghost.
+        childrenCache.removeDocument(localID)
 
         // **This paragraph is about the `insertIntoListCaches` call further down**, not the
         // statements immediately below it — the adopt branch's draft removal sits in between.
@@ -1082,8 +1166,8 @@ final class DocumentSaveCoordinator {
         // the only two places `HomeViewModel` re-seeds from the cache. An online `load()`
         // reads it for a Bool and then overwrites from the network, and the reconnect edge
         // calls `syncPendingDrafts()` without `load()` — so a **live** Home is not repopulated
-        // here. Closing that window is the create UI's job, alongside wiring the read-time
-        // merge. Absent when the
+        // here by the *cache* write alone. The read-time merge plus `pendingCreatesVersion`
+        // covers it directly instead — a migrated row leaves a live Home at once. Absent when the
         // resume's cosmetic fetch failed — the document simply waits for the next list fetch.
         // **Take the server-id draft off before the record goes**, when the adopt branch below
         // will fire. Removing the record first and dying leaves an unprotected draft holding a
@@ -1097,10 +1181,24 @@ final class DocumentSaveCoordinator {
         if let document { insertIntoListCaches(document, parentID: record.parentID) }
 
         removePendingCreate(documentID: localID)
+        // **Fire on every exit from here, and only at exit.** `defer` rather than a call site,
+        // for both halves of that. Placed after `removePendingCreate` because dropping the
+        // record is what withholds the local row and so what obliges a refetch; deferred
+        // because two paths leave before the end — the adopt branch returns early, and a
+        // resume whose cosmetic fetch failed carries no document — and pinning the call to
+        // the last statement silently skipped both, reproducing the vanishing row this
+        // exists to prevent. Exit-time is also the only safe point: mid-function a diverged
+        // resume has its draft on disk, its state `.idle` and no conflict recorded yet, so a
+        // synchronous handler that enqueued there would full-overwrite the co-author.
+        //
+        // `document` is nil when that cosmetic fetch failed: there is no real row to hand
+        // over, but the refetch is still owed, so the callback fires with nil rather than not
+        // at all.
+        defer { onDocumentMigrated?(document) }
 
         // **If the server already holds a body, ask — do not push over it.** Reachable only
         // on a resume: between the checkpoint and here the document has been live on the web,
-        // and "checkpointed but not migrated" is a state to design for (crash-only today), so a co-author (or the same
+        // and "checkpointed but not migrated" is a state to design for (previously crash-only), so a co-author (or the same
         // user on another client) can have written to it. The enqueue below goes straight to
         // `start` — the record is gone, so nothing holds it — which would silently
         // full-overwrite that body. Recording a conflict first engages the ordinary
@@ -1159,8 +1257,7 @@ final class DocumentSaveCoordinator {
             // `settledSaves`, the list-cache row written moments earlier — which is what made the
             // first attempt at it a defect rather than a feature. The residual is therefore
             // sharper than it was: a rename this code **can** show is newer is still dropped,
-            // for a document whose body it is adopting wholesale. Recorded as owed with the
-            // create UI, which can present the choice rather than guessing at it.
+            // for a document whose body it is adopting wholesale. Recorded as owed: an affordance that can present the choice rather than guessing at it.
             return
         }
         if diverged {
@@ -1480,7 +1577,7 @@ final class DocumentSaveCoordinator {
     /// difference reaches `start`, which sees a non-nil `liveSnapshot` and calls
     /// `saveLiveSnapshot` instead of `saveDocumentContent`.
     ///
-    /// Dormant until C2c: nothing calls it yet (C2b is the mechanism, not the wiring).
+    /// Called by `LiveEditingBridge`'s snapshot debounce (C2c wired what C2b built).
     func enqueueLiveSnapshot(
         documentID: UUID, snapshot: Data, projectedMarkdown: String, title: String, baseline: DraftBaseline? = nil
     ) {
@@ -1517,6 +1614,12 @@ final class DocumentSaveCoordinator {
                 // Carry the hold through: `enqueue` rebuilds the whole draft, so omitting this
                 // would silently erase a persisted conflict on the next keystroke.
                 conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
+        // A local document's *displayed* title comes from its draft (`pendingLocalDocuments`
+        // overlays it, so a rename shows in lists before the replay lands), and this is the
+        // write that changes it. Without the bump, `HomeViewModel`'s memo — keyed on the
+        // record version — would keep serving the creation title until an unrelated create or
+        // delete happened to move it.
+        if isPendingCreate(documentID: documentID) { pendingCreatesVersion += 1 }
         // Enqueue-hold: while a conflict is recorded, persist the draft and the
         // queued slot (write-ahead, so `pendingSave()` still sees it and the editor's
         // dirty short-circuit / `hasUnsavedLocalContent` keep working) but do NOT
@@ -1973,9 +2076,11 @@ final class DocumentSaveCoordinator {
         //
         //  - Deleted by its *local* id: the local traces must go either way, but the caller
         //    owes the server `DELETE` too, or the document survives and reappears in Home with
-        //    nothing on the device that knows about it. That half is the create UI's, and it
-        //    is recorded in `docs/offline-and-sync.md`.
-        //  - Deleted by its *server* id — reachable **today**, through the unmodified Options
+        //    nothing on the device that knows about it. `OptionsViewModel.delete()` does that
+        //    half via `syncedServerID(forLocalID:)` — treating a 404 there as "already gone"
+        //    rather than as a failure, since keeping the record would let the resume re-POST
+        //    the document the user just deleted.
+        //  - Deleted by its *server* id — reachable through the Options
         //    sheet, since that is the only id the user is offered. `isPendingCreate` is keyed
         //    on the local id and answers false, so without the branch below the record and the
         //    local draft both survive a successful DELETE. The next pass resumes, the resume
@@ -2012,13 +2117,40 @@ final class DocumentSaveCoordinator {
             // `mayPredateLocalSave` on a *successful* fetch, which a client-minted id can never
             // get. Cleared anyway so the asymmetry cannot become load-bearing once the create
             // UI lands.
-            removePendingCreate(documentID: checkpointed.localID)
-            states[checkpointed.localID] = .idle
-            draftStore.remove(documentID: checkpointed.localID)
-            queued[checkpointed.localID] = nil
-            settledSaves[checkpointed.localID] = nil
-            lastConfirmedPushMarkdown[checkpointed.localID] = nil
-            knownServerTitles[checkpointed.localID] = nil
+            // **Not while a screen is writing under the local id.** Every other record remover
+            // defers to an open editor (`runCreatePass`, `finishMigration`); this one did not,
+            // and it is the only one that also deletes the local draft. Reachable without a
+            // process death: an editor reopened *during* the POST leaves the record
+            // checkpointed-but-unmigrated, so Home shows the server document — empty, since
+            // the body is enqueued only at migration — and deleting that stray as a duplicate
+            // took the live editor's only copy with it. The screen kept rendering a body that
+            // no longer existed on disk, and the next launch's sweep removed what its flush
+            // rewrote.
+            //
+            // Clear only the checkpoint instead. The record starts over, so the document the
+            // user actually has open re-POSTs as a fresh create carrying its body — which is
+            // what they meant by deleting an empty stray, not "throw away what I am typing".
+            if hasOpenEditor(documentID: checkpointed.localID) {
+                var restarted = checkpointed
+                restarted.syncedServerID = nil
+                restarted.postedTitle = nil
+                updatePendingCreate(restarted)
+                // Deliberately an `if`, not an early `return`. The statements after this
+                // branch are about the document being **deleted** — the server id — not about
+                // the record, and returning cancelled them: the `serverID` draft survived, and
+                // `discardedDuringSave` never learned about an in-flight save, so `finish`
+                // took its success path and re-created the content cache entry for a document
+                // that had just been DELETEd. That is invariant 0b, reintroduced by a guard
+                // scoped to one concern that also swallowed another.
+            } else {
+                removePendingCreate(documentID: checkpointed.localID)
+                states[checkpointed.localID] = .idle
+                draftStore.remove(documentID: checkpointed.localID)
+                queued[checkpointed.localID] = nil
+                settledSaves[checkpointed.localID] = nil
+                lastConfirmedPushMarkdown[checkpointed.localID] = nil
+                knownServerTitles[checkpointed.localID] = nil
+            }
         }
         draftStore.remove(documentID: documentID)
         if inFlight[documentID] != nil {

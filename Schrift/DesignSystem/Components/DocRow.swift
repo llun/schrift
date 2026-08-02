@@ -16,6 +16,8 @@ func docRowAccessibilityLabel(
     reach: LinkReach,
     date: String,
     pinned: Bool,
+    pendingSync: Bool = false,
+    pendingSyncLabel: String = "",
     pinnedLabel: String,
     sharedWithOrganizationLabel: String,
     publicLabel: String
@@ -23,6 +25,12 @@ func docRowAccessibilityLabel(
     var parts = [title]
     if pinned {
         parts.append(pinnedLabel)
+    }
+    // The badge itself is `accessibilityHidden` — the row ignores its children and composes
+    // one label — so a state whose *only* visual signal is that glyph has to be spoken here
+    // or it is invisible to VoiceOver.
+    if pendingSync, !pendingSyncLabel.isEmpty {
+        parts.append(pendingSyncLabel)
     }
     switch reach {
     case .restricted:
@@ -56,6 +64,13 @@ struct DocRow: View {
     var reach: LinkReach = .restricted
     var date: String = ""
     var offlineAvailable: Bool = false
+    /// Created on this device and not yet on the server. Distinct from `offlineAvailable`,
+    /// which means the opposite direction of travel: a *server* document whose body is cached
+    /// here. Both can be true at once — the only call site passes a screen-wide `isOffline`
+    /// for the latter — so the `if/else if` ordering below is load-bearing, not defensive:
+    /// this is the more actionable of the two, because it is *why* the document is missing
+    /// from the web.
+    var pendingSync: Bool = false
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
@@ -95,6 +110,7 @@ struct DocRow: View {
         .accessibilityLabel(
             docRowAccessibilityLabel(
                 title: title, reach: reach, date: date, pinned: pinned,
+                pendingSync: pendingSync, pendingSyncLabel: loc[.docrow_on_this_device],
                 pinnedLabel: loc[.docrow_pinned],
                 sharedWithOrganizationLabel: loc[.docrow_shared_with_organization],
                 publicLabel: loc[.docrow_public]
@@ -121,7 +137,11 @@ struct DocRow: View {
 
     @ViewBuilder
     private var offlineIndicator: some View {
-        if offlineAvailable {
+        if pendingSync {
+            MaterialSymbol(.cloud_off, size: 16)
+                .foregroundStyle(DocsColor.gray350)
+                .accessibilityLabel(loc[.docrow_on_this_device])
+        } else if offlineAvailable {
             MaterialSymbol(.cloud_done, size: 16)
                 .foregroundStyle(DocsColor.gray350)
                 .accessibilityLabel(loc[.docrow_available_offline])
@@ -145,6 +165,15 @@ struct DocRow: View {
         DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
         DocRow(emoji: "📊", title: "Roadmap", reach: .authenticated, date: "Yesterday")
         DocRow(title: "Public notes", reach: .public, date: "Last week")
+        // The two sync states, and the overlap: a locally-created row while the whole screen
+        // is offline is both, and must read as pending.
+        DocRow(
+            emoji: "📥", title: "Cached copy", reach: .restricted, date: "1 hour ago",
+            offlineAvailable: true)
+        DocRow(emoji: "✏️", title: "Written on the plane", reach: .restricted, date: "Just now", pendingSync: true)
+        DocRow(
+            emoji: "✏️", title: "Offline and unsynced", reach: .restricted, date: "Just now",
+            offlineAvailable: true, pendingSync: true)
     }
     .environment(LocalizationStore())
 }

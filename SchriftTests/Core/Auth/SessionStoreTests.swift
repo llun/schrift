@@ -302,4 +302,47 @@ final class SessionStoreTests: XCTestCase {
 
         XCTAssertFalse(store.needsReauthentication)
     }
+    /// The stale-account disclosure. Signing in — which a completed re-login sheet also does
+    /// — is the moment a possibly-different account takes over, so a kept id would list the
+    /// previous user's unsynced documents to the new one, who could type into them, with the
+    /// edits eventually POSTed into the first user's account.
+    func testSigningInForgetsWhoWasSignedInBefore() throws {
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+
+        try store.signIn(serverURL: URL(string: "https://docs.example.org")!)
+
+        XCTAssertNil(signedIn.userID, "fails closed until the server says whose session this is")
+    }
+
+    /// And a mere expiry does **not** clear it: the user may simply have hit a transient 401,
+    /// or dismissed the sheet — whose contract is that cached data keeps showing. Emptying
+    /// their local section there would be silent collateral with no safety gain, since the
+    /// account has not changed until someone signs in.
+    func testExpiringASessionKeepsTheAccountId() throws {
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: URL(string: "https://docs.example.org")!)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        store.noteSessionExpired()
+
+        XCTAssertNotNil(signedIn.userID)
+    }
+
+    func testSigningOutForgetsTheAccountId() throws {
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: URL(string: "https://docs.example.org")!)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        try store.signOut()
+
+        XCTAssertNil(signedIn.userID)
+    }
+
 }

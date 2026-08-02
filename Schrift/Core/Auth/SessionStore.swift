@@ -15,6 +15,8 @@ final class SessionStore {
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
     private let cookieStorage: CookieStoring
+    /// Cleared at sign-in and sign-out — see `signIn`. Deliberately *not* on a mere expiry.
+    private let signedInUser: SignedInUserStore
 
     private(set) var serverURL: URL?
     private(set) var isAuthenticated: Bool
@@ -27,11 +29,15 @@ final class SessionStore {
     init(
         userDefaults: UserDefaults = .standard,
         keychain: KeychainStoring = KeychainStore(),
-        cookieStorage: CookieStoring = HTTPCookieStorage.shared
+        cookieStorage: CookieStoring = HTTPCookieStorage.shared,
+        signedInUser: SignedInUserStore? = nil
     ) {
         self.userDefaults = userDefaults
         self.keychain = keychain
         self.cookieStorage = cookieStorage
+        // Defaults to the same `userDefaults` this store was given, so a test that isolates
+        // one isolates both.
+        self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
         self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
         // Synchronous, so the cookies are back in the shared storage before
@@ -55,9 +61,27 @@ final class SessionStore {
         self.isAuthenticated = true
         // Serves both a fresh login and a completed re-login sheet.
         self.needsReauthentication = false
+        // **Forget who was signed in, here rather than at expiry.** This is the moment a
+        // possibly-different account takes over the session, which is exactly when a kept id
+        // becomes a disclosure: it would list the previous user's unsynced documents to the
+        // new one, who could open and type into them — and the record still carries the first
+        // user's `ownerUserID`, so those edits would eventually be POSTed into *their*
+        // account. Refreshing after re-auth is not enough on its own, because that fetch can
+        // fail; nil fails closed, and nothing local is listed until the server says whose
+        // session this is.
+        //
+        // Clearing at `noteSessionExpired` instead would close the same window and also empty
+        // the local section for a user who merely hit a transient 401 — or who dismissed the
+        // sheet, whose documented contract is that cached data keeps showing — with no
+        // message and nothing to re-fetch it until a Profile visit. Same safety, strictly more
+        // collateral, so it is done here.
+        signedInUser.clear()
     }
 
     func signOut() throws {
+        // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
+        // should not have to remember this one.
+        signedInUser.clear()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()

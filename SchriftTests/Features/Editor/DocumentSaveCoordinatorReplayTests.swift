@@ -4,7 +4,7 @@ import XCTest
 
 /// The create replay: POST a document this device made, move everything keyed by its
 /// client-minted id onto the one the server assigned, and hand the content to the ordinary
-/// draft replay. Dormant — nothing mints a record yet — so these drive the coordinator
+/// draft replay. These drive the coordinator
 /// directly.
 @MainActor
 final class DocumentSaveCoordinatorReplayTests: XCTestCase {
@@ -1677,6 +1677,99 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         // take-back's `remove` deleted, which makes it a claim the test cannot establish.
         // Pinning move-versus-copy here would need that draft's own GET to succeed, and it
         // cannot: it names the id that just 404'd.
+    }
+
+    /// The tail of `discardPendingWork` belongs to the document being **deleted**, not to the
+    /// record — so the open-editor branch must not cancel it. Written as an early `return` it
+    /// did: the `serverID` draft survived, and `discardedDuringSave` never learned about the
+    /// in-flight save, so `finish` took its success path and re-created the content cache
+    /// entry for a document that had just been DELETEd. Invariant 0b, introduced once already.
+    func testDeletingTheServerStrayStillPurgesItsOwnDraftAndSuppressesTheWriteThrough() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 0.2)
+        }
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: local.id)
+        // The user opened the server stray, typed, and a save is on the wire for it.
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Stray", markdown: "# Typed")
+        await waitUntil { self.savesInFlight(log) == 1 }
+
+        relaunched.coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertNil(
+            relaunched.drafts.draft(for: serverID),
+            "the deleted document's own draft goes, whatever happens to the record")
+        // Wait for the save to actually settle before asserting the cache.
+        // `waitAndConfirmNever` defaults to 0.3 s, so against the old 2 s stub the assertion
+        // could not have failed however the code behaved — vacuous, which is the one thing
+        // this PR's review keeps finding. `finish` sets `.idle` on the discarded path and
+        // `.saved` otherwise, so this synchronises for both.
+        await waitUntil { relaunched.coordinator.state(for: self.serverID) != .saving }
+        let cache = DocumentContentCacheStore(directory: cacheDirectory)
+        XCTAssertNil(
+            cache.content(for: serverID),
+            "the settled save must not re-create a cache entry for a DELETEd document")
+        XCTAssertNotNil(
+            relaunched.drafts.draft(for: local.id), "and the live editor's body is untouched")
+        XCTAssertNotNil(relaunched.creates.create(for: local.id))
+    }
+
+    /// **Deleting the empty server stray must not take a live editor's body.** An editor
+    /// reopened during the POST leaves the record checkpointed-but-unmigrated, so Home shows
+    /// the server document — empty, since the body is enqueued only at migration — and the
+    /// user deletes it as a duplicate. That path removed the record *and the local draft*,
+    /// which is the only copy of what they are still typing.
+    func testDeletingTheServerStrayKeepsALiveEditorsBody() async {
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Still typing")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.retainOpenEditor(documentID: local.id)
+
+        relaunched.coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: local.id)?.markdown, "# Still typing",
+            "the body the open screen is showing is still on disk")
+        XCTAssertNotNil(relaunched.creates.create(for: local.id), "and it can still be created")
+        XCTAssertNil(
+            relaunched.creates.create(for: local.id)?.syncedServerID,
+            "starting over, since the document it was checkpointed onto is gone")
+    }
+
+    /// The registry the deferrals key off is now wired from `EditorView`, so a balanced
+    /// appear/disappear pair must actually defer a migration and then let it complete. This
+    /// pins the coordinator half of that contract — the view owns the balance, the view model
+    /// only forwards.
+    func testAnEditorRegistrationDefersTheMigrationAndReleasingCompletesIt() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+
+        env.coordinator.retainOpenEditor(documentID: local.id)
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertEqual(creates(log), 0, "deferred while the screen holds it")
+        XCTAssertNotNil(env.creates.create(for: local.id))
+
+        env.coordinator.releaseOpenEditor(documentID: local.id)
+        await waitUntil { env.creates.create(for: local.id) == nil }
+
+        XCTAssertEqual(creates(log), 1, "and releasing kicks the funnel — no extra trigger needed")
     }
 
     /// The take-back's other reason to decline: a save on the wire for the server id. Removing

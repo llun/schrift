@@ -72,6 +72,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case docrow_shared_with_organization = "docrow.shared_with_organization"  // "Shared with organization"
     case docrow_public = "docrow.public"  // "Public"
     case docrow_available_offline = "docrow.available_offline"  // "Available offline"
+    case docrow_on_this_device = "docrow.on_this_device"  // "On this device, waiting to sync"
 
     // LinkReachPill hints (design-system component; labels reuse reach.*)
     case linkreach_hint_restricted = "linkreach.hint.restricted"  // "Only invited people"

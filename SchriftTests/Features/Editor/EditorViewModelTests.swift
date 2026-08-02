@@ -50,8 +50,16 @@ final class EditorViewModelTests: XCTestCase {
         // Isolated: load()/delete/404 paths touch the children cache, which
         // must never read from or write to UserDefaults.standard in tests.
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        // Isolate the create store too. Defaulted it is `UserDefaults.standard`, and a test
+        // whose create stub fails retryably now mints a *real* record there, which persists on
+        // the simulator across runs and contaminates later tests — a coordinator built by an
+        // unrelated suite finds a replayable record and issues requests nothing set up,
+        // recording phantom entries into that test's `RequestRecorder`. Same fix as
+        // `HomeViewModelTests.makeViewModel`.
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client,
             documentID: documentID,
@@ -63,6 +71,230 @@ final class EditorViewModelTests: XCTestCase {
             remoteChangeDebounce: remoteChangeDebounce
         )
         return (viewModel, coordinator, draftStore, contentCache)
+    }
+
+    private func makeSignedInUser(userID: UUID? = UUID(uuidString: "11111111-1111-4111-8111-111111111111"))
+        -> SignedInUserStore
+    {
+        let name = "EditorViewModelTests.signedIn.\(UUID().uuidString)"
+        draftSuiteNames.append(name)
+        let store = SignedInUserStore(userDefaults: UserDefaults(suiteName: name)!)
+        store.remember(userID)
+        return store
+    }
+
+    /// A local document's editor: the coordinator holds a real create record, and the view
+    /// model is keyed on the *minted* id rather than the suite's fixed one.
+    private func makeLocalEnvironment() -> (
+        viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, document: Document,
+        draftStore: PendingDraftStore
+    ) {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let suiteName = "EditorViewModelTests.local.\(UUID().uuidString)"
+        draftSuiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore, contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
+        let document = coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil,
+            ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        let viewModel = EditorViewModel(
+            client: client, documentID: document.id, title: document.title ?? "Untitled document",
+            saveCoordinator: coordinator, signedInUser: signedIn,
+            contentCache: contentCache, childrenCache: childrenCache,
+            autosaveInterval: .seconds(10), remoteChangeDebounce: .milliseconds(600))
+        return (viewModel, coordinator, document, draftStore)
+    }
+
+    /// The registration is tied to `deinit` rather than to `onDisappear`, which fires on mere
+    /// invisibility: this pins the release to the view model's lifetime.
+    ///
+    /// It calls `noteEditorAppeared` twice, but note what that does **not** prove. Deleting
+    /// the idempotence `guard` leaves this green, because assigning a second token deallocates
+    /// the first and that release balances the second retain — the guard avoids churn, it is
+    /// not load-bearing, and the code says so. What this does pin is the token itself:
+    /// removing it times the wait out.
+    ///
+    /// Observed on the coordinator's registry directly. Routing it through the replay would
+    /// let it pass whenever the replay simply did not run — the vacuous shape this project
+    /// keeps finding.
+    func testTheEditorRegistrationIsIdempotentAndReleasedOnDealloc() async {
+        let env = makeLocalEnvironment()
+        XCTAssertFalse(env.coordinator.hasOpenEditorForTesting(documentID: env.document.id))
+
+        do {
+            let transient = EditorViewModel(
+                client: env.viewModel.client, documentID: env.document.id, title: "Doc",
+                saveCoordinator: env.coordinator)
+            transient.noteEditorAppeared()
+            transient.noteEditorAppeared()  // a repeated `onAppear` must not double-count
+            XCTAssertTrue(env.coordinator.hasOpenEditorForTesting(documentID: env.document.id))
+        }
+
+        // `deinit` hops to the main actor to release, so let that turn run. Timing out here
+        // means either the token was never created or the retain was counted twice.
+        await waitUntil { !env.coordinator.hasOpenEditorForTesting(documentID: env.document.id) }
+    }
+
+    /// **A local sub-page must never be readable by the next account.** The children cache is
+    /// neither account-scoped nor cleared on sign-out, and `load()` seeds `subpages` from it
+    /// synchronously — so persisting a synthetic there hands the previous user's draft, title
+    /// and body, to whoever signs in next, who can then edit or delete it.
+    func testALocalSubpageIsNeverPersistedIntoTheSharedChildrenCache() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        // A known level, so `appendChild` writes through at all.
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNotNil(child)
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [child!.id], "still on screen")
+        let cache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        XCTAssertEqual(
+            cache.children(for: documentID)?.map(\.id), [],
+            "but nothing a stranger's session could read")
+    }
+
+    /// A local sub-page must survive a successful children fetch. `appendChild` writes it
+    /// into `subpages` and the cache optimistically, but `loadChildren` replaces **both**
+    /// wholesale with the server's answer — which cannot contain a document the server has
+    /// never seen. Without the read-time merge it simply disappears, and if its replay parks
+    /// it is unreachable from every list in the app while its body sits on disk.
+    func testALocalSubpageSurvivesASuccessfulChildrenFetch() async {
+        let env = makeEnvironment()
+        let signedIn = makeSignedInUser()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let child = await viewModel.addSubpage()
+        XCTAssertNotNil(child)
+
+        // The server answers with a level that knows nothing about it.
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+
+        XCTAssertEqual(viewModel.subpages?.count, 0, "the fetched list is the server's, unchanged")
+        XCTAssertEqual(
+            viewModel.mergedSubpages?.map(\.id), [child!.id],
+            "but the screen still shows the local child")
+    }
+
+    /// A transport failure on "Add a subpage" keeps the page on the device rather than
+    /// reporting an error, exactly as Home's create does.
+    func testAddSubpageFallsBackToALocalChildOnATransportError() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let env = makeEnvironment()
+        let signedIn = makeSignedInUser()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNotNil(child)
+        XCTAssertNil(viewModel.errorKey, "kept on the device, not reported")
+        XCTAssertTrue(env.coordinator.isPendingCreate(documentID: child!.id))
+    }
+
+    /// A rejection on the merits still errors: minting there would promise a replay the
+    /// server will decline again.
+    func testAddSubpageStillReportsARejectionOnTheMerits() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser())
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_subpage)
+    }
+
+    /// And a child of a **local** parent is never minted: the POST would name a client-minted
+    /// id, 404, probe the parent, 404 again, and silently re-root the child — an irreversible
+    /// placement change on evidence that proves nothing. Out of v1 scope by design.
+    func testAddSubpageNeverMintsAChildOfALocalParent() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let env = makeLocalEnvironment()
+
+        let child = await env.viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(env.viewModel.errorKey, .editor_error_add_subpage)
+    }
+
+    /// Opening a locally-created document must issue **no** request. Its id is client-minted,
+    /// so every fetch 404s — and `revalidate`'s catch calls `becomeUnavailable`, which clears
+    /// `hasLoadedContent` and leaves a document the user is writing in reading "no longer
+    /// available". Nothing is lost when that happens, but the screen is unusable, which is the
+    /// whole feature.
+    func testOpeningALocalDocumentRendersItsDraftAndIssuesNoRequest() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        env.coordinator.enqueue(documentID: env.document.id, title: "Notes", markdown: "# Written offline")
+
+        await env.viewModel.load()
+
+        XCTAssertEqual(log.methods.count, 0, "no request may name a client-minted id")
+        XCTAssertTrue(env.viewModel.hasLoadedContent, "and the screen is usable")
+        XCTAssertFalse(env.viewModel.isUnavailable)
+        XCTAssertEqual(env.viewModel.currentMarkdown(), "# Written offline")
+    }
+
+    /// Pull-to-refresh is the other way in, and it must not tear the screen down either.
+    func testRefreshingALocalDocumentDoesNotTearTheScreenDown() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        env.coordinator.enqueue(documentID: env.document.id, title: "Notes", markdown: "# Written offline")
+        await env.viewModel.load()
+
+        await env.viewModel.refresh()
+        await env.viewModel.loadChildren()
+
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertFalse(env.viewModel.isUnavailable)
+        XCTAssertEqual(env.viewModel.currentMarkdown(), "# Written offline")
     }
 
     private func cachedEntry(markdown: String = "# Cached", syncedAt: Date = Date(timeIntervalSince1970: 1_000_000))

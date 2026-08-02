@@ -63,13 +63,13 @@
 > itself: every block transformation is a local edit the draft pipeline queues,
 > but **inserting a photo** uploads a multipart attachment for which there is no
 > queue, so it is withheld offline too (disabled in `EditorFormattingBar`,
-> dropped from the slash menu by `filteredSlashItems(query:isOffline:)`) —
+> dropped from the slash menu by `filteredSlashItems(query:isOffline:isLocalDocument:)`) —
 > otherwise it would open the picker and re-encode the chosen image only to
-> fail. Offline **creation** remains out of scope here for the same reason (the
-> "Add a subpage" and Pages-drawer "New page" buttons stay gated: they POST, and
-> a document that does not exist server-side has nothing for the draft pipeline
-> to save to) — it is the subject of its own change. That rule describes the
-> editor, **not the whole app**: Home's `+` POSTs ungated and simply errors, and
+> fail. Offline **creation** was out of scope in *this* change — the "Add a subpage"
+> and Pages-drawer "New page" buttons stayed gated here — and is **superseded**: it
+> landed 2026-08-02, and those buttons now fall back to a local document rather than
+> gating on `isOffline`. See "Documents created on this device". That rule describes the
+> editor, **not the whole app**: Home's `+` now creates locally when the network cannot take the POST, and
 > the Options/Share sheets stay reachable offline throughout. Both predate this
 > change. Two decisions ride along:
 > the editor's `isOffline` stays a **chrome-only** signal derived from the Home
@@ -159,13 +159,13 @@ amendment above; when this was written, editing offline was still blocked.)
 
 ## Non-goals
 
-- **Offline *creation*** — a document that does not exist server-side has no id
-  to PATCH, so the draft pipeline has nothing to save to. The two create
-  buttons ("Add a subpage", the Pages drawer's "New page") therefore stay gated
-  on `!isOffline`. **In progress**: the storage, the safety gates and the replay
-  all landed 2026-08-01 (see "Documents created on this device" below), but
-  nothing mints a record yet — so the gates and this non-goal stand until the UI
-  lands alongside them.
+- ~~**Offline *creation***~~ — **withdrawn 2026-08-02.** The premise (a document with
+  no server id has nothing for the draft pipeline to PATCH) was answered by giving such
+  a document a client-minted id, a record, and a replay that POSTs it and migrates the
+  draft onto the real id. Home's `+`, "Add a subpage" and the drawer's "New page" all
+  create locally when the network cannot take the POST; the only remaining gate is the
+  *parent* being unsynced, which stays out of scope because the replay cannot order two
+  dependent creates. See "Documents created on this device" below.
 - ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
   amendment at the top). Editing a previously-opened document offline is
   supported: the edit is written to `PendingDraftStore` before any network
@@ -852,8 +852,8 @@ ordering; the local phase never blocks on it. `subpages` becomes optional
 (`[Document]?`, nil = not fetched this session): the subpages empty-state copy
 ("Organize this document by creating subpages.") is suppressed until a fetch has
 succeeded this session — render nothing (or just the eyebrow) in the meantime, so
-the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage"
-button is hidden when `isOffline` (`createChild` is a network POST; a failure
+the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage" button is hidden when the *parent* is locally created (until
+  2026-08-02 it was hidden when `isOffline`; `createChild` is a network POST, and a failure
 surfaces `editor_error_add_subpage`, "Couldn't add the subpage. Please try
 again.").
 Caching the subpage list is deferred (Non-goals): if
@@ -1021,10 +1021,11 @@ to what the Home list passes (still a `Document` / id).
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
 
-## Documents created on this device (2026-08-01, storage + gates + replay)
+## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
-Offline *creation* is still a non-goal above, but its **storage, its safety gates
-and its replay have landed, dormant** — nothing mints a record yet. They land first and
+Offline *creation* has landed — the non-goal above is withdrawn — and its **storage, its safety gates
+and its replay have landed, and the create UI with them** — Home's `+`, the editor's
+"Add a subpage" and the drawer's "New page" all mint records. They landed first and
 separately because without them the existing pipeline does not merely fail to
 create a local document, it **destroys** one.
 
@@ -1052,9 +1053,11 @@ POSTed. The record says *this exists*, separately from *this has unsaved text*.
 the coordinator enforce it, and each is load-bearing. It is scoped to saves
 deliberately: opening a local document names its id from places the coordinator
 does not own — `formattedContent`, the children fetch, the collaboration room,
-Options' delete, version history — and gating those belongs to the create UI.
-Until then the invariant is broader than its enforcement, which is precisely why
-nothing may mint a record yet.
+Options' delete, version history — and those are now gated too:
+`EditorViewModel.isLocalDocument` covers the content and children fetches (and the
+conflict discard), `EditorView` skips the collaboration room, and the Options sheet
+hides version history while routing delete through its local branch. The enforcement
+matches the invariant.
 
 1. **`enqueue` holds the save.** The same park-the-save branch the conflict hold
    uses. Without it a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
@@ -1108,15 +1111,14 @@ proof that has to be withheld.
 what the user threw away. "Deleting a local document is purely local" holds only
 while the record is **un-checkpointed**, though: once `syncedServerID` is set the
 POST has landed and a real server object exists — while `isPendingCreate` is still
-true — so that branch runs for exactly the case where it is false. See the
-delete-branch obligation under "What the create UI still owes".
+true — so that branch runs for exactly the case where it is false. See the delete-branch handling in the owed-work list below.
 
 **Synthetic `Document`s never enter a persisted metadata cache.**
 `localDocument(from:)` fills the server-owned fields with inert placeholders
 (`path: ""`, `depth: 1`, `numchild: 0`) and claims only locally-true abilities
-(update/partialUpdate — `destroy` waits for a
-no-network delete branch in the UI, since advertising it today would promise a
-delete that 404s). A list load replaces its array *and* its cache
+(update/partialUpdate — `destroy` stays false even
+though the local-delete branch shipped, because nothing consults these abilities
+to decide what to offer: the sheet asks `isLocalDocument`). A list load replaces its array *and* its cache
 entry wholesale, so a locally-inserted row would vanish on the next fetch — lists
 merge at **read** time via `mergedWithLocalDocuments(fetched:local:)` instead,
 whose id de-duplication is a cheap guard against overlapping lists and
@@ -1128,7 +1130,8 @@ minted does not read "Untitled document" in every list.
 `abilities.childrenCreate` is false — but **nothing reads it**, so that records the
 intent rather than enforcing it: children-of-local-parents are out of scope until a
 replay can order them, and it is the create UI that must not offer the affordance
-(today it gates on `isOffline` alone).
+(the affordances enforce it: the button is hidden for a local parent, and `addSubpage`
+carries the guard).
 
 **Protection and permission are separate things, and conflating them cost the
 content.** `isPendingCreate` is deliberately *not* origin-scoped: a record minted
@@ -1170,75 +1173,156 @@ cleared; a stale draft is inert where a deleted one is gone, and clearing it
 belongs with the recovery affordance below. Nothing reads the quarantined *bytes*
 or clears the key — its mere existence is what keeps the suppression on.
 
-Still to come, and each is an obligation this change creates rather than a
-nice-to-have:
+**Four of these landed with the create UI** and are recorded here as done rather than
+deleted, because the reasoning is what the next change needs: the signed-in user id is
+persisted (`SignedInUserStore`, read-through, cleared on sign-*in* and sign-out — sign-in being the moment a possibly-different account takes over, and a mere expiry deliberately keeping it so a transient 401 does not silently empty the local section); `EditorView` retains
+and releases the editor registry for *every* document; the editor's fetches are gated on
+`isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
+checkpointed record via `syncedServerID(forLocalID:)`. What remains:
 
-- **Persisting the signed-in user id.** Listing and minting both require it, and
-  it is only ever learned from `/users/me/` and stored nowhere — so launching
-  offline currently yields no user id at all, which is precisely the case the
-  feature exists for. Failing closed is the right default; supplying the value is
-  the create UI's job. There are now **three** fetch sites (`RootView`,
-  `ProfileViewModel`, and the create pass) and none persists it; once one does,
-  the pass's per-pass fetch should read the persisted value instead — which also
-  makes the replay work against a server that omits `id`.
-- **Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
+**Local documents reach the screen through two read-time merges, not one.** Home's root
+list merges `pendingLocalDocuments(parentID: nil)`; the editor's Subpages section merges
+`pendingLocalDocuments(parentID: documentID)`. The second is not symmetry for its own
+sake: `appendChild` puts the new sub-page into the in-memory `subpages` — **never** the
+children cache, which is neither account-scoped nor cleared on sign-out, so a synthetic
+persisted there reaches the next account's session (`load()` seeds `subpages` from it
+synchronously, and `mergedSubpages` can only add, never withhold). A successful
+`loadChildren` replaces `subpages` wholesale with the server's answer, which cannot
+contain a document the server has never seen. Without the
+merge the sub-page disappears on the next fetch — and if its replay parks (`.failed`, or
+blocked for this build) it is unreachable from every list in the app while its body sits
+on disk. The Pages drawer renders from the same cache and inherits the gap; it is
+recorded below rather than fixed here.
+
+**And a migrated document must not vanish from a live Home.** The replay drops the record,
+so the local row is correctly withheld the instant it migrates — but the *real* row exists
+only in the fetched array, which still holds the list from before the document was created.
+Nothing else reloads: `insertIntoListCaches` writes only the cache, and the list's own
+`.task` does not re-run on pop-back.
+
+**The refetch hangs off the migration, not off the triggers.** Pinning it to
+`HomeViewModel.syncPendingDrafts()` covered only two of the four things that start a create
+pass — `recoverDrafts` at launch and `releaseOpenEditor` when an editor closes do not come
+through it, and the second is the designed completion path and the only one on iPad; an
+overlapping trigger is coalesced into a no-op that returns before the migration happens. So
+`migrateCreatedDocument` fires `onDocumentMigrated` instead, which covers every trigger by
+construction.
+
+It carries the **created document**, because a refetch alone is not enough: a fresh install
+used offline first has no recents cache for `insertIntoListCaches` to write into (it refuses
+to fabricate one), so a refetch that then fails would leave the row in no list at all. The
+subscriber swaps the real document into its in-memory list first — never into the cache,
+which stays the server's to fill — and refetches after. It fires **last**, after the terminal
+`enqueue`: mid-function, a diverged resume has its draft on disk, its state `.idle` and no
+conflict recorded yet, so a synchronous handler that enqueued there would full-overwrite the
+co-author.
+
+The callback is **single-subscriber**, which is trigger-independent but not
+list-independent: a migrating *sub-page* refreshes Home, which never showed it, while the
+editor's Subpages section and the Pages drawer keep their synthetic row. That is the
+already-recorded ghost residual below, not a new one.
+
+- **[LANDED — `SignedInUserStore`]** Persisting the signed-in user id. Listing and minting both require it, and
+  it was only ever learned from `/users/me/` and stored nowhere — so launching
+  offline yielded no user id at all, which is precisely the case the feature exists
+  for. Failing closed is the right default, and `SignedInUserStore` now supplies the
+  value: two of the three fetch sites persist it (`HomeViewModel.refreshSignedInUser`,
+  driven from `RootView`, and `ProfileViewModel`). Still open is the third — the create
+  pass's own `/users/me/` could read the persisted value instead, which would also make
+  the replay work against a server that omits `id`.
+- **[LANDED — `EditorView` retains for every document, released on view-model `deinit` so a tab switch cannot trigger the swap]** Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
   create UI — from `EditorView` itself, for *every* document, not only
-  locally-created ones.** The "+" case is the obvious one: it opens an editor
+  locally-created ones. The "+" case is the obvious one: it opens an editor
   immediately, so a missed retain makes the very first reconnect-while-typing the
   migration-under-a-live-screen case. But the `serverID` half of the guard is only
   live if an *ordinary* document opened from Home, Search or Shared retains too —
   that is precisely its motivating scenario, the user meeting a checkpointed
   document under its real id. Retaining only for local documents leaves that guard
-  dead in the case it was added for. Copy `EditorView`'s
-  `holdsCollaborationSession` shape — a one-shot `@State` flag, released only if
-  held — rather than calling retain from `onAppear` directly, so the pairing
-  cannot double-count or leak. A leaked retain is not harmless *within* a
+  dead in the case it was added for. The shipped shape is a token released in the view model's
+  `deinit` rather than a `@State` flag released on `onDisappear` — see above for why
+  visibility is the wrong signal. A leaked retain is not harmless *within* a
   session: that document never replays while the caption says "syncs when
   online".
-- **Deleting a local document**, which is two changes that must land together:
-  `localDocument(from:)`'s `abilities.destroy` flipping to true, and
+- **A local sub-page under a parent whose access is revoked is stranded with no route.**
+  The replay's `createChild` 403s, the parent probe 403s too (terminal, since only a *404*
+  promotes to root), and the record goes `.failed`, which `runCreatePass` skips — `init`
+  re-seeds `.pendingSync` each launch, so it retries and re-fails forever. Meanwhile
+  `pendingLocalDocuments` filters on `parentID`, and Home asks for `nil`, so the child
+  appears in no top-level list; its only route is the parent's editor, and once a successful
+  Home fetch overwrites the list cache there is no row for the parent either. The body is on
+  disk, correctly protected from every delete path, listed nowhere and never sent. Closing it
+  means either promoting to root on a *terminal* parent failure (not just a 404) or giving
+  the stranded record a visible affordance — the same recovery this list already owes for
+  `replayBlockedAt` and a permanently-`.forbidden` resume.
+- **`finishMigration`'s checkpoint re-check ships unverified.** `guard
+  pendingCreates[localID]?.syncedServerID == serverID` distinguishes itself from the older
+  existence check only in one shape — a resume in flight, `discardPendingWork`'s open-editor
+  branch clearing the checkpoint mid-await, and the editor released before the fetch returns
+  — which no test stages. Accepted rather than blocked because the asymmetry runs the safe
+  way: the guard can only cause an *earlier return*, and every early return in that function
+  is lossless by construction (record survives, both bodies stay on disk, the next trigger
+  resumes or starts over). A bug *in* the guard cannot lose content; only its absence can.
+- **The Pages drawer has no read-time merge**, so since synthetics are no longer persisted
+  its local page vanishes on any view-model recreation. It stays reachable one screen over,
+  in the parent's Subpages section, which does merge.
+  <!-- continues --> The editor's Subpages section merges local
+  children; `PagesTreeViewModel` renders from `children`/the shared cache and does not, so a
+  local sub-page vanishes from the drawer on the next successful level fetch even though it
+  is still listed one screen over. Same fix shape as the editor's `mergedSubpages`.
+- **The replay's own child insert does not invalidate an in-flight fetch.**
+  `insertIntoListCaches` bumps neither `childrenGeneration` nor `PagesTreeViewModel
+  .mutations`, so a `listChildren` issued before the migration can land after it and
+  overwrite the level — losing the *real* child, the mirror of the guard `appendChild`
+  already carries for a local one.
+- **A live parent editor keeps the ghost child row after migration.** The cache is purged,
+  but the parent's in-memory `subpages` is not, and nothing refetches while it stays on
+  screen. Tapping the stale row opens a dead local id and reports "no longer available" for
+  a document that just synced.
+- **[LANDED — all three states] Deleting a local document**, which is two changes that must land together:
   `OptionsViewModel.delete()` short-circuiting for a pending-create id (it
-  currently always calls the server, which 404s). One without the other gives
-  either a Delete row that always errors or a record nothing can remove — and
+  previously always called the server, which 404s) and the Options sheet hiding the
+  rows that address a server copy. `abilities.destroy` was expected to flip to true
+  alongside, and deliberately did not: nothing consults those abilities to decide
+  whether to offer Delete — the sheet asks `isLocalDocument` — so flipping it would
+  change no behaviour while costing the dictionary its one meaning, *what the server
+  would let you do with this id*, which is nothing. And
   that branch is load-bearing, since `discardPendingWork` is what makes the
   replay's mid-POST delete guard fire. **And it needs a third piece: when the
   record carries a `syncedServerID`, the branch must issue the server `DELETE`
   too.** The checkpoint means the document *exists* server-side, so a purely local
   delete leaves it there — it reappears in Home on the next list fetch, with
-  nothing on the device that knows about it. **This needs a seam that does not
-  exist yet**: `pendingCreates`, `createStore` and `removePendingCreate` are
-  private and `isPendingCreate` returns only a `Bool`, so no caller can read a
-  record's `syncedServerID` to know whether a `DELETE` is owed. Add the accessor
-  *with* the delete branch — an unused public getter landed early is speculative
-  API. (The **inbound** direction is already handled: a delete arriving under the
+  nothing on the device that knows about it. That is what
+  `syncedServerID(forLocalID:)` is for: `isPendingCreate` returns a `Bool` and stays
+  true for a checkpointed record, so it cannot answer "is there anything on the
+  server to delete". A failed server `DELETE` leaves the record intact, since it
+  still names a live document and discarding the local trace would strand it. (The **inbound** direction is already handled: a delete arriving under the
   *server* id clears the record and the local draft itself, since that path is
   reachable through today's Options sheet and would otherwise resurrect the
   document on the next replay.)
 - **Reconciling `HomeViewModel.createDocument`'s work-offline branch with the
-  never-fabricate rule.** It does `cache.loadRecentDocuments() ?? []` and saves the
+  never-fabricate rule.** **[LANDED]** It used to do `cache.loadRecentDocuments() ?? []` and save the
   result, which is exactly the one-row fabrication the replay's own insert refuses —
   a first fetch that failed then renders one row, no skeleton, and
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
-- **Repopulating a *live* Home after a migration.** The replay's list-cache insert feeds
+- **[LANDED — `onDocumentMigrated`]** Repopulating a *live* Home after a migration. The replay's list-cache insert feeds
   the next Home construction and the work-offline read — the only two places
   `HomeViewModel` re-seeds from the cache — but an online `load()` overwrites from the
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
   read-time merge is wired, a live Home loses the row when `removePendingCreate` runs and
   regains it only on the next successful fetch.
-- **Gating the editor's fetch on a pending-create id.** `EditorViewModel.revalidate`
+- **[LANDED — `EditorViewModel.isLocalDocument` gates all four fetch paths]** Gating the editor's fetch on a pending-create id. `EditorViewModel.revalidate`
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen
   reads "no longer available". Nothing is lost (the teardown flushes first, the draft
-  survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI must
-  gate that fetch or a locally-created document is unusable the moment it is opened.
+  survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI gates that fetch via `EditorViewModel.isLocalDocument`, without which a
+  locally-created document would be unusable the moment it is opened.
   Recorded in `isPendingCreate`'s docstring and CLAUDE.md; it belongs in this list too.
 - **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
   checkpointed record it takes the `isPendingCreate` branch and removes only the local
   draft, leaving a `serverID` draft and its id-keyed maps behind — where the
-  `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals once the owed
-  server `DELETE` lands (the record goes, so the sweep guard passes and the ordinary 404
+  `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals via the server `DELETE` the local-delete branch now issues (the record goes, so the sweep guard passes and the ordinary 404
   rule reaps it), but the local-delete branch should square the two.
 - **Carrying a rename through the adopt-the-server branch.** Since `postedTitle` landed,
   the code *can* prove a local rename is newer than the name the server learned — the
@@ -1248,7 +1332,7 @@ nice-to-have:
   a provably-newer rename is dropped for a document whose body is being adopted wholesale.
 - **The adopt branch can discharge a conflict a live, dirty editor recorded.** Its
   justification is that it "has just removed every local trace for that id" — false when the
-  local trace is an unflushed dirty screen. With `retainOpenEditor` unwired, a user can open
+  local trace is an unflushed dirty screen. **[LANDED — `EditorView` retains for every document]** Before that wiring, a user could open
   the checkpointed document under its *server* id, type, have `apply`'s dirty branch record a
   conflict in memory (no draft yet, so nothing on disk), and then have a reconnect run the
   migration straight through every guard: the seed draft's empty body sets `willAdoptServer`,
@@ -1283,7 +1367,7 @@ nice-to-have:
   deleted the only copy on a proxy hiccup — but it is the same shape as the `.forbidden`
   resume below and wants the same affordance: surface the stranded body and let the user
   keep or discard it. Until then the escape is manual (resolve the conflict, or discard the
-  document once the create UI can).
+  document, which the create UI now can).
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it
@@ -1397,10 +1481,16 @@ Deferring makes mid-swap edit loss *unrepresentable* rather than merely unlikely
 Releasing the last hold kicks the funnel — for a pending-create id or a checkpointed
 server id — so popping back on iPhone syncs immediately. The accepted cost: an iPad
 split-view editor left selected defers that document until it is deselected or the app
-relaunches. **None of this is live yet**: `retainOpenEditor`/`releaseOpenEditor` have
-zero production callers, so both `finishMigration` editor guards are statically true
-and this invariant, like the pending-create one, is broader than its enforcement. The
-create UI owes the wiring — see "What the create UI still owes".
+relaunches. `EditorView` retains on appear — and releases when the view model is
+**deallocated**, not on `onDisappear`, which fires on mere invisibility — for **every**
+document rather than only locally-created ones — the server-id guards' motivating case
+is an ordinary document opened from Home whose id a checkpointed record is about to
+migrate *onto*. Releasing on disappearance let the replay re-key a document whose screen was
+about to return: the editor then held a dead id, took a 404 teardown, and enqueued
+post-return keystrokes against an id no hold covers, which the next launch's sweep
+removed. The accepted cost of the fix is broader than the iPad case named below — any
+editor left pushed in a tab's stack holds its document until the user pops back, which
+kicks the funnel. Bounded by user action, not by connectivity.
 
 **Everything that can change during the await is re-checked after it — and a boolean is
 not enough.** The fourth thing that can change is a save for the *server* id that starts
@@ -1423,8 +1513,7 @@ That makes the **editor** bail genuinely free. The **delete** bail is not, and t
 difference is worth stating: the POST has already landed, and the record is
 deliberately *not* written back (writing it would resurrect what the delete
 removed), so an empty document is left on the server that nothing on this device
-references any more. Accepted for now, and it is why the create UI's local-delete branch
-owes a server `DELETE` whenever `syncedServerID` is set — otherwise a document the
+references any more. Accepted for now, and it is why the local-delete branch issues a server `DELETE` whenever `syncedServerID` is set — otherwise a document the
 user deleted reappears in Home after the next list fetch.
 
 **The two re-checks above are keyed on `localID`; everything the migration writes
@@ -1590,7 +1679,7 @@ document waits for the next ordinary list fetch.
 
 **And a resume that finds a body does not push over it.** Between the checkpoint
 and the migration the document is live and editable on the web, and
-"checkpointed but not migrated" is a state to design for (crash-only today) — so a co-author, or the same
+"checkpointed but not migrated" is a state to design for (previously crash-only) — so a co-author, or the same
 user on another client, can have written to it. The migration's `enqueue` goes
 **straight to `start`** (the record is gone by then, so nothing holds it), which
 would silently full-overwrite that body. So when the server's markdown differs
@@ -1733,13 +1822,12 @@ so a CSRF 403 cannot reach a GET; that argument belongs to the create POST, wher
 genuinely revoked document lands in exactly the state the `.notFound` branch calls
 unreachable — withheld from `pendingLocalDocuments`, never pushed, two GETs per
 trigger — with its body alive only in the local draft. The trade is deliberate (an
-unrecoverable duplicate versus recoverable invisibility); making such a record
-visible and dischargeable is owed with the create UI.
+unrecoverable duplicate versus recoverable invisibility); making such a record visible and dischargeable is still owed.
 
-**"Checkpointed but not migrated" is a state to design for**, though today it still
-requires a process death: the checkpoint-to-migration stretch has no suspension point,
+**"Checkpointed but not migrated" is a state to design for**, and no longer requires a process death: the checkpoint-to-migration stretch has no suspension point,
 so the server-id guards can only *prolong* it, and the editor re-check that would
-create it has no production callers yet. It becomes ordinary once they land, because
+create it is `EditorView.onAppear` → `noteEditorAppeared`, wired for every document. It is
+ordinary now that it is wired, because
 those guards bail after the checkpoint, as will the editor re-check. (The *delete*
 re-check is the one exception: there the record is gone, so nothing is left to resume and
 the server document is simply orphaned.) In it the server holds an empty document, the record is withheld from the
@@ -1883,6 +1971,7 @@ XCTest, mirroring the source tree. New/updated:
   disk and readable offline with background revalidation (see this doc). The
   "Offline editing/sync queue" non-goal is **also superseded as of 2026-08-01**:
   offline *editing* of a previously-opened document is supported (queued draft,
-  replayed on reconnect); offline *creation* remains out of scope.
+  replayed on reconnect). Offline *creation* was out of scope then and landed
+  2026-08-02 — see "Documents created on this device".
 - `README.md` reviewed — it makes no offline/loading claims, so no change.
 - This document is a living design doc — kept current as behavior changes.

@@ -135,8 +135,8 @@
 > because the document title is a large in-canvas header, not bar chrome.
 >
 > - **One toolbar in both modes.** `editorToolbarActions` gained `.done` and
->   swaps it into **Edit**'s slot while editing, keeping Share and Options
->   either way. The editing session no longer needs a bar of its own.
+>   swaps it into **Edit**'s slot while editing, keeping Options either way, and Share except on a locally-created
+> document, which has no share URL and no accesses to list. The editing session no longer needs a bar of its own.
 > - **The save status moved into the editing surface** as a slim row above the
 >   canvas. `saveStatusDisplay` and its precedence rules are untouched — a
 >   recorded conflict still refuses to claim a sync or offer a retry that would

@@ -246,7 +246,8 @@ Schrift/
 │                        the tab shell lives in Features/Home/MainTabView,
 │                        AppAppearance + AppearanceStore (dark-mode preference)
 ├── Core/
-│   ├── Auth/            SessionStore (persists session cookies in the Keychain and
+│   ├── Auth/            SignedInUserStore (the account id offline creation needs),
+│   │                    SessionStore (persists session cookies in the Keychain and
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
@@ -340,7 +341,7 @@ Schrift/
 │                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
 │                        ConflictSheetView), documents created on-device
-│                        (PendingDocumentCreateStore — dormant until the create UI),
+│                        (PendingDocumentCreateStore + the replay; Home/editor create UI),
 │                        photo insert (ImagePreparation),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
@@ -1333,8 +1334,8 @@ markdown write endpoint**. Understand this before touching the save path:
   than defensive. (Scoped to saves deliberately: opening a local document names
   its id from places the coordinator does not own — `formattedContent`, the
   children fetch, the collaboration room, Options' delete and version history —
-  and gating those is the create UI's job. Until then the invariant is *broader
-  than its enforcement*, which is why nothing may mint a record yet.)
+  and those are gated by `EditorViewModel.isLocalDocument` instead. The invariant and its enforcement now match. The create UI mints records now, so a *save* is fully guarded while
+  those other paths are guarded by `EditorViewModel.isLocalDocument` instead.)
   1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
      Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a
      404, and — a 404 being non-retryable — lands on `.failed`, which
@@ -1366,10 +1367,11 @@ markdown write endpoint**. Understand this before touching the save path:
   what the user threw away. **But "a local delete is purely local" holds only while
   the record is un-checkpointed** — once `syncedServerID` is set the POST has landed
   and a real server object exists, while `isPendingCreate` is still true, so the
-  local-id branch runs for exactly the case where it is false. The create UI owes the
-  server `DELETE` there; without it the document survives and reappears in Home on
-  the next list fetch with nothing on the device that knows about it. (That needs an
-  accessor the coordinator does not expose yet — land it *with* the delete branch.)
+  local-id branch runs for exactly the case where it is false. `OptionsViewModel.delete()`
+  issues the server `DELETE` there, via `syncedServerID(forLocalID:)`; without it the document survives and reappears in Home on
+  the next list fetch with nothing on the device that knows about it. (`syncedServerID(forLocalID:)`
+  is that accessor; `isPendingCreate` alone cannot answer it, since it stays true for a
+  checkpointed record.)
   **The other direction is handled here, and must stay so**: once checkpointed,
   `pendingLocalDocuments` withholds the local row, so the **server** id is the only
   one the user is offered — and `isPendingCreate`, keyed on the local id, answers
@@ -1386,10 +1388,11 @@ markdown write endpoint**. Understand this before touching the save path:
   be indistinguishable from a real document. `abilities.childrenCreate` is false —
   but **nothing reads it**, so that records the intent rather than enforcing it:
   children-of-local-parents are out of scope until a replay can order them, and it is
-  the create UI that must not offer the affordance (today it gates on `isOffline` alone); `destroy` is false for the same reason, until the UI has a
-  no-network delete branch (advertising it today would promise a delete that
-  404s, and leave the record un-removable — `discardPendingWork` is reached only
-  from a *successful* delete).
+  the affordances that enforce it — the button is hidden for a local parent and `addSubpage`
+  carries the guard. `destroy` stays false even though deleting one now works, because nothing
+  consults these abilities to decide whether to offer Delete (the sheet asks `isLocalDocument`),
+  so flipping it would change no behaviour while costing the dictionary its one meaning: what
+  the *server* would allow for this id, which is nothing.
   **Protection and ownership are separate, and conflating them cost content.**
   `isPendingCreate` is deliberately **unscoped** — a record minted against another
   server still names an id that would 404 here — while one `belongsToSession`
@@ -1407,12 +1410,14 @@ markdown write endpoint**. Understand this before touching the save path:
   `createLocalDocument(title:parentID:ownerUserID:)` takes a **non-optional**
   `ownerUserID` so nil can only come from a future or damaged schema, and "I don't
   know whose this is" must never resolve to "anyone may send it".
-  **That makes the signed-in user id a prerequisite for the whole feature, and the
-  app does not have one offline yet** — it is only ever learned from
-  `client.currentUser()` and persisted nowhere. So the create UI owes persisting it
-  at sign-in: without that, launching offline (the entire point) yields no user id,
-  local documents are not listed, and none can be minted. Failing closed is right;
-  the gap is that nothing supplies the value yet.
+  **That makes the signed-in user id a prerequisite for the whole feature**, and it is
+  only ever learned from `client.currentUser()` — so `SignedInUserStore`
+  (`dev.llun.Schrift.signedInUserID`) persists it, written through from the root task and
+  Profile and cleared at sign-in (the moment a possibly-different account takes over) and sign-out. Without it, launching offline (the entire point) yields
+  no user id, local documents are not listed, and none can be minted. It is a read-through
+  struct rather than a caching `@Observable`, so a reader built before the first write
+  cannot answer nil forever; not in the Keychain, because it is an identifier rather than a
+  credential and `…WhenUnlockedThisDeviceOnly` would hide it from a background launch.
   **The replay also refuses to run while the *drafts* store cannot decode.**
   `PendingDraftStore.loadAll` is all-or-nothing too, so one bad blob makes every
   `draft(for:)` answer nil — and `runCreatePass` would read that as "every body is empty",
@@ -1466,12 +1471,15 @@ markdown write endpoint**. Understand this before touching the save path:
   to give; **remove the record
   last**, because it is what keeps the holds in force; then enqueue the content.
   **A replay never runs while an editor is open** on that document
-  (`retainOpenEditor`/`releaseOpenEditor`) — **once those are wired, which they are
-  not: both have zero production callers today, so the guards are statically true and
-  this invariant is, like the pending-create one above, broader than its enforcement.**
-  The create UI owes the wiring, from `EditorView` and for *every* document rather than
-  only locally-created ones (the server-id guard's motivating case is an ordinary
-  document opened from Home). Why it matters: migration re-keys everything, and
+  (`retainOpenEditor`/`releaseOpenEditor`), wired from `EditorView`'s `onAppear` for
+  **every** document rather than only locally-created ones — the server-id guard's
+  motivating case is an ordinary document opened from Home whose id a checkpointed record
+  is about to migrate *onto*. **The hold is released when the view model is deallocated,
+  not on `onDisappear`**: that fires on mere invisibility (a tab switch), and releasing
+  there let the replay re-key a document whose screen was about to return, after which the
+  editor held a dead id — a 404 teardown, and post-return keystrokes enqueued against an id
+  no hold covers, then swept. The cost is that any editor left pushed holds its document
+  until the user pops back. Why it matters: migration re-keys everything, and
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
@@ -1547,8 +1555,7 @@ markdown write endpoint**. Understand this before touching the save path:
   **An empty local body is never offered as a conflict** — with nothing local to
   contribute, "Keep my version" would PATCH `""` and wipe the document, so the
   migration adopts the server — **title included, writing nothing back.** (Its discharge of
-  any conflict for that id rests on having removed every local trace, which is false while
-  `retainOpenEditor` is unwired and the trace is an unflushed dirty screen — see the owed list
+  any conflict for that id rests on having removed every local trace, which is false when the trace is an unflushed dirty screen — see the owed list
   in `docs/offline-and-sync.md`.) The test is
   **canonical** emptiness, not absence and not a raw `isEmpty`: the seed draft is
   present-and-empty, so a nil check lets a created-renamed-never-typed document through,
@@ -1888,10 +1895,10 @@ markdown write endpoint**. Understand this before touching the save path:
   The coordinator write-throughs the cache on save success; delete and 404/403
   revalidation purge the entry; sign-out clears the store. See
   [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
-- **Offline is editable, not read-only — but only for a document that already
-  exists on the server.** The three reading-surface edit gates (the block tap,
+- **Offline is editable, and since the create UI landed a document can be created
+  offline too.** The three reading-surface edit gates (the block tap,
   "Start writing", and the toolbar's Edit action) were lifted 2026-08-01;
-  `editorToolbarActions(isEditing:)` deliberately no longer *takes* `isOffline`,
+  `editorToolbarActions(isEditing:isLocal:)` deliberately no longer *takes* `isOffline`,
   so the gate cannot quietly return. What makes this safe is that the save
   pipeline was already built for it: `enqueue` persists the draft **before** it
   attempts the PATCH, `retryableSaveFailure` routes a transport failure to
@@ -1905,23 +1912,30 @@ markdown write endpoint**. Understand this before touching the save path:
   photo** uploads a multipart attachment that has no queue, so it stays gated
   offline in *both* entry points — disabled in `EditorFormattingBar` (via
   `canOfferPhotoInsertion`), and dropped from the slash menu by the pure
-  `filteredSlashItems(query:isOffline:)`. Offering it would open the picker and
-  re-encode the chosen image only to fail. The editor's two **create** buttons
-  are gated for the same reason: "Add a subpage" (`EditorView`) and the Pages
-  drawer's "New page" POST, and a document that does not exist server-side has
-  no id for the draft pipeline to PATCH.
+  `filteredSlashItems(query:isOffline:isLocalDocument:)`. Offering it would open the picker and
+  re-encode the chosen image only to fail. **Photo now also gates on
+  `isLocalDocument`** at both entry points, because `isOffline` is derived from Home's
+  last *list* fetch rather than reachability — a create that 500s with the network fine
+  mints a local document while `isOffline` reads false, and the upload would POST a
+  client-minted id for a 404 and an impossible retry.
+  The editor's two **create** buttons are no longer gated on `isOffline` — a failed POST
+  now falls back to a local document the replay sends later. Their remaining gate is the
+  *parent*: "Add a subpage" is hidden for a local parent (`EditorView`) and the Pages
+  drawer's "New page" for a local root, because a child of an unsynced parent is out of
+  v1 scope (the replay cannot order the two creates).
   **This is a rule about the editor's surfaces, not an app-wide invariant — do
   not read it as an inventory.** Several POSTing affordances elsewhere are
-  deliberately ungated and simply fail loudly: Home's **`+`**
-  (`DocumentListView`, which errors with `home_error_create`), and the Options
+  deliberately ungated: Home's **`+`** now creates *locally* under Work Offline or on a
+  retryable failure, and errors with `home_error_create` only on a rejection the server
+  actually made (or when no account id is known). Also the Options
   and Share sheets' actions (pin, delete, invite, role changes), which stay
   reachable offline because `editorToolbarActions` never gated `.share` or
   `.options`. All of that predates offline editing; it is listed here so the
   paragraph above isn't mistaken for a complete one.
   Two decisions ride with this. (a) **`isOffline` never gates durability or a save
   decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
-  the presence badge) plus the POST-only affordances above (photo, the two create
-  buttons). Nothing about whether an edit is kept, queued, or replayed reads it.
+  the presence badge) plus the one POST-only affordance above that still reads it (photo).
+  Nothing about whether an edit is kept, queued, or replayed reads it.
   It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
   *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the
   **list** endpoint sets it with the network perfectly healthy. It is deliberately

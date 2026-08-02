@@ -131,8 +131,17 @@ enum EditorToolbarAction: Equatable {
     case options
 }
 
-func editorToolbarActions(isEditing: Bool) -> [EditorToolbarAction] {
-    [isEditing ? .done : .edit, .share, .options]
+/// `isLocal` drops **Share**: a document that exists only on this device has no share URL
+/// and no accesses to list, so the sheet would show "Couldn't load members" over a link
+/// nobody else can open. Everything else stays — editing, and Options for Delete — because
+/// they are exactly what a local document needs. Deliberately *not* keyed on `isOffline`:
+/// sharing an already-synced document offline fails loudly, which is the pre-existing
+/// behaviour and not this change's business.
+func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorToolbarAction] {
+    var actions: [EditorToolbarAction] = [isEditing ? .done : .edit]
+    if !isLocal { actions.append(.share) }
+    actions.append(.options)
+    return actions
 }
 
 /// The count shown on the options button while others are in the document, or
@@ -213,7 +222,10 @@ struct EditorView: View {
         self.onOpenDocument = onOpenDocument
         _optionsViewModel = State(
             initialValue: OptionsViewModel(
-                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite))
+                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
+                // So Delete can tell a document that exists only here from one the replay has
+                // already POSTed, and issue the server DELETE for the latter.
+                saveCoordinator: viewModel.saveCoordinator))
         _shareViewModel = State(
             initialValue: ShareViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
@@ -222,7 +234,9 @@ struct EditorView: View {
         // both an isolated one.
         _pagesTreeViewModel = State(
             initialValue: PagesTreeViewModel(
-                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache))
+                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache,
+                // So "New page" can fall back to a local page when the POST cannot land.
+                saveCoordinator: viewModel.saveCoordinator))
     }
 
     var body: some View {
@@ -262,7 +276,10 @@ struct EditorView: View {
                     .accessibilityHidden(isPresentingPagesTree)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    ForEach(editorToolbarActions(isEditing: viewModel.isEditing), id: \.self) {
+                    ForEach(
+                        editorToolbarActions(isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument),
+                        id: \.self
+                    ) {
                         action in
                         toolbarButton(for: action)
                             .accessibilityHidden(isPresentingPagesTree)
@@ -277,7 +294,22 @@ struct EditorView: View {
             // with `release` on disappear; the manager owns the socket lifecycle
             // (linger, suspend, reconnect), so a background/foreground cycle is handled
             // there.
-            .onAppear { requestCollaborationSessionIfNeeded() }
+            .onAppear {
+                requestCollaborationSessionIfNeeded()
+                // Tell the save coordinator a screen is writing under this id. The create
+                // replay re-keys a document's draft, coordinator maps and caches from the
+                // local id onto the server id — and `EditorViewModel.documentID` is a `let`
+                // captured by four sibling view models and by the pushed `NavigationPath`
+                // value, so a live screen cannot follow that swap and would keep writing
+                // under an id the holds no longer cover. Registering here is what makes the
+                // migration defer instead.
+                //
+                // **For every document, not only locally-created ones.** The motivating case
+                // is an ordinary document opened from Home whose id a checkpointed record is
+                // about to migrate *onto*: that screen writes under the server id, and the
+                // guards protecting it are keyed on the server id too.
+                viewModel.noteEditorAppeared()
+            }
             // Availability can resolve *after* the editor is already on screen — the
             // `/config/` fetch that decides server support runs concurrently with
             // navigation — so re-request when it flips to available; the one-shot hold
@@ -302,6 +334,10 @@ struct EditorView: View {
                 }
             }
             .onDisappear {
+                // The editor registration is deliberately *not* released here: `onDisappear`
+                // means "not visible" (a tab switch, a pushed sub-document), and the replay
+                // must not re-key a document whose screen is about to come back. It is
+                // released when the view model is deallocated — see `noteEditorAppeared`.
                 viewModel.flushPendingChanges()
                 if holdsCollaborationSession {
                     collaboration.release(viewModel.documentID)
@@ -379,6 +415,7 @@ struct EditorView: View {
                     viewModel: pagesTreeViewModel,
                     rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
                     isOffline: isOffline,
+                    isRootLocal: viewModel.isLocalDocument,
                     onOpen: { document in
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
@@ -510,6 +547,7 @@ struct EditorView: View {
                             if let query = viewModel.slashQueryText {
                                 SlashMenuView(
                                     query: query, isOffline: isOffline,
+                                    isLocalDocument: viewModel.isLocalDocument,
                                     onSelect: { viewModel.applySlashSelection($0) })
                             }
                             EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
@@ -693,6 +731,9 @@ struct EditorView: View {
     /// (retrying availability later must not mint a second bridge instance and
     /// lose the first's identity map / seed state).
     private func requestCollaborationSessionIfNeeded() {
+        // First, before the bridge is even built: a document the server has never seen has no
+        // collaboration room to join — the socket dials a URL containing its id.
+        guard !viewModel.isLocalDocument else { return }
         if liveEditingBridge == nil {
             let bridge = LiveEditingBridge(
                 documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,
@@ -774,9 +815,9 @@ struct EditorView: View {
                     MaterialSymbol(.account_tree, size: 16)
                         .accessibilityHidden(true)
                     Text(
-                        (viewModel.subpages?.isEmpty ?? true)
+                        (viewModel.mergedSubpages?.isEmpty ?? true)
                             ? loc[.editor_subpages_title]
-                            : loc.format(.editor_subpages_title_count, viewModel.subpages?.count ?? 0)
+                            : loc.format(.editor_subpages_title_count, viewModel.mergedSubpages?.count ?? 0)
                     )
                     .font(DocsFont.footnote.weight(.semibold))
                     .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
@@ -787,7 +828,7 @@ struct EditorView: View {
                 // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
                 .padding(.bottom, DocsSpacing.space3xs)
 
-                if let subpages = viewModel.subpages {
+                if let subpages = viewModel.mergedSubpages {
                     if subpages.isEmpty {
                         Text(loc[.editor_subpages_empty])
                             .font(DocsFont.footnote)
@@ -804,10 +845,13 @@ struct EditorView: View {
                 }
                 // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
 
-                // Still gated: creating a sub-page POSTs, and a document that does not
-                // exist server-side has nothing for the draft pipeline to save to.
-                // Offline creation is its own change.
-                if !isOffline {
+                // No longer gated on `isOffline` — a failed POST falls back to a local
+                // sub-page the replay sends later. Gated instead on the *parent* being local:
+                // a child of an unsynced parent is out of v1 scope, because the replay has no
+                // way to order the two creates (the child's `parentID` names an id the server
+                // has never seen). `abilities.childrenCreate` on a synthetic document records
+                // the same intent, but nothing reads it — this is the gate that enforces it.
+                if !viewModel.isLocalDocument {
                     Button {
                         Task {
                             if let child = await viewModel.addSubpage() {

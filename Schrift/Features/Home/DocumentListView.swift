@@ -186,6 +186,9 @@ struct DocumentListView: View {
                         reach: document.linkReach,
                         date: documentRowDate(document, locale: loc.locale),
                         offlineAvailable: isOffline,
+                        // Created here and not yet on the server — the one row state the
+                        // user can act on (it is why the document is missing from the web).
+                        pendingSync: viewModel.isLocalDocument(document),
                         onOpen: { onSelect(document) }
                     )
                 }

@@ -6,14 +6,27 @@ import XCTest
 final class ProfileViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
 
+    private var signedInSuiteNames: [String] = []
+
     override func tearDown() {
         MockURLProtocol.reset()
+        for name in signedInSuiteNames {
+            UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+        }
+        signedInSuiteNames.removeAll()
         super.tearDown()
     }
 
     private func makeViewModel() -> ProfileViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
-        return ProfileViewModel(client: client)
+        // Isolate the account-id store. `load()` writes the fetched user's id through, and
+        // the production default is `UserDefaults.standard` — where it would persist on the
+        // simulator and hand *other* suites a signed-in account they never set up, silently
+        // enabling the offline-create fallbacks in tests written before those existed.
+        let suiteName = "ProfileViewModelTests.signedIn.\(UUID().uuidString)"
+        signedInSuiteNames.append(suiteName)
+        return ProfileViewModel(
+            client: client, signedInUser: SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName)!))
     }
 
     private nonisolated static let userFixture: Data = """

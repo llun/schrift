@@ -5,7 +5,50 @@ import Foundation
 final class HomeViewModel {
     var searchQuery: String = ""
     var pinnedDocuments: [Document] = []
-    var recentDocuments: [Document] = []
+    /// What the server (or its cache) last said. **Never contains a locally-created
+    /// document** — see `recentDocuments`.
+    var fetchedRecentDocuments: [Document] = []
+    /// The list the screen renders: the fetched one with this device's unsynced documents
+    /// merged in at read time.
+    ///
+    /// Merging at *read* time rather than storing them together is the invariant that keeps
+    /// a synthetic `Document` out of `DocumentCacheStore`. A list load replaces its array
+    /// **and** its cache entry wholesale, so a synthetic row written into the cache would
+    /// afterwards be indistinguishable from a real server document — with a client-minted id
+    /// that every fetch 404s on. Reading `pendingCreatesVersion` here is what makes the row
+    /// disappear on its own once the replay migrates it, without a list fetch.
+    var recentDocuments: [Document] {
+        // Memoised, because this is read several times per `DocumentListView` body — the list
+        // itself, `isCurrentListKnown`, the empty-state branch — and the body re-runs on every
+        // search-field keystroke. Uncached, each read costs a **full decode of every draft on
+        // the device, document bodies included**, on the main actor: `pendingLocalDocuments`
+        // goes through `PendingDraftStore.allDrafts()`, whose `loadAll` is all-or-nothing.
+        //
+        // The key is the pair that can change the answer — the fetched array and the
+        // coordinator's record version. Reading `pendingCreatesVersion` here is also what
+        // registers the `@Observable` dependency, so a migrated row leaves a live Home the
+        // moment `removePendingCreate` runs rather than at the next successful fetch.
+        // **The account is part of the key.** Re-authenticating as someone else changes who
+        // may be listed without touching either of the other two, so a memo keyed only on
+        // them would keep serving the previous user's documents to the new one.
+        let version = saveCoordinator.pendingCreatesVersion
+        let owner = signedInUser.userID
+        if let cached = mergedRecents, cached.version == version, cached.owner == owner,
+            cached.fetched == fetchedRecentDocuments
+        {
+            return cached.merged
+        }
+        let merged = mergedWithLocalDocuments(
+            fetched: fetchedRecentDocuments,
+            local: saveCoordinator.pendingLocalDocuments(parentID: nil, currentUserID: owner))
+        mergedRecents = (version, owner, fetchedRecentDocuments, merged)
+        return merged
+    }
+
+    /// Memo for `recentDocuments`. `@ObservationIgnored` so writing it from a *getter* does
+    /// not register a mutation and re-invalidate the very view that just read it.
+    @ObservationIgnored
+    private var mergedRecents: (version: Int, owner: UUID?, fetched: [Document], merged: [Document])?
     var searchResults: [Document] = []
     var isLoading = false
     var errorKey: L10nKey?
@@ -19,11 +62,22 @@ final class HomeViewModel {
     /// list: nil (never fetched) must not masquerade as a real empty result,
     /// e.g. a fresh install under Work Offline (mirrors Shared's
     /// showsDocumentList).
-    private(set) var isCurrentListKnown = false
+    private(set) var hasKnownFetchedList = false
+    /// …or this device holds an unsynced document, which is itself a real answer: a fresh
+    /// install in airplane mode that has created one must render that row, not the
+    /// never-fetched placeholder.
+    var isCurrentListKnown: Bool {
+        hasKnownFetchedList || !recentDocuments.isEmpty
+    }
 
     let client: DocsAPIClient
     let saveCoordinator: DocumentSaveCoordinator
     private let cache: DocumentCacheStore
+    /// Whose local documents may be listed. Nil (never signed in on this device, or signed
+    /// out) withholds every record — `belongsToSession` gates listing and sending on the same
+    /// test, because showing user B another user's unsynced document is the worse half of the
+    /// same disclosure: B's edits would land in A's document when A signs back in.
+    private let signedInUser: SignedInUserStore
     private let userDefaults: UserDefaults
     /// The same log the shared client records into. nil in previews and in tests that don't
     /// care, which simply means no detail is offered. Not private: the editor screens this
@@ -40,8 +94,10 @@ final class HomeViewModel {
         saveCoordinator: DocumentSaveCoordinator? = nil,
         serverOrigin: String = "",
         userDefaults: UserDefaults = .standard,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         diagnostics: APIDiagnosticsLog? = nil
     ) {
+        self.signedInUser = signedInUser
         self.client = client
         self.cache = cache
         // `serverOrigin` reaches the coordinator only to stamp documents created on this
@@ -52,10 +108,34 @@ final class HomeViewModel {
             saveCoordinator ?? DocumentSaveCoordinator(client: client, serverOrigin: serverOrigin)
         self.userDefaults = userDefaults
         self.diagnostics = diagnostics
+        // A migration re-keys a document onto its server id, after which the local row is
+        // correctly withheld and the real one exists only in a server response this view model
+        // has not made yet. Refetch on the event itself — see `onDocumentMigrated`.
+        self.saveCoordinator.onDocumentMigrated = { [weak self] migrated in
+            // nil when the resume could not fetch the document — the refetch below is then
+            // the whole remedy.
+            guard let self else { return }
+            // Swap the real document in *first*, so the row never blinks out. A refetch alone
+            // is not enough: a fresh install used offline first has no recents cache, so
+            // `insertIntoListCaches` correctly declines to fabricate one and a refetch that
+            // then fails would leave the document in no list at all. In-memory only — the
+            // cache stays the server's to fill.
+            // **Not roots-only, unlike `insertIntoListCaches`.** That rule exists because
+            // Home's feed is fetched without a parent filter, so a sub-page's place in it is
+            // the server's answer to give — and `Document` carries no `parentID`, so this
+            // subscriber cannot tell. The divergence is bounded: this is in-memory only and
+            // the `load()` on the next line replaces it with the server's own list, so a
+            // wrongly-placed sub-page row survives only until the first successful fetch.
+            if let migrated, !self.fetchedRecentDocuments.contains(where: { $0.id == migrated.id }) {
+                self.fetchedRecentDocuments.insert(migrated, at: 0)
+                self.hasKnownFetchedList = true
+            }
+            Task { await self.load() }
+        }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
-            recentDocuments = recents
-            isCurrentListKnown = true
+            fetchedRecentDocuments = recents
+            hasKnownFetchedList = true
         }
     }
 
@@ -73,8 +153,13 @@ final class HomeViewModel {
         if userDefaults.bool(forKey: "schrift.workOffline") {
             pinnedDocuments = cache.loadPinnedDocuments()
             let cachedRecents = cache.loadRecentDocuments()
-            recentDocuments = cachedRecents ?? []
-            isCurrentListKnown = cachedRecents != nil
+            // Don't clobber a just-migrated in-memory row with a nil cache. `runCreatePass`
+            // reads no `workOffline` gate, so a replay *does* run in this mode — and on a
+            // fresh install `insertIntoListCaches` correctly declines to write a cache that
+            // was never fetched, so this assignment would drop the document that just synced
+            // out of every list, with no way back while the toggle is on.
+            if let cachedRecents { fetchedRecentDocuments = cachedRecents }
+            hasKnownFetchedList = cachedRecents != nil
             isOffline = true
             isLoading = false
             return
@@ -85,7 +170,7 @@ final class HomeViewModel {
         // rows are visible whenever the pinned section renders, so they count
         // toward "rows on screen" and rightly suppress the first-run spinner.
         let hasCachedList = cache.loadRecentDocuments() != nil
-        isCurrentListKnown = hasCachedList
+        hasKnownFetchedList = hasCachedList
         let visiblePinnedCount = showsPinnedSection ? pinnedDocuments.count : 0
         isLoading = shouldShowLoadingPlaceholder(
             hasCachedList: hasCachedList,
@@ -108,13 +193,23 @@ final class HomeViewModel {
             let recent = try await recentPage.results
             guard generation == loadGeneration else { return }
             pinnedDocuments = pinned
-            recentDocuments = recent
+            fetchedRecentDocuments = recent
             cache.savePinnedDocuments(pinned)
             cache.saveRecentDocuments(recent)
-            isCurrentListKnown = true
+            hasKnownFetchedList = true
             isOffline = false
         } catch {
             guard generation == loadGeneration else { return }
+            // **Re-seed from the cache.** A migration writes the real document into it
+            // (`insertIntoListCaches`) and then drops the record, so if the refetch that
+            // follows fails — a flaky reconnect being exactly the profile here — the row is in
+            // neither list and pull-to-refresh fails too, leaving it invisible until relaunch.
+            // The cache already holds the answer; the only reason it was not being read is
+            // that the online path re-seeds nowhere but `init`.
+            if let cachedRecents = cache.loadRecentDocuments() {
+                fetchedRecentDocuments = cachedRecents
+                hasKnownFetchedList = true
+            }
             // A real 401 is not "offline": the client's onSessionExpired hook
             // has already raised the app-level re-login sheet, so keep serving
             // cached rows silently. Everything else keeps the offline
@@ -148,6 +243,19 @@ final class HomeViewModel {
     /// drives networking/persistence directly.
     func syncPendingDrafts() async {
         await saveCoordinator.syncPendingDrafts()
+        // **A migrated document must not vanish from a live Home.** The replay drops the
+        // record, so the local row is correctly withheld the instant it migrates — but the
+        // *real* row only exists in `fetchedRecentDocuments`, which still holds the fetch from
+        // before the document was created. Nothing else reloads: the reconnect and foreground
+        // edges call this and not `load()`, `insertIntoListCaches` writes only the cache, and
+        // the list's own `.task` does not re-run on pop-back. So the user watches their
+        // document disappear from the screen, until a pull-to-refresh brings it back.
+        //
+        // The refetch itself hangs off `onDocumentMigrated`, not off this call: two of the
+        // four things that start a create pass never come through here (`recoverDrafts` at
+        // launch, and `releaseOpenEditor` when an editor closes — the designed completion
+        // path, and the only one on iPad), and an overlapping trigger is coalesced into a
+        // no-op that returns before the migration happens.
     }
 
     func search() async {
@@ -166,25 +274,77 @@ final class HomeViewModel {
         }
     }
 
+    /// Learn (or re-learn) which account this session belongs to, and persist it.
+    ///
+    /// Offline creation needs the id when there is no network to ask for it, so it is stored
+    /// rather than fetched on demand. **Re-run it after re-authentication**, not only at
+    /// launch: the sheet can be answered by a *different* account, and a stale id would list
+    /// the previous user's unsynced documents to the new one — who could then type into them,
+    /// with the edits eventually POSTed into the first user's account when they sign back in.
+    /// That is exactly the disclosure `belongsToSession` exists to prevent, reached through
+    /// the one writer that was not being refreshed.
+    ///
+    /// Best-effort: a failure leaves whatever the last successful fetch stored, which is the
+    /// conservative direction — the *send* half re-checks against a live `/users/me/` anyway.
+    func refreshSignedInUser() async {
+        guard let user = try? await client.currentUser() else { return }
+        signedInUser.remember(user.id)
+    }
+
+    /// Whether this row is a document created here that the server has not seen yet.
+    func isLocalDocument(_ document: Document) -> Bool {
+        saveCoordinator.isPendingCreate(documentID: document.id)
+    }
+
+    /// Mint a document that exists only on this device. Nil when nobody is known to own it —
+    /// `createLocalDocument` takes a non-optional owner, and a record nothing can attribute is
+    /// kept and protected but listed to nobody and replayed never, so minting one would create
+    /// a document the user can never see again. Failing closed with the ordinary error is the
+    /// honest outcome; it needs one successful `/users/me/` ever, on any launch.
+    private func createLocalDocument() -> Document? {
+        guard let ownerUserID = signedInUser.userID else {
+            errorKey = .home_error_create
+            return nil
+        }
+        return saveCoordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: ownerUserID)
+    }
+
     func createDocument() async -> Document? {
         // A retry must not sit underneath the message its predecessor left behind: nothing
         // else clears this one, since the failure path never reaches load().
         clearError()
+        // Work Offline is a strict no-network contract on every read path, so honour it here
+        // too rather than POSTing behind the user's back and reporting a failure they asked
+        // for. Creating locally is the whole point of the mode.
+        if userDefaults.bool(forKey: "schrift.workOffline") {
+            return createLocalDocument()
+        }
         let marker = diagnostics?.marker()
         do {
             let document = try await client.createDocument(title: "Untitled document")
-            if userDefaults.bool(forKey: "schrift.workOffline") {
-                // load() skips the network in work-offline mode, so reflect
-                // the new document directly rather than serving stale cache.
-                recentDocuments.insert(document, at: 0)
-                var recents = cache.loadRecentDocuments() ?? []
-                recents.insert(document, at: 0)
-                cache.saveRecentDocuments(recents)
-            } else {
-                await load()
-            }
+            await load()
             return document
         } catch {
+            // **Fall back only for a failure that is worth retrying.** Not, strictly, one that
+            // "could not have created anything": a `.network` timeout can hide a POST the
+            // server applied, and a 502/504 can sit in front of an origin that created the
+            // document. The accepted residual is one orphaned *empty* document per such
+            // response — the body is enqueued after migration, so the orphan never holds
+            // content — which is the same trade the replay accepts for a lost response, and
+            // the opposite of the `.decoding` case, where a 2xx makes creation likely enough
+            // to block the retry outright.
+            // `retryableSaveFailure` is the same classifier the save path uses: transport,
+            // 5xx, rate limit. A rejection on the merits (a 400, a 403) means the server
+            // answered and declined, and minting a local document there would promise a
+            // replay that will be declined again — so those keep today's error.
+            //
+            // `.sessionExpired` is deliberately *not* a fallback either: the re-login sheet
+            // is already up, and the document would be minted against an account the user is
+            // in the middle of re-authenticating.
+            if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError) {
+                return createLocalDocument()
+            }
             errorKey = .home_error_create
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             return nil

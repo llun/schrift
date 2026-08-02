@@ -86,6 +86,13 @@ final class EditorViewModel {
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
+    /// hold — see `noteEditorAppeared`.
+    private var openEditorRegistration: OpenEditorRegistration?
+    /// Whose local documents may be minted here — see `SignedInUserStore`. Nil withholds the
+    /// sub-page fallback entirely, which fails closed rather than minting an unattributable
+    /// record nothing would ever list or replay.
+    private let signedInUser: SignedInUserStore
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration
@@ -170,6 +177,7 @@ final class EditorViewModel {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         autosaveInterval: Duration = .seconds(10),
@@ -181,6 +189,7 @@ final class EditorViewModel {
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
         self.contentCache = contentCache
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
@@ -266,6 +275,55 @@ final class EditorViewModel {
 
     // MARK: - Loading
 
+    /// This document exists only on this device — it has a client-minted id the server has
+    /// never seen. **Every network path keyed on `documentID` must return before issuing**, or
+    /// the request 404s: content and children fetches would tear the screen down through
+    /// `becomeUnavailable`, which clears `hasLoadedContent` and leaves a document the user is
+    /// actively writing in reading "no longer available".
+    ///
+    /// Nothing is lost when that happens — the teardown flushes first, the draft survives, and
+    /// `releaseHeldSave` refuses for a pending-create id — but the screen is unusable, which is
+    /// the whole feature. The save path needs no gate here: the coordinator's four holds
+    /// already park every save that would name such an id.
+    var isLocalDocument: Bool {
+        saveCoordinator.isPendingCreate(documentID: documentID)
+    }
+
+    /// A screen is now writing under this document's id — defer any create replay that would
+    /// re-key it. Idempotent, and **held for this view model's lifetime rather than the
+    /// view's visibility.**
+    ///
+    /// Releasing on `onDisappear` is wrong, and the bug it causes is silent. `onDisappear`
+    /// means "not visible" — a tab switch, a pushed sub-document, an iPad detail swap — but
+    /// `documentID` is a `let` that survives all of those, and the screen comes back. Release
+    /// there and the replay runs in exactly that window: it POSTs, migrates the draft onto the
+    /// server id, and drops the record. On return, `isLocalDocument` is now false, so the
+    /// editor's fetch gates open, `GET documents/{dead-local-id}/…` 404s, and
+    /// `becomeUnavailable` reports "no longer available" for a document that just synced and
+    /// is sitting in Home. Anything typed after the return is flushed into an `enqueue` for
+    /// that dead id, which no hold covers — it PATCHes, 404s, lands `.failed`, and the next
+    /// launch's sweep removes the draft. Those keystrokes are gone.
+    ///
+    /// So the hold is owned by a token released in `deinit`, which is the closest thing to
+    /// "the screen is actually gone": the view model is `@State`-owned, so it is deallocated
+    /// when the view leaves the hierarchy and not before. The release still kicks the sync
+    /// funnel, so a migration this screen deferred completes on close rather than waiting for
+    /// the next foreground or reconnect.
+    /// The `guard` is churn-avoidance, not a balance requirement: assigning a second token
+    /// would deallocate the first, which releases, so the count stays right either way. It
+    /// saves a pointless retain/release pair and a main-actor hop per repeated `onAppear`.
+    func noteEditorAppeared() {
+        guard openEditorRegistration == nil else { return }
+        saveCoordinator.retainOpenEditor(documentID: documentID)
+        let coordinator = saveCoordinator
+        let id = documentID
+        openEditorRegistration = OpenEditorRegistration {
+            // `deinit` is nonisolated, so hop rather than call directly. A turn's delay is
+            // harmless: the only consumer is the replay, which is itself trigger-driven.
+            Task { @MainActor in coordinator.releaseOpenEditor(documentID: id) }
+        }
+    }
+
     func load() async {
         // The terminal 404/403 message survives until a fetch actually puts content
         // back on screen (`markAvailableAgain`). Clearing it here would leave the
@@ -339,6 +397,8 @@ final class EditorViewModel {
     /// 404/proxy hiccup, or a co-author's own permission flap) and must never eject
     /// an active editing session over another user's activity.
     private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
+        // A client-minted id 404s, and this is the path whose catch calls `becomeUnavailable`.
+        guard !isLocalDocument else { return }
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -424,6 +484,9 @@ final class EditorViewModel {
             return
         }
         clearError()
+        // A local document has nothing to ask the server about, and asking would 404
+        // into the same teardown `revalidate` guards against.
+        guard !isLocalDocument else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
@@ -1075,7 +1138,29 @@ final class EditorViewModel {
         }
     }
 
+    /// The sub-pages the screen renders: the fetched list with this device's unsynced
+    /// children merged in at read time.
+    ///
+    /// Same rule, and the same reason, as Home's root list. `appendChild` puts a synthetic
+    /// child into the in-memory `subpages` (never the cache), and a successful
+    /// `loadChildren` replaces **both** wholesale with the server's answer — which cannot
+    /// contain a document the server has never seen. Without a read-time merge the local
+    /// sub-page simply disappears, and if its replay is parked (`.failed`, or blocked for
+    /// this build) it is unreachable from every list in the app while its body sits on disk.
+    var mergedSubpages: [Document]? {
+        _ = saveCoordinator.pendingCreatesVersion
+        let local = saveCoordinator.pendingLocalDocuments(
+            parentID: documentID, currentUserID: signedInUser.userID)
+        guard !local.isEmpty else { return subpages }
+        // A nil (never-fetched) level stays distinguishable from an empty one: local children
+        // are a real answer about this device, so they make the level known.
+        return mergedWithLocalDocuments(fetched: subpages ?? [], local: local)
+    }
+
     func loadChildren() async {
+        // A local document has no children on the server to list — and cannot: nothing may be
+        // created under it until it has a server id (v1 scope), so the empty list stands.
+        guard !isLocalDocument else { return }
         childrenGeneration += 1
         let generation = childrenGeneration
         guard let results = try? await client.listChildren(documentID: documentID) else { return }
@@ -1087,12 +1172,69 @@ final class EditorViewModel {
         childrenCache.save(results.results, for: documentID)
     }
 
+    /// Reflect a new child immediately (and durably) so popping back — possibly offline —
+    /// shows it without waiting on a refetch. Only when the current list is actually known
+    /// (fetched or cached): appending to a nil (unknown) list would persist a fabricated
+    /// one-element "complete" result that hides the document's real children.
+    ///
+    /// A *local* child is deliberately **not** written into the children cache. An earlier
+    /// version argued it was safe there — keyed by parent, purged on the parent's own 404/403,
+    /// and re-inserted by the replay — and that carve-out is what let a locally-created
+    /// sub-page reach the *next* account: the cache is neither account-scoped nor cleared on
+    /// sign-out, and `load()` seeds `subpages` from it synchronously. `mergedSubpages` supplies
+    /// the row on every read instead, from the account-scoped `pendingLocalDocuments`, so it
+    /// still survives leaving the screen — for its owner only.
+    private func appendChild(_ child: Document) {
+        // Any in-flight children fetch predates this child — invalidate it.
+        childrenGeneration += 1
+        if var updated = subpages {
+            updated.append(child)
+            subpages = updated
+            // **Never persist a synthetic.** `DocumentChildrenCacheStore` is neither
+            // account-scoped nor cleared on sign-out, so a locally-created child written here
+            // survives into the *next* user's session: `load()` seeds `subpages` from it
+            // synchronously, `mergedSubpages` can only add and never withhold, and
+            // `isPendingCreate` is deliberately unscoped — so the row renders, the editor's
+            // fetch gates all return, and the previous user's draft (title and full body) is
+            // installed for a stranger to read, edit, or delete. `belongsToSession` gates the
+            // two surfaces it was written for; this cache was a third.
+            //
+            // Nothing is lost by withholding it: `mergedSubpages` merges the *scoped*
+            // `pendingLocalDocuments` on every read, which is what puts the row back after a
+            // pop-back, offline included.
+            childrenCache.save(
+                updated.filter { !saveCoordinator.isPendingCreate(documentID: $0.id) }, for: documentID)
+        }
+    }
+
     func addSubpage() async -> Document? {
         clearError()
         let child: Document
         do {
             child = try await client.createChild(documentID: documentID, title: "Untitled subpage")
         } catch {
+            // Same split as Home's `createDocument`: a failure worth retrying falls back to a
+            // local sub-page (not, strictly, one that could not have created anything — a
+            // `.network` timeout can hide an applied POST, whose accepted cost is one orphaned
+            // *empty* child, since content is enqueued only after migration), which the replay POSTs under this
+            // parent later. A rejection on the merits (403 "you may not add children here",
+            // a 400) keeps the error — minting there would promise a replay the server will
+            // decline again. `.sessionExpired` likewise stays an error; the re-login sheet is
+            // already up.
+            // The parent must itself be synced. Unreachable from the UI (the button is
+            // hidden for a local parent), but stated here rather than left to the view: a
+            // local child of a local parent POSTs `documents/{local-uuid}/children/`, 404s,
+            // probes the parent, 404s again, and is **silently re-rooted** — an irreversible
+            // placement change on evidence that proves nothing. Its sibling in
+            // `PagesTreeViewModel` carries the same conjunct.
+            if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
+                !isLocalDocument, let ownerUserID = signedInUser.userID
+            {
+                let local = saveCoordinator.createLocalDocument(
+                    title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
+                appendChild(local)
+                return local
+            }
             // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a 403
             // here means "you may not add children to this document", not "this document
             // was taken away from you". Tearing the editor down would discard the user's
@@ -1100,18 +1242,7 @@ final class EditorViewModel {
             showError(.editor_error_add_subpage)
             return nil
         }
-        // Any in-flight children fetch predates this child — invalidate it.
-        childrenGeneration += 1
-        // Reflect the new child immediately (and durably) so popping back —
-        // possibly offline — shows it without waiting on a refetch. Only when
-        // the current list is actually known (fetched or cached): appending to
-        // a nil (unknown) list would persist a fabricated one-element "complete"
-        // result that hides the document's real children.
-        if var updated = subpages {
-            updated.append(child)
-            subpages = updated
-            childrenCache.save(updated, for: documentID)
-        }
+        appendChild(child)
         return child
     }
 
@@ -1942,6 +2073,10 @@ final class EditorViewModel {
         // copy the user had explicitly chosen to keep. The draft may only be destroyed
         // once the body that replaces it is actually in hand.
         clearError()
+        // Unreachable for a local document — no conflict can be recorded against an id the
+        // server has never seen — but this is a *discarding* path, so it states the invariant
+        // rather than relying on that. Returning keeps both the record and the draft.
+        guard !isLocalDocument else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
@@ -2315,4 +2450,20 @@ final class EditorViewModel {
             return .paragraph
         }
     }
+}
+
+/// Releases a `DocumentSaveCoordinator` open-editor hold when it is deallocated.
+///
+/// The hold must last as long as the *screen*, not as long as the screen is visible — see
+/// `EditorViewModel.noteEditorAppeared` for what goes wrong otherwise. Tying it to an object
+/// owned by the view model turns "the view left the hierarchy" into the release, which is the
+/// event actually wanted and the one SwiftUI gives no direct hook for.
+private final class OpenEditorRegistration {
+    private let onRelease: @Sendable () -> Void
+
+    init(onRelease: @escaping @Sendable () -> Void) {
+        self.onRelease = onRelease
+    }
+
+    deinit { onRelease() }
 }
