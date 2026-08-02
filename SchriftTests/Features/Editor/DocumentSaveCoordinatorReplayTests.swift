@@ -1679,6 +1679,29 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         // cannot: it names the id that just 404'd.
     }
 
+    /// The registry the deferrals key off is now wired from `EditorView`, so a balanced
+    /// appear/disappear pair must actually defer a migration and then let it complete. This
+    /// pins the coordinator half of that contract — the view owns the balance, the view model
+    /// only forwards.
+    func testAnEditorRegistrationDefersTheMigrationAndReleasingCompletesIt() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "# Written offline")
+
+        env.coordinator.retainOpenEditor(documentID: local.id)
+        await env.coordinator.syncPendingDrafts()
+        XCTAssertEqual(creates(log), 0, "deferred while the screen holds it")
+        XCTAssertNotNil(env.creates.create(for: local.id))
+
+        env.coordinator.releaseOpenEditor(documentID: local.id)
+        await waitUntil { env.creates.create(for: local.id) == nil }
+
+        XCTAssertEqual(creates(log), 1, "and releasing kicks the funnel — no extra trigger needed")
+    }
+
     /// The take-back's other reason to decline: a save on the wire for the server id. Removing
     /// that draft under an in-flight save drops the write-ahead copy of what is being sent, and
     /// the start-over that follows re-POSTs the body as a second document. Sibling of

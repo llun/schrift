@@ -266,6 +266,21 @@ final class EditorViewModel {
 
     // MARK: - Loading
 
+    /// A screen is now writing under this document's id — defer any create replay that would
+    /// re-key it. Balanced by `noteEditorDisappeared`; the coordinator reference-counts, so
+    /// the *view* owns the balance (SwiftUI can re-run `onAppear` without an intervening
+    /// `onDisappear`).
+    func noteEditorAppeared() {
+        saveCoordinator.retainOpenEditor(documentID: documentID)
+    }
+
+    /// The screen is gone. `releaseOpenEditor` also kicks the coalesced sync funnel when a
+    /// checkpointed record is waiting on this id, so a migration deferred by this screen
+    /// completes on close rather than waiting for the next foreground or reconnect.
+    func noteEditorDisappeared() {
+        saveCoordinator.releaseOpenEditor(documentID: documentID)
+    }
+
     func load() async {
         // The terminal 404/403 message survives until a fetch actually puts content
         // back on screen (`markAvailableAgain`). Clearing it here would leave the

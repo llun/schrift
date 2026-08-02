@@ -184,6 +184,10 @@ struct EditorView: View {
     /// so the request/release stays one-shot and balanced even as availability
     /// flips (a session opened only once, released exactly once).
     @State private var holdsCollaborationSession = false
+    /// Balances `retainOpenEditor`/`releaseOpenEditor` the same way. SwiftUI may call
+    /// `onAppear` without a matching `onDisappear` having run, and the registry is
+    /// reference-counted, so an unbalanced retain would pin the document forever.
+    @State private var holdsEditorRegistration = false
     /// C1's live-write coordinator. `nil` until the first collaboration-session
     /// request, because it needs the `collaboration` manager, which only becomes
     /// available from `@Environment` once the view has been installed — not in
@@ -277,7 +281,25 @@ struct EditorView: View {
             // with `release` on disappear; the manager owns the socket lifecycle
             // (linger, suspend, reconnect), so a background/foreground cycle is handled
             // there.
-            .onAppear { requestCollaborationSessionIfNeeded() }
+            .onAppear {
+                requestCollaborationSessionIfNeeded()
+                // Tell the save coordinator a screen is writing under this id. The create
+                // replay re-keys a document's draft, coordinator maps and caches from the
+                // local id onto the server id — and `EditorViewModel.documentID` is a `let`
+                // captured by four sibling view models and by the pushed `NavigationPath`
+                // value, so a live screen cannot follow that swap and would keep writing
+                // under an id the holds no longer cover. Registering here is what makes the
+                // migration defer instead.
+                //
+                // **For every document, not only locally-created ones.** The motivating case
+                // is an ordinary document opened from Home whose id a checkpointed record is
+                // about to migrate *onto*: that screen writes under the server id, and the
+                // guards protecting it are keyed on the server id too.
+                if !holdsEditorRegistration {
+                    viewModel.noteEditorAppeared()
+                    holdsEditorRegistration = true
+                }
+            }
             // Availability can resolve *after* the editor is already on screen — the
             // `/config/` fetch that decides server support runs concurrently with
             // navigation — so re-request when it flips to available; the one-shot hold
@@ -302,7 +324,14 @@ struct EditorView: View {
                 }
             }
             .onDisappear {
+                // Flush *before* releasing. The flush is what puts the newest keystrokes on
+                // disk as a draft, and releasing kicks the sync funnel — so this order lets
+                // the deferred migration see the work rather than run a pass behind it.
                 viewModel.flushPendingChanges()
+                if holdsEditorRegistration {
+                    viewModel.noteEditorDisappeared()
+                    holdsEditorRegistration = false
+                }
                 if holdsCollaborationSession {
                     collaboration.release(viewModel.documentID)
                     holdsCollaborationSession = false
