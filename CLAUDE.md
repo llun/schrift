@@ -1417,9 +1417,18 @@ markdown write endpoint**. Understand this before touching the save path:
   `PendingDraftStore.loadAll` is all-or-nothing too, so one bad blob makes every
   `draft(for:)` answer nil — and `runCreatePass` would read that as "every body is empty",
   POST each record under its mint title, pass `finishMigration`'s both-drafts guard on the
-  same nil, enqueue `""`, and `removePendingCreate`. It is the first caller anywhere that
-  acts irreversibly on that read, so it is the one that has to ask
-  (`holdsUnreadableData`); quarantine on that store is still owed.
+  same nil, enqueue `""`, and `removePendingCreate` — turning a schema slip into destroyed
+  content, which is why it asks (`holdsUnreadableData`). Not the *only* irreversible
+  consumer, though: `init`'s conflict rehydration reads the same empty answer and silently
+  drops every persisted hold, after which the next `enqueue` full-overwrites a server body
+  the user was warned about — that one predates the replay. **And the guard buys a window,
+  not a guarantee**: the flag is not sticky, and every mutating method on that store is a
+  read-modify-write through the same all-or-nothing `loadAll`, so the first `save` on *any*
+  document replaces the damaged bytes, clears the flag, and lets the next pass do exactly
+  what the guard prevented at launch. Quarantine on that store is owed, and until it lands
+  **every field added to `PendingDraft`/`DraftBaseline` must stay Optional-on-decode** — a
+  non-optional addition gates the replay on every existing device, then un-gates it
+  destructively on the first keystroke.
   **The create store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.

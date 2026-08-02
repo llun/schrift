@@ -160,8 +160,8 @@ final class DocumentSaveCoordinator {
     ///
     /// **That is the design, not the current state.** `retainOpenEditor`/`releaseOpenEditor`
     /// have zero production callers — every call site today is a test — so this stays empty,
-    /// `hasOpenEditor` always answers false, and none of the four deferrals reading it ever
-    /// fires. Wiring it from `EditorView`, for *every* document rather than only
+    /// `hasOpenEditor` always answers false, and none of its five readers — four `guard`
+    /// deferrals plus the take-back's conjunct — ever fires. Wiring it from `EditorView`, for *every* document rather than only
     /// locally-created ones, is owed with the create UI.
     private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
@@ -467,8 +467,11 @@ final class DocumentSaveCoordinator {
 
     /// POST the documents this device created, then hand their content to the ordinary draft
     /// replay. Runs **before** `runSyncPass` inside the same coalesced pass, so that a
-    /// migration *deferred* by the server-id guards has the draft blocking it cleared by the
-    /// same pass rather than waiting a trigger longer.
+    /// migration *deferred* by the server-id guards has the draft blocking it cleared within
+    /// the same pass. (Not that this saves a trigger — the migration itself waits for the next
+    /// one either way, as `finishMigration` and `syncPendingDrafts` both note. What the order
+    /// buys is that a create's content reaches the ordinary draft replay in the pass that
+    /// created it.)
     ///
     /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
     /// returns before issuing any request at all.
@@ -818,7 +821,7 @@ final class DocumentSaveCoordinator {
     /// The migration, guarded by everything that can have changed while the POST or the resume
     /// GET was in flight: an editor opening on either id, the record being deleted, a save
     /// starting or being parked for the server id, and the both-drafts window. Five guards —
-    /// the first two keyed on `localID`, the rest on `serverID`.
+    /// the first two keyed on `localID`, the next two on `serverID`, and the last on both.
     private func finishMigration(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?
@@ -835,8 +838,9 @@ final class DocumentSaveCoordinator {
         // is: the POST landed, so an empty document is left on the server that nothing on this
         // device now references — see the delete-branch obligation in `docs/offline-and-sync.md`.
         guard pendingCreates[record.localID] != nil else { return }
-        // **The two guards above are keyed on `localID`; everything below is keyed on
-        // `serverID`.** That asymmetry is a content-loss path on its own. Once a record is
+        // **The two guards above are keyed on `localID`; the rest are keyed on `serverID` —
+        // except the last, which reads both, since the window it detects is defined by the
+        // local draft being gone while the server-id one is present.** That asymmetry is a content-loss path on its own. Once a record is
         // checkpointed, `pendingLocalDocuments` withholds it, so the local row disappears and
         // the *server* document comes back in an ordinary list fetch — indistinguishable from
         // any other document. The user can open it, type, and have a save on the wire, all
@@ -901,11 +905,17 @@ final class DocumentSaveCoordinator {
         // `draft == nil && queued[localID] == nil`, which concedes that `draft == nil` with
         // `queued` populated is representable; in that shape a present-but-*empty* `queued`
         // would win over a non-empty `migrated`, set `willAdoptServer`, and delete the migrated
-        // body. Unreachable today — nothing removes a local draft while leaving `queued`
-        // populated (`runSyncPass` skips pending creates, and this function does both
-        // synchronously) — and `finishMigration`'s both-drafts guard does *not* cover it, since
-        // it keys on draft presence rather than on `queued`. `discardStoredDraft` is the
-        // obvious candidate to make it reachable; check this line if the create UI wires one.
+        // body. `finishMigration`'s both-drafts guard does *not* cover it, since it keys on
+        // draft presence rather than on `queued`.
+        //
+        // Unreachable today — but not for the reason it is tempting to give. There *is* a
+        // remover that leaves `queued` populated, and it is already wired in production:
+        // `discardStoredDraft`, from `EditorViewModel.reconcileDraft`. What makes it
+        // unreachable is narrower: `reconcileDraft` is only ever entered past `apply`'s
+        // `pendingSave != nil` divert, so `queued` is provably nil there — and no editor opens
+        // on a local id at all today. So the site to watch is not "if a second remover is
+        // wired" (one is) but **the create UI putting an editor on a local id**, which is
+        // exactly what it is for.
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
         // **The title is a merge, not a race.** The body's "newest wins" rule does not carry
         // over: on a resume the document has been an ordinary Home row under its server id for
