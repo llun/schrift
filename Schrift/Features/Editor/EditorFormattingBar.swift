@@ -8,9 +8,8 @@ import SwiftUI
 /// inline expression: every *other* action in the bar is a local block transformation
 /// the draft pipeline queues, so editing offline is supported. A photo POSTs a
 /// multipart attachment and there is no queue for one — offered offline it would open
-/// the picker and re-encode the chosen image only to fail. Same rule as "Add a
-/// subpage" and the Pages drawer's "New page", and the slash menu's half of it lives
-/// in `filteredSlashItems(query:isOffline:)`.
+/// the picker and re-encode the chosen image only to fail. The slash menu's half lives
+/// in `filteredSlashItems(query:isOffline:isLocalDocument:)`.
 /// `isLocalDocument` is the load-bearing half. `isOffline` is derived from Home's last
 /// *list* fetch, not from reachability — so a create that 500s while the network is fine
 /// mints a local document and leaves this reading false. The upload would then POST

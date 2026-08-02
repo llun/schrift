@@ -1023,7 +1023,7 @@ to what the Home list passes (still a `Document` / id).
 
 ## Documents created on this device (2026-08-01, storage + gates + replay)
 
-Offline *creation* is still a non-goal above, but its **storage, its safety gates
+Offline *creation* has landed — the non-goal above is withdrawn — and its **storage, its safety gates
 and its replay have landed, and the create UI with them** — Home's `+`, the editor's
 "Add a subpage" and the drawer's "New page" all mint records. They landed first and
 separately because without them the existing pipeline does not merely fail to
@@ -1053,9 +1053,11 @@ POSTed. The record says *this exists*, separately from *this has unsaved text*.
 the coordinator enforce it, and each is load-bearing. It is scoped to saves
 deliberately: opening a local document names its id from places the coordinator
 does not own — `formattedContent`, the children fetch, the collaboration room,
-Options' delete, version history — and gating those belongs to the create UI.
-Until then the invariant is broader than its enforcement, which is precisely why
-nothing may mint a record yet.
+Options' delete, version history — and those are now gated too:
+`EditorViewModel.isLocalDocument` covers the content and children fetches (and the
+conflict discard), `EditorView` skips the collaboration room, and the Options sheet
+hides version history while routing delete through its local branch. The enforcement
+matches the invariant.
 
 1. **`enqueue` holds the save.** The same park-the-save branch the conflict hold
    uses. Without it a keystroke PATCHes `documents/<local-uuid>/content/`, takes a

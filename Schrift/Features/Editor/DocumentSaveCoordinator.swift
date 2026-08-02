@@ -992,10 +992,10 @@ final class DocumentSaveCoordinator {
         // remover that leaves `queued` populated, and it is already wired in production:
         // `discardStoredDraft`, from `EditorViewModel.reconcileDraft`. What makes it
         // unreachable is narrower: `reconcileDraft` is only ever entered past `apply`'s
-        // `pendingSave != nil` divert, so `queued` is provably nil there — and no editor opens
-        // on a local id at all today. So the site to watch is not "if a second remover is
-        // wired" (one is) but **the create UI putting an editor on a local id**, which is
-        // exactly what it is for.
+        // `pendingSave != nil` divert, so `queued` is provably nil there — and, now that the
+        // create UI does open editors on local ids, `revalidate` and `refresh` both guard on
+        // `!isLocalDocument`, which makes `reconcileDraft` unreachable for one. The site to
+        // watch is a change to either of those two guards.
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
         // **The title is a merge, not a race.** The body's "newest wins" rule does not carry
         // over: on a resume the document has been an ordinary Home row under its server id for
@@ -1582,7 +1582,7 @@ final class DocumentSaveCoordinator {
     /// difference reaches `start`, which sees a non-nil `liveSnapshot` and calls
     /// `saveLiveSnapshot` instead of `saveDocumentContent`.
     ///
-    /// Dormant until C2c: nothing calls it yet (C2b is the mechanism, not the wiring).
+    /// Called by `LiveEditingBridge`'s snapshot debounce (C2c wired what C2b built).
     func enqueueLiveSnapshot(
         documentID: UUID, snapshot: Data, projectedMarkdown: String, title: String, baseline: DraftBaseline? = nil
     ) {

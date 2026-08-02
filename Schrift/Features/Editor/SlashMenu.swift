@@ -79,8 +79,10 @@ func slashQuery(text: String, kind: BlockKind) -> String? {
 /// Offline drops **Photo**. Every other item is a local block transformation that the
 /// draft pipeline queues like any other edit, but a photo POSTs a multipart attachment
 /// and there is no queue for one — so offered offline it would open the picker, re-encode
-/// whatever the user chose, and only then fail. That is the same reason "Add a subpage"
-/// and the Pages drawer's "New page" stay gated: it POSTs, so it can't be offered.
+/// whatever the user chose, and only then fail. "Add a subpage" and the drawer's "New
+/// page" were withheld for the same reason and no longer are — a failed POST falls back
+/// to a local document — so photo is the last affordance gated this way, and on
+/// `isLocalDocument` as well, since a client-minted id has nothing to upload against.
 /// (Editing itself is *not* gated — its edits are durable the moment the flush writes
 /// the draft.)
 func filteredSlashItems(
