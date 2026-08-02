@@ -600,8 +600,13 @@ final class DocumentSaveCoordinator {
             // The checkpointed document is gone, so resuming can never succeed — and silently
             // retrying forever would leave it in no list (`pendingLocalDocuments` withholds a
             // checkpointed record) and never pushed, i.e. unreachable by every route the app
-            // offers. Drop the checkpoint so the next pass creates it afresh; there is nothing
-            // left to duplicate.
+            // offers. Drop the checkpoint so the next pass creates it afresh — but only once
+            // nothing is left under that server id (the guard below). "There is nothing left
+            // to duplicate" is the *premise* of this branch, not a fact it has established:
+            // a bare `.notFound` covers a proxy hiccup too, so where the clear does fire the
+            // residual is a re-POST that orphans a document still alive on the server. That
+            // residual is accepted; what the guard narrows is the case where a local body
+            // would have been destroyed along the way.
             //
             // **`.notFound` only — never `.forbidden`.** A bare 403 is not evidence a document
             // is gone: an ancestor access recompute can 403 transiently. (Not the bad-`Origin`
@@ -649,7 +654,12 @@ final class DocumentSaveCoordinator {
             // the fetch *succeeded*. Here it 404'd, so the document is probably gone.) That
             // case is no longer a loss: with both drafts present the start-over below declines,
             // the checkpoint stays, and the checkpoint is what stops `runSyncPass` reaping the
-            // `serverID` draft. Both bodies survive; the record simply retries next pass.
+            // `serverID` draft. Both bodies survive. Note "retries next pass" means it
+            // re-asks, not that it converges: if the document really is gone this re-takes
+            // the same 404 on every trigger, indefinitely. That standoff is deliberate —
+            // `runCreatePass` will not clear the checkpoint while the draft exists, and
+            // `runSyncPass` will not delete the draft while the record is checkpointed — and
+            // it is bounded by the recovery affordance recorded as owed in the docs.
             //
             // The take-back carries the same three conjuncts as the start-over, for the same
             // reason and one more. `runCreatePass` only guards `hasOpenEditor(record.localID)`,

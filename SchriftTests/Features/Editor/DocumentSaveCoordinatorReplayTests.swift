@@ -1050,13 +1050,18 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         await relaunched.coordinator.syncPendingDrafts()
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
-        // Assert the *conflict stamp*, not the body: with the guard deleted the migration
-        // rewrites this draft from `migrated?.markdown` — the same bytes — so a body assertion
-        // passes either way. The stamp is what it would actually destroy (the rewritten draft
-        // carries `conflictServerUpdatedAt: nil`), along with the queued slot.
+        // The discriminator is the record above, not the stamp below. An earlier version of
+        // this comment claimed the stamp was: it is not, because with the guard deleted
+        // `migrateCreatedDocument`'s terminal `enqueue` re-writes
+        // `conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt`, restoring exactly
+        // what the rewrite dropped. The stamp is asserted anyway — it is the state the hold
+        // depends on surviving — but it is not what fails under mutation.
         XCTAssertNotNil(
             relaunched.drafts.draft(for: serverID)?.conflictServerUpdatedAt,
-            "the held work keeps its conflict stamp — the migration did not rewrite it")
+            "the held work keeps its conflict stamp")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Typed on the real doc",
+            "and its body")
     }
 
     /// The other half of the same guard: a save actually on the wire for the server id.
@@ -1093,22 +1098,33 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
             if request.httpMethod == "PATCH" {
                 return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
             }
+            if url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil, delay: 0.6)
+            }
             return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
         }
-        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# On the wire")
-        await waitUntil { self.savesInFlight(log) == 1 }
+        // The save must START AFTER the resume takes its marker, or the pass exits at
+        // `replayCreate`'s own `mayPredateSave` guard and never reaches `finishMigration` —
+        // which is what an earlier version of this test did, passing for a guard it does not
+        // name. So it is launched from inside the resume's own fetch window: the recorder logs
+        // a request when it is issued, so once the `formatted-content` GET appears the marker
+        // is already taken, and that GET is held open long enough for the PATCH to be on the
+        // wire when it answers. `hadPendingSave` is then false and `settledSaves` has not
+        // moved, so only `finishMigration`'s `inFlight[serverID] == nil` can defer this.
+        let starter = Task { @MainActor in
+            await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+            relaunched.coordinator.enqueue(
+                documentID: serverID, title: "Notes", markdown: "# On the wire")
+        }
 
         await relaunched.coordinator.syncPendingDrafts()
+        _ = await starter.value
 
         XCTAssertNotNil(relaunched.creates.create(for: local.id), "the migration deferred")
-        // Exclude the never-got-there false pass: the record would also survive a resume that
-        // never issued its fetch. (`syncedServerID` cannot do this job — the test sets it, and
-        // only the `.notFound` branch clears it, which this stub never returns.) Note the
-        // recorder logs before the response is chosen, so this proves the fetch was *issued*,
-        // not that it succeeded; the stub always answers it with a valid body.
         XCTAssertEqual(
             log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1,
             "the resume issued its fetch, so the pass reached the migration")
+        XCTAssertEqual(savesInFlight(log), 1, "the save was still on the wire when it deferred")
     }
 
     /// A death *between* the migration's two draft writes leaves **both** drafts present. The
@@ -1308,11 +1324,51 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         // cannot: it names the id that just 404'd.
     }
 
+    /// The take-back's other reason to decline: a save on the wire for the server id. Removing
+    /// that draft under an in-flight save drops the write-ahead copy of what is being sent, and
+    /// the start-over that follows re-POSTs the body as a second document. Sibling of
+    /// `testTheTakeBackDeclinesWhileAnEditorHoldsTheServerID`; the conjuncts differ, the harm
+    /// does not.
+    func testTheTakeBackDeclinesWhileASaveForTheServerIDIsOnTheWire() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "PATCH" {
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil, delay: 2.0)
+            }
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# On the wire")
+        await waitUntil { self.savesInFlight(log) == 1 }
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(relaunched.drafts.draft(for: serverID)?.markdown, "# On the wire")
+        XCTAssertNil(relaunched.drafts.draft(for: local.id), "not taken back under a live save")
+        XCTAssertEqual(relaunched.creates.create(for: local.id)?.syncedServerID, serverID)
+    }
+
     /// With a local draft still present this is *not* the partial-migration window, so a draft
     /// under the server id is the user's own separate work — the take-back must not overwrite
-    /// the local body with it. Note what this does *not* claim: that draft is not preserved.
-    /// `runSyncPass`, next in the same pass, GETs it, takes the same 404 and removes it. The
-    /// branch's job is only to leave the local body alone.
+    /// the local body with it. Since round 34 that draft is preserved as well: with both
+    /// present the take-back declines *and* the start-over declines, so the checkpoint
+    /// survives — and the checkpoint is exactly what makes `runSyncPass` skip its own 404
+    /// delete for this id. (An earlier revision of this comment said the opposite, describing
+    /// the behaviour that round closed.)
     func testAStartOverLeavesAUserDraftUnderTheServerIDAlone() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -1338,6 +1394,9 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             relaunched.drafts.draft(for: local.id)?.markdown, "# Local body",
             "the local body is not overwritten by the server-id draft")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Against the real document",
+            "and the server-id body survives the pass rather than being reaped by it")
     }
 
     /// **A delete arriving under the server id must clear the record too.** Once checkpointed,

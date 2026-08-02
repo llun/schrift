@@ -1248,7 +1248,7 @@ nice-to-have:
   a provably-newer rename is dropped for a document whose body is being adopted wholesale.
 - **An escape for a checkpoint that keeps 404ing with work under its server id.** The
   start-over now declines while a `serverID` draft survives, so a genuinely deleted
-  document leaves the record checkpointed indefinitely: two GETs per trigger, the body on
+  document leaves the record checkpointed indefinitely: three GETs plus a `/users/me/` per trigger — four, once `runSyncPass` also fetches the surviving draft's document, the body on
   disk, nothing reaping it and no way to see it. That is deliberate — the alternative
   deleted the only copy on a proxy hiccup — but it is the same shape as the `.forbidden`
   resume below and wants the same affordance: surface the stranded body and let the user
@@ -1584,8 +1584,12 @@ that a rename made elsewhere during a deferral is reverted.)
 **A resume whose document is gone drops its checkpoint.** Retrying that GET
 forever would leave the document in no list (a checkpointed record is withheld
 from `pendingLocalDocuments`) and never pushed — unreachable by every route the
-app offers. Clearing `syncedServerID` lets the next pass create it afresh; there
-is nothing left to duplicate.
+app offers. Clearing `syncedServerID` lets the next pass create it afresh — **but
+only once nothing is left under that server id** (below): with a draft still there,
+the clear would disarm the very suppression protecting it, so the checkpoint stays
+and the record re-asks instead. Where it does clear, the residual is the one a
+spurious 404 always carried — a re-POST that orphans a document still alive on the
+server — now narrowed to the case where no local body is at stake.
 
 **A third suppression protects the server-id half.** `isPendingCreate` is keyed on the
 *local* id, so it does not cover the draft the migration writes under `serverID` before
@@ -1639,13 +1643,13 @@ Guarded on the local draft being absent — the discriminator `finishMigration` 
 since with one present this is not the partial-migration window and the `serverID`
 draft is the user's own separate work, which must not overwrite the local body. (Not
 "work against a real document" — that is `finishMigration`'s reasoning, where the
-fetch succeeded; here it 404'd, so the document is gone.) The accepted consequence:
-`runSyncPass`, next in the same pass, GETs
-that draft, takes the same 404 and removes it — so the newer server-id body is dropped
-while the older local one is re-POSTed. It needs a checkpointed record, an edit under
-the server id whose save failed transiently, *and* a server-side delete; and it is the
-conservative direction, since the branch declines to overwrite and the loss is the
-ordinary 404-draft rule acting on a document that really is gone.
+fetch succeeded; here it 404'd, so the document is *probably* gone — a bare
+`.notFound` is not proof, which is the whole reason for the guard described above.)
+That case is no longer a loss: with both drafts present the start-over declines too,
+the checkpoint survives, and the checkpoint is what stops `runSyncPass` reaping the
+`serverID` draft in the same pass. Both bodies stay on disk. An earlier revision of
+this paragraph described the opposite — the newer server-id body dropped while the
+older local one is re-POSTed — which is exactly the loss that guard closed.
 
 **`.notFound` only, never `.forbidden`** — a bare 403
 is not evidence a document is gone (an ancestor access recompute can 403
