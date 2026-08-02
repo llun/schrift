@@ -1322,10 +1322,11 @@ markdown write endpoint**. Understand this before touching the save path:
   per-document latest-wins coalescing; background-task assertion; draft replay).
   View models **enqueue** on the coordinator — they never call the client to
   persist edits themselves.
-- **A document created on this device has no server id, and two holds keep the
+- **A document created on this device has no server id, and four gates keep the
   pipeline from pretending otherwise.** `PendingDocumentCreateStore` records it
   (`PendingDocumentCreate`: `localID`, `title`, `parentID`, `createdAt`,
-  `serverOrigin`, `ownerUserID`, `syncedServerID`), the coordinator mirrors
+  `serverOrigin`, `ownerUserID`, `syncedServerID`, `replayBlockedAt`/
+  `replayBlockedBuild`), the coordinator mirrors
   **every** record — protection is unconditional — and
   `isPendingCreate(documentID:)` is the predicate the holds key off. **Invariant: no *save* may ever name a pending-create id.**
   It is enforced at four gates in the coordinator, each load-bearing rather
@@ -1361,15 +1362,31 @@ markdown write endpoint**. Understand this before touching the save path:
   `createLocalDocument(title:parentID:ownerUserID:)` mints the record **plus a
   seed draft** (so the editor's existing draft precedence renders it unchanged)
   and sets `.pendingSync` — nothing is syncing, but the work is on the device.
-  `discardPendingWork` drops the record with the draft: a local delete is purely
-  local, and a surviving record would let a replay resurrect it.
+  `discardPendingWork` drops the record with the draft, or a replay would resurrect
+  what the user threw away. **But "a local delete is purely local" holds only while
+  the record is un-checkpointed** — once `syncedServerID` is set the POST has landed
+  and a real server object exists, while `isPendingCreate` is still true, so the
+  local-id branch runs for exactly the case where it is false. The create UI owes the
+  server `DELETE` there; without it the document survives and reappears in Home on
+  the next list fetch with nothing on the device that knows about it. (That needs an
+  accessor the coordinator does not expose yet — land it *with* the delete branch.)
+  **The other direction is handled here, and must stay so**: once checkpointed,
+  `pendingLocalDocuments` withholds the local row, so the **server** id is the only
+  one the user is offered — and `isPendingCreate`, keyed on the local id, answers
+  false for it. So `discardPendingWork` also matches a record by its
+  `syncedServerID` and clears the record *and the local draft*. Without that a
+  successful DELETE left both in place, the resume 404'd, the checkpoint cleared, and
+  the next pass **re-POSTed the document from that draft** — a deleted document
+  coming back with its old body. The 404 is indistinguishable from a co-author's
+  delete, so the record has to go here, where the user's intent is still known.
   **Synthetic `Document`s (`localDocument(from:)`) must never enter a persisted
   metadata cache** — lists merge them at read time via
   `mergedWithLocalDocuments(fetched:local:)`, because a list load replaces its
   array *and* its cache entry wholesale, and a cached synthetic would afterwards
-  be indistinguishable from a real document. `abilities.childrenCreate` is false,
-  which is what holds children-of-local-parents out of scope until a replay can
-  order them; `destroy` is false for the same reason, until the UI has a
+  be indistinguishable from a real document. `abilities.childrenCreate` is false —
+  but **nothing reads it**, so that records the intent rather than enforcing it:
+  children-of-local-parents are out of scope until a replay can order them, and it is
+  the create UI that must not offer the affordance (today it gates on `isOffline` alone); `destroy` is false for the same reason, until the UI has a
   no-network delete branch (advertising it today would promise a delete that
   404s, and leave the record un-removable — `discardPendingWork` is reached only
   from a *successful* delete).
@@ -1396,7 +1413,23 @@ markdown write endpoint**. Understand this before touching the save path:
   at sign-in: without that, launching offline (the entire point) yields no user id,
   local documents are not listed, and none can be minted. Failing closed is right;
   the gap is that nothing supplies the value yet.
-  **The store's `try?` decode is all-or-nothing, so an undecodable blob means the
+  **The replay also refuses to run while the *drafts* store cannot decode.**
+  `PendingDraftStore.loadAll` is all-or-nothing too, so one bad blob makes every
+  `draft(for:)` answer nil — and `runCreatePass` would read that as "every body is empty",
+  POST each record under its mint title, pass `finishMigration`'s both-drafts guard on the
+  same nil, enqueue `""`, and `removePendingCreate` — turning a schema slip into destroyed
+  content, which is why it asks (`holdsUnreadableData`). Not the *only* irreversible
+  consumer, though: `init`'s conflict rehydration reads the same empty answer and silently
+  drops every persisted hold, after which the next `enqueue` full-overwrites a server body
+  the user was warned about — that one predates the replay. **And the guard buys a window,
+  not a guarantee**: the flag is not sticky, and every mutating method on that store is a
+  read-modify-write through the same all-or-nothing `loadAll`, so the first `save` on *any*
+  document replaces the damaged bytes, clears the flag, and lets the next pass do exactly
+  what the guard prevented at launch. Quarantine on that store is owed, and until it lands
+  **every field added to `PendingDraft`/`DraftBaseline` must stay Optional-on-decode** — a
+  non-optional addition gates the replay on every existing device, then un-gates it
+  destructively on the first keystroke.
+  **The create store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.
   `holdsUnreadableData` detects it and suppresses `runSyncPass`'s delete branch
@@ -1408,15 +1441,197 @@ markdown write endpoint**. Understand this before touching the save path:
   exists, because a clean live key next launch would re-arm the delete and take the
   drafts anyway. Every field added to the record must stay Optional-on-decode for
   the same reason.
+  **The replay (`runCreatePass`) runs inside `syncPendingDrafts`'s coalesced loop,
+  before `runSyncPass`, and has no triggers of its own** — sharing the funnel is
+  what stops two overlapping reconnects POSTing the same record twice. It asks
+  `/users/me/` once per pass (only when there is work) because `isReplayable`
+  needs the account and this is the layer that can await it; a failure leaves
+  everything unreplayable, which is correct rather than a reason to guess.
+  **Its ordering is the safety property**, and each step exists for a failure that
+  was reasoned about: persist `syncedServerID` **first** (no idempotency key
+  exists, so this write landing before anything else is the only thing between a
+  process death and a duplicate — a checkpointed record resumes at migration
+  instead of re-POSTing); stamp the baseline; move every id-keyed thing including
+  **`queued`** (a copy of the newest keystrokes — hygiene rather than a rescue, since
+  for a pending create it always agrees with the draft: `enqueue` write-ahead-saves
+  from the same `save` it parks, and no save is ever in flight to make them diverge)
+  (and write the draft under the
+  new id *before* removing the old one — in between it is on disk twice, which is
+  the point; the reverse order is what leaves a window with it nowhere); insert into the list caches so
+  the document doesn't vanish from Home before the next fetch — the **recents** insert
+  roots-only (a sub-page *is* appended to the children cache), and **neither cache ever
+  fabricated**, since `nil` (never fetched) and `[]` (fetched, empty)
+  are read as different by the lists' "is this known" logic, and Home's feed is
+  fetched without a parent filter so a sub-page's place there is the server's answer
+  to give; **remove the record
+  last**, because it is what keeps the holds in force; then enqueue the content.
+  **A replay never runs while an editor is open** on that document
+  (`retainOpenEditor`/`releaseOpenEditor`) — **once those are wired, which they are
+  not: both have zero production callers today, so the guards are statically true and
+  this invariant is, like the pending-create one above, broader than its enforcement.**
+  The create UI owes the wiring, from `EditorView` and for *every* document rather than
+  only locally-created ones (the server-id guard's motivating case is an ordinary
+  document opened from Home). Why it matters: migration re-keys everything, and
+  `EditorViewModel.documentID` is a `let` captured by four sibling view models and
+  by pushed `NavigationPath` values, so a live screen cannot follow the id and
+  would keep writing under one the holds no longer cover. Deferring makes mid-swap
+  edit loss unrepresentable. Everything that can change during the await is
+  re-checked after it — **and a boolean is not enough**: a save for the *server* id that
+  starts **and settles** inside the resume's fetches leaves `inFlight`/`queued` nil and
+  removes its own draft, so the resume snapshots `saveMarker(documentID:)` before fetching
+  and bails on `mayPredateSave`, exactly as the editor's revalidation does. Otherwise: the record is re-read from `pendingCreates` (a delete during
+  the POST must not be undone — acting on the stale copy would POST a document the
+  user threw away and orphan it server-side; it would *not* resurrect the record,
+  which every `updatePendingCreate` on that path already guards) and `hasOpenEditor`
+  is asked again.
+  **A resume whose document is gone takes the body back before it drops the
+  checkpoint.** A death inside the migration can leave the only copy under the
+  *server* id, and the checkpoint is the last thing tying it to the record — so
+  clearing first **orphans** the body: the re-POST mints a different server id and
+  its body chain never looks under the old one, so it builds an **empty** document,
+  and the stranded draft is separately reaped by `runSyncPass`'s 404 rule.
+  **And it starts over only when nothing is left under that id.** A bare `.notFound` is not
+  proof the document is gone (invariant 0c), yet two destructive effects hang off that
+  premise: discharging the conflict drops the held keystrokes, and clearing `syncedServerID`
+  disarms the server-id suppression — after which `runSyncPass`, next in the *same* pass on
+  the *same* 404, deletes the draft. Gating on *concurrent* activity is insufficient, because
+  the user who typed under `serverID` and navigated away leaves no such witness and theirs is
+  the work at stake; the sufficient question is whether anything remains to lose, so the
+  start-over requires `draftStore.draft(for: serverID) == nil` — **and `!mayPredateSave(marker)`
+  beside it**, because a save that started *and settled* inside the resume's fetch window has
+  `finish` remove its draft, manufacturing the very emptiness the first gate reads as safe while
+  the 404 may predate it (that one duplicates the document; the draft-absence gate closes the
+  different harm of losing the body), plus `!hasOpenEditor(serverID)` — clearing the checkpoint
+  disarms the sweep's server-id suppression, and `runCreatePass` guards only the *local* id, so
+  a screen writing under `serverID` would be left unprotected — and the take-back carries the
+  concurrency conjuncts for its own reason (it can run under a live editor on the server id,
+  where removing the draft yanks the screen's backing and splits the conflict mirror). A
+  genuinely deleted document then strands — checkpointed, unreachable, lossless — which is
+  the `.forbidden` resume's accepted outcome and wants the same owed affordance. An earlier
+  revision discharged instead, to stop exactly that strand; it ranked the harms backwards.
+  (That
+  draft is never covered by the pending-create hold in either ordering — the hold is
+  keyed on the local id. The ordering decides whether the body is still *reachable*,
+  not whether it is protected from that sweep — the checkpointed window has its own
+  server-id suppression there, and this branch is about the state after the checkpoint is
+  cleared.) Move-then-clear is self-healing across a kill between the two writes;
+  clear-then-move reproduces the very loss it closes. Guarded on the local draft
+  being absent, or a `serverID` draft that is the *user's* work would overwrite it.
+  **Both of those re-checks are keyed on the *local* id, and the migration writes under the
+  *server* id — so it defers on that side too.** A checkpointed record is withheld
+  from `pendingLocalDocuments`, so the local row disappears and the server document
+  returns in an ordinary list fetch, indistinguishable from any other: the user can
+  open it, type, and have a save on the wire under `serverID` while a local-id-only
+  guard sees nothing. Migrating then overwrites that draft (dropping its
+  `lastPushedMarkdown` and conflict stamp), replaces its `queued` keystrokes, and
+  records a conflict against an in-flight save — which the conflict invariant
+  forbids. So it also bails on an open editor, an in-flight or queued save, or a
+  draft under `serverID` that is provably the user's (**a server-id draft is *ours*
+  only once the local one is gone** — that is what defines the partial-migration
+  window — note a death *between* the two draft writes leaves **both** present, so
+  that window defers rather than migrating). Deferring clears itself only for the
+  **both-drafts** guard, where the same pass's `runSyncPass` pushes that draft and
+  `finish` removes it; `runSyncPass` skips a document with `inFlight`/`queued` set, so
+  `finish` alone drains those. The migration
+  waits for the **next** trigger though — `finish` does not kick the funnel and the
+  `repeat` loop only re-runs on `needsAnotherSyncPass` — so a foreground, a
+  reconnect, or the editor release completes it; releasing an editor on the
+  **server** id kicks the funnel for exactly that reason. **Two** shapes never clear
+  themselves — a `.failed` push, which `runSyncPass` skips, and a recorded
+  **conflict**, which waits on the user and (unlike the in-memory `.failed`) is
+  persisted on the draft, so it is the more durable of the two. A `queued` slot on
+  its own is *not* one of them: filled behind an in-flight save, `finish` drains and
+  starts it, and the obstruction goes with no trigger — the self-perpetuating queued
+  slot *is* the conflict hold. Both bodies stay on disk, so this costs the sync,
+  never the content.
+  **An empty local body is never offered as a conflict** — with nothing local to
+  contribute, "Keep my version" would PATCH `""` and wipe the document, so the
+  migration adopts the server — **title included, writing nothing back.** (Its discharge of
+  any conflict for that id rests on having removed every local trace, which is false while
+  `retainOpenEditor` is unwired and the trace is an unflushed dirty screen — see the owed list
+  in `docs/offline-and-sync.md`.) The test is
+  **canonical** emptiness, not absence and not a raw `isEmpty`: the seed draft is
+  present-and-empty, so a nil check lets a created-renamed-never-typed document through,
+  and a raw check lets a `" "` body through — both arming the very "Keep my version"
+  wipe the branch exists to prevent. Two
+  attempts to preserve a local rename there were both wrong: pushing the server's
+  own markdown back to carry it re-encodes via `MarkdownYjs`, where a co-author's
+  table is an `.unknown` block that round-trips as literal paragraphs (the app's
+  only full-overwrite of content no local user authored); and a title-only PATCH
+  writes a name **nothing here can show is the newer one** — it falls back to the
+  server's own for a never-typed-into document, and the branch only fires once the
+  server has a body, i.e. after
+  elapsed time in which a web rename is at least as likely. Accepted residual: a
+  rename made here on a body-less document is lost when the server has moved on.
+  **No failure strands content**: transport/5xx/
+  `.sessionExpired` retry later; a failed sub-page create **probes the parent** and
+  promotes to a root only on the probe finding the parent **gone** (404). Not a bare 403
+  — an ancestor-access recompute 403s transiently and would 403 the create too, the same
+  reason the resume path drops a checkpoint only on `.notFound`; a 403 probe is terminal
+  instead, since the create error is non-retryable and still owes an end state. A
+  reachable parent means the create itself was rejected: also terminal, as the root path
+  treats the same error. **`.routeNotFound` returns before any of this, root or sub-page**
+  — a missing route is a fact about the server, and the probe tests `documents/{p}/`, a
+  different path from the one that 404'd. `abilities.childrenCreate` is deliberately not
+  consulted: it decodes `?? false`, so absent and denied are indistinguishable, and both
+  reach the same terminal outcome anyway. Anything else rejected
+  on the merits goes `.failed`, which stops the retry loop but is **not** reachable
+  by the reading surface's "tap to retry" (`saveNow` no-ops while `pendingSave` is
+  non-nil, which a local document with content always has), so a relaunch is the
+  escape until the UI offers a create-specific one. **The one rejection that is
+  persisted is `.decoding`**, which arrives *after* a 2xx: the server very likely
+  built the document (`.decoding` proves 2xx-and-unreadable, not 201-created — a
+  gateway answering `200` with HTML created nothing) and no checkpoint could be
+  written, the id having been in the body that failed to decode. So the in-memory
+  rule would POST and abandon another every launch —
+  the `is_favorite`-as-required-`Bool` incident, on a loop. It stamps
+  `replayBlockedAt` **scoped to the app build** (`isReplayBlocked(forBuild:)`);
+  a blanket block would make that same incident unrecoverable by *shipping the
+  fix*, which is worse than the littering it prevents. A stamp from another build
+  is spent, so a fixed build retries once, and the gate excludes blocked records
+  so they cost no `/users/me/` round trip either.
+  **A resume takes its baseline from `formattedContent`, never from `document`**
+  (it calls both — `document` only feeds the list caches). The latter carries no
+  body, so using it stamped `markdown: ""`, asserting an empty server nothing had
+  checked; an *unchecked* `""` is provable only on the fresh-POST path. (Distinct from
+  the diverged baseline's `""`, which comes with a nil clock and asserts nothing about
+  the server — see above.) And because a resume can
+  find a body that arrived while the document sat checkpointed — live and editable
+  on the web — the migration **records a conflict** when the server's body differs
+  from ours (compared canonically) instead of pushing. Recording it *first* is what
+  makes that work: the record is already gone by then, so an unrecorded conflict
+  would let the enqueue go straight to `start` and full-overwrite the server's body,
+  whereas with one recorded the same enqueue takes the ordinary hold and the pill
+  asks the user.
   **The seed draft carries no `DraftBaseline`, and the replay must stamp one.**
   Nil is the only honest value at mint time (there is no server state yet), but a
   baseline-less draft routes to `draftSyncDecision` rule 3's 120 s tolerance — and
   the moment a create POST lands, the new document's `updated_at` is *now* while
   the draft's is hours old, which is the point of creating offline. Rule 3 would
   answer `.discardServerWins` and the launch pass would delete the body, leaving
-  the empty document the POST just made. Migration must write
-  `DraftBaseline(serverUpdatedAt: <POST response>, markdown: "", title:)` before
-  the draft is replayed.
+  the empty document the POST just made. **But it must say what the body *descends
+  from*, not what was observed** — where those differ, stamping the observation is
+  self-defeating: a diverged resume would hand `draftSyncBodyDecision` rule 2 a proof
+  (`serverUpdatedAt <= baselineDate`, trivially true of the state it was copied
+  from), so the next revalidation answers `.push(.descendsFromBaseline)`,
+  `releaseConflictIfProven` clears the conflict the migration just recorded, and the
+  held save full-overwrites the co-author **by way of** the conflict meant to stop
+  it. Diverged, the baseline is therefore a `nil` clock and an empty body — what an
+  offline body actually descends from — which re-reaches `.conflict` while staying
+  non-nil so rule 3 can never discard. **The baseline is not the only proof that has
+  to be withheld.** Rule 1 (`serverHoldsOurLastPush`) is consulted *before* rule 2, and
+  `enqueue` stamps the draft's `lastPushedMarkdown` from
+  `lastConfirmedPushMarkdown[serverID]` — which can hold the very body just conflicted
+  against, since a checkpointed document is met under its server id and the user's save
+  there may already have landed. So the diverged path clears that map entry too;
+  otherwise the honest baseline is never reached and the held save overwrites the
+  co-author anyway. The general rule: **the migration must withhold every proof, not
+  just the baseline.** (One benign exception to "forever": if the co-author *empties*
+  the document first, rule 2's body tiebreak matches `"" == ""` and releases — their
+  deletion is undone, but the server held nothing.) Undiverged it is the server state
+  it actually **observed** — the create response
+  on a fresh POST, where `markdown: ""` is provable, and a `formattedContent` fetch
+  on a resume, where it is not.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
@@ -1523,6 +1738,12 @@ markdown write endpoint**. Understand this before touching the save path:
     flip affects newly requested sessions, not screens already open.** See
     `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
     "C3 (shipped)" paragraph).
+- **The 404/403 sweep has a third suppression, and it is keyed on the *server* id.**
+  `isPendingCreate` covers the local id only, so it misses the draft the migration writes
+  under `serverID` before removing the local one — which in that window is the **only
+  copy**. `runSyncPass`'s delete branch therefore also skips any id a checkpointed record
+  is waiting to migrate onto. Only the delete, never the push: the push is what clears
+  `finishMigration`'s both-drafts guard.
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping
@@ -1564,10 +1785,19 @@ markdown write endpoint**. Understand this before touching the save path:
   forever); `resolveConflictKeepingServer` is the one sanctioned discard and **fetches
   before it discards** (a failed fetch must not cost the user the only copy of their
   work). Every purge path (`discardPendingWork`, `suppressLocalWriteThrough`,
-  `handleDidDelete`) clears the record, or the enqueue-hold wedges the document's save
-  pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
+  `handleDidDelete`, the create migration's **adopt-the-server** branch, which deletes
+  every local trace for that id, and the replay's **start-over**, whose id is now dead)
+  clears the record, or the enqueue-hold
+  wedges the document's save pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
   flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
-  unreachable during a save; `syncPendingDrafts` guards on both), which is why
+  unreachable during a save; `syncPendingDrafts` guards on both; the **create
+  migration** holds by an explicit check, *not* by the tempting argument that the
+  id was just minted — it only records on the **resume** path, where the id may
+  come from a previous process, may have returned in an ordinary list fetch since,
+  and may already carry a save this process started, so what holds it is
+  `finishMigration`'s `guard inFlight[serverID] == nil, queued[serverID] == nil`
+  immediately before the record),
+  which is why
   `SaveMarker.hadPendingSave` asks whether a save *reached the network*
   (`inFlightContent != nil`) and **not** `pendingSave(_:) != nil` — the held slot is
   never sent, and counting it wedged "keep the server version" permanently.

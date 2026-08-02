@@ -2,11 +2,12 @@ import XCTest
 
 @testable import Schrift
 
-/// The coordinator's half of offline creation: minting a local document, and the two
-/// **holds** that keep a document the server has never seen from being addressed as if
-/// it had. Both holds are the safety net for the replay that PR 3 adds — they land first,
-/// and dormant, because without them the existing pipeline actively destroys a local
-/// document the moment it runs.
+/// The coordinator's half of offline creation: minting a local document, and the **gates**
+/// that keep a document the server has never seen from being addressed as if it had. They
+/// are the safety net for the replay, and landed first and dormant because without them the
+/// existing pipeline actively destroys a local document the moment it runs. (The replay
+/// itself, and the gates that key off the *server* id once a record is checkpointed, are
+/// exercised by `DocumentSaveCoordinatorReplayTests`.)
 @MainActor
 final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
@@ -285,8 +286,9 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     }
 
     /// `clearResolvedConflict` releases whatever the hold was parking by calling `start`
-    /// **directly** — the one path that reaches the network without passing through
-    /// `enqueue`'s hold, and the editor clears conflicts from five places. For a document
+    /// **directly** — one of the two paths that reach the network without passing through
+    /// `enqueue`'s hold (the other is `finish`'s queued restart), and the editor clears
+    /// conflicts from five places. For a document
     /// the server has never seen that would PATCH a nonexistent id, take a 404, and land on
     /// `.failed`, which `runSyncPass` skips: wedged out of the replay meant to create it.
     /// The held save must stay parked *and* stay held — dropping it would lose the content.
@@ -366,6 +368,115 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         let (relaunched, _, _) = makeCoordinatorSharing(createStore, draftStore: draftStore)
 
         XCTAssertEqual(relaunched.state(for: document.id), .pendingSync)
+    }
+
+    /// **An unreadable *drafts* store must stop the replay, not be read as "every body is
+    /// empty".** `PendingDraftStore.loadAll` is all-or-nothing, so one undecodable blob makes
+    /// every `draft(for:)` answer nil. Before the replay existed that only made unsaved work
+    /// invisible; the replay is what turns it into destroyed content — it would POST
+    /// each record under its mint title, pass `finishMigration`'s both-drafts guard (which
+    /// reads the same nil), enqueue `""`, and then `removePendingCreate`, deleting the one
+    /// thing that could have driven a recovery after a shipped decode fix.
+    func testAnUnreadableDraftStoreStopsTheReplayEntirely() async {
+        let log = RequestRecorder()
+        // The POST must return a **decodable** Document, or removing the guard merely lands a
+        // `.decoding` failure — which stamps `replayBlockedAt` and *keeps* the record, so the
+        // record assertion below would pass with the guard gone and prove nothing. With a real
+        // response the destructive chain runs to completion: mint-title POST, both-drafts guard
+        // on the same nil, `enqueue("")`, `removePendingCreate`.
+        let created = Data(
+            """
+            {"id": "44444444-4444-4444-8444-444444444444", "title": "Untitled document",
+             "abilities": {"destroy": true, "partial_update": true},
+             "content": "", "created_at": "2026-03-01T12:00:00Z",
+             "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+             "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            return .init(statusCode: 201, headers: [:], body: created, error: nil)
+        }
+        let suiteName = "CoordinatorCreateTests.corruptDrafts.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let createStore = PendingDocumentCreateStore(userDefaults: defaults)
+        // A perfectly readable record — only the drafts are unknown.
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let seed = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: createStore, serverOrigin: origin, backgroundTasks: .noop)
+        let local = seed.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: origin, backgroundTasks: .noop)
+        await coordinator.recoverDrafts()
+
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: "documents/"), 0,
+            "nothing is POSTed while the bodies are unknown")
+        XCTAssertNotNil(
+            createStore.create(for: local.id),
+            "and the record survives, so a shipped decode fix can still recover the body")
+    }
+
+    /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —
+    /// carries the same `!createStoreUnreadable` guard, and its sibling below cannot cover it:
+    /// that test drives a 404, which reaches the *catch*. Getting here needs a draft whose
+    /// baseline is nil (rule 3) against a server that has moved past it, on a launch pass.
+    /// The line's own comment calls it unreachable today, since every writer of a draft under
+    /// a freshly-minted server id stamps a baseline — but a hand-built baseline-less draft is
+    /// exactly what that shape looks like, and it is the one create-related deleting line the
+    /// suite otherwise never executes.
+    func testAnUnreadableCreateStoreSuppressesTheLaunchDiscardToo() async {
+        let log = RequestRecorder()
+        let stale = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(
+                statusCode: 200, headers: [:],
+                body: Data(
+                    """
+                    {"id": "\(stale.uuidString.lowercased())", "title": "Server copy",
+                     "content": "# Server moved on",
+                     "created_at": "2026-03-01T12:00:00Z", "updated_at": "2030-01-01T00:00:00Z"}
+                    """.utf8), error: nil)
+        }
+        let suiteName = "CoordinatorCreateTests.corruptDiscard.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
+        // Baseline-less and long stale, so `draftSyncDecision` reaches rule 3's tolerance and
+        // answers `.discardServerWins`.
+        draftStore.save(
+            PendingDraft(
+                documentID: stale, title: "Doc", markdown: "# Written offline",
+                updatedAt: Date(timeIntervalSince1970: 1), baseline: nil))
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingCreates")
+
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: draftStore,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            serverOrigin: origin, backgroundTasks: .noop)
+        await coordinator.recoverDrafts()
+
+        XCTAssertGreaterThan(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0,
+            "the pass must actually reach the decision — otherwise this proves nothing")
+        XCTAssertEqual(
+            draftStore.draft(for: stale)?.markdown, "# Written offline",
+            "unknown records must not read as 'no local documents exist' here either")
     }
 
     /// The whole hold rests on the create store decoding. If it ever doesn't, the records
@@ -524,9 +635,10 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
     // MARK: - Deleting a local document
 
-    /// Deleting a local document is purely local — there is no server object to DELETE —
-    /// so the record has to go with the draft, or the replay would resurrect a document
-    /// the user threw away.
+    /// The record has to go with the draft, or the replay would resurrect a document the user
+    /// threw away. Deleting is purely local only while the record is **un-checkpointed**,
+    /// which is this test's case: once `syncedServerID` is set the POST has landed and a real
+    /// server object exists — see the replay suite's delete tests.
     func testDiscardingPendingWorkRemovesTheCreateRecordToo() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
         let document = coordinator.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)

@@ -99,6 +99,36 @@ final class PendingDraftStore {
         loadAll().values.sorted { $0.updatedAt < $1.updatedAt }
     }
 
+    /// There is stored draft data and it does not decode — so the drafts are **unknown**,
+    /// not absent.
+    ///
+    /// `loadAll` is all-or-nothing, so one undecodable blob makes every `draft(for:)` answer
+    /// nil. Read as "there is no draft" that is merely invisible, which is how the app behaved
+    /// before the create replay existed. The replay is what turns that read into *destroyed*
+    /// content: it POSTs a document whose body it believes empty and then deletes the create
+    /// record, which is the only thing that could have driven a recovery after a shipped
+    /// decode fix. So it asks this first. (Not the only irreversible consumer, though —
+    /// `DocumentSaveCoordinator.init`'s conflict rehydration reads the same empty answer and
+    /// silently drops every persisted hold, after which the next `enqueue` full-overwrites a
+    /// server body the user was warned about. That one predates the replay.)
+    ///
+    /// **Detection only, and not sticky** — unlike `PendingDocumentCreateStore`, whose
+    /// equivalent ORs in a quarantine key and is read once at init. Every mutating method here
+    /// is a read-modify-write through `loadAll`, so the first `save` or `remove` after the
+    /// corruption replaces the damaged bytes and this flag goes false again, with the other
+    /// drafts genuinely gone. Callers get a hold that lasts until the next write to *any*
+    /// document, not one that lasts until the schema is fixed. Quarantining the bytes before
+    /// the key is reused is recorded as owed.
+    ///
+    /// Corollary inherited from that store: **every field added to `PendingDraft` or
+    /// `DraftBaseline` must stay Optional-on-decode.** A non-optional addition makes this
+    /// return true for every existing device, which gates the create replay — and then
+    /// un-gates it, destructively, on the first keystroke.
+    var holdsUnreadableData: Bool {
+        guard let data = userDefaults.data(forKey: Self.draftsKey) else { return false }
+        return (try? decoder.decode([String: PendingDraft].self, from: data)) == nil
+    }
+
     private func loadAll() -> [String: PendingDraft] {
         guard let data = userDefaults.data(forKey: Self.draftsKey),
             let drafts = try? decoder.decode([String: PendingDraft].self, from: data)

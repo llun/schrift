@@ -137,8 +137,9 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
 
     /// Abilities are the honest set for a document that exists only here: editing works,
     /// and nothing else does yet — every other ability is a server call against an id the
-    /// server has never seen. `childrenCreate` false is also what keeps
-    /// children-of-local-parents out of scope until the replay can order them.
+    /// server has never seen. `childrenCreate` false records the same intent for
+    /// children-of-local-parents — but **nothing reads it**, so keeping them out of scope is
+    /// the create UI's job, not this value's.
     func testTheSyntheticDocumentClaimsOnlyLocallyTrueAbilities() {
         let document = localDocument(from: record())
 

@@ -1865,7 +1865,11 @@ final class EditorViewModel {
         // and only the timestamp is needed: rule 2's date check short-circuits first.
         // Mirror the coordinator's `?? draft.markdown` fallback exactly — do NOT fabricate `""`.
         // A legacy (baseline-less) draft leaves `serverBaseline == nil` here, and an empty
-        // baseline body makes rule 2's content tiebreak match any **empty server document**:
+        // baseline body makes rule 2's content tiebreak match any **empty server document**.
+        // (A `""` baseline body no longer implies fabrication: the create migration's diverged
+        // path stamps one deliberately, with a nil clock. Carrying *that* forward inherits the
+        // same tiebreak — but only after the user has answered "keep mine", so the push is what
+        // they asked for. The warning below is about inventing one they did not.) Concretely:
         // a co-author who deliberately empties the doc would then be silently full-overwritten
         // instead of raising a new conflict. And this value *wins*: `flushPendingChanges()`
         // below re-enqueues with it, and `enqueue` persists the caller's baseline verbatim — so

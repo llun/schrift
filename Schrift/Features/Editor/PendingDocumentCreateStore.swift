@@ -20,11 +20,14 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// which is what the replay actually POSTs — this is the fallback.
     let title: String
     /// The **server** id of the parent, or nil for a root document. v1 never creates
-    /// under a parent that is itself pending (the synthetic document's
-    /// `abilities.childrenCreate` is false), so this is always a real server id and the
-    /// replay needs no dependency ordering. `var` because the replay rewrites it to nil
-    /// when the parent turns out to be gone or forbidden, retrying as a root create —
-    /// degrading the document's *placement* rather than stranding its content.
+    /// under a parent that is itself pending, so this is always a real server id and the
+    /// replay needs no dependency ordering. `var` because the replay rewrites it to nil and
+    /// retries as a root create — degrading the document's *placement* rather than stranding
+    /// its content — but **only on the one answer that justifies it**: the probe finding the
+    /// parent **gone** (404). Never a bare 403 — an ancestor-access recompute 403s transiently
+    /// and would 403 the create too — and never on the bare create failure alone. A reachable
+    /// parent means the create was rejected on its own merits, which is terminal rather than a
+    /// re-parent. See `handleCreateFailure`'s probe.
     var parentID: UUID?
     /// Replay order, and the synthetic document's dates.
     let createdAt: Date
@@ -47,6 +50,68 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// found with this set skips straight to migration. Nothing else can close that
     /// window — the backend supports no idempotency key.
     var syncedServerID: UUID?
+    /// The title the create POST actually **sent**, stamped beside `syncedServerID`.
+    ///
+    /// The migration needs to know whether the local side has renamed *since the server
+    /// learned the name*, and neither of the two obvious proxies answers that. `title` is the
+    /// **mint** title and never moves, so a rename made before the POST reads as "renamed"
+    /// forever — and the resume would then push that now-stale title over a newer rename made
+    /// under the server id, which is the loss the discriminator exists to prevent, one step
+    /// over. `serverTitle` is the server's *current* title, which is the thing being compared
+    /// against. Only what was sent settles it.
+    ///
+    /// Optional-on-decode like every field here; nil means "not checkpointed, or a record
+    /// written before this field existed", and the migration falls back to the mint title,
+    /// which is the pre-existing behaviour.
+    var postedTitle: String?
+    /// Set when a create POST failed in a way that leaves us **unable to tell whether the
+    /// server created the document** — in practice a `.decoding` failure, which arrives
+    /// *after a 2xx* — so the server very likely built the document, though not certainly:
+    /// `performRequest` accepts any `200..<300`, and a gateway answering `200` with an HTML
+    /// body created nothing. Retrying is therefore not a free retry: it very likely POSTs a
+    /// second document and abandons the first.
+    ///
+    /// This is the one failure that has to survive the process — but not the only one that
+    /// is ambiguous about whether the server built the document. `performRequest` wraps a
+    /// dropped or timed-out response into `.network`, which can equally hide a POST the
+    /// server applied (`start`'s catch records the same ambiguity for saves). That one is
+    /// deliberately left retryable: a create that never reached the server must retry, and
+    /// there is no idempotency key to tell the two apart, so the accepted cost is one
+    /// orphaned empty document per lost response. What separates `.decoding` is that it
+    /// arrives *after* a 2xx, so a retry is very likely a duplicate rather than possibly
+    /// one — which is what earns it a persistent block instead of a free retry.
+    ///
+    /// Every failure on the merits (a validation 400) proves nothing was created, so it stays the in-memory
+    /// `.failed` state that `init` deliberately re-seeds to `.pendingSync` — a relaunch
+    /// retries and costs nothing. A decode failure is the opposite: `CLAUDE.md` records
+    /// this having happened here for real (`is_favorite` decoded as a required `Bool`
+    /// failed every create *after* the server had built the document, "quietly littering
+    /// the server with them"), and with a per-launch replay that becomes one orphaned
+    /// document per launch, forever.
+    ///
+    /// **Scoped to the build that set it** (`replayBlockedBuild`), which is what keeps this
+    /// from being worse than the bug it fixes. A blanket block would make the cited incident
+    /// *unrecoverable by an app update*: every affected record is stamped, the fix ships, and
+    /// the pass keeps skipping records that the new build could now decode perfectly — where
+    /// before this field the bug at least self-healed on the first launch after the fix. So
+    /// the block means "*this* build could not read the response", and a different build
+    /// retries once. That also bounds the littering it prevents to one orphan per app
+    /// version rather than one per launch.
+    ///
+    /// Giving the user a way to retry or discard within a build still belongs with the create
+    /// UI that can present it.
+    var replayBlockedAt: Date?
+    /// The app build that set `replayBlockedAt`. Optional-on-decode like everything here, and
+    /// a record carrying a stamp with no build is treated as blocked for *no* build — an
+    /// unknown blocker cannot be shown to still apply.
+    ///
+    /// If the *running* build is unknown (an empty `CFBundleVersion`), the stamp matches and
+    /// the block is permanent. That is deliberate: the alternative — never blocking — is the
+    /// re-POST-every-launch loop this field exists to stop, and the file's ranking is that a
+    /// duplicate is unrecoverable where a delayed retry is not. Unreachable in a shipped
+    /// build anyway; `project.yml` sets `CURRENT_PROJECT_VERSION` and CI overrides it with the
+    /// run number.
+    var replayBlockedBuild: String?
 
     init(
         localID: UUID,
@@ -55,7 +120,10 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         createdAt: Date,
         serverOrigin: String,
         ownerUserID: UUID? = nil,
-        syncedServerID: UUID? = nil
+        syncedServerID: UUID? = nil,
+        postedTitle: String? = nil,
+        replayBlockedAt: Date? = nil,
+        replayBlockedBuild: String? = nil
     ) {
         self.localID = localID
         self.title = title
@@ -64,6 +132,15 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
         self.serverOrigin = serverOrigin
         self.ownerUserID = ownerUserID
         self.syncedServerID = syncedServerID
+        self.postedTitle = postedTitle
+        self.replayBlockedAt = replayBlockedAt
+        self.replayBlockedBuild = replayBlockedBuild
+    }
+
+    /// Whether this build should skip the record. A stamp from a *different* build is spent:
+    /// that build's inability to read the create response says nothing about this one's.
+    func isReplayBlocked(forBuild build: String) -> Bool {
+        replayBlockedAt != nil && replayBlockedBuild == build
     }
 }
 
@@ -120,10 +197,15 @@ final class PendingDocumentCreateStore {
         persist(creates)
     }
 
-    /// Oldest first — the order a replay must POST them in, so a document created after
-    /// another never reaches the server before it. The `localID` tie-break makes that a
-    /// real guarantee rather than an approximate one: `values` has no defined order,
-    /// Swift's `sorted` is not stable, and `Date()` is not monotonic across a clock change.
+    /// Oldest first — the order a replay POSTs them in. The `localID` tie-break makes that
+    /// order *deterministic* rather than approximate: `values` has no defined order, Swift's
+    /// `sorted` is not stable, and `Date()` is not monotonic across a clock change.
+    ///
+    /// It is deterministic, not a guarantee about arrival: `runCreatePass` `continue`s past a
+    /// record that is skipped, blocked or failed, so a newer record can still reach the server
+    /// before an older one that was passed over. Harmless in v1, where records carry no
+    /// inter-record dependencies — sub-pages of *local* parents are out of scope precisely
+    /// because a replay cannot order them — but do not build ordering on this.
     func allCreates() -> [PendingDocumentCreate] {
         loadAll().values.sorted { orderedByCreation($0, $1) }
     }
@@ -137,11 +219,19 @@ final class PendingDocumentCreateStore {
     /// next sync pass destroy the content of every offline-created document at once. The
     /// coordinator asks this at init and suppresses that delete entirely.
     ///
-    /// That suppression only has to cover the 404 branch: every other draft-deleting path
-    /// (`resolveConflictKeepingServer`, `discardStoredDraft`, `finish`'s success and
-    /// discarded branches, the `.discardServerWins` branch) requires a *successful* server
-    /// interaction with that id — a landed PATCH, a 200 `formattedContent`, a successful
-    /// DELETE — and a client-minted id can never get one. Under corruption a local document
+    /// That suppression only has to cover the 404 branch. Every other draft-deleting path
+    /// falls into one of two classes, neither of which can fire under corruption. Some
+    /// require a *successful* server interaction with that **client-minted** id — a landed PATCH, a 200
+    /// `formattedContent`, a successful DELETE (`resolveConflictKeepingServer`,
+    /// `discardStoredDraft`, `finish`'s success and discarded branches, the
+    /// `.discardServerWins` branch) — and a client-minted id can never get one. The rest are
+    /// the replay's own (the migration's draft move, the `.notFound` take-back, the
+    /// adopt-the-server branch, `discardPendingWork`'s checkpointed branch), and they read
+    /// the same empty mirror a corrupt blob produces, so they never run at all. (Note the
+    /// first criterion is about the *local* id: a draft under a checkpointed record's
+    /// **server** id gets a 200 `formattedContent` perfectly well, which is why both of
+    /// `runSyncPass`'s deleting lines carry an explicit `createStoreUnreadable` guard rather
+    /// than resting on this argument.) Under corruption a local document
     /// degrades to `.failed` with its draft intact, never to deletion.
     /// **Sticky across launches, deliberately.** Quarantining preserves the record *bytes*,
     /// but on its own it buys nothing for the thing that matters: the live key comes back
@@ -227,8 +317,9 @@ func orderedByCreation(_ lhs: PendingDocumentCreate, _ rhs: PendingDocumentCreat
 /// that cannot happen — and, because `discardPendingWork` is reached only from a
 /// *successful* delete, would leave the record un-removable. It flips to true with the
 /// local-delete branch in the UI change. `childrenCreate` is false for the same
-/// discipline: it holds children-of-local-parents out of scope until a replay can order
-/// them.
+/// discipline — though **nothing reads it**, so it records the intent rather than
+/// enforcing it: children-of-local-parents stay out of scope until a replay can order
+/// them, and it is the create UI that must not offer the affordance.
 ///
 /// `title` is the record's, i.e. the title at creation time. Callers that can see the
 /// draft should prefer the draft's — the user may have renamed the document since, and
