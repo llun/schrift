@@ -1334,8 +1334,7 @@ markdown write endpoint**. Understand this before touching the save path:
   than defensive. (Scoped to saves deliberately: opening a local document names
   its id from places the coordinator does not own — `formattedContent`, the
   children fetch, the collaboration room, Options' delete and version history —
-  and those are gated by `EditorViewModel.isLocalDocument` instead. The invariant is *broader
-  than its enforcement*. The create UI mints records now, so a *save* is fully guarded while
+  and those are gated by `EditorViewModel.isLocalDocument` instead. The invariant and its enforcement now match. The create UI mints records now, so a *save* is fully guarded while
   those other paths are guarded by `EditorViewModel.isLocalDocument` instead.)
   1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
      Without it, a keystroke PATCHes `documents/<local-uuid>/content/`, takes a

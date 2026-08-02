@@ -977,8 +977,10 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
   background revalidation. A **failed save is not a lost save**: a transport or
   5xx failure classifies to `.pendingSync`, keeping the write-ahead draft for the
   reconnect/foreground/launch replay, which is what makes editing offline safe
-  (2026-08-01). Creating a document still requires connectivity.
-- Save conflicts are not detected (see Editing & save mechanism) — documented limitation, not silently swallowed.
+  (2026-08-01). Creating one offline landed 2026-08-02: it is minted with a client-side
+  id and POSTed by the replay on reconnect.
+- Save conflicts *are* detected and asked about (`draftSyncDecision` + the conflict pill,
+  #72–#78); they are never auto-merged, and never silently swallowed.
 
 ## Testing
 

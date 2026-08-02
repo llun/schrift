@@ -353,8 +353,8 @@ final class DocumentSaveCoordinator {
     /// changes), and `.pendingSync` — nothing is syncing, but the work *is* on the device.
     ///
     /// `parentID` is a **server** id or nil; v1 never creates under a parent that is itself
-    /// pending, so a replay needs no dependency ordering. **That is enforced by the affordances
-    /// yet**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
+    /// pending, so a replay needs no dependency ordering. **That is enforced by the
+    /// affordances**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
     /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
     /// denied are indistinguishable), and the sub-page affordance gates on the parent being local.
     /// So the create UI must not offer a sub-page under a pending parent; a record minted that
@@ -2085,7 +2085,7 @@ final class DocumentSaveCoordinator {
         //    half via `syncedServerID(forLocalID:)` — treating a 404 there as "already gone"
         //    rather than as a failure, since keeping the record would let the resume re-POST
         //    the document the user just deleted.
-        //  - Deleted by its *server* id — reachable **today**, through the unmodified Options
+        //  - Deleted by its *server* id — reachable through the Options
         //    sheet, since that is the only id the user is offered. `isPendingCreate` is keyed
         //    on the local id and answers false, so without the branch below the record and the
         //    local draft both survive a successful DELETE. The next pass resumes, the resume

@@ -1021,7 +1021,7 @@ to what the Home list passes (still a `Document` / id).
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
 
-## Documents created on this device (2026-08-01, storage + gates + replay)
+## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
 Offline *creation* has landed — the non-goal above is withdrawn — and its **storage, its safety gates
 and its replay have landed, and the create UI with them** — Home's `+`, the editor's
@@ -1307,7 +1307,7 @@ already-recorded ghost residual below, not a new one.
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
-- **[LANDED — `onDocumentMigrated`]** Repopulating a *live* Home after a migration.** The replay's list-cache insert feeds
+- **[LANDED — `onDocumentMigrated`]** Repopulating a *live* Home after a migration. The replay's list-cache insert feeds
   the next Home construction and the work-offline read — the only two places
   `HomeViewModel` re-seeds from the cache — but an online `load()` overwrites from the
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
@@ -1976,6 +1976,7 @@ XCTest, mirroring the source tree. New/updated:
   disk and readable offline with background revalidation (see this doc). The
   "Offline editing/sync queue" non-goal is **also superseded as of 2026-08-01**:
   offline *editing* of a previously-opened document is supported (queued draft,
-  replayed on reconnect); offline *creation* remains out of scope.
+  replayed on reconnect). Offline *creation* was out of scope then and landed
+  2026-08-02 — see "Documents created on this device".
 - `README.md` reviewed — it makes no offline/loading claims, so no change.
 - This document is a living design doc — kept current as behavior changes.
