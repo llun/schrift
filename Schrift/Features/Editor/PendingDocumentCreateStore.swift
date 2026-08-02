@@ -191,13 +191,17 @@ final class PendingDocumentCreateStore {
     ///
     /// That suppression only has to cover the 404 branch. Every other draft-deleting path
     /// falls into one of two classes, neither of which can fire under corruption. Some
-    /// require a *successful* server interaction with that id — a landed PATCH, a 200
+    /// require a *successful* server interaction with that **client-minted** id — a landed PATCH, a 200
     /// `formattedContent`, a successful DELETE (`resolveConflictKeepingServer`,
     /// `discardStoredDraft`, `finish`'s success and discarded branches, the
     /// `.discardServerWins` branch) — and a client-minted id can never get one. The rest are
     /// the replay's own (the migration's draft move, the `.notFound` take-back, the
     /// adopt-the-server branch, `discardPendingWork`'s checkpointed branch), and they read
-    /// the same empty mirror a corrupt blob produces, so they never run at all. Under corruption a local document
+    /// the same empty mirror a corrupt blob produces, so they never run at all. (Note the
+    /// first criterion is about the *local* id: a draft under a checkpointed record's
+    /// **server** id gets a 200 `formattedContent` perfectly well, which is why both of
+    /// `runSyncPass`'s deleting lines carry an explicit `createStoreUnreadable` guard rather
+    /// than resting on this argument.) Under corruption a local document
     /// degrades to `.failed` with its draft intact, never to deletion.
     /// **Sticky across launches, deliberately.** Quarantining preserves the record *bytes*,
     /// but on its own it buys nothing for the thing that matters: the live key comes back

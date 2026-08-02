@@ -2004,7 +2004,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// `.notFound` start-over rescues it by moving it back; a `.forbidden` resume has no such
     /// branch and would land here, as would any pass where the record simply is not replayable
     /// this session (a foreign origin, another account, a failing `/users/me/`, an open
-    /// editor — not a build block, which cannot coexist with a checkpoint). Deleting it makes the later migration build an empty document.
+    /// editor — not a build block, which cannot coexist with a checkpoint). Deleting it makes
+    /// the later migration build an empty document.
     func testTheSweepNeverDeletesTheOnlyCopyUnderACheckpointedServerID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
@@ -2028,6 +2029,81 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
             "the sweep must not delete the body of a checkpointed record")
+    }
+
+    /// A rename made **on this device, under the server id** must survive the migration.
+    /// Once checkpointed the local row is withheld, so the user meets the document under
+    /// `serverID` in an ordinary list; a rename there lands and `finish` removes that draft,
+    /// leaving the seed draft holding the mint title. Preferring the local title
+    /// unconditionally PATCHes "Untitled document" back over their rename, silently.
+    func testAMigrationDoesNotRevertARenameMadeUnderTheServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // The seed draft still holds the mint title — the local side never renamed.
+        // The server has since been renamed under its own id.
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Recipes", "content": "",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.title, "Recipes",
+            "the server's rename is kept — the local side only ever held the mint title")
+    }
+
+    /// The `.discardServerWins` deleting line's own server-id guard. Rule 3 needs a nil
+    /// baseline, which no production writer produces under a server id — but the guard states
+    /// the invariant at the deleting line rather than resting on that, exactly as its twin in
+    /// the 404/403 catch does.
+    func testTheLaunchDiscardNeverDeletesACheckpointedServerIDDraft() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.drafts.remove(documentID: local.id)
+        // Baseline-less, and far older than the 120 s tolerance, so rule 3 answers
+        // `.discardServerWins`.
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Notes", markdown: "# The only copy",
+                updatedAt: Date(timeIntervalSince1970: 1), baseline: nil))
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes",
+             "content": "# Written on the web",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        // Another account, so `runCreatePass` skips the record before it can migrate or rescue.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"99999999-9999-4999-8999-999999999999\"}".utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+        }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.recoverDrafts()
+
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# The only copy",
+            "the launch discard must not delete a checkpointed record's only copy")
     }
 
     // MARK: - Helpers

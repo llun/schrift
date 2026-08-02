@@ -580,8 +580,11 @@ final class DocumentSaveCoordinator {
             // when nothing had checked. The migration then enqueues straight into `start`, so
             // a document that had *acquired* a body would be silently full-overwritten, and
             // the lying baseline would mislead every later `draftSyncDecision` too. That is no
-            // longer a crash-only path: "checkpointed but not migrated" is a routine state
-            // now, and in it the document is visible and editable on the web.
+            // longer only a theoretical path: "checkpointed but not migrated" is a state the
+            // document is visible and editable on the web in. (Today it still needs a process
+            // death — the checkpoint-to-migration stretch has no suspension point, so the
+            // server-id guards cannot *create* it, only prolong it once the editor registry
+            // has production callers.)
             formatted = try await client.formattedContent(documentID: serverID)
         } catch let error as DocsAPIError where error == .notFound {
             // The checkpointed document is gone, so resuming can never succeed — and silently
@@ -786,8 +789,21 @@ final class DocumentSaveCoordinator {
         // another client is not a co-author at all. What makes it acceptable is scope: only
         // the *title* is decided this way, and only across a window that is normally
         // microseconds; the **body** is protected properly, by the conflict recorded below.
-        let title =
-            queued[localID]?.title ?? draft?.title ?? migrated?.title ?? serverTitle ?? record.title
+        // **The local title wins only when the local side actually renamed.** A draft still
+        // carrying the *mint* title has contributed nothing, so the server's is the newer one
+        // — and on a resume that is not hypothetical: once checkpointed, the local row is
+        // withheld and the user meets the document under `serverID` in an ordinary list, where
+        // a rename lands, `finish` removes the server-id draft, and the seed draft is left
+        // holding "Untitled document". Without this discriminator the migration PATCHes that
+        // back over their rename, silently. The window is the whole deferral, not the
+        // microseconds the fresh-POST path takes.
+        let localTitle = queued[localID]?.title ?? draft?.title ?? migrated?.title
+        let title: String
+        if let localTitle, localTitle != record.title {
+            title = localTitle  // a real local rename, and the newer one
+        } else {
+            title = serverTitle ?? localTitle ?? record.title
+        }
 
         // **The baseline says what this body descends from — and on the conflict path that is
         // not what we just observed.** Stamping one is mandatory either way: a baseline-less
@@ -1453,6 +1469,7 @@ final class DocumentSaveCoordinator {
                         // writer of a draft under a freshly-minted server id stamps one), but a
                         // hand-built baseline-less draft is what that shape naturally looks
                         // like, which is how it would become reachable.
+                        guard !createStoreUnreadable else { continue }
                         guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
                         draftStore.remove(documentID: draft.documentID)
                     }

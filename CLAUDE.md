@@ -1386,7 +1386,7 @@ markdown write endpoint**. Understand this before touching the save path:
   be indistinguishable from a real document. `abilities.childrenCreate` is false —
   but **nothing reads it**, so that records the intent rather than enforcing it:
   children-of-local-parents are out of scope until a replay can order them, and it is
-  the create UI that must not offer the affordance (today's gates on `isOffline` alone); `destroy` is false for the same reason, until the UI has a
+  the create UI that must not offer the affordance (today it gates on `isOffline` alone); `destroy` is false for the same reason, until the UI has a
   no-network delete branch (advertising it today would promise a delete that
   404s, and leave the record un-removable — `discardPendingWork` is reached only
   from a *successful* delete).

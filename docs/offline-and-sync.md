@@ -1614,11 +1614,13 @@ trigger — with its body alive only in the local draft. The trade is deliberate
 unrecoverable duplicate versus recoverable invisibility); making such a record
 visible and dischargeable is owed with the create UI.
 
-**"Checkpointed but not migrated" is now a routine state**, not only a
-crash-recovery one, because the server-id guards bail after the checkpoint (and the
-editor re-check will too, once it has production callers) (the *delete* re-check is the one exception — there the
-record is gone, so there is nothing left to resume and the server document is simply
-orphaned). In it the server holds an empty document, the record is withheld from the
+**"Checkpointed but not migrated" is a state to design for**, though today it still
+requires a process death: the checkpoint-to-migration stretch has no suspension point,
+so the server-id guards can only *prolong* it, and the editor re-check that would
+create it has no production callers yet. It becomes ordinary once they land, because
+those guards bail after the checkpoint, as will the editor re-check. (The *delete*
+re-check is the one exception: there the record is gone, so nothing is left to resume and
+the server document is simply orphaned.) In it the server holds an empty document, the record is withheld from the
 local list,
 and the content is still in a draft under the local id. Nothing is lost — the
 next pass finishes the job — but a list fetch landing in that window shows the
