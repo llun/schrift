@@ -197,8 +197,9 @@ final class PagesTreeViewModel {
         do {
             child = try await client.createChild(documentID: parent, title: "Untitled subpage")
         } catch {
-            // Same split as the editor's own "Add a subpage": a failure that could not have
-            // created anything falls back to a local page the replay sends later; a rejection
+            // Same split as the editor's own "Add a subpage": a failure worth retrying falls
+            // back to a local page (a `.network` timeout can hide an applied POST — the
+            // accepted cost is one orphaned *empty* child) the replay sends later; a rejection
             // on the merits keeps the error. The parent must itself be synced — a child of an
             // unsynced parent is out of v1 scope, since the replay cannot order the two.
             guard let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),

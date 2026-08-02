@@ -171,7 +171,19 @@ final class DocumentSaveCoordinator {
     /// designed completion path, and the *only* one on iPad), and an overlapping trigger is
     /// coalesced into a no-op that returns before the migration happens. So it hangs off the
     /// migration itself, which is the event that actually invalidates the list.
-    var onDocumentMigrated: (@MainActor () -> Void)?
+    ///
+    /// Carries the **created document**, because a refetch alone is not enough: a fresh
+    /// install used offline first has no recents cache for `insertIntoListCaches` to write
+    /// into (it refuses to fabricate one), so if the refetch then fails the row is in no list
+    /// at all. The subscriber can put the real document straight into its in-memory list —
+    /// never into the cache, which stays the server's to fill.
+    ///
+    /// Fired **last**, after the terminal `enqueue`, so a subscriber sees a fully settled
+    /// state. Firing mid-function would expose a diverged resume with its draft on disk, its
+    /// state `.idle` and *no conflict recorded yet* — a synchronous handler that enqueued
+    /// there would go straight to `start` and full-overwrite the co-author.
+    @ObservationIgnored
+    var onDocumentMigrated: (@MainActor (Document?) -> Void)?
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
@@ -444,6 +456,17 @@ final class DocumentSaveCoordinator {
         pendingCreates[documentID] = nil
         pendingCreatesVersion += 1
         createStore.remove(localID: documentID)
+    }
+
+    /// Test seams for staging a *checkpointed* record, which only the replay can otherwise
+    /// produce. Both go through the same mirror+disk pair every other writer uses, so a test
+    /// cannot construct a state the production code could not.
+    func pendingCreateForTesting(localID: UUID) -> PendingDocumentCreate? {
+        pendingCreates[localID]
+    }
+
+    func savePendingCreateForTesting(_ record: PendingDocumentCreate) {
+        updatePendingCreate(record)
     }
 
     /// Test seam: whether any screen currently holds this document. The registration is
@@ -1156,7 +1179,20 @@ final class DocumentSaveCoordinator {
         if let document { insertIntoListCaches(document, parentID: record.parentID) }
 
         removePendingCreate(documentID: localID)
-        onDocumentMigrated?()
+        // **Fire on every exit from here, and only at exit.** `defer` rather than a call site,
+        // for both halves of that. Placed after `removePendingCreate` because dropping the
+        // record is what withholds the local row and so what obliges a refetch; deferred
+        // because two paths leave before the end — the adopt branch returns early, and a
+        // resume whose cosmetic fetch failed carries no document — and pinning the call to
+        // the last statement silently skipped both, reproducing the vanishing row this
+        // exists to prevent. Exit-time is also the only safe point: mid-function a diverged
+        // resume has its draft on disk, its state `.idle` and no conflict recorded yet, so a
+        // synchronous handler that enqueued there would full-overwrite the co-author.
+        //
+        // `document` is nil when that cosmetic fetch failed: there is no real row to hand
+        // over, but the refetch is still owed, so the callback fires with nil rather than not
+        // at all.
+        defer { onDocumentMigrated?(document) }
 
         // **If the server already holds a body, ask — do not push over it.** Reachable only
         // on a resume: between the checkpoint and here the document has been live on the web,

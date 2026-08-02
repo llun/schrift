@@ -1197,8 +1197,10 @@ final class EditorViewModel {
         do {
             child = try await client.createChild(documentID: documentID, title: "Untitled subpage")
         } catch {
-            // Same split as Home's `createDocument`: a failure that could not have created
-            // anything falls back to a local sub-page, which the replay POSTs under this
+            // Same split as Home's `createDocument`: a failure worth retrying falls back to a
+            // local sub-page (not, strictly, one that could not have created anything — a
+            // `.network` timeout can hide an applied POST, whose accepted cost is one orphaned
+            // *empty* child, since content is enqueued only after migration), which the replay POSTs under this
             // parent later. A rejection on the merits (403 "you may not add children here",
             // a 400) keeps the error — minting there would promise a replay the server will
             // decline again. `.sessionExpired` likewise stays an error; the re-login sheet is

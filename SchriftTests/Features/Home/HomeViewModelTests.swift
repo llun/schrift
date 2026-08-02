@@ -69,8 +69,8 @@ final class HomeViewModelTests: XCTestCase {
         // fails retryably writes a real record — and to `UserDefaults.standard` if this is
         // left defaulted, where it *persists on the simulator across runs*. Every later
         // `syncPendingDrafts` in any test then passes the replay's pre-flight gate and issues
-        // a real `/users/me/`, which escapes `MockURLProtocol` and hangs the suite on a 60 s
-        // URL timeout. That is what it looks like: a test unrelated to creation, stalling.
+        // requests nothing set up, recording phantom entries into that test's
+        // `RequestRecorder`. A test unrelated to creation fails on a count it never caused.
         let suiteName = "HomeViewModelTests.coordinator.\(UUID().uuidString)"
         coordinatorSuiteNames.append(suiteName)
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -463,6 +463,93 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertTrue(
             viewModel.recentDocuments.isEmpty,
             "the previous user's unsynced documents are not listed to the new one")
+    }
+
+    /// The adopt-the-server branch drops the record and `return`s **before** the end of the
+    /// migration, and a resume whose cosmetic fetch failed carries no document. Pinning the
+    /// callback to the last statement skipped both — the record goes, the local row is
+    /// withheld, and nothing refetches. `defer` is what makes every exit fire.
+    func testAnAdoptedMigrationStillTriggersARefetch() async {
+        let log = RequestRecorder()
+        let serverID = "88888888-8888-4888-8888-888888888888"
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser())
+        preferences.set(true, forKey: "schrift.workOffline")
+        let local = await viewModel.createDocument()
+        preferences.set(false, forKey: "schrift.workOffline")
+        // A checkpointed record whose resume finds a server body: the local seed body is
+        // canonically empty, so the migration adopts the server and returns early.
+        var record = viewModel.saveCoordinator.pendingCreateForTesting(localID: local!.id)!
+        record.syncedServerID = UUID(uuidString: serverID)!
+        viewModel.saveCoordinator.savePendingCreateForTesting(record)
+
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(serverID)", "title": "Untitled document",
+                         "content": "# Written on the web", "created_at": "2026-03-01T12:00:00Z",
+                         "updated_at": "2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.syncPendingDrafts()
+        await waitUntil { viewModel.saveCoordinator.isPendingCreate(documentID: local!.id) == false }
+
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "documents/?") > 0 }
+    }
+
+    /// The case the refetch alone cannot cover: a fresh install used offline first has **no**
+    /// recents cache, so `insertIntoListCaches` correctly declines to fabricate one — and if
+    /// the refetch that follows fails, the document is in no list at all. The real row is
+    /// swapped into memory before the refetch, so it never blinks out.
+    func testAMigratedDocumentSurvivesAFailedRefetchOnAFreshInstall() async {
+        let serverID = "77777777-7777-4777-8777-777777777777"
+        let cache = makeCache()
+        let viewModel = makeViewModel(cache: cache, signedInUser: makeSignedInUser())
+        preferences.set(true, forKey: "schrift.workOffline")
+        let local = await viewModel.createDocument()
+        preferences.set(false, forKey: "schrift.workOffline")
+        XCTAssertNil(cache.loadRecentDocuments(), "never fetched — nothing to re-seed from")
+
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            if request.httpMethod == "POST" {
+                return .init(
+                    statusCode: 201, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "\(serverID)", "title": "Untitled document",
+                         "abilities": {"destroy": true, "partial_update": true}, "content": "",
+                         "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z",
+                         "depth": 1, "numchild": 0, "path": "00000A", "link_reach": "restricted",
+                         "link_role": "reader", "user_role": "owner"}
+                        """.utf8), error: nil)
+            }
+            // Every list fetch fails — the flaky-reconnect profile.
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        await viewModel.syncPendingDrafts()
+        await waitUntil { viewModel.saveCoordinator.isPendingCreate(documentID: local!.id) == false }
+
+        await waitUntil { viewModel.recentDocuments.map { $0.id.uuidString.lowercased() } == [serverID] }
+        XCTAssertNil(cache.loadRecentDocuments(), "and no cache entry was fabricated")
     }
 
     /// A migrated document must not vanish from a live Home. The record is dropped, so the

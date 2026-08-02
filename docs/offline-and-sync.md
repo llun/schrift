@@ -1191,10 +1191,30 @@ recorded below rather than fixed here.
 **And a migrated document must not vanish from a live Home.** The replay drops the record,
 so the local row is correctly withheld the instant it migrates — but the *real* row exists
 only in the fetched array, which still holds the list from before the document was created.
-Nothing else reloads: the reconnect and foreground edges call `syncPendingDrafts()` and not
-`load()`, `insertIntoListCaches` writes only the cache, and the list's own `.task` does not
-re-run on pop-back. So `HomeViewModel.syncPendingDrafts()` refetches — but only when this
-device actually had something to replay, so an ordinary reconnect costs nothing extra.
+Nothing else reloads: `insertIntoListCaches` writes only the cache, and the list's own
+`.task` does not re-run on pop-back.
+
+**The refetch hangs off the migration, not off the triggers.** Pinning it to
+`HomeViewModel.syncPendingDrafts()` covered only two of the four things that start a create
+pass — `recoverDrafts` at launch and `releaseOpenEditor` when an editor closes do not come
+through it, and the second is the designed completion path and the only one on iPad; an
+overlapping trigger is coalesced into a no-op that returns before the migration happens. So
+`migrateCreatedDocument` fires `onDocumentMigrated` instead, which covers every trigger by
+construction.
+
+It carries the **created document**, because a refetch alone is not enough: a fresh install
+used offline first has no recents cache for `insertIntoListCaches` to write into (it refuses
+to fabricate one), so a refetch that then fails would leave the row in no list at all. The
+subscriber swaps the real document into its in-memory list first — never into the cache,
+which stays the server's to fill — and refetches after. It fires **last**, after the terminal
+`enqueue`: mid-function, a diverged resume has its draft on disk, its state `.idle` and no
+conflict recorded yet, so a synchronous handler that enqueued there would full-overwrite the
+co-author.
+
+The callback is **single-subscriber**, which is trigger-independent but not
+list-independent: a migrating *sub-page* refreshes Home, which never showed it, while the
+editor's Subpages section and the Pages drawer keep their synthetic row. That is the
+already-recorded ghost residual below, not a new one.
 
 - **[LANDED — `SignedInUserStore`]** Persisting the signed-in user id. Listing and minting both require it, and
   it is only ever learned from `/users/me/` and stored nowhere — so launching
@@ -1217,6 +1237,17 @@ device actually had something to replay, so an ordinary reconnect costs nothing 
   visibility is the wrong signal. A leaked retain is not harmless *within* a
   session: that document never replays while the caption says "syncs when
   online".
+- **A local sub-page under a parent whose access is revoked is stranded with no route.**
+  The replay's `createChild` 403s, the parent probe 403s too (terminal, since only a *404*
+  promotes to root), and the record goes `.failed`, which `runCreatePass` skips — `init`
+  re-seeds `.pendingSync` each launch, so it retries and re-fails forever. Meanwhile
+  `pendingLocalDocuments` filters on `parentID`, and Home asks for `nil`, so the child
+  appears in no top-level list; its only route is the parent's editor, and once a successful
+  Home fetch overwrites the list cache there is no row for the parent either. The body is on
+  disk, correctly protected from every delete path, listed nowhere and never sent. Closing it
+  means either promoting to root on a *terminal* parent failure (not just a 404) or giving
+  the stranded record a visible affordance — the same recovery this list already owes for
+  `replayBlockedAt` and a permanently-`.forbidden` resume.
 - **The Pages drawer has no read-time merge.** The editor's Subpages section merges local
   children; `PagesTreeViewModel` renders from `children`/the shared cache and does not, so a
   local sub-page vanishes from the drawer on the next successful level fetch even though it

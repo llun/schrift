@@ -111,8 +111,19 @@ final class HomeViewModel {
         // A migration re-keys a document onto its server id, after which the local row is
         // correctly withheld and the real one exists only in a server response this view model
         // has not made yet. Refetch on the event itself — see `onDocumentMigrated`.
-        self.saveCoordinator.onDocumentMigrated = { [weak self] in
+        self.saveCoordinator.onDocumentMigrated = { [weak self] migrated in
+            // nil when the resume could not fetch the document — the refetch below is then
+            // the whole remedy.
             guard let self else { return }
+            // Swap the real document in *first*, so the row never blinks out. A refetch alone
+            // is not enough: a fresh install used offline first has no recents cache, so
+            // `insertIntoListCaches` correctly declines to fabricate one and a refetch that
+            // then fails would leave the document in no list at all. In-memory only — the
+            // cache stays the server's to fill.
+            if let migrated, !self.fetchedRecentDocuments.contains(where: { $0.id == migrated.id }) {
+                self.fetchedRecentDocuments.insert(migrated, at: 0)
+                self.hasKnownFetchedList = true
+            }
             Task { await self.load() }
         }
         pinnedDocuments = cache.loadPinnedDocuments()
