@@ -379,11 +379,27 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// thing that could have driven a recovery after a shipped decode fix.
     func testAnUnreadableDraftStoreStopsTheReplayEntirely() async {
         let log = RequestRecorder()
+        // The POST must return a **decodable** Document, or removing the guard merely lands a
+        // `.decoding` failure — which stamps `replayBlockedAt` and *keeps* the record, so the
+        // record assertion below would pass with the guard gone and prove nothing. With a real
+        // response the destructive chain runs to completion: mint-title POST, both-drafts guard
+        // on the same nil, `enqueue("")`, `removePendingCreate`.
+        let created = Data(
+            """
+            {"id": "44444444-4444-4444-8444-444444444444", "title": "Untitled document",
+             "abilities": {"destroy": true, "partial_update": true},
+             "content": "", "created_at": "2026-03-01T12:00:00Z",
+             "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
+             "link_reach": "restricted", "link_role": "reader", "user_role": "owner"}
+            """.utf8)
         MockURLProtocol.stubHandler = { request in
             log.record(request)
-            return .init(
-                statusCode: 200, headers: [:],
-                body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
+            }
+            return .init(statusCode: 201, headers: [:], body: created, error: nil)
         }
         let suiteName = "CoordinatorCreateTests.corruptDrafts.\(UUID().uuidString)"
         suiteNames.append(suiteName)

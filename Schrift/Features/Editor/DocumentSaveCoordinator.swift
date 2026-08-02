@@ -155,9 +155,14 @@ final class DocumentSaveCoordinator {
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
     /// models and by the pushed `NavigationPath` values — so an open screen cannot follow the
-    /// id and would keep writing drafts under one the holds no longer cover. Deferring makes
-    /// mid-swap edit loss unrepresentable rather than merely unlikely: there is no moment at
-    /// which a live screen and a migration are both in progress.
+    /// id and would keep writing drafts under one the holds no longer cover. Deferring is meant
+    /// to make mid-swap edit loss unrepresentable rather than merely unlikely.
+    ///
+    /// **That is the design, not the current state.** `retainOpenEditor`/`releaseOpenEditor`
+    /// have zero production callers — every call site today is a test — so this stays empty,
+    /// `hasOpenEditor` always answers false, and none of the four deferrals reading it ever
+    /// fires. Wiring it from `EditorView`, for *every* document rather than only
+    /// locally-created ones, is owed with the create UI.
     private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
@@ -468,19 +473,6 @@ final class DocumentSaveCoordinator {
     /// Dormant until something mints a record: `allCreates()` is empty, so the pre-flight gate
     /// returns before issuing any request at all.
     private func runCreatePass() async {
-        // **Never replay while the drafts are unknown.** `PendingDraftStore.loadAll` is
-        // all-or-nothing, so one undecodable blob makes every `draft(for:)` answer nil — and
-        // this pass reads that as "the body is empty". It would then POST each record under
-        // its mint title, sail through `finishMigration`'s both-drafts guard (which reads the
-        // same nil), enqueue `""`, and `removePendingCreate` — deleting the one thing that
-        // could have driven a recovery after a shipped decode fix. N unrecoverable empty
-        // documents from a single schema slip.
-        //
-        // Before the replay existed, an undecodable blob merely made unsaved work invisible.
-        // This is the first caller that acts irreversibly on it, so it is the caller that has
-        // to ask. Same discipline as `createStoreUnreadable`: a schema slip must degrade to
-        // "nothing is sent", never to "everything is committed empty".
-        guard !draftStore.holdsUnreadableData else { return }
         let records = createStore.allCreates()
         // Cheap gate before the round trip: a record from another server, or one nothing can
         // attribute, can never be replayed here (see `belongsToSession`) and nothing deletes
@@ -492,6 +484,39 @@ final class DocumentSaveCoordinator {
                     && !$0.isReplayBlocked(forBuild: appBuild)
             })
         else { return }
+
+        // Placed **after** the cheap gate above deliberately: this reads and decodes every
+        // draft on the device, bodies included, on the main actor. Nothing below reads a
+        // draft until `replayCreate`, so deferring it past the gate costs no safety and
+        // keeps the dormant case — no replayable records, which is every device today —
+        // free of a full draft decode on every launch, foreground and reconnect.
+        // **Never replay while the drafts are unknown.** `PendingDraftStore.loadAll` is
+        // all-or-nothing, so one undecodable blob makes every `draft(for:)` answer nil — and
+        // this pass reads that as "the body is empty". It would then POST each record under
+        // its mint title, sail through `finishMigration`'s both-drafts guard (which reads the
+        // same nil), enqueue `""`, and `removePendingCreate` — deleting the one thing that
+        // could have driven a recovery after a shipped decode fix. N unrecoverable empty
+        // documents from a single schema slip.
+        //
+        // Before the replay existed, an undecodable blob merely made unsaved work invisible;
+        // this pass is what turns it into destroyed content, so this is where it is asked.
+        // (Not the *only* irreversible consumer, though — `init`'s conflict rehydration reads
+        // the same empty answer and silently drops every persisted hold, after which `enqueue`
+        // takes the `start` path against a server the user was warned about. That one predates
+        // this PR and is untouched here.)
+        //
+        // **This buys less than `createStoreUnreadable` does, and the difference matters.**
+        // That flag is read once at init and is sticky, backed by a quarantine key. This one is
+        // recomputed per pass over bytes that two very ordinary callers overwrite: `enqueue`'s
+        // `draftStore.save` on any keystroke for *any* document, and `discardPendingWork`'s
+        // `remove`. Both are read-modify-writes through `loadAll`, which answers `[:]` for a
+        // corrupt blob — so the first of them replaces the damaged bytes, this flag goes false,
+        // and the next pass does exactly what the guard exists to prevent: POST under the mint
+        // title, pass the both-drafts guard on the same nil, enqueue `""`, and delete the
+        // records. The hold lasts until the first save on any document, not until the schema is
+        // fixed. Strictly better than firing at launch, but the thing that would make it mean
+        // anything past that write is the quarantine `PendingDraftStore` still owes.
+        guard !draftStore.holdsUnreadableData else { return }
         // Which account is in front of us. Asked once per pass, and only when there is
         // something to send: `isReplayable` needs it, and this is the layer that *can* await
         // it — the coordinator is constructed long before `/users/me/` returns. A failure
@@ -716,6 +741,11 @@ final class DocumentSaveCoordinator {
             // and the record would strand permanently. True, and beside the point: it ranked
             // stranding above losing the body, which is backwards. The guards below are the
             // correction, and this discharge now runs only once they have all passed.
+            //
+            // (Those statements are ~45 lines down, past the three guards and their own
+            // rationale. This block is here because it explains why the *branch* ends the way
+            // it does; the next paragraph starts a separate argument.)
+            //
             // **Do not start over while work survives under the server id.** The checkpoint is
             // the *only* thing protecting that draft: `isPendingCreate` is keyed on the local
             // id, so `runSyncPass`'s delete branch skips it solely because
@@ -785,8 +815,10 @@ final class DocumentSaveCoordinator {
             document: document)
     }
 
-    /// The migration, guarded by the two things that can have changed while the POST or the
-    /// resume GET was in flight.
+    /// The migration, guarded by everything that can have changed while the POST or the resume
+    /// GET was in flight: an editor opening on either id, the record being deleted, a save
+    /// starting or being parked for the server id, and the both-drafts window. Five guards —
+    /// the first two keyed on `localID`, the rest on `serverID`.
     private func finishMigration(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?
@@ -970,9 +1002,17 @@ final class DocumentSaveCoordinator {
         // it**. That body is not the offline one — it is whatever a previous attempt already
         // wrote under the server id — so the diverged path's "the local body provably does not
         // descend from that push" is false of it, and dropping the stamp would raise a conflict
-        // no evidence can ever release against the user's own earlier write. The condition is
-        // exactly `draft(localID) == nil && migrated != nil`; the both-drafts guard rules out
-        // every other shape in which `migrated` could be the source.
+        // no evidence can ever release against the user's own earlier write.
+        //
+        // The condition is `draft == nil && queued[localID] == nil` — **both conjuncts**, and
+        // the `queued` one is not decoration. It exactly characterises "the body came from
+        // `migrated`", because `queued[localID]` *outranks* `migrated` in the body chain
+        // above: drop it and the stamp rides along with a body that came from the offline
+        // draft instead, which is precisely the false rule-1 evidence this is meant to avoid —
+        // `releaseConflictIfProven` could then discharge the conflict the diverged arm just
+        // recorded and let the held save full-overwrite the co-author. The both-drafts guard
+        // does **not** rule that shape out; it keys on draft presence, not on `queued`. This
+        // conjunct is the only thing that does.
         let carriedPush = (draft == nil && queued[localID] == nil) ? migrated?.lastPushedMarkdown : nil
         // **Load-bearing and unstated until now:** this rebuild carries no
         // `conflictServerUpdatedAt`, so it *erases* a stamp `init` rehydrated from disk while
@@ -1024,6 +1064,9 @@ final class DocumentSaveCoordinator {
         // writes one), but purge defensively so a stale entry can never outlive the id.
         contentCache.remove(documentID: localID)
 
+        // **This paragraph is about the `insertIntoListCaches` call further down**, not the
+        // statements immediately below it — the adopt branch's draft removal sits in between.
+        //
         // Put it under its real id before the record disappears. Note what this does and does
         // not buy: it feeds the *next* Home construction and the work-offline read, which are
         // the only two places `HomeViewModel` re-seeds from the cache. An online `load()`

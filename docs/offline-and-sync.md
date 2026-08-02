@@ -1258,14 +1258,24 @@ nice-to-have:
 - **`PendingDraftStore` still has no quarantine, where `PendingDocumentCreateStore` does.**
   Its `loadAll` is the same all-or-nothing `try?` decode, so one undecodable blob makes every
   draft on the device read as absent. It now at least *detects* that (`holdsUnreadableData`),
-  and `runCreatePass` returns on it — because the replay was the first caller anywhere that
-  acted **irreversibly** on a nil draft read: it would POST each record under its mint title,
-  pass `finishMigration`'s both-drafts guard (which reads the same nil), enqueue `""`, and then
-  `removePendingCreate`, destroying the one thing that could have driven a recovery after a
-  shipped decode fix. What is still owed is the other half the create store has: quarantining
-  the bytes before a read-modify-write reuses the key, and making the flag sticky. Until then a
-  `save` after the corruption overwrites the damaged blob and the bodies are gone for good —
-  and drafts are full document bodies, so the blast radius is larger than the records'.
+  and `runCreatePass` returns on it — because the replay is what turns a nil draft read into
+  **destroyed content**: it would POST each record under its mint title, pass
+  `finishMigration`'s both-drafts guard (which reads the same nil), enqueue `""`, and then
+  `removePendingCreate`, taking the one thing that could have driven a recovery after a shipped
+  decode fix. (It is not the only irreversible consumer — `init`'s conflict rehydration reads
+  the same empty answer and silently drops every persisted hold, after which the next `enqueue`
+  full-overwrites a server the user was warned about. That one predates the replay.)
+
+  **The guard buys a window, not a guarantee, and that is the part worth remembering.** The
+  flag is not sticky and every mutating method on that store is a read-modify-write through the
+  same all-or-nothing `loadAll`, so the first `save` on **any** document — one keystroke in any
+  open editor — replaces the damaged bytes, clears the flag, and lets the following pass POST
+  and delete the records exactly as it would have at launch. What is owed is the other half the
+  create store has: quarantine the bytes before the key is reused, and make the flag sticky.
+  Drafts are full document bodies, so the blast radius is larger than the records'. The same
+  reasoning gives `PendingDraft`/`DraftBaseline` the create record's obligation: **every field
+  added must stay Optional-on-decode**, or the addition gates the replay on every existing
+  device and then un-gates it destructively on the first keystroke.
 - **An escape for a checkpoint that keeps 404ing with work under its server id.** The
   start-over now declines while a `serverID` draft survives, so a genuinely deleted
   document leaves the record checkpointed indefinitely: three GETs plus a `/users/me/` per trigger — four, once `runSyncPass` also fetches the surviving draft's document, the body on
