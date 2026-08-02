@@ -196,8 +196,9 @@ final class DocumentSaveCoordinator {
     /// opened from Home whose id a checkpointed record is about to migrate *onto*. The view
     /// hold is released when the *view model* is deallocated, not on `onDisappear` — that
     /// fires on mere invisibility (a tab switch), and the replay must not re-key a document
-    /// whose screen is about to return. Five readers: four `guard` deferrals plus the
-    /// take-back's conjunct.
+    /// whose screen is about to return. Six readers: four `guard` deferrals, the take-back's conjunct, and
+    /// `discardPendingWork`'s checkpointed branch — the one that is *not* a deferral, since
+    /// it clears the checkpoint and restarts the record instead of returning.
     ///
     /// The cost is broader than an iPad split view: any editor left pushed in a tab's
     /// navigation stack holds its document until the user pops back, so a create-type-switch-
@@ -705,10 +706,8 @@ final class DocumentSaveCoordinator {
             // a document that had *acquired* a body would be silently full-overwritten, and
             // the lying baseline would mislead every later `draftSyncDecision` too. That is no
             // longer only a theoretical path: "checkpointed but not migrated" is a state the
-            // document is visible and editable on the web in. (Today it still needs a process
-            // death — the checkpoint-to-migration stretch has no suspension point, so the
-            // server-id guards cannot *create* it, only prolong it once the editor registry
-            // has production callers.)
+            // document is visible and editable on the web in. (It no longer needs a process death — the checkpoint-to-migration stretch has no suspension point, so the
+            // server-id guards cannot *create* it, only prolong it.)
             formatted = try await client.formattedContent(documentID: serverID)
         } catch let error as DocsAPIError where error == .notFound {
             // The checkpointed document is gone, so resuming can never succeed — and silently
@@ -1199,7 +1198,7 @@ final class DocumentSaveCoordinator {
 
         // **If the server already holds a body, ask — do not push over it.** Reachable only
         // on a resume: between the checkpoint and here the document has been live on the web,
-        // and "checkpointed but not migrated" is a state to design for (crash-only today), so a co-author (or the same
+        // and "checkpointed but not migrated" is a state to design for (previously crash-only), so a co-author (or the same
         // user on another client) can have written to it. The enqueue below goes straight to
         // `start` — the record is gone, so nothing holds it — which would silently
         // full-overwrite that body. Recording a conflict first engages the ordinary

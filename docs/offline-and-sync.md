@@ -1116,9 +1116,9 @@ true — so that branch runs for exactly the case where it is false. See the del
 **Synthetic `Document`s never enter a persisted metadata cache.**
 `localDocument(from:)` fills the server-owned fields with inert placeholders
 (`path: ""`, `depth: 1`, `numchild: 0`) and claims only locally-true abilities
-(update/partialUpdate — `destroy` waits for a
-no-network delete branch in the UI, since advertising it today would promise a
-delete that 404s). A list load replaces its array *and* its cache
+(update/partialUpdate — `destroy` stays false even
+though the local-delete branch shipped, because nothing consults these abilities
+to decide what to offer: the sheet asks `isLocalDocument`). A list load replaces its array *and* its cache
 entry wholesale, so a locally-inserted row would vanish on the next fetch — lists
 merge at **read** time via `mergedWithLocalDocuments(fetched:local:)` instead,
 whose id de-duplication is a cheap guard against overlapping lists and
@@ -1232,7 +1232,7 @@ already-recorded ghost residual below, not a new one.
   the replay work against a server that omits `id`.
 - **[LANDED — `EditorView` retains for every document, released on view-model `deinit` so a tab switch cannot trigger the swap]** Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
   create UI — from `EditorView` itself, for *every* document, not only
-  locally-created ones.** The "+" case is the obvious one: it opens an editor
+  locally-created ones. The "+" case is the obvious one: it opens an editor
   immediately, so a missed retain makes the very first reconnect-while-typing the
   migration-under-a-live-screen case. But the `serverID` half of the guard is only
   live if an *ordinary* document opened from Home, Search or Shared retains too —
@@ -1679,7 +1679,7 @@ document waits for the next ordinary list fetch.
 
 **And a resume that finds a body does not push over it.** Between the checkpoint
 and the migration the document is live and editable on the web, and
-"checkpointed but not migrated" is a state to design for (crash-only today) — so a co-author, or the same
+"checkpointed but not migrated" is a state to design for (previously crash-only) — so a co-author, or the same
 user on another client, can have written to it. The migration's `enqueue` goes
 **straight to `start`** (the record is gone by then, so nothing holds it), which
 would silently full-overwrite that body. So when the server's markdown differs
@@ -1824,8 +1824,7 @@ unreachable — withheld from `pendingLocalDocuments`, never pushed, two GETs pe
 trigger — with its body alive only in the local draft. The trade is deliberate (an
 unrecoverable duplicate versus recoverable invisibility); making such a record visible and dischargeable is still owed.
 
-**"Checkpointed but not migrated" is a state to design for**, though today it still
-requires a process death: the checkpoint-to-migration stretch has no suspension point,
+**"Checkpointed but not migrated" is a state to design for**, and no longer requires a process death: the checkpoint-to-migration stretch has no suspension point,
 so the server-id guards can only *prolong* it, and the editor re-check that would
 create it is `EditorView.onAppear` → `noteEditorAppeared`, wired for every document. It is
 ordinary now that it is wired, because
