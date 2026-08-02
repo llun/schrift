@@ -44,4 +44,19 @@ final class EditorToolbarActionsTests: XCTestCase {
         XCTAssertNil(presenceBadgeCount(peerCount: 3, isOffline: true))
         XCTAssertNil(presenceBadgeCount(peerCount: 0, isOffline: true))
     }
+
+    /// A document that exists only on this device has no share URL and no accesses to list,
+    /// so Share would open a sheet showing "Couldn't load members" over a link nobody else
+    /// can open. Editing and Options (for Delete) are exactly what it does need.
+    func testALocalDocumentDropsShareButKeepsEditingAndOptions() {
+        XCTAssertEqual(editorToolbarActions(isEditing: false, isLocal: true), [.edit, .options])
+        XCTAssertEqual(editorToolbarActions(isEditing: true, isLocal: true), [.done, .options])
+    }
+
+    /// And a synced document is unchanged, offline or not — sharing one offline fails loudly,
+    /// which predates this change.
+    func testASyncedDocumentKeepsShare() {
+        XCTAssertEqual(editorToolbarActions(isEditing: false), [.edit, .share, .options])
+        XCTAssertEqual(editorToolbarActions(isEditing: true, isLocal: false), [.done, .share, .options])
+    }
 }

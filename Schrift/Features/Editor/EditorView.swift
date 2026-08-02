@@ -131,8 +131,17 @@ enum EditorToolbarAction: Equatable {
     case options
 }
 
-func editorToolbarActions(isEditing: Bool) -> [EditorToolbarAction] {
-    [isEditing ? .done : .edit, .share, .options]
+/// `isLocal` drops **Share**: a document that exists only on this device has no share URL
+/// and no accesses to list, so the sheet would show "Couldn't load members" over a link
+/// nobody else can open. Everything else stays — editing, and Options for Delete — because
+/// they are exactly what a local document needs. Deliberately *not* keyed on `isOffline`:
+/// sharing an already-synced document offline fails loudly, which is the pre-existing
+/// behaviour and not this change's business.
+func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorToolbarAction] {
+    var actions: [EditorToolbarAction] = [isEditing ? .done : .edit]
+    if !isLocal { actions.append(.share) }
+    actions.append(.options)
+    return actions
 }
 
 /// The count shown on the options button while others are in the document, or
@@ -269,7 +278,10 @@ struct EditorView: View {
                     .accessibilityHidden(isPresentingPagesTree)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    ForEach(editorToolbarActions(isEditing: viewModel.isEditing), id: \.self) {
+                    ForEach(
+                        editorToolbarActions(isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument),
+                        id: \.self
+                    ) {
                         action in
                         toolbarButton(for: action)
                             .accessibilityHidden(isPresentingPagesTree)
@@ -735,6 +747,11 @@ struct EditorView: View {
             // is actually engaged, so classic-only documents are unaffected.
             viewModel.liveWrite = bridge
         }
+        // A document the server has never seen has no collaboration room to join — the
+        // socket dials a URL containing its id. Belt-and-braces (the availability gate and
+        // `canEngageLiveEditing` would both refuse anyway, the latter because a local
+        // document always has a draft), but this is the cheap place to say so.
+        guard !viewModel.isLocalDocument else { return }
         guard !holdsCollaborationSession else { return }
         if collaboration.session(for: viewModel.documentID) != nil {
             holdsCollaborationSession = true
@@ -836,10 +853,13 @@ struct EditorView: View {
                 }
                 // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
 
-                // Still gated: creating a sub-page POSTs, and a document that does not
-                // exist server-side has nothing for the draft pipeline to save to.
-                // Offline creation is its own change.
-                if !isOffline {
+                // No longer gated on `isOffline` — a failed POST falls back to a local
+                // sub-page the replay sends later. Gated instead on the *parent* being local:
+                // a child of an unsynced parent is out of v1 scope, because the replay has no
+                // way to order the two creates (the child's `parentID` names an id the server
+                // has never seen). `abilities.childrenCreate` on a synthetic document records
+                // the same intent, but nothing reads it — this is the gate that enforces it.
+                if !viewModel.isLocalDocument {
                     Button {
                         Task {
                             if let child = await viewModel.addSubpage() {

@@ -86,6 +86,10 @@ final class EditorViewModel {
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    /// Whose local documents may be minted here — see `SignedInUserStore`. Nil withholds the
+    /// sub-page fallback entirely, which fails closed rather than minting an unattributable
+    /// record nothing would ever list or replay.
+    private let signedInUser: SignedInUserStore
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration
@@ -170,6 +174,7 @@ final class EditorViewModel {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         autosaveInterval: Duration = .seconds(10),
@@ -181,6 +186,7 @@ final class EditorViewModel {
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
         self.contentCache = contentCache
         self.childrenCache = childrenCache
         self.autosaveInterval = autosaveInterval
@@ -1124,12 +1130,45 @@ final class EditorViewModel {
         childrenCache.save(results.results, for: documentID)
     }
 
+    /// Reflect a new child immediately (and durably) so popping back — possibly offline —
+    /// shows it without waiting on a refetch. Only when the current list is actually known
+    /// (fetched or cached): appending to a nil (unknown) list would persist a fabricated
+    /// one-element "complete" result that hides the document's real children.
+    ///
+    /// A *local* child is written into the children cache like any other, which is safe in a
+    /// way a synthetic row in Home's list cache is not: this cache is keyed by parent and is
+    /// purged wholesale on the parent's own 404/403, and the replay inserts the real child
+    /// here when it migrates. The row the user just created must survive leaving the screen.
+    private func appendChild(_ child: Document) {
+        // Any in-flight children fetch predates this child — invalidate it.
+        childrenGeneration += 1
+        if var updated = subpages {
+            updated.append(child)
+            subpages = updated
+            childrenCache.save(updated, for: documentID)
+        }
+    }
+
     func addSubpage() async -> Document? {
         clearError()
         let child: Document
         do {
             child = try await client.createChild(documentID: documentID, title: "Untitled subpage")
         } catch {
+            // Same split as Home's `createDocument`: a failure that could not have created
+            // anything falls back to a local sub-page, which the replay POSTs under this
+            // parent later. A rejection on the merits (403 "you may not add children here",
+            // a 400) keeps the error — minting there would promise a replay the server will
+            // decline again. `.sessionExpired` likewise stays an error; the re-login sheet is
+            // already up.
+            if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
+                let ownerUserID = signedInUser.userID
+            {
+                let local = saveCoordinator.createLocalDocument(
+                    title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
+                appendChild(local)
+                return local
+            }
             // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a 403
             // here means "you may not add children to this document", not "this document
             // was taken away from you". Tearing the editor down would discard the user's
@@ -1137,18 +1176,7 @@ final class EditorViewModel {
             showError(.editor_error_add_subpage)
             return nil
         }
-        // Any in-flight children fetch predates this child — invalidate it.
-        childrenGeneration += 1
-        // Reflect the new child immediately (and durably) so popping back —
-        // possibly offline — shows it without waiting on a refetch. Only when
-        // the current list is actually known (fetched or cached): appending to
-        // a nil (unknown) list would persist a fabricated one-element "complete"
-        // result that hides the document's real children.
-        if var updated = subpages {
-            updated.append(child)
-            subpages = updated
-            childrenCache.save(updated, for: documentID)
-        }
+        appendChild(child)
         return child
     }
 
