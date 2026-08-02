@@ -1221,6 +1221,12 @@ nice-to-have:
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
+- **Repopulating a *live* Home after a migration.** The replay's list-cache insert feeds
+  the next Home construction and the work-offline read — the only two places
+  `HomeViewModel` re-seeds from the cache — but an online `load()` overwrites from the
+  network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
+  read-time merge is wired, a live Home loses the row when `removePendingCreate` runs and
+  regains it only on the next successful fetch.
 - **Gating the editor's fetch on a pending-create id.** `EditorViewModel.revalidate`
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen

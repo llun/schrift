@@ -884,8 +884,13 @@ final class DocumentSaveCoordinator {
         // writes one), but purge defensively so a stale entry can never outlive the id.
         contentCache.remove(documentID: localID)
 
-        // Make it visible under its real id before the record disappears, or the document
-        // drops out of Home between here and the next successful list fetch. Absent when the
+        // Put it under its real id before the record disappears. Note what this does and does
+        // not buy: it feeds the *next* Home construction and the work-offline read, which are
+        // the only two places `HomeViewModel` re-seeds from the cache. An online `load()`
+        // reads it for a Bool and then overwrites from the network, and the reconnect edge
+        // calls `syncPendingDrafts()` without `load()` — so a **live** Home is not repopulated
+        // here. Closing that window is the create UI's job, alongside wiring the read-time
+        // merge. Absent when the
         // resume's cosmetic fetch failed — the document simply waits for the next list fetch.
         // **Take the server-id draft off before the record goes**, when the adopt branch below
         // will fire. Removing the record first and dying leaves an unprotected draft holding a
@@ -1440,6 +1445,15 @@ final class DocumentSaveCoordinator {
                         // discards **and installs** the winning body atomically, on the
                         // screen that is actually showing it.
                         guard isLaunchRecovery else { continue }
+                        // The loop's *other* deleting line. Its local-id half is covered by the
+                        // `isPendingCreate` guard before the fetch, but the server-id half is
+                        // not — so state the same invariant here rather than relying on a
+                        // caller, exactly as the 404/403 branch does. Unreachable today
+                        // (`.discardServerWins` is rule 3, which needs a nil baseline, and every
+                        // writer of a draft under a freshly-minted server id stamps one), but a
+                        // hand-built baseline-less draft is what that shape naturally looks
+                        // like, which is how it would become reachable.
+                        guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
                         draftStore.remove(documentID: draft.documentID)
                     }
                 }
