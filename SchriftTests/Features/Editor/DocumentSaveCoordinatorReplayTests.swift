@@ -1287,9 +1287,73 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// The start-over must not retract the checkpoint under a live screen on the server id.
+    /// It removes no draft itself — so the take-back's rationale does not apply — but clearing
+    /// `syncedServerID` disarms `runSyncPass`'s server-id suppression, and `runCreatePass`
+    /// guards only the *local* id. A user reading the document under `serverID` (the only id
+    /// they are offered once checkpointed) can type straight after, take a transient save
+    /// failure, and have the next pass meet the same 404 with nothing left holding their
+    /// draft back.
+    func testAStartOverDoesNotFireWhileAnEditorHoldsTheServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // The screen is open on the server id, with nothing written under it yet — so the
+        // draft-absence gate below would pass and the marker is clean.
+        relaunched.coordinator.retainOpenEditor(documentID: serverID)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            relaunched.creates.create(for: local.id)?.syncedServerID, serverID,
+            "the checkpoint is not retracted while a screen is still writing under that id")
+    }
+
+    /// The other arm of `!diverged`, which must **not** release. An empty server with a
+    /// non-empty local body is not proof the conflict is moot: `serverMarkdown` is
+    /// `formatted.content ?? ""`, so a response carrying no body is indistinguishable from an
+    /// emptied document, and nothing here compares the observed `updated_at` against the stamp
+    /// the conflict was recorded with. Releasing would discharge a pill the user has already
+    /// been shown and then immediately full-overwrite the co-author, since the enqueue that
+    /// follows would no longer be parked.
+    func testAnEmptyServerDoesNotReleaseAConflictAgainstANonEmptyLocalBody() async {
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        // Partial-migration window, stamped — but with a real body, against the stub's empty
+        // server copy. So `diverged` is false via the empty-server arm, not via equality.
+        env.drafts.remove(documentID: local.id)
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Untitled document", markdown: "# Real local work",
+                updatedAt: Date(), baseline: nil, lastPushedMarkdown: nil,
+                conflictServerUpdatedAt: Date(timeIntervalSince1970: 1)))
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        XCTAssertNotNil(relaunched.coordinator.conflict(for: serverID), "rehydrated from the draft")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "kept — an absent body is not proof the co-author's document is empty")
+        await waitAndConfirmNever { self.savesInFlight(log) > 0 }
+    }
+
     /// A conflict stamp persisted by an earlier session is rehydrated by `init` for the
-    /// *server* id. If the migration then finds the server holding our own body, that record
-    /// protects nothing — and leaving it parks the enqueue below, makes `runSyncPass` skip the
+    /// *server* id. If the migration then finds the server holding our own body — the
+    /// **equality** arm, the only one that proves anything — that record protects nothing — and leaving it parks the enqueue below, makes `runSyncPass` skip the
     /// document, and self-perpetuates until the user happens to open the editor.
     func testAnUndivergedMigrationReleasesAConflictItProvesIsMoot() async {
         let log = RequestRecorder()

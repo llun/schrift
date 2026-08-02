@@ -1246,6 +1246,12 @@ nice-to-have:
   scope: a title PATCH from that branch is an unowned `Task` outside the coordinator's
   ordering bookkeeping, which is what made the first attempt a defect. The residual is that
   a provably-newer rename is dropped for a document whose body is being adopted wholesale.
+- **`PendingDraftStore` has no quarantine, where `PendingDocumentCreateStore` now does.**
+  Its `loadAll` is the same all-or-nothing `try?` decode, so a single undecodable draft
+  silently drops **every** draft on the device — the exact failure class the create store
+  treats as content loss (quarantine the bytes, set a sticky `holdsUnreadableData`, suppress
+  every delete). Pre-existing and untouched here, but the asymmetry is newly conspicuous:
+  drafts are full document bodies, so the blast radius is larger than the records'.
 - **An escape for a checkpoint that keeps 404ing with work under its server id.** The
   start-over now declines while a `serverID` draft survives, so a genuinely deleted
   document leaves the record checkpointed indefinitely: three GETs plus a `/users/me/` per trigger — four, once `runSyncPass` also fetches the surviving draft's document, the body on
@@ -1591,6 +1597,21 @@ and the record re-asks instead. Where it does clear, the residual is the one a
 spurious 404 always carried — a re-POST that orphans a document still alive on the
 server — now narrowed to the case where no local body is at stake.
 
+**A migration releases a conflict only when it has *proved* it moot.** `init` rehydrates a
+conflict from a persisted stamp, so a migration can meet one for the server id with nothing
+else clearing it — `recordConflict` fires only on the diverged arm, `clearResolvedConflict`
+only on the adopt one — and the enqueue that ends the migration would then park, `runSyncPass`
+would skip the document, and it would self-perpetuate until the user happened to open the
+editor. So the undiverged path discharges it, but **on equality only**
+(`canonicalServer == canonicalBody`), never on `!diverged`. The difference matters: equality
+proves the record is moot, since a conflict is recorded because the two differed, so the
+enqueue is a content no-op. The other arm — an empty server against a non-empty body — proves
+nothing, because `serverMarkdown` is `formatted.content ?? ""` (a response carrying no body is
+indistinguishable from an emptied document) and nothing compares the observed `updated_at`
+against the stamp. Releasing there would discharge a pill the user was already shown and then
+immediately full-overwrite the co-author. `diverged`'s empty-server carve-out is a trade
+accepted for *detection*; it does not extend to discharging a persisted hold.
+
 **A third suppression protects the server-id half.** `isPendingCreate` is keyed on the
 *local* id, so it does not cover the draft the migration writes under `serverID` before
 removing the local one — and in that window that draft is the **only copy**. The sweep's
@@ -1628,13 +1649,16 @@ two guards close different harms (the draft-absence one, losing the body; the ma
 duplicating the document). The take-back's identical conjunct cannot stand in for it,
 since the take-back is skipped outright whenever a local draft is present.
 
-Gating that on evidence of *concurrent* activity (a live save, an open editor,
-`mayPredateSave`) is not enough, because the user who typed under `serverID` and then
-navigated away leaves no such witness — and theirs is exactly the work at stake. The
-sufficient question is not "is anyone busy?" but "is anything still there to lose?", so the
-start-over requires `draftStore.draft(for: serverID) == nil`: take the body back if this is
-the partial-migration window, and otherwise leave the checkpoint in place and re-ask next
-pass. The take-back carries the concurrency conjuncts for its own reason — it can run with a
+Gating that on evidence of *concurrent* activity alone is not enough, because the user who
+typed under `serverID` and then navigated away leaves no such witness — and theirs is
+exactly the work at stake. The sufficient question is not "is anyone busy?" but "is anything
+still there to lose?", so the start-over requires `draftStore.draft(for: serverID) == nil`:
+take the body back if this is the partial-migration window, and otherwise leave the
+checkpoint in place and re-ask next pass. Insufficient is not unnecessary, though — it
+carries `!mayPredateSave(marker)` (above) and `!hasOpenEditor(serverID)` beside it, and the
+three close different harms: draft-absence, losing the body; the marker, duplicating the
+document; the editor, retracting the checkpoint while a screen is still writing under that
+id and thereby disarming the sweep's server-id suppression. The take-back carries the concurrency conjuncts for its own reason — it can run with a
 live editor on `serverID` (`runCreatePass` only guards the *local* id), and removing that
 draft would yank the screen's disk backing and split the conflict mirror
 `persistConflictOnDraft` keeps whole.

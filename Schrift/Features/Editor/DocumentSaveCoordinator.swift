@@ -661,9 +661,11 @@ final class DocumentSaveCoordinator {
             // `runSyncPass` will not delete the draft while the record is checkpointed — and
             // it is bounded by the recovery affordance recorded as owed in the docs.
             //
-            // The take-back carries the concurrency conjuncts for its own reason — the
-            // start-over below has a single one (`draft(serverID) == nil`), so this is not a
-            // copy of it. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
+            // The take-back carries the concurrency conjuncts for its own reason. It shares
+            // `!mayPredateSave(marker)` with the start-over below, but the two are not
+            // redundant: this one is skipped outright whenever a local draft is present, and
+            // that is exactly the shape in which the start-over still runs — so neither can
+            // stand in for the other. `inFlight` and `hasOpenEditor` are this guard's alone. `runCreatePass` only guards `hasOpenEditor(record.localID)`,
             // so this branch can run with a live editor — or an in-flight save — on `serverID`,
             // and removing that draft yanks the disk backing out from under it; the editor's
             // next flush would recreate it while the re-POST mints a *second* document holding
@@ -733,6 +735,16 @@ final class DocumentSaveCoordinator {
             // conjunct, but it is skipped entirely whenever a local draft is present, so it
             // cannot stand in for this one.)
             guard !mayPredateSave(marker) else { return }
+            // And not under a live screen on that id. This branch removes no draft, so the
+            // take-back's rationale does not apply — but clearing the checkpoint *disarms*
+            // `runSyncPass`'s server-id suppression, and `runCreatePass` only ever guarded
+            // `hasOpenEditor(record.localID)`. A user reading the document under `serverID`
+            // (the only id they are offered once checkpointed) can type immediately after,
+            // take a transient save failure, and have the next pass meet the same 404 with
+            // nothing left to hold its draft back. The checkpoint is the app's own record
+            // that it believed this document alive; a bare `.notFound` is not the evidence
+            // to retract it while a screen is still writing under it.
+            guard !hasOpenEditor(documentID: serverID) else { return }
             guard draftStore.draft(for: serverID) == nil else { return }
             // Nothing is left under that id, so the conflict record and any parked save are
             // moot by construction — there is no work left for them to protect.
@@ -839,6 +851,16 @@ final class DocumentSaveCoordinator {
         // resume reads an already-removed local draft as empty and overwrites good content
         // with "".
         let migrated = draftStore.draft(for: serverID)
+        // First **non-nil**, not first non-empty — and that distinction is load-bearing if a
+        // second draft remover is ever added. `carriedPush` below keys off
+        // `draft == nil && queued[localID] == nil`, which concedes that `draft == nil` with
+        // `queued` populated is representable; in that shape a present-but-*empty* `queued`
+        // would win over a non-empty `migrated`, set `willAdoptServer`, and delete the migrated
+        // body. Unreachable today — nothing removes a local draft while leaving `queued`
+        // populated (`runSyncPass` skips pending creates, and this function does both
+        // synchronously) — and `finishMigration`'s both-drafts guard does *not* cover it, since
+        // it keys on draft presence rather than on `queued`. `discardStoredDraft` is the
+        // obvious candidate to make it reachable; check this line if the create UI wires one.
         let body = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
         // **The title is a merge, not a race.** The body's "newest wins" rule does not carry
         // over: on a resume the document has been an ordinary Home row under its server id for
@@ -910,6 +932,15 @@ final class DocumentSaveCoordinator {
         // the same accepted trade — an emptied server holds nothing, so there is nothing to
         // lose by writing, whereas treating it as a divergence would raise a conflict against
         // a document with no content in it.
+        // Note this is a rule-0 (body equality) test, not `draftSyncBodyDecision`. It can
+        // therefore disagree with rule 1: the diverged arm clears
+        // `lastConfirmedPushMarkdown[serverID]` precisely so rule 1 cannot release the conflict
+        // it records, yet it still carries `carriedPush` onto the same draft — so if the server
+        // happens to hold exactly that body, the very next evaluation releases on
+        // `.serverHoldsOurLastPush`. That release is *correct* (we were the last writer), and
+        // no content is at risk either way; the cost is a pill that can appear and then vanish
+        // on its own. Consulting rule 1 here would remove the disagreement, at the price of
+        // giving this branch a second decision procedure to keep in step.
         let diverged = !canonicalServer.isEmpty && canonicalServer != canonicalBody
         let baseline =
             diverged
@@ -1085,7 +1116,7 @@ final class DocumentSaveCoordinator {
             recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
         }
 
-        // **Undiverged, release any conflict `init` rehydrated for this id.** Nothing above
+        // **Release a conflict this migration has *proved* moot — equality only.** Nothing above
         // clears it — `recordConflict` only fires on the diverged arm and `clearResolvedConflict`
         // only on the adopt one — so a stamp persisted by an earlier session would park the
         // enqueue below, `runSyncPass` would then skip the document on that same record, and it
@@ -1099,7 +1130,21 @@ final class DocumentSaveCoordinator {
         // ran: `clearResolvedConflict` → `releaseHeldSave` therefore has no parked save to
         // start, and this is a pure clear plus the draft-stamp rewrite the enqueue below
         // redoes anyway.
-        if !diverged { clearResolvedConflict(documentID: serverID) }
+        //
+        // **Equality, not `!diverged`.** `!diverged` is two arms and only one of them proves
+        // anything. On `canonicalServer == canonicalBody` a conflict is moot by construction:
+        // it was recorded because local and server differed, so equality now means someone
+        // made the server match us, and the enqueue below is a content no-op. The other arm —
+        // an *empty* server with a non-empty body — proves nothing of the sort, and releasing
+        // there would discharge a pill the user has already been shown and then immediately
+        // full-overwrite: `serverMarkdown` is `formatted.content ?? ""`, so a response that
+        // simply carried no body reads as "the server is empty", and nothing here compares the
+        // observed `updated_at` against the stamp the conflict was recorded with. The
+        // empty-server carve-out in `diverged` is an accepted trade for *detection*; extending
+        // it to discharging a persisted hold and starting a destructive write is a strictly
+        // stronger claim, and one this branch cannot make. That arm keeps its hold and waits
+        // for the user.
+        if canonicalServer == canonicalBody { clearResolvedConflict(documentID: serverID) }
 
         // Undiverged, this is an ordinary document with an ordinary queued edit: rule 2 sees a
         // server no newer than the baseline we just stamped and answers `.push`. Diverged, the

@@ -1485,7 +1485,9 @@ markdown write endpoint**. Understand this before touching the save path:
   beside it**, because a save that started *and settled* inside the resume's fetch window has
   `finish` remove its draft, manufacturing the very emptiness the first gate reads as safe while
   the 404 may predate it (that one duplicates the document; the draft-absence gate closes the
-  different harm of losing the body) — and the take-back carries the
+  different harm of losing the body), plus `!hasOpenEditor(serverID)` — clearing the checkpoint
+  disarms the sweep's server-id suppression, and `runCreatePass` guards only the *local* id, so
+  a screen writing under `serverID` would be left unprotected — and the take-back carries the
   concurrency conjuncts for its own reason (it can run under a live editor on the server id,
   where removing the draft yanks the screen's backing and splits the conflict mirror). A
   genuinely deleted document then strands — checkpointed, unreachable, lossless — which is

@@ -370,9 +370,6 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertEqual(relaunched.state(for: document.id), .pendingSync)
     }
 
-    /// The whole hold rests on the create store decoding. If it ever doesn't, the records
-    /// are *unknown* — not absent — so any draft might belong to a local document, and the
-    /// 404 branch would delete every offline-created document's only copy at once. Cleaning
     /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —
     /// carries the same `!createStoreUnreadable` guard, and its sibling above cannot cover it:
     /// that test drives a 404, which reaches the *catch*. Getting here needs a draft whose
@@ -423,6 +420,9 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             "unknown records must not read as 'no local documents exist' here either")
     }
 
+    /// The whole hold rests on the create store decoding. If it ever doesn't, the records
+    /// are *unknown* — not absent — so any draft might belong to a local document, and the
+    /// 404 branch would delete every offline-created document's only copy at once. Cleaning
     /// up nothing is recoverable; that is not.
     func testAnUnreadableCreateStoreSuppressesTheSyncPassDeleteEntirely() async {
         let log = RequestRecorder()
