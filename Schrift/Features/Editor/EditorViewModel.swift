@@ -309,6 +309,9 @@ final class EditorViewModel {
     /// when the view leaves the hierarchy and not before. The release still kicks the sync
     /// funnel, so a migration this screen deferred completes on close rather than waiting for
     /// the next foreground or reconnect.
+    /// The `guard` is churn-avoidance, not a balance requirement: assigning a second token
+    /// would deallocate the first, which releases, so the count stays right either way. It
+    /// saves a pointless retain/release pair and a main-actor hop per repeated `onAppear`.
     func noteEditorAppeared() {
         guard openEditorRegistration == nil else { return }
         saveCoordinator.retainOpenEditor(documentID: documentID)

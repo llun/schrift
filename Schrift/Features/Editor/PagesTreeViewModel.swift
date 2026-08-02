@@ -155,6 +155,11 @@ final class PagesTreeViewModel {
         if children[parentID] == nil, let cached = cache.children(for: parentID) {
             children[parentID] = cached
         }
+        // A client-minted id 404s, which would land this level in `failedLoads` — a retry
+        // affordance for something that can never load. The editor's own `loadChildren`
+        // carries the same guard; this sibling was missed, so opening the drawer on a
+        // locally-created document issued a doomed request.
+        if saveCoordinator?.isPendingCreate(documentID: parentID) == true { return }
         // "Work offline" (Profile > Preferences): serve the cached tree and
         // never hit the network, the same contract the document lists honour.
         // Read through the injected defaults, never the singleton.

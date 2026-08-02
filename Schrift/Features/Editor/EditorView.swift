@@ -730,6 +730,9 @@ struct EditorView: View {
     /// (retrying availability later must not mint a second bridge instance and
     /// lose the first's identity map / seed state).
     private func requestCollaborationSessionIfNeeded() {
+        // First, before the bridge is even built: a document the server has never seen has no
+        // collaboration room to join — the socket dials a URL containing its id.
+        guard !viewModel.isLocalDocument else { return }
         if liveEditingBridge == nil {
             let bridge = LiveEditingBridge(
                 documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,
@@ -740,11 +743,6 @@ struct EditorView: View {
             // is actually engaged, so classic-only documents are unaffected.
             viewModel.liveWrite = bridge
         }
-        // A document the server has never seen has no collaboration room to join — the
-        // socket dials a URL containing its id. Belt-and-braces (the availability gate and
-        // `canEngageLiveEditing` would both refuse anyway, the latter because a local
-        // document always has a draft), but this is the cheap place to say so.
-        guard !viewModel.isLocalDocument else { return }
         guard !holdsCollaborationSession else { return }
         if collaboration.session(for: viewModel.documentID) != nil {
             holdsCollaborationSession = true

@@ -1333,7 +1333,7 @@ markdown write endpoint**. Understand this before touching the save path:
   than defensive. (Scoped to saves deliberately: opening a local document names
   its id from places the coordinator does not own — `formattedContent`, the
   children fetch, the collaboration room, Options' delete and version history —
-  and gating those is the create UI's job. Until then the invariant is *broader
+  and those are gated by `EditorViewModel.isLocalDocument` instead. The invariant is *broader
   than its enforcement*. The create UI mints records now, so a *save* is fully guarded while
   those other paths are guarded by `EditorViewModel.isLocalDocument` instead.)
   1. **`enqueue` holds** — the same park-the-save branch the conflict hold uses.
@@ -1388,10 +1388,11 @@ markdown write endpoint**. Understand this before touching the save path:
   be indistinguishable from a real document. `abilities.childrenCreate` is false —
   but **nothing reads it**, so that records the intent rather than enforcing it:
   children-of-local-parents are out of scope until a replay can order them, and it is
-  the create UI that must not offer the affordance (today it gates on `isOffline` alone); `destroy` is false for the same reason, until the UI has a
-  no-network delete branch (advertising it today would promise a delete that
-  404s, and leave the record un-removable — `discardPendingWork` is reached only
-  from a *successful* delete).
+  the affordances that enforce it — the button is hidden for a local parent and `addSubpage`
+  carries the guard. `destroy` stays false even though deleting one now works, because nothing
+  consults these abilities to decide whether to offer Delete (the sheet asks `isLocalDocument`),
+  so flipping it would change no behaviour while costing the dictionary its one meaning: what
+  the *server* would allow for this id, which is nothing.
   **Protection and ownership are separate, and conflating them cost content.**
   `isPendingCreate` is deliberately **unscoped** — a record minted against another
   server still names an id that would 404 here — while one `belongsToSession`
@@ -1470,12 +1471,15 @@ markdown write endpoint**. Understand this before touching the save path:
   to give; **remove the record
   last**, because it is what keeps the holds in force; then enqueue the content.
   **A replay never runs while an editor is open** on that document
-  (`retainOpenEditor`/`releaseOpenEditor`), wired from `EditorView`'s appear/disappear for
+  (`retainOpenEditor`/`releaseOpenEditor`), wired from `EditorView`'s `onAppear` for
   **every** document rather than only locally-created ones — the server-id guard's
   motivating case is an ordinary document opened from Home whose id a checkpointed record
-  is about to migrate *onto*. The *view* owns the balance (the registry reference-counts,
-  and SwiftUI may re-run `onAppear` without an intervening `onDisappear`), and the flush
-  runs before the release so the deferred migration sees the work. Why it matters: migration re-keys everything, and
+  is about to migrate *onto*. **The hold is released when the view model is deallocated,
+  not on `onDisappear`**: that fires on mere invisibility (a tab switch), and releasing
+  there let the replay re-key a document whose screen was about to return, after which the
+  editor held a dead id — a 404 teardown, and post-return keystrokes enqueued against an id
+  no hold covers, then swept. The cost is that any editor left pushed holds its document
+  until the user pops back. Why it matters: migration re-keys everything, and
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap

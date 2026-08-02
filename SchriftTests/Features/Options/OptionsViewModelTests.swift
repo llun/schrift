@@ -145,6 +145,33 @@ final class OptionsViewModelTests: XCTestCase {
         XCTAssertNil(env.creates.create(for: env.document.id))
     }
 
+    /// A **404** is not a failure to report: it is indistinguishable from a co-author having
+    /// deleted the document first, and keeping the record re-arms the resurrection — the next
+    /// resume takes the same 404, clears the checkpoint, and the pass after that re-POSTs the
+    /// document from its draft, back with its old body under a new id.
+    func testAnAlreadyDeletedServerCopyStillClearsTheRecord() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 404, headers: ["Content-Type": "application/json"],
+                body: Data(#"{"detail":"Not found."}"#.utf8), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        var record = env.creates.create(for: env.document.id)!
+        record.syncedServerID = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        env.creates.save(record)
+        let coordinator = DocumentSaveCoordinator(
+            client: env.client, draftStore: env.drafts, createStore: env.creates,
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let viewModel = OptionsViewModel(
+            client: env.client, documentID: env.document.id, isFavorite: false, saveCoordinator: coordinator)
+
+        await viewModel.delete()
+
+        XCTAssertTrue(viewModel.didDelete)
+        XCTAssertNil(viewModel.errorKey, "already gone is not an error")
+        XCTAssertNil(env.creates.create(for: env.document.id), "and nothing is left to re-POST")
+    }
+
     /// A failed server DELETE must leave everything: the record still names a live document,
     /// and discarding the local trace here would strand it permanently.
     func testAFailedServerDeleteKeepsTheRecord() async {

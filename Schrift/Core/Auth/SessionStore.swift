@@ -15,6 +15,8 @@ final class SessionStore {
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
     private let cookieStorage: CookieStoring
+    /// Cleared the moment a session is known to be over — see `noteSessionExpired`.
+    private let signedInUser: SignedInUserStore
 
     private(set) var serverURL: URL?
     private(set) var isAuthenticated: Bool
@@ -27,11 +29,15 @@ final class SessionStore {
     init(
         userDefaults: UserDefaults = .standard,
         keychain: KeychainStoring = KeychainStore(),
-        cookieStorage: CookieStoring = HTTPCookieStorage.shared
+        cookieStorage: CookieStoring = HTTPCookieStorage.shared,
+        signedInUser: SignedInUserStore? = nil
     ) {
         self.userDefaults = userDefaults
         self.keychain = keychain
         self.cookieStorage = cookieStorage
+        // Defaults to the same `userDefaults` this store was given, so a test that isolates
+        // one isolates both.
+        self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
         self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
         // Synchronous, so the cookies are back in the shared storage before
@@ -71,6 +77,16 @@ final class SessionStore {
     func noteSessionExpired() {
         guard isAuthenticated else { return }
         needsReauthentication = true
+        // **Forget who was signed in, immediately.** The sheet can be answered by a
+        // *different* account, and until the next `/users/me/` succeeds nothing here can tell
+        // which. A stale id lists the previous user's unsynced documents to the new one, who
+        // can open and type into them — and the record still carries the first user's
+        // `ownerUserID`, so those edits are eventually POSTed into *their* account. Refreshing
+        // after re-auth is not enough on its own: that fetch can fail, and "keep the last
+        // known id" is the wrong direction for listing even though it is the right one for
+        // sending. Nil fails closed — no local document is listed until the server says whose
+        // it is — which costs a brief empty section and discloses nothing.
+        signedInUser.clear()
     }
 
     /// User dismissed the re-login sheet without signing in. Cached data keeps

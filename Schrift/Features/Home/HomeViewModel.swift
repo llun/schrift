@@ -28,22 +28,27 @@ final class HomeViewModel {
         // coordinator's record version. Reading `pendingCreatesVersion` here is also what
         // registers the `@Observable` dependency, so a migrated row leaves a live Home the
         // moment `removePendingCreate` runs rather than at the next successful fetch.
+        // **The account is part of the key.** Re-authenticating as someone else changes who
+        // may be listed without touching either of the other two, so a memo keyed only on
+        // them would keep serving the previous user's documents to the new one.
         let version = saveCoordinator.pendingCreatesVersion
-        if let cached = mergedRecents, cached.version == version, cached.fetched == fetchedRecentDocuments {
+        let owner = signedInUser.userID
+        if let cached = mergedRecents, cached.version == version, cached.owner == owner,
+            cached.fetched == fetchedRecentDocuments
+        {
             return cached.merged
         }
         let merged = mergedWithLocalDocuments(
             fetched: fetchedRecentDocuments,
-            local: saveCoordinator.pendingLocalDocuments(
-                parentID: nil, currentUserID: signedInUser.userID))
-        mergedRecents = (version, fetchedRecentDocuments, merged)
+            local: saveCoordinator.pendingLocalDocuments(parentID: nil, currentUserID: owner))
+        mergedRecents = (version, owner, fetchedRecentDocuments, merged)
         return merged
     }
 
     /// Memo for `recentDocuments`. `@ObservationIgnored` so writing it from a *getter* does
     /// not register a mutation and re-invalidate the very view that just read it.
     @ObservationIgnored
-    private var mergedRecents: (version: Int, fetched: [Document], merged: [Document])?
+    private var mergedRecents: (version: Int, owner: UUID?, fetched: [Document], merged: [Document])?
     var searchResults: [Document] = []
     var isLoading = false
     var errorKey: L10nKey?
@@ -269,7 +274,14 @@ final class HomeViewModel {
             await load()
             return document
         } catch {
-            // **Fall back only for a failure that could not have created anything.**
+            // **Fall back only for a failure that is worth retrying.** Not, strictly, one that
+            // "could not have created anything": a `.network` timeout can hide a POST the
+            // server applied, and a 502/504 can sit in front of an origin that created the
+            // document. The accepted residual is one orphaned *empty* document per such
+            // response — the body is enqueued after migration, so the orphan never holds
+            // content — which is the same trade the replay accepts for a lost response, and
+            // the opposite of the `.decoding` case, where a 2xx makes creation likely enough
+            // to block the retry outright.
             // `retryableSaveFailure` is the same classifier the save path uses: transport,
             // 5xx, rate limit. A rejection on the merits (a 400, a 403) means the server
             // answered and declined, and minting a local document there would promise a

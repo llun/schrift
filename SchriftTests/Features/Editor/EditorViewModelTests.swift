@@ -105,6 +105,36 @@ final class EditorViewModelTests: XCTestCase {
         return (viewModel, coordinator, document, draftStore)
     }
 
+    /// The registration is tied to `deinit` rather than to `onDisappear`, which fires on mere
+    /// invisibility: this pins the release to the view model's lifetime.
+    ///
+    /// It calls `noteEditorAppeared` twice, but note what that does **not** prove. Deleting
+    /// the idempotence `guard` leaves this green, because assigning a second token deallocates
+    /// the first and that release balances the second retain — the guard avoids churn, it is
+    /// not load-bearing, and the code says so. What this does pin is the token itself:
+    /// removing it times the wait out.
+    ///
+    /// Observed on the coordinator's registry directly. Routing it through the replay would
+    /// let it pass whenever the replay simply did not run — the vacuous shape this project
+    /// keeps finding.
+    func testTheEditorRegistrationIsIdempotentAndReleasedOnDealloc() async {
+        let env = makeLocalEnvironment()
+        XCTAssertFalse(env.coordinator.hasOpenEditorForTesting(documentID: env.document.id))
+
+        do {
+            let transient = EditorViewModel(
+                client: env.viewModel.client, documentID: env.document.id, title: "Doc",
+                saveCoordinator: env.coordinator)
+            transient.noteEditorAppeared()
+            transient.noteEditorAppeared()  // a repeated `onAppear` must not double-count
+            XCTAssertTrue(env.coordinator.hasOpenEditorForTesting(documentID: env.document.id))
+        }
+
+        // `deinit` hops to the main actor to release, so let that turn run. Timing out here
+        // means either the token was never created or the retain was counted twice.
+        await waitUntil { !env.coordinator.hasOpenEditorForTesting(documentID: env.document.id) }
+    }
+
     /// A transport failure on "Add a subpage" keeps the page on the device rather than
     /// reporting an error, exactly as Home's create does.
     func testAddSubpageFallsBackToALocalChildOnATransportError() async {

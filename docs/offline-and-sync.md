@@ -1193,10 +1193,9 @@ checkpointed record via `syncedServerID(forLocalID:)`. What remains:
   live if an *ordinary* document opened from Home, Search or Shared retains too —
   that is precisely its motivating scenario, the user meeting a checkpointed
   document under its real id. Retaining only for local documents leaves that guard
-  dead in the case it was added for. Copy `EditorView`'s
-  `holdsCollaborationSession` shape — a one-shot `@State` flag, released only if
-  held — rather than calling retain from `onAppear` directly, so the pairing
-  cannot double-count or leak. A leaked retain is not harmless *within* a
+  dead in the case it was added for. The shipped shape is a token released in the view model's
+  `deinit` rather than a `@State` flag released on `onDisappear` — see above for why
+  visibility is the wrong signal. A leaked retain is not harmless *within* a
   session: that document never replays while the caption says "syncs when
   online".
 - **[LANDED — all three states] Deleting a local document**, which is two changes that must land together:
@@ -1403,12 +1402,16 @@ Deferring makes mid-swap edit loss *unrepresentable* rather than merely unlikely
 Releasing the last hold kicks the funnel — for a pending-create id or a checkpointed
 server id — so popping back on iPhone syncs immediately. The accepted cost: an iPad
 split-view editor left selected defers that document until it is deselected or the app
-relaunches. `EditorView` retains on appear and releases on disappear, for **every**
+relaunches. `EditorView` retains on appear — and releases when the view model is
+**deallocated**, not on `onDisappear`, which fires on mere invisibility — for **every**
 document rather than only locally-created ones — the server-id guards' motivating case
 is an ordinary document opened from Home whose id a checkpointed record is about to
-migrate *onto*. The view owns the balance (the registry reference-counts and SwiftUI may
-re-run `onAppear` without a matching `onDisappear`), and the flush runs before the
-release so the deferred migration sees the work rather than running a pass behind it.
+migrate *onto*. Releasing on disappearance let the replay re-key a document whose screen was
+about to return: the editor then held a dead id, took a 404 teardown, and enqueued
+post-return keystrokes against an id no hold covers, which the next launch's sweep
+removed. The accepted cost of the fix is broader than the iPad case named below — any
+editor left pushed in a tab's stack holds its document until the user pops back, which
+kicks the funnel. Bounded by user action, not by connectivity.
 
 **Everything that can change during the await is re-checked after it — and a boolean is
 not enough.** The fourth thing that can change is a save for the *server* id that starts

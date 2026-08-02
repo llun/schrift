@@ -63,9 +63,20 @@ final class OptionsViewModel {
             if let serverID = coordinator.syncedServerID(forLocalID: documentID) {
                 do {
                     try await client.deleteDocument(documentID: serverID)
+                } catch let error as DocsAPIError where error == .notFound {
+                    // **Already gone — fall through and clear, do not report.** A 404 here is
+                    // indistinguishable from a co-author having deleted it first, and treating
+                    // it as a failure re-arms the exact resurrection `discardPendingWork`'s
+                    // server-id branch exists to prevent: the record survives, the next resume
+                    // GETs `serverID`, takes the same 404, clears the checkpoint, and the pass
+                    // after that **re-POSTs the document from its draft** — deleted, and back
+                    // with its old body under a new id. The user's intent is known and there
+                    // is provably nothing left to strand, which is precisely when clearing is
+                    // the safe direction.
                 } catch {
-                    // Leave everything: the record still names a live server document, and
-                    // discarding the local trace here would strand it permanently.
+                    // Anything else — transport, 5xx, 403 — leaves everything: the record may
+                    // still name a live document, and discarding the local trace would strand
+                    // it permanently with no affordance to reach it.
                     errorKey = .options_error_delete
                     return
                 }

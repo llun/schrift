@@ -168,12 +168,18 @@ final class DocumentSaveCoordinator {
     /// id and would keep writing drafts under one the holds no longer cover. Deferring is meant
     /// to make mid-swap edit loss unrepresentable rather than merely unlikely.
     ///
-    /// Wired from `EditorView`'s appear/disappear, for **every** document rather than only
+    /// Wired from `EditorView`'s `onAppear`, for **every** document rather than only
     /// locally-created ones — the server-id guards' motivating case is an ordinary document
     /// opened from Home whose id a checkpointed record is about to migrate *onto*. The view
-    /// owns the balance, because this reference-counts and SwiftUI may re-run `onAppear`
-    /// without an intervening `onDisappear`; an unbalanced retain would pin a document
-    /// forever. Five readers: four `guard` deferrals plus the take-back's conjunct.
+    /// hold is released when the *view model* is deallocated, not on `onDisappear` — that
+    /// fires on mere invisibility (a tab switch), and the replay must not re-key a document
+    /// whose screen is about to return. Five readers: four `guard` deferrals plus the
+    /// take-back's conjunct.
+    ///
+    /// The cost is broader than an iPad split view: any editor left pushed in a tab's
+    /// navigation stack holds its document until the user pops back, so a create-type-switch-
+    /// tabs flow leaves it unreplayed while the indicator reads "syncs when online". Bounded
+    /// by user action rather than by connectivity, and popping back kicks the funnel.
     private var openEditors: [UUID: Int] = [:]
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
@@ -429,6 +435,13 @@ final class DocumentSaveCoordinator {
         createStore.remove(localID: documentID)
     }
 
+    /// Test seam: whether any screen currently holds this document. The registration is
+    /// released from a `deinit` that hops to the main actor, so a test needs to observe the
+    /// hop rather than assume it.
+    func hasOpenEditorForTesting(documentID: UUID) -> Bool {
+        hasOpenEditor(documentID: documentID)
+    }
+
     /// The server id a locally-created document has already been POSTed under, if any.
     ///
     /// The delete path needs this and cannot infer it: `isPendingCreate` stays true for a
@@ -518,7 +531,7 @@ final class DocumentSaveCoordinator {
         // Placed **after** the cheap gate above deliberately: this reads and decodes every
         // draft on the device, bodies included, on the main actor. Nothing below reads a
         // draft until `replayCreate`, so deferring it past the gate costs no safety and
-        // keeps the dormant case — no replayable records, which is every device today —
+        // keeps the no-local-documents case —
         // free of a full draft decode on every launch, foreground and reconnect.
         // **Never replay while the drafts are unknown.** `PendingDraftStore.loadAll` is
         // all-or-nothing, so one undecodable blob makes every `draft(for:)` answer nil — and
@@ -1102,6 +1115,12 @@ final class DocumentSaveCoordinator {
         // A local document never reached the content cache (only a confirmed save or a fetch
         // writes one), but purge defensively so a stale entry can never outlive the id.
         contentCache.remove(documentID: localID)
+        // And the synthetic row the editor/drawer optimistically wrote into its parent's
+        // cached level. `insertIntoListCaches` appends the *real* child below, and its
+        // de-dupe is by id — a different id — so without this the level holds both: two rows
+        // in Subpages and the Pages drawer, one of which reports "no longer available" for a
+        // document that has just synced. Same API `handleDidDelete` uses for the same ghost.
+        childrenCache.removeDocument(localID)
 
         // **This paragraph is about the `insertIntoListCaches` call further down**, not the
         // statements immediately below it — the adopt branch's draft removal sits in between.
@@ -1111,8 +1130,8 @@ final class DocumentSaveCoordinator {
         // the only two places `HomeViewModel` re-seeds from the cache. An online `load()`
         // reads it for a Bool and then overwrites from the network, and the reconnect edge
         // calls `syncPendingDrafts()` without `load()` — so a **live** Home is not repopulated
-        // here. Closing that window is the create UI's job, alongside wiring the read-time
-        // merge. Absent when the
+        // here by the *cache* write alone. The read-time merge plus `pendingCreatesVersion`
+        // covers it directly instead — a migrated row leaves a live Home at once. Absent when the
         // resume's cosmetic fetch failed — the document simply waits for the next list fetch.
         // **Take the server-id draft off before the record goes**, when the adopt branch below
         // will fire. Removing the record first and dying leaves an unprotected draft holding a
@@ -1546,6 +1565,12 @@ final class DocumentSaveCoordinator {
                 // Carry the hold through: `enqueue` rebuilds the whole draft, so omitting this
                 // would silently erase a persisted conflict on the next keystroke.
                 conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
+        // A local document's *displayed* title comes from its draft (`pendingLocalDocuments`
+        // overlays it, so a rename shows in lists before the replay lands), and this is the
+        // write that changes it. Without the bump, `HomeViewModel`'s memo — keyed on the
+        // record version — would keep serving the creation title until an unrelated create or
+        // delete happened to move it.
+        if isPendingCreate(documentID: documentID) { pendingCreatesVersion += 1 }
         // Enqueue-hold: while a conflict is recorded, persist the draft and the
         // queued slot (write-ahead, so `pendingSave()` still sees it and the editor's
         // dirty short-circuit / `hasUnsavedLocalContent` keep working) but do NOT
@@ -2002,8 +2027,10 @@ final class DocumentSaveCoordinator {
         //
         //  - Deleted by its *local* id: the local traces must go either way, but the caller
         //    owes the server `DELETE` too, or the document survives and reappears in Home with
-        //    nothing on the device that knows about it. That half is the create UI's, and it
-        //    is recorded in `docs/offline-and-sync.md`.
+        //    nothing on the device that knows about it. `OptionsViewModel.delete()` does that
+        //    half via `syncedServerID(forLocalID:)` — treating a 404 there as "already gone"
+        //    rather than as a failure, since keeping the record would let the resume re-POST
+        //    the document the user just deleted.
         //  - Deleted by its *server* id — reachable **today**, through the unmodified Options
         //    sheet, since that is the only id the user is offered. `isPendingCreate` is keyed
         //    on the local id and answers false, so without the branch below the record and the
