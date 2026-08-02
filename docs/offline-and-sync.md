@@ -852,8 +852,8 @@ ordering; the local phase never blocks on it. `subpages` becomes optional
 (`[Document]?`, nil = not fetched this session): the subpages empty-state copy
 ("Organize this document by creating subpages.") is suppressed until a fetch has
 succeeded this session — render nothing (or just the eyebrow) in the meantime, so
-the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage"
-button is hidden when `isOffline` (`createChild` is a network POST; a failure
+the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage" button is hidden when the *parent* is locally created (until
+  2026-08-02 it was hidden when `isOffline`; `createChild` is a network POST, and a failure
 surfaces `editor_error_add_subpage`, "Couldn't add the subpage. Please try
 again.").
 Caching the subpage list is deferred (Non-goals): if
@@ -1111,8 +1111,7 @@ proof that has to be withheld.
 what the user threw away. "Deleting a local document is purely local" holds only
 while the record is **un-checkpointed**, though: once `syncedServerID` is set the
 POST has landed and a real server object exists — while `isPendingCreate` is still
-true — so that branch runs for exactly the case where it is false. See the
-delete-branch obligation under "What the create UI still owes".
+true — so that branch runs for exactly the case where it is false. See the delete-branch handling in the owed-work list below.
 
 **Synthetic `Document`s never enter a persisted metadata cache.**
 `localDocument(from:)` fills the server-owned fields with inert placeholders
@@ -1224,13 +1223,13 @@ editor's Subpages section and the Pages drawer keep their synthetic row. That is
 already-recorded ghost residual below, not a new one.
 
 - **[LANDED — `SignedInUserStore`]** Persisting the signed-in user id. Listing and minting both require it, and
-  it is only ever learned from `/users/me/` and stored nowhere — so launching
-  offline currently yields no user id at all, which is precisely the case the
-  feature exists for. Failing closed is the right default; supplying the value is
-  the create UI's job. There are now **three** fetch sites (`RootView`,
-  `ProfileViewModel`, and the create pass) and none persists it; once one does,
-  the pass's per-pass fetch should read the persisted value instead — which also
-  makes the replay work against a server that omits `id`.
+  it was only ever learned from `/users/me/` and stored nowhere — so launching
+  offline yielded no user id at all, which is precisely the case the feature exists
+  for. Failing closed is the right default, and `SignedInUserStore` now supplies the
+  value: two of the three fetch sites persist it (`HomeViewModel.refreshSignedInUser`,
+  driven from `RootView`, and `ProfileViewModel`). Still open is the third — the create
+  pass's own `/users/me/` could read the persisted value instead, which would also make
+  the replay work against a server that omits `id`.
 - **[LANDED — `EditorView` retains for every document, released on view-model `deinit` so a tab switch cannot trigger the swap]** Wiring `retainOpenEditor`/`releaseOpenEditor` in the same change as the
   create UI — from `EditorView` itself, for *every* document, not only
   locally-created ones.** The "+" case is the obvious one: it opens an editor
@@ -1317,14 +1316,13 @@ already-recorded ghost residual below, not a new one.
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen
   reads "no longer available". Nothing is lost (the teardown flushes first, the draft
-  survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI must
-  gate that fetch or a locally-created document is unusable the moment it is opened.
+  survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI gates that fetch via `EditorViewModel.isLocalDocument`, without which a
+  locally-created document would be unusable the moment it is opened.
   Recorded in `isPendingCreate`'s docstring and CLAUDE.md; it belongs in this list too.
 - **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
   checkpointed record it takes the `isPendingCreate` branch and removes only the local
   draft, leaving a `serverID` draft and its id-keyed maps behind — where the
-  `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals once the owed
-  server `DELETE` lands (the record goes, so the sweep guard passes and the ordinary 404
+  `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals via the server `DELETE` the local-delete branch now issues (the record goes, so the sweep guard passes and the ordinary 404
   rule reaps it), but the local-delete branch should square the two.
 - **Carrying a rename through the adopt-the-server branch.** Since `postedTitle` landed,
   the code *can* prove a local rename is newer than the name the server learned — the
@@ -1515,8 +1513,7 @@ That makes the **editor** bail genuinely free. The **delete** bail is not, and t
 difference is worth stating: the POST has already landed, and the record is
 deliberately *not* written back (writing it would resurrect what the delete
 removed), so an empty document is left on the server that nothing on this device
-references any more. Accepted for now, and it is why the create UI's local-delete branch
-owes a server `DELETE` whenever `syncedServerID` is set — otherwise a document the
+references any more. Accepted for now, and it is why the local-delete branch issues a server `DELETE` whenever `syncedServerID` is set — otherwise a document the
 user deleted reappears in Home after the next list fetch.
 
 **The two re-checks above are keyed on `localID`; everything the migration writes
@@ -1825,8 +1822,7 @@ so a CSRF 403 cannot reach a GET; that argument belongs to the create POST, wher
 genuinely revoked document lands in exactly the state the `.notFound` branch calls
 unreachable — withheld from `pendingLocalDocuments`, never pushed, two GETs per
 trigger — with its body alive only in the local draft. The trade is deliberate (an
-unrecoverable duplicate versus recoverable invisibility); making such a record
-visible and dischargeable is owed with the create UI.
+unrecoverable duplicate versus recoverable invisibility); making such a record visible and dischargeable is still owed.
 
 **"Checkpointed but not migrated" is a state to design for**, though today it still
 requires a process death: the checkpoint-to-migration stretch has no suspension point,

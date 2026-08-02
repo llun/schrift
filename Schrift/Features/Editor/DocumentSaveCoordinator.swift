@@ -319,8 +319,7 @@ final class DocumentSaveCoordinator {
     ///
     /// Consulted by the editor via `EditorViewModel.isLocalDocument`: opening a local document names its id from several
     /// places this coordinator does not own (`formattedContent`, the children fetch, the
-    /// collaboration room, Options' delete and version history). Those are the create UI's
-    /// to gate — the invariant is broader than the enforcement in this file.
+    /// collaboration room, Options' delete and version history). Those are gated in `EditorViewModel`/`EditorView`/`OptionsSheetView`, not here.
     func isPendingCreate(documentID: UUID) -> Bool {
         pendingCreates[documentID] != nil
     }
@@ -357,7 +356,7 @@ final class DocumentSaveCoordinator {
     /// affordances**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
     /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
     /// denied are indistinguishable), and the sub-page affordance gates on the parent being local.
-    /// So the create UI must not offer a sub-page under a pending parent; a record minted that
+    /// So the create UI does not offer a sub-page under a pending parent; a record minted that
     /// way would POST `documents/{local-uuid}/children/`, 404, probe, 404, and silently re-root.
     ///
     /// `ownerUserID` is **required, not defaulted**: an unattributable record can be neither
@@ -619,7 +618,7 @@ final class DocumentSaveCoordinator {
             // A save the *server* rejected on the merits is left to the user, exactly as
             // `runSyncPass` does. Note the caption is visible but the affordance is inert here:
             // `saveNow` no-ops while `pendingSave` is non-nil, which a local document with
-            // content always has — so a relaunch is the escape until the create UI offers one.
+            // content always has — so a relaunch is the escape until a create-specific affordance offers one.
             if case .failed = state(for: record.localID) { continue }
             // Never migrate under a live screen — see `openEditors`.
             guard !hasOpenEditor(documentID: record.localID) else { continue }
@@ -736,8 +735,7 @@ final class DocumentSaveCoordinator {
             // ends up in exactly the state the branch below calls unreachable — withheld from
             // `pendingLocalDocuments`, never pushed, two GETs per trigger, forever — with its
             // body alive only in the local draft. The trade is deliberate (unrecoverable
-            // duplicate vs. recoverable invisibility), and making such a record visible and
-            // dischargeable is owed with the create UI.
+            // duplicate vs. recoverable invisibility), and making such a record visible and dischargeable is still owed.
             // **Take the body back to the local id *before* clearing the checkpoint.** A
             // process death inside the migration can leave the only copy under `serverID` —
             // that draft is written before the local one is removed, precisely so no instant
@@ -840,8 +838,7 @@ final class DocumentSaveCoordinator {
             // otherwise start over only when nothing remains under `serverID`. If something
             // does, leave the checkpoint — the record stays protected and the next pass
             // re-asks. A genuinely gone document then sticks in that state, which is the same
-            // stuck-but-lossless outcome the `.forbidden` branch already accepts and the same
-            // recovery the create UI owes; a spurious 404 simply resolves next pass.
+            // stuck-but-lossless outcome the `.forbidden` branch already accepts and the same recovery still owed; a spurious 404 simply resolves next pass.
             //
             // **And the absence of a draft is not, by itself, evidence there was none.** A
             // save for `serverID` that started *and settled successfully* inside the fetch
@@ -1261,8 +1258,7 @@ final class DocumentSaveCoordinator {
             // `settledSaves`, the list-cache row written moments earlier — which is what made the
             // first attempt at it a defect rather than a feature. The residual is therefore
             // sharper than it was: a rename this code **can** show is newer is still dropped,
-            // for a document whose body it is adopting wholesale. Recorded as owed with the
-            // create UI, which can present the choice rather than guessing at it.
+            // for a document whose body it is adopting wholesale. Recorded as owed: an affordance that can present the choice rather than guessing at it.
             return
         }
         if diverged {
