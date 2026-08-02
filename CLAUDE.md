@@ -1383,9 +1383,10 @@ markdown write endpoint**. Understand this before touching the save path:
   metadata cache** — lists merge them at read time via
   `mergedWithLocalDocuments(fetched:local:)`, because a list load replaces its
   array *and* its cache entry wholesale, and a cached synthetic would afterwards
-  be indistinguishable from a real document. `abilities.childrenCreate` is false,
-  which is what holds children-of-local-parents out of scope until a replay can
-  order them; `destroy` is false for the same reason, until the UI has a
+  be indistinguishable from a real document. `abilities.childrenCreate` is false —
+  but **nothing reads it**, so that records the intent rather than enforcing it:
+  children-of-local-parents are out of scope until a replay can order them, and it is
+  the create UI that must not offer the affordance (today's gates on `isOffline` alone); `destroy` is false for the same reason, until the UI has a
   no-network delete branch (advertising it today would promise a delete that
   404s, and leave the record un-removable — `discardPendingWork` is reached only
   from a *successful* delete).
@@ -1475,7 +1476,9 @@ markdown write endpoint**. Understand this before touching the save path:
   strand permanently (`init` rehydrates the stamp, so the skip outlives relaunches). (That
   draft is never covered by the pending-create hold in either ordering — the hold is
   keyed on the local id. The ordering decides whether the body is still *reachable*,
-  not whether it is protected from that sweep.) Move-then-clear is self-healing across a kill between the two writes;
+  not whether it is protected from that sweep — the checkpointed window has its own
+  server-id suppression there, and this branch is about the state after the checkpoint is
+  cleared.) Move-then-clear is self-healing across a kill between the two writes;
   clear-then-move reproduces the very loss it closes. Guarded on the local draft
   being absent, or a `serverID` draft that is the *user's* work would overwrite it.
   **Both of those re-checks are keyed on the *local* id, and the migration writes under the
@@ -1695,6 +1698,12 @@ markdown write endpoint**. Understand this before touching the save path:
     flip affects newly requested sessions, not screens already open.** See
     `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
     "C3 (shipped)" paragraph).
+- **The 404/403 sweep has a third suppression, and it is keyed on the *server* id.**
+  `isPendingCreate` covers the local id only, so it misses the draft the migration writes
+  under `serverID` before removing the local one — which in that window is the **only
+  copy**. `runSyncPass`'s delete branch therefore also skips any id a checkpointed record
+  is waiting to migrate onto. Only the delete, never the push: the push is what clears
+  `finishMigration`'s both-drafts guard.
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping

@@ -2003,7 +2003,8 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
     /// the *local* id, so `runSyncPass`'s 404/403 sweep does not see it as protected. The
     /// `.notFound` start-over rescues it by moving it back; a `.forbidden` resume has no such
     /// branch and would land here, as would any pass where the record simply is not replayable
-    /// this session. Deleting it makes the later migration build an empty document.
+    /// this session (a foreign origin, another account, a failing `/users/me/`, an open
+    /// editor — not a build block, which cannot coexist with a checkpoint). Deleting it makes the later migration build an empty document.
     func testTheSweepNeverDeletesTheOnlyCopyUnderACheckpointedServerID() async {
         let log = RequestRecorder()
         let env = makeEnvironment()

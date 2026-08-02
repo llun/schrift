@@ -1125,8 +1125,10 @@ whose id de-duplication is a cheap guard against overlapping lists and
 id filter can match them; `pendingLocalDocuments` withholds a checkpointed record
 instead. It also overlays the draft's title, so a document renamed since it was
 minted does not read "Untitled document" in every list.
-`abilities.childrenCreate` is false, which is what holds children-of-local-parents
-out of scope until a replay can order them.
+`abilities.childrenCreate` is false — but **nothing reads it**, so that records the
+intent rather than enforcing it: children-of-local-parents are out of scope until a
+replay can order them, and it is the create UI that must not offer the affordance
+(today it gates on `isOffline` alone).
 
 **Protection and permission are separate things, and conflating them cost the
 content.** `isPendingCreate` is deliberately *not* origin-scoped: a record minted
@@ -1219,6 +1221,19 @@ nice-to-have:
   `isCurrentListKnown = true`. Pre-existing and untouched here (the rule as documented
   is scoped to the replay), but the create UI rewrites that method for the local-create
   fallback, so it should be fixed in the same change rather than propagated.
+- **Gating the editor's fetch on a pending-create id.** `EditorViewModel.revalidate`
+  404s on a client-minted id and calls `becomeUnavailable`, which clears
+  `hasLoadedContent` — so every local-document caption cell is suppressed and the screen
+  reads "no longer available". Nothing is lost (the teardown flushes first, the draft
+  survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI must
+  gate that fetch or a locally-created document is unusable the moment it is opened.
+  Recorded in `isPendingCreate`'s docstring and CLAUDE.md; it belongs in this list too.
+- **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
+  checkpointed record it takes the `isPendingCreate` branch and removes only the local
+  draft, leaving a `serverID` draft and its id-keyed maps behind — where the
+  `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals once the owed
+  server `DELETE` lands (the record goes, so the sweep guard passes and the ordinary 404
+  rule reaps it), but the local-delete branch should square the two.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it
@@ -1436,8 +1451,9 @@ the user, a lost body is not — but only on *evidence*. A `403` on a POST is no
 only "the parent isn't yours": it is also what Django answers for a bad `Origin`
 (the capitalised-host bug), and an HTML `404` is not proof a route is absent,
 since a proxy can serve one for a path it swallowed. So the parent is **probed**,
-and its answer decides. Every outcome has exactly one end state, and root and sub-page
-now differ in **zero** cells:
+and its answer decides. Every outcome has exactly one end state. Root and sub-page differ in exactly the two
+rows the probe exists for — `.forbidden` and `.notFound`, where a root has no parent to
+ask about — and nowhere else:
 
 - **gone (404) ⇒ promote.** The one answer that justifies re-parenting, which is
   irreversible — the old parent is stored nowhere and there is no move feature. Never a
@@ -1485,7 +1501,10 @@ document the last one built. This is not hypothetical: `CLAUDE.md` records
 `is_favorite`-as-required-`Bool` failing every create after the server had already
 made the document, "quietly littering the server with them". So a decode failure
 stamps `replayBlockedAt` on the record, which the pass skips. The record stays
-protected but inert until a later POST succeeds, which clears the stamp; a
+protected but inert until a later POST succeeds, which clears the stamp. **And within
+that build the surface actively promises the sync it cannot do**: `init` re-seeds the
+state to `.pendingSync`, so the caption reads "Saved on this device · syncs when online"
+with a retry `saveNow` no-ops. A
 retry/discard affordance within the same build is still owed
 with the create UI.
 
@@ -1534,6 +1553,15 @@ from `pendingLocalDocuments`) and never pushed — unreachable by every route th
 app offers. Clearing `syncedServerID` lets the next pass create it afresh; there
 is nothing left to duplicate.
 
+**A third suppression protects the server-id half.** `isPendingCreate` is keyed on the
+*local* id, so it does not cover the draft the migration writes under `serverID` before
+removing the local one — and in that window that draft is the **only copy**. The sweep's
+404/403 delete therefore also skips any id a checkpointed record is waiting to migrate
+onto (`checkpointedRecord(forServerID:)`). Only the delete: the push must keep running,
+since it is what clears `finishMigration`'s both-drafts guard. Without it a `.forbidden`
+resume — or any pass where the record is not replayable this session — reaches the
+delete and the later migration builds an *empty* document.
+
 **But it takes the body back to the local id *first*.** A death inside the migration
 can leave the only copy under `serverID` — the draft is written there before the local
 one is removed, so that no instant exists with the content nowhere — and the
@@ -1546,7 +1574,9 @@ draft and the reap would otherwise never run, stranding the record permanently (
 rehydrates the stamp, so the skip outlives relaunches). It GETs the draft and takes the same
 404. (That draft is never covered by the pending-create hold in either ordering — the
 hold is keyed on the local id. The ordering decides whether the body is still
-*reachable*, not whether it is protected from that sweep.)
+*reachable*, not whether it is protected from that sweep — the checkpointed window has its own
+server-id suppression there, and this branch is about the state after the checkpoint is
+cleared.)
 
 **Order is the whole point.** These are two independent
 UserDefaults keys, so a kill between them is a real state: move-then-clear is

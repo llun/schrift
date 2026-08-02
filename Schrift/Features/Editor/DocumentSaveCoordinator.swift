@@ -616,7 +616,9 @@ final class DocumentSaveCoordinator {
             // GETs it and takes the same 404. (Note the draft under `serverID` is never covered
             // by the pending-create hold in *either* ordering — that guard is keyed on the
             // local id. What the ordering decides is whether the body is still reachable at
-            // all, not whether it is protected from that sweep.)
+            // all, not whether it is protected from that sweep — the checkpointed window has its own
+            // server-id suppression there, and this branch is about the state after the checkpoint is
+            // cleared.)
             //
             // **Order is the whole point, and getting it backwards reproduces exactly that.**
             // These are two independent UserDefaults keys, so a kill between them is a real
@@ -1458,8 +1460,12 @@ final class DocumentSaveCoordinator {
                 // that draft is the **only copy** of the body. The `.notFound` start-over
                 // rescues it by moving it back; `.forbidden` has no such branch and would land
                 // here, as would any pass where the record is simply not replayable this
-                // session (another account signed in, a build-scoped block), since
-                // `runCreatePass` skips those before the take-back can run. Deleting it makes
+                // session — a foreign origin, another account, an unknown owner, a failing
+                // `/users/me/`, or an open editor — since `runCreatePass` skips those before
+                // the take-back can run. (Not a build-scoped block or a `.failed` state:
+                // neither can coexist with a checkpoint, since `replayCreate` clears both
+                // stamps in the same write that sets it and `markCreateRejected` only ever
+                // fires pre-checkpoint.) Deleting it makes
                 // the later migration find an all-nil body chain and build an *empty* document
                 // in place of the user's text — the same loss the take-back exists to prevent,
                 // reached one error over. Only the **delete** is withheld: the push path above

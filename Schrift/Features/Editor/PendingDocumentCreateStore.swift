@@ -283,8 +283,9 @@ func orderedByCreation(_ lhs: PendingDocumentCreate, _ rhs: PendingDocumentCreat
 /// that cannot happen — and, because `discardPendingWork` is reached only from a
 /// *successful* delete, would leave the record un-removable. It flips to true with the
 /// local-delete branch in the UI change. `childrenCreate` is false for the same
-/// discipline: it holds children-of-local-parents out of scope until a replay can order
-/// them.
+/// discipline — though **nothing reads it**, so it records the intent rather than
+/// enforcing it: children-of-local-parents stay out of scope until a replay can order
+/// them, and it is the create UI that must not offer the affordance.
 ///
 /// `title` is the record's, i.e. the title at creation time. Callers that can see the
 /// draft should prefer the draft's — the user may have renamed the document since, and
