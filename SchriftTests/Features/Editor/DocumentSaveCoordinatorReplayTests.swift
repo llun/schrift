@@ -292,50 +292,28 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertTrue(env.lists.loadRecentDocuments()?.isEmpty ?? false, "and not Home's root list")
     }
 
-    /// A parent that is reachable but no longer allows children has to reach a terminal
-    /// state: before the abilities check it never promoted, never failed, and paid a POST
-    /// plus a probe on every trigger, forever.
-    func testAParentThatNoLongerAllowsChildrenIsTerminalNotReParented() async {
+    /// A missing **route** is a fact about the server, not this document — so a sub-page
+    /// retries exactly as a root create does. Scoping the early return to roots parked every
+    /// offline sub-page for the session whenever a proxy swallowed the children route during a
+    /// deploy, while an identically-affected root recovered on the next trigger. The probe
+    /// cannot speak to it either: it tests `documents/{p}/`, a different path.
+    func testARouteNotFoundOnASubpageCreateRetriesLikeARoot() async {
         let log = RequestRecorder()
         let parent = UUID()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(title: "Child", parentID: parent, ownerUserID: user)
-        MockURLProtocol.stubHandler = { [parent] request in
-            log.record(request)
-            let url = request.url?.absoluteString ?? ""
-            if url.hasSuffix("users/me/") {
-                return .init(
-                    statusCode: 200, headers: [:],
-                    body: Data("{\"id\": \"11111111-1111-4111-8111-111111111111\"}".utf8), error: nil)
-            }
-            if request.httpMethod == "GET", url.contains(parent.uuidString.lowercased()) {
-                return .init(
-                    statusCode: 200, headers: [:],
-                    body: Data(
-                        """
-                        {"id": "\(parent.uuidString.lowercased())", "title": "Parent",
-                         "abilities": {"children_create": false},
-                         "content": "", "created_at": "2026-03-01T12:00:00Z",
-                         "updated_at": "2026-03-01T12:00:00Z", "depth": 1, "numchild": 0, "path": "00000A",
-                         "link_reach": "restricted", "link_role": "reader", "user_role": "reader"}
-                        """.utf8), error: nil)
-            }
-            return .init(statusCode: 403, headers: [:], body: Data(), error: nil)
+        // Django's own missing-route page: an HTML 404, which maps to `.routeNotFound`.
+        stubUsersMeThen(log: log) { _ in
+            .init(
+                statusCode: 404, headers: ["Content-Type": "text/html; charset=utf-8"],
+                body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
         }
 
         await env.coordinator.syncPendingDrafts()
+        await env.coordinator.syncPendingDrafts()
 
-        XCTAssertNotNil(env.creates.create(for: local.id), "the document is still ours to send")
-        // **Terminal, not re-parented.** `childrenCreate` decodes `?? false`, so an `abilities`
-        // object that merely omits the key is indistinguishable from one denying it — and
-        // re-parenting is irreversible (the old parent is stored nowhere, and there is no move
-        // feature). So a reachable-but-unwilling parent stops the retry loop without moving the
-        // document; only the probe's own 404/403, which is real evidence, promotes.
-        XCTAssertEqual(
-            env.creates.create(for: local.id)?.parentID, parent, "the placement is left alone")
-        guard case .failed = env.coordinator.state(for: local.id) else {
-            return XCTFail("a reachable-but-unwilling parent needs a terminal state")
-        }
+        XCTAssertEqual(creates(log), 2, "not parked after the first attempt")
+        XCTAssertEqual(env.creates.create(for: local.id)?.parentID, parent, "and never re-parented")
     }
 
     // MARK: - Idempotency
@@ -683,7 +661,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
 
     // MARK: - Failures
 
-    /// A parent that is gone or no longer ours must not strand the content: the document
+    /// A parent that is **gone** must not strand the content: the document
     /// becomes a root instead. Placement is recoverable by the user; a lost body is not.
     func testASubpageWhoseParentIsGoneRetriesAsARootDocument() async {
         let log = RequestRecorder()
@@ -991,7 +969,7 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             env.creates.create(for: local.id)?.parentID, parent,
             "an unanswerable probe leaves the placement alone")
-        // And leaves it *retryable*: since (a), all three probe outcomes keep `parentID`, so
+        // And leaves it *retryable*: every probe outcome but a 404 keeps `parentID`, so
         // the state is the only discriminator. Without this, "every reachable parent is
         // terminal" passes.
         if case .failed = env.coordinator.state(for: local.id) {
@@ -1992,6 +1970,13 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertEqual(
             env.creates.create(for: local.id)?.parentID, parent,
             "a transient 403 is not evidence the parent is gone")
+        // And it still owes a terminal state — `markCreateRejected` writes only `states`, so
+        // the assertion above passes whether this cell parks or retries forever. Without it,
+        // the record pays a POST plus a probe on every trigger with the caption reading "syncs
+        // when online".
+        guard case .failed = env.coordinator.state(for: local.id) else {
+            return XCTFail("a non-retryable create with an indecisive probe must still terminate")
+        }
     }
 
     // MARK: - Helpers

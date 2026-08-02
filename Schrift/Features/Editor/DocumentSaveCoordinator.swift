@@ -1034,73 +1034,63 @@ final class DocumentSaveCoordinator {
             // raised. Leave everything; the next trigger retries.
             return
         }
-        // A missing *route* is a fact about the server, not about this document or its parent
-        // — the same reason the resume treats it as transient. Retry rather than parking.
-        if docsError == .routeNotFound, record.parentID == nil { return }
-        if let parentID = record.parentID,
-            docsError == .forbidden || docsError == .notFound || docsError == .routeNotFound
-        {
+        // **A missing *route* is a fact about the server, not about this document — root or
+        // sub-page.** Retry rather than parking, the same reading the resume path gives it.
+        // Scoping this to roots was an asymmetry with real cost: a proxy swallowing
+        // `documents/{p}/children/` for the length of a deploy would park every offline
+        // sub-page for the session, while an identically-affected root create recovered on the
+        // next trigger — and the probe below cannot speak to it either, since it tests
+        // `documents/{p}/`, a different path.
+        if docsError == .routeNotFound { return }
+        if let parentID = record.parentID, docsError == .forbidden || docsError == .notFound {
             // Maybe we may not create children under that parent — but a 403 on a POST is
             // **not** only that. Django answers a bad `Origin` with `403 CSRF Failed`, which
             // flattens to `.forbidden` here, and that is the documented symptom of the
             // capitalised-host bug: every sub-page create would be silently promoted to a
-            // root, irreversibly. An HTML 404 is likewise not proof a route is absent — a
-            // proxy can serve one for a path it swallowed. So ask about the parent, and
-            // promote only on what the answer actually says.
-            let promote: Bool
+            // root, irreversibly. So ask about the parent, and let the answer decide.
+            //
+            // Note what is deliberately *not* consulted: `parent.abilities.childrenCreate`.
+            // `Document` decodes it `decodeIfPresent(...) ?? false`, so an `abilities` object
+            // that merely **omits** the key is indistinguishable from one denying it — and this
+            // would be the app's first and only read of that field, on a route whose serializer
+            // it has never depended on (the repo has already been bitten by exactly that
+            // variance with `is_favorite`). A reachable parent means the create was rejected on
+            // its own merits whatever the abilities dict says, and that is the same outcome
+            // either way, so reading it would buy a distinction the code does not act on.
             do {
-                let parent = try await client.document(documentID: parentID)
-                // The parent is reachable, so the failure was not about it existing — and a
-                // reachable-but-unwilling parent gets a **terminal state, not a re-parent.**
-                // Without something here a permission downgrade between minting and replaying
-                // had no terminal state at all: it never promoted, never failed, and paid a
-                // POST plus a probe on every trigger while the caption said "syncs when
-                // online". But promoting on `!childrenCreate` is not available to us:
-                // `Document` decodes it `decodeIfPresent(...) ?? false`, so an `abilities`
-                // object that simply **omits** the key is indistinguishable from one that
-                // denies it — and this is the app's first and only consumer of that field, on
-                // a route (`GET documents/{id}/`) whose serializer the app has never depended
-                // on before. This repo has already been bitten by exactly that variance
-                // (`is_favorite`, present on list routes and absent from creates). Re-parenting
-                // is irreversible — the old parent is stored nowhere and there is no move
-                // feature — so it must never rest on a value that cannot say "the server
-                // didn't answer". `.failed` is recoverable; a silently re-rooted sub-page is
-                // not.
-                if !parent.abilities.childrenCreate {
-                    markCreateRejected(record)
-                    return
-                }
-                promote = false
+                _ = try await client.document(documentID: parentID)
             } catch let probe as DocsAPIError where probe == .notFound {
-                // **`.notFound` only — never `.forbidden`**, the same rule the resume path
-                // states for the same evidence class: a bare 403 is not proof a document is
-                // gone (an ancestor-access recompute 403s transiently, and that is exactly the
-                // shape that would also 403 the create). Promotion is irreversible, so it must
-                // not rest on a value that cannot say "not right now".
-                promote = true
-            } catch {
-                // The probe itself failed to answer. "I couldn't ask" must never read as
-                // "it isn't there" — leave the record alone and try again next pass.
+                // The parent is **gone** — the one answer that justifies re-parenting, which is
+                // irreversible (the old parent is stored nowhere, and there is no move
+                // feature). Never a bare 403: an ancestor-access recompute 403s transiently and
+                // would 403 the create too, so the pair is one transient seen twice, not
+                // corroboration. Same rule the resume path states for the same evidence.
+                //
+                // Retry as a **root** rather than stranding the content: placement is
+                // recoverable by the user, a lost body is not.
+                guard pendingCreates[record.localID] != nil else { return }
+                var promoted = record
+                promoted.parentID = nil
+                updatePendingCreate(promoted)
                 return
-            }
-            // The probe answered and the parent is willing, so the failure was about the
-            // create itself — and it is non-retryable, since every retryable class returned
-            // above. **Terminal, exactly as the root path treats the same error.** Leaving it
-            // to retry was the one asymmetry here: a capitalised host makes Django answer
-            // `403 CSRF Failed` on the POST while the probe, a GET, succeeds — so a root
-            // create parked immediately while a sub-page paid a POST plus a probe on every
-            // trigger forever, caption still reading "syncs when online". That is verbatim the
-            // no-terminal-state this branch was added to eliminate.
-            guard promote else {
+            } catch let probe as DocsAPIError where probe == .forbidden {
+                // The server answered, just not dispositively. The create error is
+                // non-retryable, so it still owes a terminal state — exactly what a root create
+                // gets for the same error. Without this the record pays a POST plus a probe on
+                // every reconnect, foreground and launch, forever, while the caption reads
+                // "syncs when online".
                 markCreateRejected(record)
                 return
+            } catch {
+                // The probe could not answer at all (transport, 5xx). "I couldn't ask" must
+                // never read as "it isn't there" — leave the record alone and try next pass.
+                return
             }
-            // Retry as a **root** document rather than stranding the content: placement is
-            // recoverable by the user, a lost body is not.
-            guard pendingCreates[record.localID] != nil else { return }
-            var promoted = record
-            promoted.parentID = nil
-            updatePendingCreate(promoted)
+            // The parent is reachable, so the failure was about the create itself, and it is
+            // non-retryable — every retryable class returned above, and `.routeNotFound`, the
+            // one error the probe cannot speak to, returned before we got here. Terminal, as
+            // the root path treats the same error.
+            markCreateRejected(record)
             return
         }
         // A `.decoding` failure is the one rejection where "the POST failed" is provably the

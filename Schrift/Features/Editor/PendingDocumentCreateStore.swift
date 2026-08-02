@@ -24,11 +24,11 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// `abilities.childrenCreate` is false), so this is always a real server id and the
     /// replay needs no dependency ordering. `var` because the replay rewrites it to nil and
     /// retries as a root create — degrading the document's *placement* rather than stranding
-    /// its content — but **only on evidence the server actually gave**: the probe's own 404 or
-    /// 403. A reachable parent whose `abilities.childrenCreate` is false is terminal instead,
-    /// never a re-parent, because that key decodes `decodeIfPresent(...) ?? false` and so
-    /// cannot distinguish *absent* from *denied*. Never on the bare create failure alone; see
-    /// `handleCreateFailure`'s probe.
+    /// its content — but **only on the one answer that justifies it**: the probe finding the
+    /// parent **gone** (404). Never a bare 403 — an ancestor-access recompute 403s transiently
+    /// and would 403 the create too — and never on the bare create failure alone. A reachable
+    /// parent means the create was rejected on its own merits, which is terminal rather than a
+    /// re-parent. See `handleCreateFailure`'s probe.
     var parentID: UUID?
     /// Replay order, and the synthetic document's dates.
     let createdAt: Date
