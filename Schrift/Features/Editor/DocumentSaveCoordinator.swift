@@ -151,6 +151,16 @@ final class DocumentSaveCoordinator {
     /// lookup rather than a UserDefaults decode. **Every** record is mirrored, whatever
     /// origin or user minted it — protection is unconditional; see `isPendingCreate`.
     private var pendingCreates: [UUID: PendingDocumentCreate] = [:]
+    /// Bumped on every mutation of `pendingCreates`, so an `@Observable` consumer can track
+    /// "the set of local documents changed" without the dictionary itself being visible.
+    ///
+    /// `HomeViewModel.recentDocuments` merges local documents in at *read* time — a synthetic
+    /// `Document` must never enter a persisted metadata cache, since a list load replaces its
+    /// array and its cache entry wholesale and a cached synthetic would afterwards be
+    /// indistinguishable from a real one. Reading this in that computed property is what makes
+    /// a migrated row vanish from a live Home the moment `removePendingCreate` runs, rather
+    /// than at the next successful fetch.
+    private(set) var pendingCreatesVersion = 0
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
@@ -334,6 +344,7 @@ final class DocumentSaveCoordinator {
             ownerUserID: ownerUserID)
         createStore.save(record)
         pendingCreates[record.localID] = record
+        pendingCreatesVersion += 1
         // The seed draft is what makes the document readable after the editor is dismissed:
         // `DocumentContentCacheStore` is only ever written by a confirmed save or a fetch,
         // so a document that has never been to the server has no entry there — and must not
@@ -412,6 +423,7 @@ final class DocumentSaveCoordinator {
     private func removePendingCreate(documentID: UUID) {
         guard pendingCreates[documentID] != nil else { return }
         pendingCreates[documentID] = nil
+        pendingCreatesVersion += 1
         createStore.remove(localID: documentID)
     }
 
@@ -422,6 +434,9 @@ final class DocumentSaveCoordinator {
     private func updatePendingCreate(_ record: PendingDocumentCreate) {
         createStore.save(record)
         pendingCreates[record.localID] = record
+        // A rewrite counts: the checkpoint being stamped is what withholds the local row from
+        // `pendingLocalDocuments`, so a live Home must re-read.
+        pendingCreatesVersion += 1
     }
 
     // MARK: - The open-editor registry

@@ -5,7 +5,25 @@ import Foundation
 final class HomeViewModel {
     var searchQuery: String = ""
     var pinnedDocuments: [Document] = []
-    var recentDocuments: [Document] = []
+    /// What the server (or its cache) last said. **Never contains a locally-created
+    /// document** — see `recentDocuments`.
+    var fetchedRecentDocuments: [Document] = []
+    /// The list the screen renders: the fetched one with this device's unsynced documents
+    /// merged in at read time.
+    ///
+    /// Merging at *read* time rather than storing them together is the invariant that keeps
+    /// a synthetic `Document` out of `DocumentCacheStore`. A list load replaces its array
+    /// **and** its cache entry wholesale, so a synthetic row written into the cache would
+    /// afterwards be indistinguishable from a real server document — with a client-minted id
+    /// that every fetch 404s on. Reading `pendingCreatesVersion` here is what makes the row
+    /// disappear on its own once the replay migrates it, without a list fetch.
+    var recentDocuments: [Document] {
+        _ = saveCoordinator.pendingCreatesVersion
+        return mergedWithLocalDocuments(
+            fetched: fetchedRecentDocuments,
+            local: saveCoordinator.pendingLocalDocuments(
+                parentID: nil, currentUserID: signedInUser.userID))
+    }
     var searchResults: [Document] = []
     var isLoading = false
     var errorKey: L10nKey?
@@ -19,11 +37,22 @@ final class HomeViewModel {
     /// list: nil (never fetched) must not masquerade as a real empty result,
     /// e.g. a fresh install under Work Offline (mirrors Shared's
     /// showsDocumentList).
-    private(set) var isCurrentListKnown = false
+    private(set) var hasKnownFetchedList = false
+    /// …or this device holds an unsynced document, which is itself a real answer: a fresh
+    /// install in airplane mode that has created one must render that row, not the
+    /// never-fetched placeholder.
+    var isCurrentListKnown: Bool {
+        hasKnownFetchedList || !recentDocuments.isEmpty
+    }
 
     let client: DocsAPIClient
     let saveCoordinator: DocumentSaveCoordinator
     private let cache: DocumentCacheStore
+    /// Whose local documents may be listed. Nil (never signed in on this device, or signed
+    /// out) withholds every record — `belongsToSession` gates listing and sending on the same
+    /// test, because showing user B another user's unsynced document is the worse half of the
+    /// same disclosure: B's edits would land in A's document when A signs back in.
+    private let signedInUser: SignedInUserStore
     private let userDefaults: UserDefaults
     /// The same log the shared client records into. nil in previews and in tests that don't
     /// care, which simply means no detail is offered. Not private: the editor screens this
@@ -40,8 +69,10 @@ final class HomeViewModel {
         saveCoordinator: DocumentSaveCoordinator? = nil,
         serverOrigin: String = "",
         userDefaults: UserDefaults = .standard,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         diagnostics: APIDiagnosticsLog? = nil
     ) {
+        self.signedInUser = signedInUser
         self.client = client
         self.cache = cache
         // `serverOrigin` reaches the coordinator only to stamp documents created on this
@@ -54,8 +85,8 @@ final class HomeViewModel {
         self.diagnostics = diagnostics
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
-            recentDocuments = recents
-            isCurrentListKnown = true
+            fetchedRecentDocuments = recents
+            hasKnownFetchedList = true
         }
     }
 
@@ -73,8 +104,8 @@ final class HomeViewModel {
         if userDefaults.bool(forKey: "schrift.workOffline") {
             pinnedDocuments = cache.loadPinnedDocuments()
             let cachedRecents = cache.loadRecentDocuments()
-            recentDocuments = cachedRecents ?? []
-            isCurrentListKnown = cachedRecents != nil
+            fetchedRecentDocuments = cachedRecents ?? []
+            hasKnownFetchedList = cachedRecents != nil
             isOffline = true
             isLoading = false
             return
@@ -85,7 +116,7 @@ final class HomeViewModel {
         // rows are visible whenever the pinned section renders, so they count
         // toward "rows on screen" and rightly suppress the first-run spinner.
         let hasCachedList = cache.loadRecentDocuments() != nil
-        isCurrentListKnown = hasCachedList
+        hasKnownFetchedList = hasCachedList
         let visiblePinnedCount = showsPinnedSection ? pinnedDocuments.count : 0
         isLoading = shouldShowLoadingPlaceholder(
             hasCachedList: hasCachedList,
@@ -108,10 +139,10 @@ final class HomeViewModel {
             let recent = try await recentPage.results
             guard generation == loadGeneration else { return }
             pinnedDocuments = pinned
-            recentDocuments = recent
+            fetchedRecentDocuments = recent
             cache.savePinnedDocuments(pinned)
             cache.saveRecentDocuments(recent)
-            isCurrentListKnown = true
+            hasKnownFetchedList = true
             isOffline = false
         } catch {
             guard generation == loadGeneration else { return }
@@ -166,25 +197,48 @@ final class HomeViewModel {
         }
     }
 
+    /// Mint a document that exists only on this device. Nil when nobody is known to own it —
+    /// `createLocalDocument` takes a non-optional owner, and a record nothing can attribute is
+    /// kept and protected but listed to nobody and replayed never, so minting one would create
+    /// a document the user can never see again. Failing closed with the ordinary error is the
+    /// honest outcome; it needs one successful `/users/me/` ever, on any launch.
+    private func createLocalDocument() -> Document? {
+        guard let ownerUserID = signedInUser.userID else {
+            errorKey = .home_error_create
+            return nil
+        }
+        return saveCoordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: ownerUserID)
+    }
+
     func createDocument() async -> Document? {
         // A retry must not sit underneath the message its predecessor left behind: nothing
         // else clears this one, since the failure path never reaches load().
         clearError()
+        // Work Offline is a strict no-network contract on every read path, so honour it here
+        // too rather than POSTing behind the user's back and reporting a failure they asked
+        // for. Creating locally is the whole point of the mode.
+        if userDefaults.bool(forKey: "schrift.workOffline") {
+            return createLocalDocument()
+        }
         let marker = diagnostics?.marker()
         do {
             let document = try await client.createDocument(title: "Untitled document")
-            if userDefaults.bool(forKey: "schrift.workOffline") {
-                // load() skips the network in work-offline mode, so reflect
-                // the new document directly rather than serving stale cache.
-                recentDocuments.insert(document, at: 0)
-                var recents = cache.loadRecentDocuments() ?? []
-                recents.insert(document, at: 0)
-                cache.saveRecentDocuments(recents)
-            } else {
-                await load()
-            }
+            await load()
             return document
         } catch {
+            // **Fall back only for a failure that could not have created anything.**
+            // `retryableSaveFailure` is the same classifier the save path uses: transport,
+            // 5xx, rate limit. A rejection on the merits (a 400, a 403) means the server
+            // answered and declined, and minting a local document there would promise a
+            // replay that will be declined again — so those keep today's error.
+            //
+            // `.sessionExpired` is deliberately *not* a fallback either: the re-login sheet
+            // is already up, and the document would be minted against an account the user is
+            // in the middle of re-authenticating.
+            if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError) {
+                return createLocalDocument()
+            }
             errorKey = .home_error_create
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             return nil
