@@ -1459,8 +1459,11 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorViewModel.documentID` is a `let` captured by four sibling view models and
   by pushed `NavigationPath` values, so a live screen cannot follow the id and
   would keep writing under one the holds no longer cover. Deferring makes mid-swap
-  edit loss unrepresentable. Everything that can change during the POST await is
-  re-checked after it: the record is re-read from `pendingCreates` (a delete during
+  edit loss unrepresentable. Everything that can change during the await is
+  re-checked after it — **and a boolean is not enough**: a save for the *server* id that
+  starts **and settles** inside the resume's fetches leaves `inFlight`/`queued` nil and
+  removes its own draft, so the resume snapshots `saveMarker(documentID:)` before fetching
+  and bails on `mayPredateSave`, exactly as the editor's revalidation does. Otherwise: the record is re-read from `pendingCreates` (a delete during
   the POST must not be undone — acting on the stale copy would POST a document the
   user threw away and orphan it server-side; it would *not* resurrect the record,
   which every `updatePendingCreate` on that path already guards) and `hasOpenEditor`

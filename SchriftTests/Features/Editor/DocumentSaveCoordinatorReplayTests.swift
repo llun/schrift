@@ -2223,6 +2223,38 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         }
     }
 
+    /// A spurious 404 must not void a persisted conflict hold. The start-over's premise is
+    /// "the document is gone", but a proxy hiccup maps to `.notFound` too — and discharging on
+    /// one drops the held keystrokes, erases the hold in memory and on disk, and removes the
+    /// suppression protecting that draft, after which a keystroke landing before `runSyncPass`
+    /// re-detects reaches `enqueue` with nothing holding it.
+    func testASpuriousNotFoundDoesNotVoidAHeldConflict() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Untitled document"
+        env.creates.save(record)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        // A live editing session under the server id, with a recorded conflict holding its push.
+        relaunched.coordinator.retainOpenEditor(documentID: serverID)
+        relaunched.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
+        relaunched.coordinator.enqueue(documentID: serverID, title: "Notes", markdown: "# Held")
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            relaunched.coordinator.conflict(for: serverID),
+            "a bare 404 is not evidence enough to void a hold the user still has to answer")
+        XCTAssertEqual(
+            relaunched.drafts.draft(for: serverID)?.markdown, "# Held",
+            "and the held work is still on disk")
+    }
+
     // MARK: - Helpers
 
     /// `/users/me/` answers this user; everything else is the caller's to decide.

@@ -1240,6 +1240,12 @@ nice-to-have:
   `checkpointedRecord(forServerID:)` branch sweeps both. It self-heals once the owed
   server `DELETE` lands (the record goes, so the sweep guard passes and the ordinary 404
   rule reaps it), but the local-delete branch should square the two.
+- **Carrying a rename through the adopt-the-server branch.** Since `postedTitle` landed,
+  the code *can* prove a local rename is newer than the name the server learned — the
+  evidence objection that justified writing nothing there is spent. What still blocks it is
+  scope: a title PATCH from that branch is an unowned `Task` outside the coordinator's
+  ordering bookkeeping, which is what made the first attempt a defect. The residual is that
+  a provably-newer rename is dropped for a document whose body is being adopted wholesale.
 - **A retry or discard for a record whose create response we could not read**
   (`replayBlockedAt`). The stamp is scoped to the build that set it, so shipping a
   fix recovers the record on its first launch, and a later successful POST clears it
@@ -1358,7 +1364,14 @@ zero production callers, so both `finishMigration` editor guards are statically 
 and this invariant, like the pending-create one, is broader than its enforcement. The
 create UI owes the wiring — see "What the create UI still owes".
 
-**Everything that can change during the await is re-checked after it.** The pass
+**Everything that can change during the await is re-checked after it — and a boolean is
+not enough.** The fourth thing that can change is a save for the *server* id that starts
+**and settles** inside the resume's fetches: it leaves `inFlight` and `queued` nil *and*
+removes its own draft, so every point-in-time guard passes while the body just read is
+already stale. The resume therefore snapshots `saveMarker(documentID:)` before its first
+fetch and bails on `mayPredateSave` — the same instrument, and for the same stated reason,
+that the editor's revalidation uses. Without it the migration pushed the older local body
+over content the user had just seen confirmed as saved, silently. The pass
 awaits `/users/me/` and then a POST per record, and the main actor is reentrant
 throughout — so before migrating it re-reads the record from `pendingCreates` (a
 delete during the POST must not be undone: acting on the stale copy would POST a

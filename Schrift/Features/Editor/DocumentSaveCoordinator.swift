@@ -681,14 +681,32 @@ final class DocumentSaveCoordinator {
             // `releaseHeldSave` is its only drainer, reached only from the call being skipped.
             // Dropping it makes `releaseHeldSave` a provable no-op, so no PATCH can start at an
             // id that just 404'd, and the ordinary 404 rule can finally reap the draft.
-            queued[serverID] = nil
-            clearResolvedConflict(documentID: serverID)
+            // **Only on the same evidence the success path uses.** This branch's premise is
+            // "the document is gone", and `CLAUDE.md`'s invariant 0c refuses that reading of a
+            // bare 404 elsewhere — a proxy hiccup maps to `.notFound` too. Discharging on a
+            // spurious one drops the held keystrokes, erases a persisted conflict hold both in
+            // memory and on the draft, and removes the `checkpointedRecord` suppression that
+            // was protecting the draft from the sweep — after which a keystroke landing before
+            // `runSyncPass` re-detects (it awaits a fetch first) reaches `enqueue` with nothing
+            // holding it and full-overwrites the diverged server body, unasked. The
+            // duplicate-document cost of a spurious 404 is accepted and documented; silently
+            // voiding a hold is not, and is strictly worse. So skip the discharge when a save
+            // is live or an editor is open under that id, or when one settled inside the
+            // fetches — the checkpoint clear below is still safe, and the next pass re-asks.
+            if !mayPredateSave(marker), inFlight[serverID] == nil, !hasOpenEditor(documentID: serverID) {
+                queued[serverID] = nil
+                clearResolvedConflict(documentID: serverID)
+            }
             record.syncedServerID = nil
             // The block belongs to the create attempt that failed to decode, and this record is
             // about to start over with a fresh POST — carrying a spent stamp forward would wedge
             // the record for any build that matches it.
             record.replayBlockedAt = nil
             record.replayBlockedBuild = nil
+            // Cleared with the checkpoint it was stamped beside, or a persisted record would
+            // carry a `postedTitle` with no `syncedServerID` — which is what its own doc
+            // comment says cannot happen.
+            record.postedTitle = nil
             if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
             return
         } catch {
@@ -980,20 +998,16 @@ final class DocumentSaveCoordinator {
             // server's markdown back to carry our title re-encodes it through `MarkdownYjs`,
             // where a co-author's table is an `.unknown` block that round-trips as literal
             // paragraphs — flattening their document to carry our name. A title-only PATCH
-            // avoids that but fails for a different reason: **nothing here can show our title
-            // is the newer one.** for a never-typed-into document `title` now
-            // *resolves to the server's own*, so there is nothing local to assert; and the
-            // branch only fires
-            // once the server has acquired a *body* — i.e. after real elapsed time in the
-            // checkpointed state, during which a rename on the web is at least as likely as
-            // one here. Writing it would silently revert a co-author, unasked, and it would do
-            // so through an unowned `Task` outside every piece of ordering bookkeeping the
-            // coordinator maintains (`knownServerTitles`, `settledSaves`, the list-cache row
-            // written moments earlier).
-            //
-            // The accepted residual, in exchange: a rename made *here* on a document with no
-            // local body is lost when the server has moved on. Recovering it needs evidence
-            // this branch does not have — see the create UI's owed work.
+            // avoids that, and since `postedTitle` landed the evidence objection no longer
+            // holds: `localTitle != knownToServer` *does* prove the local side moved after the
+            // server learned the name. What remains is a scope trade, and it is the reason this
+            // branch still writes nothing. Sending a title here means an unowned `Task` outside
+            // every piece of ordering bookkeeping the coordinator maintains — `knownServerTitles`,
+            // `settledSaves`, the list-cache row written moments earlier — which is what made the
+            // first attempt at it a defect rather than a feature. The residual is therefore
+            // sharper than it was: a rename this code **can** show is newer is still dropped,
+            // for a document whose body it is adopting wholesale. Recorded as owed with the
+            // create UI, which can present the choice rather than guessing at it.
             return
         }
         if diverged {
