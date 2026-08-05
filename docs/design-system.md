@@ -919,22 +919,6 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   which put it under **Delete document, Sign out and both conflict-resolution
 >   choices** — the decisions least forgiving of a missed tap. It is invisible in
 >   a screenshot and uncatchable by the suite; test it by tapping the padding.
->
-> **Amended: 2026-08-05.** `maxHeight: .infinity` was the wrong half of that
-> technique for the editor's save status, and the bug it caused was very visible.
-> A flexible frame's unspecified bound defaults to its child's answer, so the
-> unbounded label was greedy through every `minHeight:`-only ancestor — and the
-> Dynamic Type rule makes `minHeight:` the norm. Offered a whole screen the row
-> answered a whole screen, `editingSurface`'s `VStack` split the free height
-> between the row and the canvas, and the document title sat mid-screen with the
-> keyboard up. `SaveStatusIndicator` now floors each state itself
-> (`minHeight: DocsSpacing.rowMinHeight`) — the same ≥44pt tap shape, still
-> growing with Dynamic Type, never claiming a proposal — with the three passive
-> states carrying the same floor so the canvas cannot resize as the status moves
-> Save → Saving → Saved. Reach for `maxHeight: .infinity` only where an ancestor
-> is genuinely bounded; otherwise floor the label. `SaveStatusIndicatorTests`
-> measures the hosted component against a full-screen proposal, a 10pt proposal
-> and the largest accessibility size.
 > - Icon-only controls go through **`IconButton`**, which keeps the small glyph
 >   and pads *outside* it to the floor, rather than wrapping a bare
 >   `MaterialSymbol` in a `Button` (the Home error-banner dismiss was a 13pt
@@ -952,3 +936,32 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   hex-only. The `DocsColorHex`/`DocsColorHexDark` palette is untouched — it is
 >   the design system's colour definition, complete whether or not every entry is
 >   currently spent.
+
+> **Amended: 2026-08-05 (the save status took half the editor).**
+> `maxHeight: .infinity` was the wrong half of the tap-target technique above
+> for the editing save-status row, and the bug was very visible: the document
+> title and first line of content sat mid-screen with the keyboard up.
+>
+> A flexible frame answers the **proposal**, clamped into the bounds you give
+> it, falling back to its child only where a bound is missing — so an unbounded
+> max means "all of it" as soon as an ancestor hands down a concrete height.
+> That is the real test, not "is an ancestor bounded". `editingSurface` is a
+> `VStack(spacing: 0)` of the row and the canvas in a height-bounded container,
+> so the Save/retry label answered 874pt to an 874pt proposal, the stack saw two
+> greedy children and split the free height between them. `PagesTreeDrawer`
+> keeps the same technique and is *not* greedy, because a scroll view proposes
+> an unspecified height along its scroll axis and the row resolves to its ideal
+> 44pt (measured) — the distinction that tells the two call sites apart.
+>
+> `SaveStatusIndicator` now floors each state itself
+> (`minHeight: DocsSpacing.rowMinHeight`), which never claims a proposal and
+> still grows with Dynamic Type. It is also the *bigger* target: the row pads 8pt
+> below before its own 44pt floor, so a fill-the-row label only ever got 36pt at
+> the row's floor — 44pt was reached only while the row was inflating. The three
+> passive states carry the same floor so the canvas cannot resize as the status
+> moves Save → Saving → Saved **at default text sizes**; a state whose own text
+> wraps (`Couldn't save`, `Saved on this device`) outgrows the floor at
+> accessibility sizes, so that uniformity is a default-size guarantee rather than
+> an invariant. `SaveStatusIndicatorTests` measures the hosted component at the
+> width the row actually offers it, against a full-screen proposal, a 10pt
+> proposal and the largest accessibility size.

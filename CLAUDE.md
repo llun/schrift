@@ -910,22 +910,33 @@ new code reads like the surrounding code.
   `ProfileTrailingRow`, `SharedRow`, `SubpageRow`, `PagesTreeDrawer`), and a label
   that must fill a taller container takes **`.frame(maxHeight: .infinity)` first**
   — a `Text` is only as tall as its line, so the shape it hands over is that line.
-  **`maxHeight: .infinity` is only safe where something above it is *bounded*.**
-  A flexible frame's unspecified bound defaults to whatever its child answers, so
-  an unbounded-max label is vertically greedy through every `minHeight:`-only
-  ancestor — and `minHeight:` is what the Dynamic Type rule below *requires*, so
-  the ancestor is usually a floor, not a cap. `SaveStatusIndicator`'s Save/retry
-  filled the row this way and the row filled the screen: offered 874pt it
-  answered 874pt, `editingSurface`'s `VStack` saw two greedy children, split the
-  free height between them, and parked the document title and first line of
-  content mid-screen whenever the keyboard was up. **Where nothing above the
-  label is bounded, floor the label itself** —
-  `.frame(minHeight: DocsSpacing.rowMinHeight)` gives the identical ≥44pt shape,
-  still grows with Dynamic Type, and never claims a proposal. Give every sibling
-  state the same floor (`SaveStatusIndicator`'s three passive states do) or the
-  content below resizes as the state changes; `SaveStatusIndicatorTests` pins
-  both halves — content-sized against a full-screen proposal, and still ≥44pt
-  when offered less. Two shapes this rule takes:
+  **But `maxHeight: .infinity` fills whatever it is *proposed*, so it is only
+  safe where the proposal is one you want filled.** A flexible frame answers the
+  proposal clamped into the bounds you give it, falling back to its child only
+  where a bound is missing — so an unbounded max means "all of it" the moment any
+  ancestor hands down a concrete height. **The operative question is the
+  proposal, not whether an ancestor caps it.** Both shipping call sites are worth
+  knowing: a **scroll view** proposes an unspecified height along its scroll
+  axis, so `PagesTreeDrawer`'s row label resolves to its ideal and the row settles
+  at 44pt (measured) — safe; a **stack in a height-bounded container** hands its
+  children a concrete proposal, which is what `editingSurface`'s
+  `VStack(spacing: 0)` does, and there `SaveStatusIndicator`'s Save/retry filled
+  the row and the row filled the screen — offered 874pt it answered 874pt, the
+  `VStack` saw two greedy children, split the free height between them, and
+  parked the document title and first line of content mid-screen whenever the
+  keyboard was up. **In the second case, floor the label itself** —
+  `.frame(minHeight: DocsSpacing.rowMinHeight)` never claims a proposal and still
+  grows with Dynamic Type, which the rule above *requires* (a fixed `height:`
+  clips). Note the floor is also the *larger* target: the row applies
+  `.padding(.bottom, 8)` before its own `.frame(minHeight: 44)`, so a
+  fill-the-row label only ever got 36pt at the row's floor — it reached 44 only
+  while inflating the row. Give every sibling state the same floor
+  (`SaveStatusIndicator`'s three passive states do) or the content below resizes
+  as the state changes — at default text sizes; a state whose own text wraps
+  outgrows the floor at accessibility sizes, so uniformity is a default-size
+  guarantee, not an invariant. `SaveStatusIndicatorTests` pins the halves that
+  are: content-sized against a full-screen proposal, ≥44pt tall when offered
+  less, and ≥44pt wide for the short "Save" label. Two shapes this rule takes:
   - a small glyph inside a bigger target keeps the glyph fixed and pads *outside*
     it — that is what `IconButton` does, and why an icon-only control should go
     through `IconButton` rather than wrapping a bare `MaterialSymbol` in a
