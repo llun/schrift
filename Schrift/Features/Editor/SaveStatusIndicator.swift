@@ -12,8 +12,10 @@ import SwiftUI
 ///
 /// `CaseIterable` so `SaveStatusIndicatorTests` can derive the list of visible
 /// states rather than restate it: a sixth case added to `body`'s switch without
-/// the height floor every other state carries would otherwise reintroduce the
-/// greedy row that took half the editor, with the whole file still green.
+/// the height floor every other state carries would otherwise slip past the whole
+/// file green — sized to its own text, so the canvas resizes when the status
+/// changes to it, and free to reach for the `maxHeight: .infinity` that took half
+/// the editor.
 enum SaveStatusDisplay: Equatable, CaseIterable {
     case none
     /// Tappable — flushes the in-progress edit to disk (and pushes it, unless held).
@@ -74,11 +76,13 @@ struct SaveStatusIndicator: View {
                     // Reach the tap target before taking the tap shape. A footnote
                     // line is ~19pt tall, less than half the 44pt target on its
                     // own. The floor is this label's own — *not* `maxHeight:
-                    // .infinity` waiting for an ancestor to bound it, which is
-                    // what put the title mid-screen: nothing above it has a
-                    // bounded height (`EditorView.saveStatusRow` floors, it does
-                    // not cap), so the row answered a whole screen's proposal in
-                    // full and the canvas got what was left. The width floor
+                    // .infinity`, which is what put the title mid-screen: an
+                    // unbounded max fills whatever height it is **proposed**, and
+                    // `editingSurface` is a `VStack(spacing: 0)` in a
+                    // height-bounded container, so a whole screen was proposed
+                    // and answered in full, leaving the canvas the remainder.
+                    // (`saveStatusRow`'s `minHeight:` could not stop it: a floor
+                    // is not a cap.) The width floor
                     // matters here and nowhere else in this switch: "Save" is
                     // four characters, narrower than 44pt at the default text
                     // size, where every other state is a whole phrase.
@@ -103,10 +107,11 @@ struct SaveStatusIndicator: View {
             }
             // The passive states carry the same floor as the two tappable ones —
             // they need no tap target, but sized to their own text the canvas
-            // below would resize as the status moved Save → Saving → Saved. That
-            // holds at default text sizes: at accessibility sizes the longer
-            // phrases wrap past the floor, so the strip is uniform up to about
-            // `.accessibility3` and text-sized above it.
+            // below would resize as the status moved Save → Saving → Saved. A
+            // floor only levels states whose own text fits inside it, so this is
+            // a default-size property: once a phrase grows past 44pt the state is
+            // text-sized again, which is the right trade — capping it would clip
+            // the text.
             .frame(minHeight: DocsSpacing.rowMinHeight)
 
         case .saved:
