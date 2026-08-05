@@ -602,10 +602,12 @@ struct EditorView: View {
             }
             .padding(.horizontal, DocsSpacing.gutter)
             .padding(.bottom, DocsSpacing.spaceXS)
-            // A fixed row height for every state, not just the two that carry a
-            // button: sized per-state, the canvas below would jump as the status
-            // moved Save → Saving → Saved. The two button states fill this
-            // height, which is what gets them to 44pt.
+            // A floor, and only a floor — this is a strip above a canvas that
+            // takes whatever is left, so it must never claim the height it is
+            // offered. `SaveStatusIndicator` floors every state itself (which is
+            // also what gets the two tappable ones to 44pt), so this guards the
+            // padded strip alone; a state that ever forgot its own floor would
+            // still not collapse.
             .frame(minHeight: DocsSpacing.rowMinHeight)
         }
     }
