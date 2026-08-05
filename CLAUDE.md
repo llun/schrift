@@ -909,9 +909,23 @@ new code reads like the surrounding code.
   therefore ends its label with **`.contentShape(Rectangle())`** (`ListRow`,
   `ProfileTrailingRow`, `SharedRow`, `SubpageRow`, `PagesTreeDrawer`), and a label
   that must fill a taller container takes **`.frame(maxHeight: .infinity)` first**
-  — a `Text` is only as tall as its line, so the shape it hands over is that line
-  (`SaveStatusIndicator`'s Save/retry, whose row supplies the height so it can't
-  jump between save states). Two shapes this rule takes:
+  — a `Text` is only as tall as its line, so the shape it hands over is that line.
+  **`maxHeight: .infinity` is only safe where something above it is *bounded*.**
+  A flexible frame's unspecified bound defaults to whatever its child answers, so
+  an unbounded-max label is vertically greedy through every `minHeight:`-only
+  ancestor — and `minHeight:` is what the Dynamic Type rule below *requires*, so
+  the ancestor is usually a floor, not a cap. `SaveStatusIndicator`'s Save/retry
+  filled the row this way and the row filled the screen: offered 874pt it
+  answered 874pt, `editingSurface`'s `VStack` saw two greedy children, split the
+  free height between them, and parked the document title and first line of
+  content mid-screen whenever the keyboard was up. **Where nothing above the
+  label is bounded, floor the label itself** —
+  `.frame(minHeight: DocsSpacing.rowMinHeight)` gives the identical ≥44pt shape,
+  still grows with Dynamic Type, and never claims a proposal. Give every sibling
+  state the same floor (`SaveStatusIndicator`'s three passive states do) or the
+  content below resizes as the state changes; `SaveStatusIndicatorTests` pins
+  both halves — content-sized against a full-screen proposal, and still ≥44pt
+  when offered less. Two shapes this rule takes:
   - a small glyph inside a bigger target keeps the glyph fixed and pads *outside*
     it — that is what `IconButton` does, and why an icon-only control should go
     through `IconButton` rather than wrapping a bare `MaterialSymbol` in a
@@ -922,9 +936,13 @@ new code reads like the surrounding code.
     back with **symmetric negative padding**
     (`.padding(x).contentShape(Rectangle()).padding(-x)`): same layout, bigger
     target.
-  None of this is visible in a screenshot or catchable by the test suite, which
-  is why it survived a whole design refresh on `Delete document`, `Sign out` and
-  both conflict-resolution rows. Check it by tapping the *padding*, not the text.
+  The hit *shape* is invisible in a screenshot and uncatchable by the suite,
+  which is why it survived a whole design refresh on `Delete document`,
+  `Sign out` and both conflict-resolution rows — check that by tapping the
+  *padding*, not the text. The *geometry* a fill-the-row label demands is not
+  invisible: host the view and measure it (`SaveStatusIndicatorTests`,
+  `EditorFormattingBarTests`), because a control that claims the height or width
+  it is offered takes it out of whatever it shares a stack with.
 - **Inter-row hairlines are opt-in per call site, not a `ListSection`
   parameter.** There is no `divided:` flag in the Swift code (that's the React
   handoff's prop) — a section draws separators only where its own body

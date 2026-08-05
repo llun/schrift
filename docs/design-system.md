@@ -919,6 +919,22 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   which put it under **Delete document, Sign out and both conflict-resolution
 >   choices** — the decisions least forgiving of a missed tap. It is invisible in
 >   a screenshot and uncatchable by the suite; test it by tapping the padding.
+>
+> **Amended: 2026-08-05.** `maxHeight: .infinity` was the wrong half of that
+> technique for the editor's save status, and the bug it caused was very visible.
+> A flexible frame's unspecified bound defaults to its child's answer, so the
+> unbounded label was greedy through every `minHeight:`-only ancestor — and the
+> Dynamic Type rule makes `minHeight:` the norm. Offered a whole screen the row
+> answered a whole screen, `editingSurface`'s `VStack` split the free height
+> between the row and the canvas, and the document title sat mid-screen with the
+> keyboard up. `SaveStatusIndicator` now floors each state itself
+> (`minHeight: DocsSpacing.rowMinHeight`) — the same ≥44pt tap shape, still
+> growing with Dynamic Type, never claiming a proposal — with the three passive
+> states carrying the same floor so the canvas cannot resize as the status moves
+> Save → Saving → Saved. Reach for `maxHeight: .infinity` only where an ancestor
+> is genuinely bounded; otherwise floor the label. `SaveStatusIndicatorTests`
+> measures the hosted component against a full-screen proposal, a 10pt proposal
+> and the largest accessibility size.
 > - Icon-only controls go through **`IconButton`**, which keeps the small glyph
 >   and pads *outside* it to the floor, rather than wrapping a bare
 >   `MaterialSymbol` in a `Button` (the Home error-banner dismiss was a 13pt
