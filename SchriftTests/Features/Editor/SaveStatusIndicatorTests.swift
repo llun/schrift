@@ -10,11 +10,12 @@ import XCTest
 /// `.frame(maxHeight: .infinity)` on the Save/retry label — the technique that
 /// got them to a 44pt tap target — made the row answer any proposal in full: a
 /// flexible frame answers the proposal clamped into the bounds it was given, and
-/// falls back to its child only where a bound is missing, so an unbounded max
-/// means "all of it" as soon as an ancestor hands down a concrete height. The
-/// enclosing `.frame(minHeight:)` is a floor, not a cap, so nothing clamped it:
-/// SwiftUI saw two greedy children and split the free height, which parked the
-/// title and the first line of content mid-screen with the keyboard up.
+/// falls back to its child where the proposal is unspecified or a bound is
+/// missing, so an unbounded max means "all of it" as soon as an ancestor hands
+/// down a concrete height. The enclosing `.frame(minHeight:)` is a floor, not a
+/// cap, so nothing clamped it: SwiftUI saw two greedy children and split the free
+/// height, which parked the title and the first line of content mid-screen with
+/// the keyboard up.
 ///
 /// A `minHeight` floor buys the tap target without ever claiming a proposal, so
 /// these tests pin both halves at once — the component is content-sized, and it
@@ -115,7 +116,8 @@ final class SaveStatusIndicatorTests: XCTestCase {
             // other axis.
             XCTAssertGreaterThan(
                 width, DocsSpacing.rowMinHeight,
-                "\(display) is \(width)pt wide, so it would need a width floor too")
+                "\(display) is only \(width)pt wide, so \"the width floor matters here and nowhere "
+                    + "else\" no longer describes this switch")
             XCTAssertLessThan(
                 width, screen.width - roundingSlack,
                 "\(display) claims the full \(screen.width)pt it was offered")
@@ -125,8 +127,9 @@ final class SaveStatusIndicatorTests: XCTestCase {
     /// Uniform height across states, which is why the floor is on all five and
     /// not just the two that carry a button: sized per-state, the canvas below
     /// would jump as the status moved Save → Saving → Saved. A default-size
-    /// guarantee only — at accessibility sizes the longer phrases wrap past the
-    /// floor, which `testTheFloorGrowsWithDynamicType…` is what covers.
+    /// property only: a floor levels the states whose own text fits inside it, and
+    /// a phrase that outgrows 44pt is text-sized again — which is the trade
+    /// `testTheFloorGrowsWithDynamicType…` pins from the other side.
     func testEveryVisibleStateReportsTheSameHeight() {
         let heights = visibleDisplays.map { height(of: $0, proposing: screen) }
         guard let reference = heights.first else { return XCTFail("no visible displays to compare") }

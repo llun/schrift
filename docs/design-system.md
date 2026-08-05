@@ -942,9 +942,12 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > for the editing save-status row, and the bug was very visible: the document
 > title and first line of content sat mid-screen with the keyboard up.
 >
-> A flexible frame answers the **proposal**, clamped into the bounds you give
-> it, falling back to its child only where a bound is missing — so an unbounded
-> max means "all of it" as soon as an ancestor hands down a concrete height.
+> A flexible frame answers the **proposal**, clamped into the bounds you give it,
+> and falls back to its child where the proposal is unspecified or a bound is
+> missing — so an unbounded max means "all of it" as soon as an ancestor hands
+> down a concrete height. Both halves matter here: in the height axis the drawer's
+> label and the old save label were identically bounded (no min, infinite max), so
+> only the proposal separates them.
 > That is the real test, not "is an ancestor bounded". `editingSurface` is a
 > `VStack(spacing: 0)` of the row and the canvas in a height-bounded container,
 > so the Save/retry label answered 874pt to an 874pt proposal, the stack saw two
