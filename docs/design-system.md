@@ -949,9 +949,11 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > `VStack(spacing: 0)` of the row and the canvas in a height-bounded container,
 > so the Save/retry label answered 874pt to an 874pt proposal, the stack saw two
 > greedy children and split the free height between them. `PagesTreeDrawer`
-> keeps the same technique and is *not* greedy, because a scroll view proposes
-> an unspecified height along its scroll axis and the row resolves to its ideal
-> 44pt (measured) — the distinction that tells the two call sites apart.
+> keeps the same technique and is *not* greedy, because a scroll view proposes an
+> unspecified height along its scroll axis, so its rows are ideal-sized — the
+> distinction that tells the two call sites apart. (Whether that modifier still
+> buys the drawer's row its full 44pt tap *shape* under such a proposal is a
+> different question from greed, and is being checked separately.)
 >
 > `SaveStatusIndicator` now floors each state itself
 > (`minHeight: DocsSpacing.rowMinHeight`), which never claims a proposal and
@@ -959,9 +961,12 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > below before its own 44pt floor, so a fill-the-row label only ever got 36pt at
 > the row's floor — 44pt was reached only while the row was inflating. The three
 > passive states carry the same floor so the canvas cannot resize as the status
-> moves Save → Saving → Saved **at default text sizes**; a state whose own text
-> wraps (`Couldn't save`, `Saved on this device`) outgrows the floor at
-> accessibility sizes, so that uniformity is a default-size guarantee rather than
-> an invariant. `SaveStatusIndicatorTests` measures the hosted component at the
-> width the row actually offers it, against a full-screen proposal, a 10pt
-> proposal and the largest accessibility size.
+> moves Save → Saving → Saved. That levelling is a **default-size** property: a
+> floor only equalises states whose own text fits inside it, so a phrase that
+> grows past 44pt is text-sized again — the right trade, since capping it would
+> clip the text. `SaveStatusIndicatorTests` measures the hosted component at the
+> width the row actually offers it (the screen less the row's gutters), against a
+> full-screen proposal, a 10pt proposal and the largest accessibility size, in
+> English through an isolated `LocalizationStore` — a width floor only binds while
+> the label is narrower than the floor, which "Save" is and its translations need
+> not be.

@@ -912,14 +912,17 @@ new code reads like the surrounding code.
   — a `Text` is only as tall as its line, so the shape it hands over is that line.
   **But `maxHeight: .infinity` fills whatever it is *proposed*, so it is only
   safe where the proposal is one you want filled.** A flexible frame answers the
-  proposal clamped into the bounds you give it, falling back to its child only
-  where a bound is missing — so an unbounded max means "all of it" the moment any
-  ancestor hands down a concrete height. **The operative question is the
-  proposal, not whether an ancestor caps it.** Both shipping call sites are worth
-  knowing: a **scroll view** proposes an unspecified height along its scroll
-  axis, so `PagesTreeDrawer`'s row label resolves to its ideal and the row settles
-  at 44pt (measured) — safe; a **stack in a height-bounded container** hands its
-  children a concrete proposal, which is what `editingSurface`'s
+  proposal clamped into the bounds you give it, and falls back to its child where
+  the proposal is unspecified or a bound is missing — so an unbounded max means
+  "all of it" the moment any ancestor hands down a concrete height. **The
+  operative question is the proposal, not whether an ancestor caps it.** Both
+  shipping call sites are worth knowing: a **scroll view** proposes an
+  unspecified height along its scroll axis, so `PagesTreeDrawer`'s rows are
+  ideal-sized rather than greedy — which is why the same modifier is harmless
+  there (whether it still buys that row its full tap *shape* under such a
+  proposal is a separate question, and being checked); a **stack in a
+  height-bounded container** hands its children a concrete proposal, which is
+  what `editingSurface`'s
   `VStack(spacing: 0)` does, and there `SaveStatusIndicator`'s Save/retry filled
   the row and the row filled the screen — offered 874pt it answered 874pt, the
   `VStack` saw two greedy children, split the free height between them, and
@@ -932,11 +935,14 @@ new code reads like the surrounding code.
   fill-the-row label only ever got 36pt at the row's floor — it reached 44 only
   while inflating the row. Give every sibling state the same floor
   (`SaveStatusIndicator`'s three passive states do) or the content below resizes
-  as the state changes — at default text sizes; a state whose own text wraps
-  outgrows the floor at accessibility sizes, so uniformity is a default-size
-  guarantee, not an invariant. `SaveStatusIndicatorTests` pins the halves that
-  are: content-sized against a full-screen proposal, ≥44pt tall when offered
-  less, and ≥44pt wide for the short "Save" label. Two shapes this rule takes:
+  as the state changes. That levelling is a **default-size** property: a floor
+  only equalises states whose own text fits inside it, so once a phrase grows past
+  44pt that state is text-sized again — the right trade, since capping it would
+  clip the text. `SaveStatusIndicatorTests` pins what is invariant: content-sized
+  against a full-screen proposal, ≥44pt tall when offered less, and ≥44pt wide for
+  the short "Save" label — measured in English through an isolated
+  `LocalizationStore`, because a width floor only binds while the label is
+  narrower than the floor. Two shapes this rule takes:
   - a small glyph inside a bigger target keeps the glyph fixed and pads *outside*
     it — that is what `IconButton` does, and why an icon-only control should go
     through `IconButton` rather than wrapping a bare `MaterialSymbol` in a
