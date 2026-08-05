@@ -43,6 +43,32 @@ final class SaveStatusIndicatorTests: XCTestCase {
     /// guards against was hundreds of points, not a sub-pixel.
     private let roundingSlack: CGFloat = 1
 
+    private var defaults: UserDefaults!
+
+    /// English, pinned — and through an isolated suite, so this neither reads nor
+    /// writes the host's `schrift.language`. The width floor only *binds* while
+    /// the label is narrower than 44pt, which "Save" is and its translations need
+    /// not be: on a machine whose preferred language happened to be one of the
+    /// longer ones, `testSaveKeepsItsWidthFloor…` would pass without the floor
+    /// being there at all.
+    override func setUp() {
+        super.setUp()
+        defaults = UserDefaults(suiteName: "SaveStatusIndicatorTests")
+        defaults.removePersistentDomain(forName: "SaveStatusIndicatorTests")
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: "SaveStatusIndicatorTests")
+        defaults = nil
+        super.tearDown()
+    }
+
+    private func english() -> LocalizationStore {
+        let store = LocalizationStore(userDefaults: defaults)
+        store.language = .english
+        return store
+    }
+
     private func size(
         of display: SaveStatusDisplay,
         proposing proposal: CGSize,
@@ -51,7 +77,7 @@ final class SaveStatusIndicatorTests: XCTestCase {
         let host = UIHostingController(
             rootView: SaveStatusIndicator(display: display, onTap: {})
                 .dynamicTypeSize(typeSize)
-                .environment(LocalizationStore()))
+                .environment(english()))
         return host.sizeThatFits(in: proposal)
     }
 
@@ -83,9 +109,16 @@ final class SaveStatusIndicatorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(size(of: .save, proposing: screen).width, DocsSpacing.rowMinHeight)
         for display in visibleDisplays where display != .save {
             let width = size(of: display, proposing: screen).width
+            // Text-sized means both things: past the floor on its own, so it needs
+            // no `minWidth`, and short of the proposal, so it is not *horizontally*
+            // greedy either — the failure `EditorFormattingBarTests` guards on the
+            // other axis.
             XCTAssertGreaterThan(
                 width, DocsSpacing.rowMinHeight,
                 "\(display) is \(width)pt wide, so it would need a width floor too")
+            XCTAssertLessThan(
+                width, screen.width - roundingSlack,
+                "\(display) claims the full \(screen.width)pt it was offered")
         }
     }
 
