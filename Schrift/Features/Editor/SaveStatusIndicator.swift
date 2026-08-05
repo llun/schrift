@@ -9,7 +9,12 @@ import SwiftUI
 
 /// What the editing session's status slot shows. A resolved value, not a raw save state:
 /// a recorded conflict outranks the save state (see `saveStatusDisplay`).
-enum SaveStatusDisplay: Equatable {
+///
+/// `CaseIterable` so `SaveStatusIndicatorTests` can derive the list of visible
+/// states rather than restate it: a sixth case added to `body`'s switch without
+/// the height floor every other state carries would otherwise reintroduce the
+/// greedy row that took half the editor, with the whole file still green.
+enum SaveStatusDisplay: Equatable, CaseIterable {
     case none
     /// Tappable — flushes the in-progress edit to disk (and pushes it, unless held).
     case save
@@ -98,7 +103,10 @@ struct SaveStatusIndicator: View {
             }
             // The passive states carry the same floor as the two tappable ones —
             // they need no tap target, but sized to their own text the canvas
-            // below would resize as the status moved Save → Saving → Saved.
+            // below would resize as the status moved Save → Saving → Saved. That
+            // holds at default text sizes: at accessibility sizes the longer
+            // phrases wrap past the floor, so the strip is uniform up to about
+            // `.accessibility3` and text-sized above it.
             .frame(minHeight: DocsSpacing.rowMinHeight)
 
         case .saved:
