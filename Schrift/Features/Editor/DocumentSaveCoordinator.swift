@@ -421,9 +421,13 @@ final class DocumentSaveCoordinator {
     /// record's, because every list renders `title ?? untitled` — a nil check, not an
     /// emptiness one — so overlaying "" (or "   ") would produce a blank row.
     func pendingLocalDocuments(parentID: UUID?, currentUserID: UUID?) -> [Document] {
-        let parentID = resolvedParentID(parentID)
+        let keys = parentIDAliases(parentID)
         let listed = pendingCreates.values
-            .filter { isListable($0, currentUserID: currentUserID) && $0.parentID == parentID }
+            .filter {
+                guard isListable($0, currentUserID: currentUserID) else { return false }
+                guard let recordParent = $0.parentID else { return parentID == nil }
+                return keys.contains(recordParent)
+            }
             .sorted { orderedByCreation($1, $0) }
         guard !listed.isEmpty else { return [] }
         let draftTitles = draftTitlesByDocument()
@@ -438,15 +442,15 @@ final class DocumentSaveCoordinator {
     /// Roots are excluded: they are nobody's children, and the drawer's own root is the
     /// document behind it rather than the top of the account.
     func pendingLocalDocumentsByParent(currentUserID: UUID?) -> [UUID: [Document]] {
-        let grouped = Dictionary(
-            grouping: pendingCreates.values.filter {
-                isListable($0, currentUserID: currentUserID) && $0.parentID != nil
-            },
-            // Keyed by the id the parent is **presented** under, which is its server id once it
-            // is checkpointed — the inverse of `resolvedParentID`, and for the same window. The
-            // drawer can only draw a checkpointed parent under that id, since the local row is
-            // withheld from the moment the checkpoint lands.
-            by: { presentedParentID($0.parentID ?? $0.localID) })
+        // Filed under **every** id its parent can be asked about, not one of them. This
+        // dictionary is looked up by whatever id the asking screen happens to hold, and unlike
+        // `pendingLocalDocuments` it has no requested id to resolve — so picking a side is
+        // picking which caller to fail. See `parentIDAliases`.
+        var grouped: [UUID: [PendingDocumentCreate]] = [:]
+        for create in pendingCreates.values where isListable(create, currentUserID: currentUserID) {
+            guard let parentID = create.parentID else { continue }
+            for key in parentIDAliases(parentID) { grouped[key, default: []].append(create) }
+        }
         guard !grouped.isEmpty else { return [:] }
         let draftTitles = draftTitlesByDocument()
         return grouped.mapValues { records in
@@ -461,28 +465,37 @@ final class DocumentSaveCoordinator {
         belongsToSession(create, currentUserID: currentUserID) && create.syncedServerID == nil
     }
 
-    /// The id a level is actually **keyed by**, given the id a screen asks about.
+    /// Every id one level can be known by — **a union, never a substitution.**
     ///
-    /// They differ for exactly one window. A sub-page names its parent's `localID` until the
+    /// For one window a document has two: a sub-page names its parent's `localID` until the
     /// migration re-keys it, but the moment that parent is checkpointed `pendingLocalDocuments`
-    /// withholds its local row, so the user meets it — and asks for its children — under its
-    /// *server* id. Between the checkpoint and the migration a strict `parentID` match would
-    /// therefore find nothing, and the parent's own sub-pages would blink out of the Subpages
-    /// list and the drawer, reappearing only once the migration re-keyed them.
+    /// withholds its local row, so the *server* id is the one the user is offered. A strict
+    /// `parentID` match therefore blanks the level for the whole window, which is usually
+    /// microseconds but is stretched indefinitely by a crash and by every guard that defers
+    /// `finishMigration` (an open editor on either id, an in-flight or queued save, the
+    /// both-drafts window).
     ///
-    /// Usually microseconds, but not always: the two are separated by a crash, and by every
-    /// guard that defers `finishMigration` (an open editor on either id, an in-flight or queued
-    /// save, the both-drafts window). `hasPendingLocalChildren` already resolves the pair this
-    /// way, so this is what makes the listings agree with it on one id for the whole window.
-    private func resolvedParentID(_ parentID: UUID?) -> UUID? {
-        guard let parentID else { return nil }
-        return checkpointedRecord(forServerID: parentID)?.localID ?? parentID
-    }
-
-    /// The other direction: the id a parent is currently **shown** under. Only differs for the
-    /// same checkpointed window, and only for a parent that is itself one of our records.
-    private func presentedParentID(_ parentID: UUID) -> UUID {
-        pendingCreates[parentID]?.syncedServerID ?? parentID
+    /// **Resolving to one id does not fix that, it only moves it**, and both directions were
+    /// tried and were wrong. Mapping server→local hides a sub-page created *during* the window,
+    /// which names the server id because that is the screen the user was on. Mapping local→server
+    /// hides every sub-page from a screen still holding the local id — the editor's `documentID`
+    /// is a `let`, and an editor open on that id is itself one of the things deferring the
+    /// migration, so it is not a rare pairing but the *characteristic* one. Two cohorts exist at
+    /// once, so the level is the union of both.
+    ///
+    /// Costs nothing to over-answer: the two ids never appear as separate nodes in one tree,
+    /// since the local row is withheld exactly while the server one is available.
+    ///
+    /// Deliberately **not** used by `hasPendingLocalChildren` or the cascade. Those ask what a
+    /// delete would *take*, which is only ever the `localID` cohort; this asks what a level
+    /// *contains*. Conflating them would have the confirmation promise sub-pages the cascade
+    /// leaves behind — the false sentence round one removed.
+    private func parentIDAliases(_ parentID: UUID?) -> Set<UUID> {
+        guard let parentID else { return [] }
+        var aliases: Set<UUID> = [parentID]
+        if let localID = checkpointedRecord(forServerID: parentID)?.localID { aliases.insert(localID) }
+        if let serverID = pendingCreates[parentID]?.syncedServerID { aliases.insert(serverID) }
+        return aliases
     }
 
     /// One decode for a whole listing: `draftStore.draft(for:)` re-decodes every draft —

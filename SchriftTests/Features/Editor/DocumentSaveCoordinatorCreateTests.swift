@@ -742,21 +742,53 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     /// inside it.** Its sub-pages keep naming the local id until the migration re-keys them, so
     /// a strict match would blank the level for the whole checkpointed window — usually
     /// microseconds, but a crash or any deferred migration stretches it indefinitely.
-    func testALocalSubpageStaysListedWhileItsParentIsCheckpointed() {
+    /// **Both cohorts, under both ids.** A checkpointed parent has two at once — sub-pages
+    /// minted before the checkpoint name its `localID`, ones minted during the window name the
+    /// `serverID`, because that is the screen the user was on — and it is asked about under both
+    /// too: an editor's `documentID` is a `let`, and an editor still holding the local id is
+    /// itself one of the things deferring the migration. Resolving to *either* id blanks one of
+    /// the four combinations, which is how the first attempt at this shipped a regression.
+    func testALocalSubpageStaysListedWhicheverIDItsCheckpointedParentIsAskedBy() {
         let (coordinator, _, _) = makeCoordinator()
         let serverID = UUID()
         let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
-        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        let beforeCheckpoint = coordinator.createLocalDocument(
+            title: "Before", parentID: root.id, ownerUserID: user)
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+        // Created while the parent sat checkpointed, from the screen that meets it under its
+        // server id — so this one names the server id, not the local one.
+        let duringWindow = coordinator.createLocalDocument(
+            title: "During", parentID: serverID, ownerUserID: user)
+        let both = Set([beforeCheckpoint.id, duringWindow.id])
+
+        for askedBy in [("server id", serverID), ("local id", root.id)] {
+            XCTAssertEqual(
+                Set(coordinator.pendingLocalDocuments(parentID: askedBy.1, currentUserID: user).map(\.id)),
+                both, "the Subpages list must answer under the \(askedBy.0)")
+            XCTAssertEqual(
+                Set(coordinator.pendingLocalDocumentsByParent(currentUserID: user)[askedBy.1]?.map(\.id) ?? []),
+                both, "and so must the drawer, keyed by the \(askedBy.0)")
+        }
+    }
+
+    /// The union must not leak sideways: an unrelated parent gains nothing from it, and roots
+    /// still mean roots.
+    func testTheParentIDUnionDoesNotWidenUnrelatedLevels() {
+        let (coordinator, _, _) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
         var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
         checkpointed.syncedServerID = serverID
         coordinator.savePendingCreateForTesting(checkpointed)
 
-        XCTAssertEqual(
-            coordinator.pendingLocalDocuments(parentID: serverID, currentUserID: user).map(\.id), [child.id],
-            "the Subpages list asks under the server id, which is the only one it is offered")
-        XCTAssertEqual(
-            coordinator.pendingLocalDocumentsByParent(currentUserID: user)[serverID]?.map(\.id), [child.id],
-            "and the drawer groups it under the id it draws the parent as")
+        XCTAssertTrue(coordinator.pendingLocalDocuments(parentID: UUID(), currentUserID: user).isEmpty)
+        XCTAssertTrue(
+            coordinator.pendingLocalDocuments(parentID: nil, currentUserID: user).isEmpty,
+            "the checkpointed root is withheld, and a sub-page is not a root")
+        XCTAssertNil(coordinator.pendingLocalDocumentsByParent(currentUserID: user)[UUID()])
     }
 
     /// The one shape the confirmation over-warns about, pinned so it stays *over*-warning: a

@@ -1137,6 +1137,24 @@ takes neither branch: the sub-page survives, and the probe later re-roots it, pe
 below. Announcing a deletion there would put a false sentence in a destructive confirmation,
 so the predicate answers false wherever the cascade would not run.
 
+**The *listings* do the opposite, and the difference is the point.** A checkpointed parent
+has two ids at once, and for the whole window both are live: sub-pages minted before the
+checkpoint name its `localID`, ones minted during it name the `serverID` (that is the screen
+the user was on), and it is *asked* about under both — the editor's `documentID` is a `let`,
+and an editor still holding the local id is itself one of the things deferring the
+migration, so that pairing is the characteristic one rather than a rare one. So
+`parentIDAliases` is a **union, never a substitution**, and both `pendingLocalDocuments` and
+`pendingLocalDocumentsByParent` answer for every id a level can be known by. Resolving to
+one id does not fix the blank level, it only moves it: mapping server→local hides the
+during-the-window cohort, mapping local→server blanks the drawer for a screen still on the
+local id. Both were tried, and each shipped the other's bug. Over-answering costs nothing
+here, since the two ids never appear as separate nodes in one tree — the local row is
+withheld exactly while the server one is available.
+
+`hasPendingLocalChildren` and the cascade deliberately do **not** use it: they ask what a
+delete would *take*, which is only ever the `localID` cohort, where the listings ask what a
+level *contains*. Conflating the two is what put the false sentence in the confirmation.
+
 Three ordering rules make it safe, all for reasons this document has met before:
 
 - **Every record goes in one store write, the root's included** — `PendingDocumentCreateStore
