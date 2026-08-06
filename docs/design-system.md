@@ -954,9 +954,33 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > greedy children and split the free height between them. `PagesTreeDrawer`
 > keeps the same technique and is *not* greedy, because a scroll view proposes an
 > unspecified height along its scroll axis, so its rows are ideal-sized — the
-> distinction that tells the two call sites apart. (Whether that modifier still
-> buys the drawer's row its full 44pt tap *shape* under such a proposal is a
-> different question from greed, and is being checked separately.)
+> distinction that tells the two call sites apart.
+>
+> **Amended: 2026-08-06.** That drawer row does still get its full 44pt tap
+> shape under an unspecified proposal, and it is now measured rather than
+> assumed. Given only a `minHeight:`, a flexible frame clamps an unspecified
+> proposal *up to* that minimum and proposes **that** to its child, so the row
+> hands 44pt inward and the fill-the-row label answers 44pt. The leaf rows had
+> been read the other way twice — a leaf reserves the disclosure column with a
+> 22pt `Color.clear` where a parent puts a 44pt button, which looks like it
+> should shorten the label beside it — but the proposal arrives down the row,
+> not across the `HStack`, so leaf and parent measure identically.
+> `PagesTreeDrawerTests` pins that, and carries a negative control (the same row
+> with the fill removed, which must measure short) because a measurement that
+> cannot fail proves nothing.
+>
+> Measuring a label *inside* a row took three tries, which is worth writing down.
+> `sizeThatFits` cannot see this class of defect at all: the row floors at 44pt
+> whether or not the label fills it. A `GeometryReader` behind the
+> `contentShape`'d label does see it, but reports `.zero` unless the hosted view
+> is in a `UIWindow` and laid out. A hosted view's accessibility frames track the
+> same bounds and can read the *real* drawer rather than a copy — that is how the
+> shipping view was checked (every row 44.0pt; deleting the fill dropped every
+> row, parents included, to 21.0pt) — but they are materialized only where an
+> accessibility client is, so on the freshly erased simulator CI runs they come
+> back empty and the whole suite goes red. The landed tests therefore measure the
+> row's shape reproduced from the same tokens, and say so; keep the replica in
+> step with `treeRow`.
 >
 > `SaveStatusIndicator` now floors each state itself
 > (`minHeight: DocsSpacing.rowMinHeight`), which never claims a proposal and

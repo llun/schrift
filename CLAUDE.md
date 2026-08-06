@@ -919,8 +919,20 @@ new code reads like the surrounding code.
   shipping call sites are worth knowing: a **scroll view** proposes an
   unspecified height along its scroll axis, so `PagesTreeDrawer`'s rows are
   ideal-sized rather than greedy — which is why the same modifier is harmless
-  there (whether it still buys that row its full tap *shape* under such a
-  proposal is a separate question, and being checked); a **stack in a
+  there, and (measured since) it still buys the full tap shape: given only a
+  `minHeight:`, a flexible frame clamps an unspecified proposal *up to* that
+  minimum and hands **that** down, so the row proposes 44pt inward and the
+  fill-the-row label answers 44pt. Its leaf rows are worth naming, having twice
+  been read the other way — a leaf reserves the disclosure column with a 22pt
+  `Color.clear` where a parent puts a 44pt button, and the shorter sibling looks
+  like it should shorten the label. The proposal arrives down the row, not across
+  the `HStack`, so it doesn't: `PagesTreeDrawerTests` holds that to the numbers —
+  the row's shape reproduced around the same tokens, leaf and parent alike at the
+  same 44pt, and the label still covering the row up through the accessibility
+  text sizes. Delete the fill there and the label drops to 21pt while the row
+  still reports 44 — which is both what makes those assertions bite and why the
+  row's own size is the one thing that cannot be measured to catch this; a
+  **stack in a
   height-bounded container** hands its children a concrete proposal, which is
   what `editingSurface`'s
   `VStack(spacing: 0)` does, and there `SaveStatusIndicator`'s Save/retry filled
@@ -959,7 +971,21 @@ new code reads like the surrounding code.
   *padding*, not the text. The *geometry* a fill-the-row label demands is not
   invisible: host the view and measure it (`SaveStatusIndicatorTests`,
   `EditorFormattingBarTests`), because a control that claims the height or width
-  it is offered takes it out of whatever it shares a stack with.
+  it is offered takes it out of whatever it shares a stack with. Three things
+  about measuring a label *inside* a row, which cost `PagesTreeDrawerTests` a red
+  CI round to learn. `sizeThatFits` reports the row and **cannot see this class
+  of defect at all** — the row floors at 44pt whether or not the label fills it.
+  A **`GeometryReader`** behind the `contentShape`'d label does see it, but only
+  once the hosted view is in a `UIWindow` **and** laid out; short of that it
+  reports `.zero`. A hosted view's **accessibility frames** track that same
+  label's bounds and can read the *real* screen rather than a copy — but they are
+  materialized only where an accessibility client is, so on a freshly erased
+  simulator, which is what CI runs, every frame comes back empty and every such
+  test fails. Keep that one for local verification; never put it in the suite.
+  Whichever instrument, land a **negative control** with it — the same row with
+  the fill removed, which must measure *short*. Without one, "44pt" only says the
+  instrument never reports anything else, and a measurement that cannot fail is
+  not evidence.
 - **Inter-row hairlines are opt-in per call site, not a `ListSection`
   parameter.** There is no `divided:` flag in the Swift code (that's the React
   handoff's prop) — a section draws separators only where its own body
