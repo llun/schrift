@@ -269,6 +269,29 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(env.viewModel.mergedSubpages?.map(\.id), [child!.id], "and it shows immediately")
     }
 
+    /// Nothing may be filed inside a document that has just been deleted. The screen stays
+    /// interactive between the Options sheet dismissing and the pop, and offline the POST fails
+    /// `.network` — so without this the fallback mints a sub-page naming a record the delete has
+    /// already removed, which nothing then gates: the replay POSTs it, the probe 404s, and a
+    /// document the user threw away returns as a stray root.
+    func testAddSubpageDoesNothingOnceTheDocumentIsDeleted() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let env = makeLocalEnvironment()
+        env.viewModel.handleDidDelete()
+
+        let child = await env.viewModel.addSubpage()
+
+        XCTAssertNil(child)
+        XCTAssertEqual(log.methods.count, 0, "and it does not even ask")
+        XCTAssertFalse(
+            env.coordinator.hasPendingLocalChildren(documentID: env.document.id),
+            "no record may name the parent the delete just removed")
+    }
+
     /// Minting needs an account to attribute the record to: without one it would be listed by
     /// nothing and replayed by nothing, so saying so beats a document that silently never syncs.
     func testAddSubpageUnderALocalParentReportsWhenNoAccountIsKnown() async {

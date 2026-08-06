@@ -1214,6 +1214,17 @@ final class EditorViewModel {
 
     func addSubpage() async -> Document? {
         clearError()
+        // **Nothing may be filed inside a document that has just been deleted.** `handleDidDelete`
+        // makes the same point about an in-flight photo upload: it leaves `hasLoadedContent` true,
+        // so the screen stays interactive for the moment between the Options sheet dismissing and
+        // the pop, and anything reachable there needs its own gate. Pre-existing rather than new
+        // — the delete clears the create record, so `isLocalDocument` is already false by the time
+        // this could be tapped, and the pre-2026-08-06 gate let the button through for exactly the
+        // same window — but it is reachable and it is destructive in one shape: offline, the POST
+        // below fails `.network`, the fallback mints a sub-page naming a parent record the delete
+        // has removed, and with nothing left to gate it the replay POSTs it, the probe 404s, and
+        // it is re-rooted. A document the user threw away comes back as a stray root.
+        guard !isDocumentDiscarded else { return nil }
         // **A parent the server has never seen is minted straight away, with no request.** It
         // has no children route to POST to: the call would address
         // `documents/{local-uuid}/children/` and take a 404, which `retryableSaveFailure`
