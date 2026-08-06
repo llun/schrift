@@ -352,13 +352,15 @@ final class DocumentSaveCoordinator {
     /// into), a seed draft (so the editor's existing draft precedence renders it with no
     /// changes), and `.pendingSync` — nothing is syncing, but the work *is* on the device.
     ///
-    /// `parentID` is a **server** id or nil; v1 never creates under a parent that is itself
-    /// pending, so a replay needs no dependency ordering. **That is enforced by the
-    /// affordances**: `localDocument`'s `abilities.childrenCreate` is false, but no code reads the
-    /// field (the replay's probe deliberately does not — it decodes `?? false`, so absent and
-    /// denied are indistinguishable), and the sub-page affordance gates on the parent being local.
-    /// So the create UI does not offer a sub-page under a pending parent; a record minted that
-    /// way would POST `documents/{local-uuid}/children/`, 404, probe, 404, and silently re-root.
+    /// `parentID` is a server id, nil for a root, **or another pending record's `localID`** —
+    /// a sub-page created under a document this device has also not sent yet. Nothing needs
+    /// to be true of the parent at mint time; ordering is the replay's problem, and it solves
+    /// it in two pieces that must be read together: `runCreatePass` refuses to POST a record
+    /// whose parent is still pending, and `migrateCreatedDocument` repoints every such child
+    /// at the server id the parent was just given, immediately before dropping its record.
+    /// Between them a child can never address `documents/{local-uuid}/children/`, which the
+    /// server answers with a 404 that the probe then mistakes for "the parent is gone" and
+    /// silently re-roots the document.
     ///
     /// `ownerUserID` is **required, not defaulted**: an unattributable record can be neither
     /// listed nor replayed (see `belongsToSession`), so a caller that could not name the
@@ -610,6 +612,32 @@ final class DocumentSaveCoordinator {
             // is already guarded on the record still existing — so this guard is about the
             // wasted create, not the write-back.)
             guard let record = pendingCreates[snapshot.localID] else { continue }
+            // **A sub-page waits for its parent to become a real document.** A child created
+            // under a parent this device has not yet POSTed carries that parent's *local* id
+            // in its own `parentID`, and POSTing it would name `documents/{local-uuid}/
+            // children/` — a 404, then a parent probe that 404s too, then a silent re-root.
+            // `migrateCreatedDocument` rewrites these to the server id the instant the parent
+            // lands, and the loop below re-reads each record from the mirror, so a parent and
+            // its sub-pages replay in *this* pass, in order.
+            //
+            // Keyed on `isPendingCreate`, which stays true through checkpointing: the child
+            // waits for the parent's **full** migration, because it is the migration — not the
+            // POST — that does the rewrite.
+            //
+            // What a waiting child inherits, and how each state clears:
+            //
+            //   parent's POST failed retryably   → next trigger retries the parent first
+            //   parent `.failed` (on the merits) → relaunch re-seeds it `.pendingSync`
+            //   parent replay-blocked            → a build that can read the response retries
+            //   parent's editor open             → `releaseOpenEditor` kicks the funnel
+            //   parent checkpointed, deferred    → that deferral's own escape
+            //   parent foreign/unattributable    → the owner signs back in
+            //
+            // In every one of them the child's body stays on disk and protected: this costs a
+            // sub-page its sync, never its content. The one cost is that a permanently stranded
+            // parent strands its children with it — the same recovery the docs already record as
+            // owed for the parent alone.
+            if let parentID = record.parentID, isPendingCreate(documentID: parentID) { continue }
             guard isReplayable(record, currentUserID: currentUserID) else { continue }
             // A create *this build* could not read the response of. Retrying it POSTs a
             // duplicate and abandons whatever the server already built — see
@@ -1179,6 +1207,35 @@ final class DocumentSaveCoordinator {
         let willAdoptServer = canonicalBody.isEmpty && !canonicalServer.isEmpty
         if willAdoptServer { draftStore.remove(documentID: serverID) }
         if let document { insertIntoListCaches(document, parentID: record.parentID) }
+
+        // **Re-key the sub-pages created under this document before the record goes.** They
+        // carry its *local* id in their own `parentID` — an id the server has never seen —
+        // and `runCreatePass`'s dependency gate is what has kept them unsent. Pointing them
+        // at the real id is what opens that gate, and because the pass re-reads every record
+        // from the mirror, a parent and its sub-pages replay in the same pass.
+        //
+        // **Before `removePendingCreate`, and that ordering is the whole safety argument.**
+        // The record and its children live in one blob under one UserDefaults key, so these
+        // are two successive whole-store writes and a crash lands on one of exactly three
+        // states: nothing written (the record still gates the children, and the next pass
+        // redoes the migration); rewritten but the record still present (the gate opens, and
+        // `POST documents/{serverID}/children/` is valid because the checkpoint proves that
+        // document exists); or both (the ordinary end state). The reverse order adds a fourth
+        // — record gone while a child still names the dead local id — in which nothing gates
+        // the child any more: it POSTs `documents/{local-uuid}/children/`, 404s, probes the
+        // parent, 404s again, and is silently re-rooted. That is the one outcome the gate
+        // exists to prevent, so it must not be reachable through a kill either.
+        //
+        // Snapshot first rather than iterating `pendingCreates.values` live, since
+        // `updatePendingCreate` writes back into the dictionary being read.
+        //
+        // Deliberately **not** scoped to replayable records, matching `isPendingCreate`:
+        // a child nothing here may send still must not be left naming an id that no longer
+        // exists, or it becomes the re-root above the moment anything does send it.
+        for var child in pendingCreates.values.filter({ $0.parentID == localID }) {
+            child.parentID = serverID
+            updatePendingCreate(child)
+        }
 
         removePendingCreate(documentID: localID)
         // **Fire on every exit from here, and only at exit.** `defer` rather than a call site,
