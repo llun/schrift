@@ -3098,6 +3098,36 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(env.creates.create(for: child.id))
     }
 
+    /// **The gate is keyed on the record, not on the checkpoint, and this is what pins that.**
+    /// A parent that has been POSTed but whose migration is deferred still holds its sub-pages:
+    /// the repoint happens in `migrateCreatedDocument`, after every one of `finishMigration`'s
+    /// bails, so until it runs the child still names an id the server has never seen. Weakening
+    /// the gate to `syncedServerID == nil` passes every other test in this suite and loses this
+    /// document's placement irreversibly — the POST 404s, the probe 404s, and it is re-rooted.
+    func testASubpageWaitsWhileItsCheckpointedParentsMigrationIsDeferred() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let parent = env.coordinator.createLocalDocument(title: "Parent", parentID: nil, ownerUserID: user)
+        let child = env.coordinator.createLocalDocument(title: "Child", parentID: parent.id, ownerUserID: user)
+        var checkpointed = env.coordinator.pendingCreateForTesting(localID: parent.id)!
+        checkpointed.syncedServerID = rootServerID
+        checkpointed.postedTitle = "Parent"
+        env.coordinator.savePendingCreateForTesting(checkpointed)
+        // The migration is deferred, not the POST: a screen is live on the parent's local id.
+        env.coordinator.retainOpenEditor(documentID: parent.id)
+        stubChainedReplayPipeline(log: log, rootID: rootServerID, childIDs: [rootServerID: childServerID])
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(creates(log), 0, "the sub-page is not sent behind an unmigrated parent")
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: parent.id.uuidString.lowercased()), 0,
+            "and nothing addresses the id the server has never seen")
+        XCTAssertEqual(
+            env.creates.create(for: child.id)?.parentID, parent.id,
+            "so nothing re-roots it: it still names its parent's local id")
+    }
+
     /// A parent the server rejected on the merits parks its sub-page too — losing the sync,
     /// never the content. `init` re-seeds `.pendingSync`, so a relaunch retries the chain.
     func testASubpageOfAFailedParentWaitsAndRetriesAfterARelaunch() async {

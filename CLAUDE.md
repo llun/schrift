@@ -1519,11 +1519,13 @@ markdown write endpoint**. Understand this before touching the save path:
   `isPendingCreate`, so it holds through checkpointing, because it is the *migration* and
   not the POST that repoints the child. `migrateCreatedDocument` then rewrites every record
   naming this `localID` to the server id, **immediately before `removePendingCreate`**.
-  That order is the safety argument, not a preference: the record and its children share one
-  blob under one UserDefaults key, so a kill lands on nothing-written (the record still
-  gates), rewritten-with-the-record-present (the gate opens, and
-  `POST documents/{serverID}/children/` is valid because the checkpoint proves that
-  document exists), or both. The reverse order adds a fourth state — record gone, child
+  That order is the safety argument, not a preference. Each `updatePendingCreate` is its own
+  whole-store write, so N sub-pages means N+1 writes and a kill can land between any two —
+  what holds is that **the record's presence gates every child, whatever subset of the
+  rewrites has landed**: record present ⇒ all still gated and the next pass redoes the
+  migration; record gone ⇒ the loop completed, so every child names a live server id and
+  `POST documents/{serverID}/children/` is valid (the checkpoint proves that document
+  exists). The reverse order admits the one unsafe state — record gone, child
   still naming the dead local id, nothing gating it — in which the child POSTs
   `documents/{local-uuid}/children/`, 404s, probes, 404s again, and is **silently
   re-rooted**. Because the pass re-reads each record from the mirror, a parent and its

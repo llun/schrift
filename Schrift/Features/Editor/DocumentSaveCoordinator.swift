@@ -421,6 +421,7 @@ final class DocumentSaveCoordinator {
     /// record's, because every list renders `title ?? untitled` — a nil check, not an
     /// emptiness one — so overlaying "" (or "   ") would produce a blank row.
     func pendingLocalDocuments(parentID: UUID?, currentUserID: UUID?) -> [Document] {
+        let parentID = resolvedParentID(parentID)
         let listed = pendingCreates.values
             .filter { isListable($0, currentUserID: currentUserID) && $0.parentID == parentID }
             .sorted { orderedByCreation($1, $0) }
@@ -441,7 +442,11 @@ final class DocumentSaveCoordinator {
             grouping: pendingCreates.values.filter {
                 isListable($0, currentUserID: currentUserID) && $0.parentID != nil
             },
-            by: { $0.parentID ?? $0.localID })
+            // Keyed by the id the parent is **presented** under, which is its server id once it
+            // is checkpointed — the inverse of `resolvedParentID`, and for the same window. The
+            // drawer can only draw a checkpointed parent under that id, since the local row is
+            // withheld from the moment the checkpoint lands.
+            by: { presentedParentID($0.parentID ?? $0.localID) })
         guard !grouped.isEmpty else { return [:] }
         let draftTitles = draftTitlesByDocument()
         return grouped.mapValues { records in
@@ -454,6 +459,30 @@ final class DocumentSaveCoordinator {
     /// Shown to this session, and not yet the server's — the filter both listings share.
     private func isListable(_ create: PendingDocumentCreate, currentUserID: UUID?) -> Bool {
         belongsToSession(create, currentUserID: currentUserID) && create.syncedServerID == nil
+    }
+
+    /// The id a level is actually **keyed by**, given the id a screen asks about.
+    ///
+    /// They differ for exactly one window. A sub-page names its parent's `localID` until the
+    /// migration re-keys it, but the moment that parent is checkpointed `pendingLocalDocuments`
+    /// withholds its local row, so the user meets it — and asks for its children — under its
+    /// *server* id. Between the checkpoint and the migration a strict `parentID` match would
+    /// therefore find nothing, and the parent's own sub-pages would blink out of the Subpages
+    /// list and the drawer, reappearing only once the migration re-keyed them.
+    ///
+    /// Usually microseconds, but not always: the two are separated by a crash, and by every
+    /// guard that defers `finishMigration` (an open editor on either id, an in-flight or queued
+    /// save, the both-drafts window). `hasPendingLocalChildren` already resolves the pair this
+    /// way, so this is what makes the listings agree with it on one id for the whole window.
+    private func resolvedParentID(_ parentID: UUID?) -> UUID? {
+        guard let parentID else { return nil }
+        return checkpointedRecord(forServerID: parentID)?.localID ?? parentID
+    }
+
+    /// The other direction: the id a parent is currently **shown** under. Only differs for the
+    /// same checkpointed window, and only for a parent that is itself one of our records.
+    private func presentedParentID(_ parentID: UUID) -> UUID {
+        pendingCreates[parentID]?.syncedServerID ?? parentID
     }
 
     /// One decode for a whole listing: `draftStore.draft(for:)` re-decodes every draft —
@@ -516,11 +545,19 @@ final class DocumentSaveCoordinator {
     ///
     /// Direct children only: a grandchild implies a child, so the copy is right either way.
     ///
-    /// Two shapes answer true where nothing is in fact deleted, both benign. The checkpointed
-    /// branch declines to cascade while an editor holds the local id — but it declines to delete
-    /// the *document* too, restarting the record instead, so nothing is lost either way. And a
-    /// sub-page minted against a checkpointed parent's **server** id is covered by neither this
-    /// nor the cascade, which is the same residual as the plain server parent above.
+    /// Three shapes answer true where the cascade in fact takes nothing, all benign — and all
+    /// in the over-warning direction, which is the safe one for a destructive confirmation.
+    ///
+    ///  - The checkpointed branch declines to cascade while an editor holds the local id. Note
+    ///    what it does **not** decline: the server document has already been deleted by the time
+    ///    `discardPendingWork` runs, since `OptionsViewModel.delete` takes the plain server path
+    ///    for a server id. What it declines is dropping the *record*, which restarts instead —
+    ///    so the still-open screen's document re-POSTs as a fresh create carrying its body and
+    ///    its sub-pages. Nothing is lost, but by the restart, not by a delete that did happen.
+    ///  - A sub-page whose own editor is open is promoted out of the subtree rather than
+    ///    deleted, so a subtree of exactly one such child warns and then takes nothing.
+    ///  - A sub-page minted against a checkpointed parent's **server** id is covered by neither
+    ///    this nor the cascade, the same residual as the plain server parent above.
     func hasPendingLocalChildren(documentID: UUID) -> Bool {
         let localID: UUID
         if isPendingCreate(documentID: documentID) {
@@ -1377,16 +1414,20 @@ final class DocumentSaveCoordinator {
         // from the mirror, a parent and its sub-pages replay in the same pass.
         //
         // **Before `removePendingCreate`, and that ordering is the whole safety argument.**
-        // The record and its children live in one blob under one UserDefaults key, so these
-        // are two successive whole-store writes and a crash lands on one of exactly three
-        // states: nothing written (the record still gates the children, and the next pass
-        // redoes the migration); rewritten but the record still present (the gate opens, and
-        // `POST documents/{serverID}/children/` is valid because the checkpoint proves that
-        // document exists); or both (the ordinary end state). The reverse order adds a fourth
-        // — record gone while a child still names the dead local id — in which nothing gates
-        // the child any more: it POSTs `documents/{local-uuid}/children/`, 404s, probes the
-        // parent, 404s again, and is silently re-rooted. That is the one outcome the gate
-        // exists to prevent, so it must not be reachable through a kill either.
+        // Each `updatePendingCreate` is its own whole-store write, so a parent with N sub-pages
+        // means N+1 writes and a kill can land between any two of them — the property is not
+        // that the window is small, it is that **the record's presence is what gates every
+        // child, whatever subset of the rewrites has landed.** So: record still present ⇒ every
+        // child is still gated, rewritten or not, and the next pass redoes the migration from
+        // the checkpoint; record gone ⇒ the loop ran to completion, so every child names a live
+        // server id and `POST documents/{serverID}/children/` is valid, the checkpoint being
+        // what proves that document exists. Neither is lossy.
+        //
+        // The reverse order breaks exactly that: it admits a state where the record is gone
+        // while a child still names the dead local id, and nothing gates it any more — it POSTs
+        // `documents/{local-uuid}/children/`, 404s, probes the parent, 404s again, and is
+        // silently re-rooted. That is the one outcome the gate exists to prevent, so it must
+        // not be reachable through a kill either.
         //
         // Snapshot first rather than iterating `pendingCreates.values` live, since
         // `updatePendingCreate` writes back into the dictionary being read.

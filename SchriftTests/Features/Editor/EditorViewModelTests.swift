@@ -91,7 +91,8 @@ final class EditorViewModelTests: XCTestCase {
         signedInUserID: UUID? = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
     ) -> (
         viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, document: Document,
-        draftStore: PendingDraftStore, children: DocumentChildrenCacheStore
+        draftStore: PendingDraftStore, children: DocumentChildrenCacheStore,
+        createStore: PendingDocumentCreateStore
     ) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelTests.local.\(UUID().uuidString)"
@@ -100,9 +101,10 @@ final class EditorViewModelTests: XCTestCase {
         let draftStore = PendingDraftStore(userDefaults: defaults)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        let createStore = PendingDocumentCreateStore(userDefaults: defaults)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache,
-            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            createStore: createStore,
             serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,
@@ -114,7 +116,7 @@ final class EditorViewModelTests: XCTestCase {
             saveCoordinator: coordinator, signedInUser: signedIn,
             contentCache: contentCache, childrenCache: childrenCache,
             autosaveInterval: .seconds(10), remoteChangeDebounce: .milliseconds(600))
-        return (viewModel, coordinator, document, draftStore, childrenCache)
+        return (viewModel, coordinator, document, draftStore, childrenCache, createStore)
     }
 
     /// The registration is tied to `deinit` rather than to `onDisappear`, which fires on mere
@@ -287,8 +289,13 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertNil(child)
         XCTAssertEqual(log.methods.count, 0, "and it does not even ask")
-        XCTAssertFalse(
-            env.coordinator.hasPendingLocalChildren(documentID: env.document.id),
+        // Asserted against the store, **not** `hasPendingLocalChildren`. That predicate answers
+        // "would the cascade delete anything", and the delete has just removed this record — so
+        // it returns false whether or not a dangling child exists, which makes it incapable of
+        // failing here. Verified by reverting the guard: this line kept passing while the record
+        // it names sat on disk.
+        XCTAssertTrue(
+            env.createStore.allCreates().allSatisfy { $0.parentID != env.document.id },
             "no record may name the parent the delete just removed")
     }
 

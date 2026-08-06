@@ -738,6 +738,50 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertNil(draftStore.draft(for: child.id))
     }
 
+    /// **A checkpointed parent is met under its server id, and must still show what is filed
+    /// inside it.** Its sub-pages keep naming the local id until the migration re-keys them, so
+    /// a strict match would blank the level for the whole checkpointed window — usually
+    /// microseconds, but a crash or any deferred migration stretches it indefinitely.
+    func testALocalSubpageStaysListedWhileItsParentIsCheckpointed() {
+        let (coordinator, _, _) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+
+        XCTAssertEqual(
+            coordinator.pendingLocalDocuments(parentID: serverID, currentUserID: user).map(\.id), [child.id],
+            "the Subpages list asks under the server id, which is the only one it is offered")
+        XCTAssertEqual(
+            coordinator.pendingLocalDocumentsByParent(currentUserID: user)[serverID]?.map(\.id), [child.id],
+            "and the drawer groups it under the id it draws the parent as")
+    }
+
+    /// The one shape the confirmation over-warns about, pinned so it stays *over*-warning: a
+    /// live screen on the local id makes the checkpointed branch restart the record instead of
+    /// dropping it, so the sub-pages go with the document that re-POSTs, not into the bin.
+    func testDeletingACheckpointedParentWithALiveLocalScreenKeepsItsSubpages() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        coordinator.enqueue(documentID: child.id, title: "Child", markdown: "# Kept")
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+        coordinator.retainOpenEditor(documentID: root.id)
+
+        coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertNotNil(createStore.create(for: root.id), "the record restarts rather than going")
+        XCTAssertNil(createStore.create(for: root.id)?.syncedServerID, "with its checkpoint cleared")
+        XCTAssertEqual(
+            createStore.create(for: child.id)?.parentID, root.id, "and the sub-page stays filed under it")
+        XCTAssertEqual(draftStore.draft(for: child.id)?.markdown, "# Kept")
+    }
+
     /// What the delete confirmation keys off.
     func testHasPendingLocalChildrenOnlyReportsDocumentsFiledUnderThisOne() {
         let (coordinator, _, _) = makeCoordinator()

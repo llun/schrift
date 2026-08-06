@@ -1496,14 +1496,17 @@ not the POST, is what repoints it.
 gate opens on a later iteration of the *same* pass: a parent and its sub-pages replay
 in one go, to any depth.
 
-**Why that order, and not the other.** The record and its children live in one blob
-under one UserDefaults key, so these are two successive whole-store writes and a kill
-lands on one of exactly three states: nothing written (the record still gates the
-children, and the next pass redoes the migration); rewritten with the record still
-present (the gate opens, and `POST documents/{serverID}/children/` is valid — the
-checkpoint proves that document exists); or both. The reverse order adds a fourth —
-record gone while a child still names the dead local id, with nothing gating it any
-more — which is the silent re-root above, reached through a kill instead of a bug.
+**Why that order, and not the other.** Each `updatePendingCreate` is its own whole-store
+write, so a parent with N sub-pages means N+1 writes and a kill can land between any two.
+The property is therefore not that the window is small — it is that **the record's
+presence is what gates every child, whatever subset of the rewrites has landed.** Record
+still present ⇒ every child is still gated, rewritten or not, and the next pass redoes the
+migration from the checkpoint. Record gone ⇒ the loop ran to completion, so every child
+names a live server id and `POST documents/{serverID}/children/` is valid, the checkpoint
+being what proves that document exists. Neither is lossy. The reverse order breaks exactly
+that, admitting a state where the record is gone while a child still names the dead local
+id with nothing gating it — the silent re-root above, reached through a kill instead of a
+bug.
 
 **`allCreates()`' oldest-first order is now an optimization, not a correctness
 property.** Its own doc comment already warned against building ordering on it (the

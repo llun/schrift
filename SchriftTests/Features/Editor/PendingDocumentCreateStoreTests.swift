@@ -73,10 +73,9 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
         XCTAssertEqual(store.create(for: kept.localID), kept)
     }
 
-    /// Replay order: a child created after its parent must never be POSTed first.
-    /// The sub-page delete's stated safety property: a subtree leaves in **one** write, so no
-    /// intermediate state exists in which part of it is gone and the rest still names a parent
-    /// that is not — a record nothing gates, which the replay would re-root back into Home.
+    /// What the sub-page delete removes in one write. The single-write property itself is not
+    /// observable from here — a `UserDefaults` blob has no torn state to catch — so this pins
+    /// the reachable half: the whole set goes, and nothing outside it does.
     func testRemovingSeveralRecordsTakesThemAllAndLeavesTheRest() {
         let store = makeStore()
         let parent = record(title: "Parent")
@@ -103,6 +102,7 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
         XCTAssertEqual(store.allCreates().map(\.localID), [kept.localID])
     }
 
+    /// Replay order: a child created after its parent must never be POSTed first.
     func testAllCreatesAreOldestFirst() {
         let store = makeStore()
         let second = record(title: "Second", createdAt: Date(timeIntervalSince1970: 2_000))
