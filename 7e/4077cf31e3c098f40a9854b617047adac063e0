@@ -1,0 +1,26 @@
+SchriftTests/Features/Editor/PagesTreeDrawerTests.swift
+  s_0964bd9eccbc9a::t_ceea06cc2987f6 128,132,134-135,141,144-146,154,157-159,208,211,213
+  s_0964bd9eccbc9a::t_cc5adfc33128c5 1-30,35-104,108-127,129-131,133,136-140,142-143,150-153,155-156,160-164,166-170,172,174-207,209-210,212,214-216
+  s_0964bd9eccbc9a::t_453e38b5e7adbf 31-34,105-107,147-149,165,171,173
+CLAUDE.md
+  s_0964bd9eccbc9a::t_a005ada9a2307b 922-933
+  s_0964bd9eccbc9a::t_024b334dd637d2 972-978
+docs/design-system.md
+  s_0964bd9eccbc9a::t_fba024a60591d6 957-972
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "7e4077cf31e3c098f40a9854b617047adac063e0",
+  "prompts": {},
+  "sessions": {
+    "s_0964bd9eccbc9a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a755ab9b-2250-4e7c-9807-5689cbca5e7f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
