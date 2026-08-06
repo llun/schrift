@@ -1536,7 +1536,7 @@ markdown write endpoint**. Understand this before touching the save path:
   stays on disk and protected: it costs the sync, never the content.
   **`discardPendingWork` cascades through the local subtree** for the same reason the gate
   exists: an orphaned record is listed by nothing (`pendingLocalDocuments` filters on an
-  exact `parentID`, Home asks for `nil`) yet still holds a document body, and it is a record
+  no level keyed by a dead id, Home asks for `nil`) yet still holds a document body, and it is a record
   no gate holds any more, so the replay would re-root it and a deleted document would return
   to Home. `discardLocalSubtree` runs from **both** branches — keyed on the passed id when
   un-checkpointed, on `checkpointed.localID` otherwise, since a checkpointed parent is met

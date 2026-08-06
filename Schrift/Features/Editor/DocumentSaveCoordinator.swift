@@ -447,9 +447,12 @@ final class DocumentSaveCoordinator {
         // `pendingLocalDocuments` it has no requested id to resolve — so picking a side is
         // picking which caller to fail. See `parentIDAliases`.
         var grouped: [UUID: [PendingDocumentCreate]] = [:]
+        let checkpointedLocalIDs = localIDsByCheckpointedServerID()
         for create in pendingCreates.values where isListable(create, currentUserID: currentUserID) {
             guard let parentID = create.parentID else { continue }
-            for key in parentIDAliases(parentID) { grouped[key, default: []].append(create) }
+            for key in aliases(of: parentID, checkpointedLocalID: checkpointedLocalIDs[parentID]) {
+                grouped[key, default: []].append(create)
+            }
         }
         guard !grouped.isEmpty else { return [:] }
         let draftTitles = draftTitlesByDocument()
@@ -492,10 +495,30 @@ final class DocumentSaveCoordinator {
     /// leaves behind — the false sentence round one removed.
     private func parentIDAliases(_ parentID: UUID?) -> Set<UUID> {
         guard let parentID else { return [] }
+        return aliases(of: parentID, checkpointedLocalID: checkpointedRecord(forServerID: parentID)?.localID)
+    }
+
+    /// The alias set with the server→local half already looked up, so a caller that needs it for
+    /// **many** parents can resolve that half once instead of per parent.
+    ///
+    /// `checkpointedRecord` is a linear scan, and `pendingLocalDocumentsByParent` asks for every
+    /// record it lists — which made the grouping quadratic, on a main-actor path a SwiftUI body
+    /// reads more than once per evaluation. `localIDsByCheckpointedServerID` is that scan done
+    /// once. The local→server half needs no index: it is already a dictionary subscript.
+    private func aliases(of parentID: UUID, checkpointedLocalID: UUID?) -> Set<UUID> {
         var aliases: Set<UUID> = [parentID]
-        if let localID = checkpointedRecord(forServerID: parentID)?.localID { aliases.insert(localID) }
+        if let checkpointedLocalID { aliases.insert(checkpointedLocalID) }
         if let serverID = pendingCreates[parentID]?.syncedServerID { aliases.insert(serverID) }
         return aliases
+    }
+
+    /// Reverse index of the checkpoint: the id the server gave a record → the id it is keyed by
+    /// here. `uniquingKeysWith` keeps the first, matching `checkpointedRecord`'s own `.first` —
+    /// two records sharing a `syncedServerID` would need the server to reissue an id.
+    private func localIDsByCheckpointedServerID() -> [UUID: UUID] {
+        Dictionary(
+            pendingCreates.values.compactMap { record in record.syncedServerID.map { ($0, record.localID) } },
+            uniquingKeysWith: { first, _ in first })
     }
 
     /// One decode for a whole listing: `draftStore.draft(for:)` re-decodes every draft —
@@ -632,7 +655,7 @@ final class DocumentSaveCoordinator {
     /// so on. Deleting a document created on this device deletes what was filed inside it, the
     /// same as deleting one on the server does — and the alternative is worse than it sounds,
     /// since an orphaned record is listed by nothing (`pendingLocalDocuments` filters on an
-    /// exact `parentID`, and Home asks for `nil`) yet still holds a full document body.
+    /// no level keyed by a dead id, and Home asks for `nil`) yet still holds a full document body.
     ///
     /// **Every record goes in one write — the root's included — and only then the drafts.**
     /// That single write is what stops a partial subtree existing (see `removePendingCreates`);

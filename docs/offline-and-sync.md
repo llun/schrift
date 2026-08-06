@@ -1122,7 +1122,7 @@ true — so that branch runs for exactly the case where it is false. See the del
 **And it takes the whole local subtree with it (2026-08-06).** Sub-pages created on this
 device under a local document are its subtree exactly as they would be on the server, and
 leaving them is not the conservative option: an orphaned record is listed by *nothing*
-(`pendingLocalDocuments` filters on an exact `parentID`, and Home asks for `nil`) while
+(no level is keyed by a dead id, and Home asks for `nil`) while
 still holding a whole document body — and, worse, it is a record no gate holds any more,
 so the replay would POST it under a dead local id, the probe would re-root it, and a
 deleted document would come back in Home as a root. `discardLocalSubtree` is where that

@@ -653,8 +653,8 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
     /// Deleting a local document takes what was filed inside it, to any depth — the same as
     /// deleting one on the server does. Leaving them is not the conservative option: an
-    /// orphaned record is listed by nothing (`pendingLocalDocuments` filters on an exact
-    /// `parentID`, and Home asks for `nil`) while still holding a whole document body.
+    /// orphaned record is listed by nothing — no level is keyed by the parent that has gone,
+    /// and Home asks for roots — while it still holds a whole document body.
     func testDiscardingALocalDocumentTakesItsWholeLocalSubtree() {
         let (coordinator, draftStore, createStore) = makeCoordinator()
         let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
@@ -789,6 +789,23 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
             coordinator.pendingLocalDocuments(parentID: nil, currentUserID: user).isEmpty,
             "the checkpointed root is withheld, and a sub-page is not a root")
         XCTAssertNil(coordinator.pendingLocalDocumentsByParent(currentUserID: user)[UUID()])
+    }
+
+    /// Newest first, which the union must not disturb — it changes which records match, never
+    /// how the matches are ordered. Pinned here because the checkpointed-parent test compares
+    /// as a `Set` (it has to: the two cohorts are keyed differently), so it cannot see order.
+    func testLocalSubpagesAreListedNewestFirst() {
+        let (coordinator, _, _) = makeCoordinator()
+        let parent = UUID()
+        let older = coordinator.createLocalDocument(title: "Older", parentID: parent, ownerUserID: user)
+        let newer = coordinator.createLocalDocument(title: "Newer", parentID: parent, ownerUserID: user)
+
+        XCTAssertEqual(
+            coordinator.pendingLocalDocuments(parentID: parent, currentUserID: user).map(\.id),
+            [newer.id, older.id])
+        XCTAssertEqual(
+            coordinator.pendingLocalDocumentsByParent(currentUserID: user)[parent]?.map(\.id),
+            [newer.id, older.id])
     }
 
     /// The one shape the confirmation over-warns about, pinned so it stays *over*-warning: a
