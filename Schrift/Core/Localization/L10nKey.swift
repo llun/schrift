@@ -112,6 +112,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case options_share = "options.share"  // "Share"
     case options_delete_document = "options.delete_document"  // "Delete document"
     case options_delete_confirm_title = "options.delete_confirm_title"  // "Delete this document?"
+    // Shown only when sub-pages created on this device are filed under the document, since
+    // those are deleted with it and exist nowhere else. Count-free deliberately: a number here
+    // would need the plural machinery in all eleven tables to say nothing the user acts on.
+    case options_delete_confirm_subpages = "options.delete_confirm_subpages"
     case options_delete = "options.delete"  // "Delete"
     case options_error_toggle_favorite = "options.error.toggle_favorite"
     // "Couldn't update favorite. Please try again."

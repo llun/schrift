@@ -99,6 +99,7 @@ enum Strings_pt {
         .options_share: "Partilhar",
         .options_delete_document: "Eliminar documento",
         .options_delete_confirm_title: "Eliminar este documento?",
+        .options_delete_confirm_subpages: "As subpáginas guardadas neste dispositivo serão eliminadas com ele.",
         .options_delete: "Eliminar",
         .options_error_toggle_favorite: "Não foi possível atualizar o favorito. Tente novamente.",
         .options_error_delete: "Não foi possível eliminar o documento. Tente novamente.",

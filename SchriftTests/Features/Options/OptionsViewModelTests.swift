@@ -117,6 +117,44 @@ final class OptionsViewModelTests: XCTestCase {
         XCTAssertNil(env.drafts.draft(for: env.document.id), "and its draft, so no replay revives it")
     }
 
+    /// Deleting a local document takes the sub-pages created under it, and the sheet says so
+    /// beforehand — they exist nowhere else, so this is the one delete confirmation that has
+    /// something to add beyond its title.
+    func testDeletingALocalDocumentAnnouncesAndTakesItsSubpages() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalEnvironment()
+        let viewModel = OptionsViewModel(
+            client: env.client, documentID: env.document.id, isFavorite: false,
+            saveCoordinator: env.coordinator)
+        XCTAssertFalse(viewModel.hasLocalSubpages, "nothing extra to warn about yet")
+
+        let child = env.coordinator.createLocalDocument(
+            title: "Child", parentID: env.document.id,
+            ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        XCTAssertTrue(viewModel.hasLocalSubpages)
+
+        await viewModel.delete()
+
+        XCTAssertEqual(log.count(ofMethod: "DELETE"), 0, "neither document is on a server")
+        XCTAssertNil(env.creates.create(for: child.id), "and the sub-page goes with its parent")
+        XCTAssertNil(env.drafts.draft(for: child.id))
+    }
+
+    /// The warning is about *local* sub-pages only. An ordinary server document's children are
+    /// the server's to cascade, and it has always done so silently.
+    func testAnOrdinaryDocumentNeverAnnouncesSubpages() {
+        let env = makeLocalEnvironment()
+        let viewModel = OptionsViewModel(
+            client: env.client, documentID: UUID(), isFavorite: false, saveCoordinator: env.coordinator)
+
+        XCTAssertFalse(viewModel.hasLocalSubpages)
+    }
+
     /// Once checkpointed the POST has landed, so a real server document exists even though
     /// `isPendingCreate` is still true. Treating it as purely local would leave that copy
     /// alive, to reappear in Home's next list fetch with nothing on the device knowing about it.

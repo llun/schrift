@@ -44,6 +44,13 @@ final class OptionsViewModel {
         saveCoordinator?.isPendingCreate(documentID: documentID) ?? false
     }
 
+    /// Whether deleting this document also throws away sub-pages that exist nowhere else, so
+    /// the confirmation can say so. Not gated on `isLocalDocument`: a *checkpointed* record is
+    /// met under its server id, and its sub-pages still go with it.
+    var hasLocalSubpages: Bool {
+        saveCoordinator?.hasPendingLocalChildren(documentID: documentID) ?? false
+    }
+
     func delete() async {
         isDeleting = true
         errorKey = nil

@@ -3161,6 +3161,25 @@ final class DocumentSaveCoordinatorReplayTests: XCTestCase {
         XCTAssertNil(env.creates.create(for: child.id))
     }
 
+    /// The point of the delete cascade, stated as the replay sees it: a deleted subtree comes
+    /// back as *nothing*. Without it the orphaned sub-page would POST under its dead parent id,
+    /// be re-rooted by the probe, and reappear in Home as a root document the user had thrown
+    /// away — content and all.
+    func testADeletedLocalSubtreeIsNeverResurrectedByTheReplay() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let root = env.coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = env.coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        env.coordinator.enqueue(documentID: child.id, title: "Child", markdown: "# Thrown away")
+        stubChainedReplayPipeline(log: log, rootID: rootServerID, childIDs: [rootServerID: childServerID])
+
+        env.coordinator.discardPendingWork(documentID: root.id)
+        await env.coordinator.syncPendingDrafts()
+        await waitAndConfirmNever { creates(log) > 0 }
+
+        XCTAssertNil(env.drafts.draft(for: child.id), "and no body is left for a later pass to find")
+    }
+
     /// A chain belonging to another account stays dormant whole: not sent, not re-parented,
     /// not deleted.
     func testASubpageChainFromAnotherAccountIsNeverSent() async {

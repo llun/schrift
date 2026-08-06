@@ -96,6 +96,7 @@ enum Strings_zhHant {
         .options_share: "分享",
         .options_delete_document: "刪除文件",
         .options_delete_confirm_title: "要刪除此文件嗎？",
+        .options_delete_confirm_subpages: "儲存在此裝置上的子頁面將一併刪除。",
         .options_delete: "刪除",
         .options_error_toggle_favorite: "無法更新最愛。請再試一次。",
         .options_error_delete: "無法刪除文件。請再試一次。",

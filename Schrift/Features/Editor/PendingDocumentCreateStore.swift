@@ -193,6 +193,17 @@ final class PendingDocumentCreateStore {
     }
 
     func remove(localID: UUID) {
+        remove(localIDs: [localID])
+    }
+
+    /// Remove several records in **one** write, which the sub-page delete needs and a loop of
+    /// `remove(localID:)` cannot give it. Every method here is a read-modify-write of a single
+    /// blob, so a loop leaves intermediate states on disk in which part of a subtree is gone
+    /// and the rest is not — and a record whose parent's record has been removed is one
+    /// `runCreatePass`'s dependency gate no longer holds, so it would POST under an id the
+    /// server has never seen, be re-rooted by the probe, and resurrect as a root document the
+    /// user had just deleted. One write makes that state unrepresentable.
+    func remove(localIDs: [UUID]) {
         // Same reasoning as `save`: this is a read-modify-write, so on a corrupt blob the
         // `loadAll` below reads `[:]` and the `persist` overwrites it. Unreachable through
         // the coordinator today — `removePendingCreate` returns early when the id isn't in
@@ -200,7 +211,7 @@ final class PendingDocumentCreateStore {
         // has to quarantine, or the guarantee depends on which caller happens to run first.
         quarantineUnreadableDataIfNeeded()
         var creates = loadAll()
-        creates[localID.uuidString] = nil
+        for localID in localIDs { creates[localID.uuidString] = nil }
         persist(creates)
     }
 

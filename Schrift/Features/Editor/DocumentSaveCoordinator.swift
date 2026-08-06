@@ -454,10 +454,121 @@ final class DocumentSaveCoordinator {
     /// `migrateCreatedDocument` (replay) — are the only ones that pair it with a decision
     /// about the draft.
     private func removePendingCreate(documentID: UUID) {
-        guard pendingCreates[documentID] != nil else { return }
-        pendingCreates[documentID] = nil
+        removePendingCreates(documentIDs: [documentID])
+    }
+
+    /// The same, for a whole set at once — what the sub-page delete needs. Batched rather than
+    /// looped because the store is one blob: see `PendingDocumentCreateStore.remove(localIDs:)`
+    /// for why a partially-removed subtree is the one state that must not exist.
+    private func removePendingCreates(documentIDs: [UUID]) {
+        let present = documentIDs.filter { pendingCreates[$0] != nil }
+        guard !present.isEmpty else { return }
+        for documentID in present { pendingCreates[documentID] = nil }
         pendingCreatesVersion += 1
-        createStore.remove(localID: documentID)
+        createStore.remove(localIDs: present)
+    }
+
+    /// Whether any document created on this device is filed under this one — the question the
+    /// delete confirmation asks, so it can say that sub-pages go with it.
+    ///
+    /// Resolves **both** ids, because the two are used at different moments in a record's life:
+    /// a sub-page names its parent's `localID`, but once that parent is checkpointed
+    /// `pendingLocalDocuments` withholds the local row and the user meets — and deletes — the
+    /// document under its *server* id. Asking only about `documentID` would answer "no
+    /// sub-pages" for precisely the parent whose sub-pages are about to be deleted.
+    ///
+    /// Direct children only: a grandchild implies a child, so the copy is right either way.
+    func hasPendingLocalChildren(documentID: UUID) -> Bool {
+        let localID = checkpointedRecord(forServerID: documentID)?.localID
+        return pendingCreates.values.contains { child in
+            // Unwrapped rather than compared as Optionals. `child.parentID == localID` with
+            // both nil — an ordinary document, so no checkpointed record, against a record that
+            // is a root — is `true`, which would announce sub-pages for every document on the
+            // device the moment one root existed.
+            guard let parentID = child.parentID else { return false }
+            return parentID == documentID || parentID == localID
+        }
+    }
+
+    /// The local documents filed under this one, **parents before their own children**, with
+    /// any whose editor is open promoted out of the subtree instead of listed.
+    ///
+    /// Iterative and `visited`-guarded on purpose. This walks data decoded from disk, where the
+    /// shape is a tree only by construction — a damaged blob naming a cycle would otherwise
+    /// recurse until the stack ran out, and `createLocalDocument` is not the only thing that
+    /// could ever write these records.
+    ///
+    /// **A child whose editor is open is re-parented to the root rather than deleted.** Every
+    /// other record remover in this file defers to an open editor, and this is the only one
+    /// that would take a live screen's draft — the disk backing of content the user can see —
+    /// out from under it. Unreachable through navigation today (a parent's Options sheet can
+    /// only open while the parent's own editor is topmost, and a child is pushed above it), but
+    /// promoting is what keeps that from mattering. Promoting rather than merely skipping,
+    /// because a skipped record left naming a deleted parent is one no gate holds any more: it
+    /// would POST under a dead local id and be re-rooted by the probe anyway, just later and
+    /// without the user's screen surviving intact. Its own sub-pages stay with it.
+    private func localDescendantsToDiscard(of parentLocalID: UUID) -> [UUID] {
+        var ordered: [UUID] = []
+        var visited: Set<UUID> = [parentLocalID]
+        var frontier = [parentLocalID]
+        while let next = frontier.popLast() {
+            for child in pendingCreates.values.filter({ $0.parentID == next }) {
+                guard visited.insert(child.localID).inserted else { continue }
+                if hasOpenEditor(documentID: child.localID) {
+                    var promoted = child
+                    promoted.parentID = nil
+                    updatePendingCreate(promoted)
+                    continue
+                }
+                ordered.append(child.localID)
+                frontier.append(child.localID)
+            }
+        }
+        return ordered
+    }
+
+    /// Throw away a local document's whole subtree: the sub-pages created under it, theirs, and
+    /// so on. Deleting a document created on this device deletes what was filed inside it, the
+    /// same as deleting one on the server does — and the alternative is worse than it sounds,
+    /// since an orphaned record is listed by nothing (`pendingLocalDocuments` filters on an
+    /// exact `parentID`, and Home asks for `nil`) yet still holds a full document body.
+    ///
+    /// **Every record goes in one write — the root's included — and only then the drafts.**
+    /// That single write is what stops a partial subtree existing (see `removePendingCreates`);
+    /// taking the root out separately would reintroduce it, since a crash in between leaves the
+    /// document the user deleted still holding a record that replays it back onto the server.
+    /// Record-before-draft is then the same ordering `discardPendingWork` already uses for the
+    /// document itself: a draft left with no record is inert and gets reaped by the sync pass's
+    /// ordinary 404 rule, where a record left with no draft POSTs an empty document under its
+    /// mint title.
+    ///
+    /// The **root's** draft and state stay with the caller, whose two branches handle them
+    /// differently; only the descendants are this method's to clean up.
+    ///
+    /// Nothing here purges the content cache, and that is not an omission: a descendant is
+    /// provably un-checkpointed — the dependency gate held it back for as long as this parent's
+    /// record existed, which is exactly the window in which this runs — so it has never had a
+    /// confirmed save or a fetch under its own id, and only those write that cache.
+    private func discardLocalSubtree(rootedAt rootLocalID: UUID) {
+        let descendants = localDescendantsToDiscard(of: rootLocalID)
+        removePendingCreates(documentIDs: descendants + [rootLocalID])
+        for documentID in descendants.reversed() {
+            // Reversed, so a document is only ever cleaned up after everything filed inside it.
+            states[documentID] = .idle
+            draftStore.remove(documentID: documentID)
+            queued[documentID] = nil
+            settledSaves[documentID] = nil
+            lastConfirmedPushMarkdown[documentID] = nil
+            knownServerTitles[documentID] = nil
+            // Assigned directly rather than through `clearResolvedConflict`, which is
+            // `releaseHeldSave`'s route: that method's own guard is `isPendingCreate`, which
+            // the removal above has just made false, so it would pop the parked save and PATCH
+            // an id the server has never seen. (A client-minted id cannot acquire a conflict in
+            // the first place — `recordConflict` needs a successful server interaction — so
+            // this is defensive, and defensive is exactly why it must not take a route that
+            // sends a request.)
+            conflicts[documentID] = nil
+        }
     }
 
     /// Test seams for staging a *checkpointed* record, which only the replay can otherwise
@@ -2157,8 +2268,15 @@ final class DocumentSaveCoordinator {
         // cleared synchronously the wait returned instantly and the assertions ran while
         // the save was still on the wire. The test stayed green while no longer pinning
         // invariant 0b at all. A server document's state stays `finish`'s to settle.
+        //
+        // **And what was filed inside it goes too.** Sub-pages created on this device under a
+        // local document are its subtree, exactly as they would be on the server; leaving them
+        // is not the conservative option, since an orphaned record is listed by nothing yet
+        // still holds a whole document body. `discardLocalSubtree` is where that happens, and
+        // where the one document it refuses to take — a sub-page whose editor is open — is
+        // re-parented out of the subtree instead.
         if isPendingCreate(documentID: documentID) {
-            removePendingCreate(documentID: documentID)
+            discardLocalSubtree(rootedAt: documentID)
             states[documentID] = .idle
         } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
             // Clear it under the id it is actually keyed by, and take the local draft with it
@@ -2200,7 +2318,10 @@ final class DocumentSaveCoordinator {
                 // that had just been DELETEd. That is invariant 0b, reintroduced by a guard
                 // scoped to one concern that also swallowed another.
             } else {
-                removePendingCreate(documentID: checkpointed.localID)
+                // Keyed on the **local** id, which is what a sub-page names — the record is
+                // checkpointed, so the user met and deleted this document under its server id,
+                // but nothing filed under it ever learned that id.
+                discardLocalSubtree(rootedAt: checkpointed.localID)
                 states[checkpointed.localID] = .idle
                 draftStore.remove(documentID: checkpointed.localID)
                 queued[checkpointed.localID] = nil
