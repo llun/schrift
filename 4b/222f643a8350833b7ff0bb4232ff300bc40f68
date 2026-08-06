@@ -1,0 +1,60 @@
+Schrift/Core/Localization/Strings+pt.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 102
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_c34c2d42f0d06d::t_046b6fcacf336a 196-206,214
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_c34c2d42f0d06d::t_72b4b23d6142da 483-490
+  s_c34c2d42f0d06d::t_f67e083c863a3e 457-466,468-482,491-535,544,548-551,555-571
+  s_c34c2d42f0d06d::t_a469a32f87911f 2271-2277,2279
+  s_c34c2d42f0d06d::t_c451a7d73cc81b 2321-2324
+  s_c34c2d42f0d06d::t_ac7f9b0b88bff1 536-543,545-547,552-554
+Schrift/Core/Localization/L10nKey.swift
+  s_c34c2d42f0d06d::t_86baae654d89cc 115-118
+Schrift/Core/Localization/Strings+es.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 104
+SchriftTests/Features/Editor/DocumentSaveCoordinatorCreateTests.swift
+  s_c34c2d42f0d06d::t_1371c8f0ffdf36 663-664,668-672
+  s_c34c2d42f0d06d::t_12f295be09cfb2 654-662,665-667,673-751
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayTests.swift
+  s_c34c2d42f0d06d::t_a6de1bf5630d84 3164-3182
+Schrift/Core/Localization/Strings+sl.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 110
+Schrift/Core/Localization/Strings+en.swift
+  s_c34c2d42f0d06d::t_13c1a178fae488 102
+Schrift/Features/Options/OptionsViewModel.swift
+  s_c34c2d42f0d06d::t_45bf3d4d754fee 47-53
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_c34c2d42f0d06d::t_621fe1679a97c7 120-157
+Schrift/Core/Localization/Strings+fr.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 103
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 99
+Schrift/Core/Localization/Strings+it.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 101
+Schrift/Core/Localization/Strings+nl.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 103
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 99
+Schrift/Features/Options/OptionsSheetView.swift
+  s_c34c2d42f0d06d::t_7a7b699420a516 111-117
+Schrift/Core/Localization/Strings+th.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 101
+Schrift/Core/Localization/Strings+de.swift
+  s_c34c2d42f0d06d::t_3a8efcdff1bf5e 105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "4b222f643a8350833b7ff0bb4232ff300bc40f68",
+  "prompts": {},
+  "sessions": {
+    "s_c34c2d42f0d06d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21773c5e-d10f-4a5b-8968-7dc110386d9e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
