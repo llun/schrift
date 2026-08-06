@@ -1,0 +1,23 @@
+CLAUDE.md
+  s_51ac28cf0c36f0::t_0c18f2195deaf9 913-939
+docs/design-system.md
+  s_51ac28cf0c36f0::t_28177d667a8dae 939-967
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_51ac28cf0c36f0::t_1c7540aba4b0f3 151-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "c275b65f3a71c4abcbd4349554a56dac05e74f3a",
+  "prompts": {},
+  "sessions": {
+    "s_51ac28cf0c36f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6403666-aacb-42d3-9bcc-ee0231f1a5d6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <natkung@gmail.com>"
+    }
+  }
+}

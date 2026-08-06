@@ -1,0 +1,23 @@
+SchriftTests/Features/Editor/SaveStatusIndicatorTests.swift
+  s_51ac28cf0c36f0::t_4e0177229145b2 15-18
+  s_51ac28cf0c36f0::t_1d934f2192e418 130-132
+  s_51ac28cf0c36f0::t_81844f244d6549 13-14
+docs/design-system.md
+  s_51ac28cf0c36f0::t_1080a8c51f130f 945-950
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "d9ca5478238c45364f6f10795b5e325c697b1bd5",
+  "prompts": {},
+  "sessions": {
+    "s_51ac28cf0c36f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6403666-aacb-42d3-9bcc-ee0231f1a5d6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <natkung@gmail.com>"
+    }
+  }
+}
