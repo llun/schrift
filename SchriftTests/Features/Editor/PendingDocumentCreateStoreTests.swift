@@ -74,6 +74,35 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
     }
 
     /// Replay order: a child created after its parent must never be POSTed first.
+    /// The sub-page delete's stated safety property: a subtree leaves in **one** write, so no
+    /// intermediate state exists in which part of it is gone and the rest still names a parent
+    /// that is not — a record nothing gates, which the replay would re-root back into Home.
+    func testRemovingSeveralRecordsTakesThemAllAndLeavesTheRest() {
+        let store = makeStore()
+        let parent = record(title: "Parent")
+        let child = record(title: "Child", parentID: parent.localID)
+        let unrelated = record(title: "Other")
+        for created in [parent, child, unrelated] { store.save(created) }
+
+        store.remove(localIDs: [child.localID, parent.localID])
+
+        XCTAssertNil(store.create(for: parent.localID))
+        XCTAssertNil(store.create(for: child.localID))
+        XCTAssertEqual(store.allCreates().map(\.localID), [unrelated.localID])
+    }
+
+    /// Removing an id the store never held is not an error, and must not disturb the rest —
+    /// `removePendingCreates` filters against the mirror, which can legitimately disagree.
+    func testRemovingAnAbsentRecordLeavesTheStoreAlone() {
+        let store = makeStore()
+        let kept = record(title: "Kept")
+        store.save(kept)
+
+        store.remove(localIDs: [UUID(), UUID()])
+
+        XCTAssertEqual(store.allCreates().map(\.localID), [kept.localID])
+    }
+
     func testAllCreatesAreOldestFirst() {
         let store = makeStore()
         let second = record(title: "Second", createdAt: Date(timeIntervalSince1970: 2_000))

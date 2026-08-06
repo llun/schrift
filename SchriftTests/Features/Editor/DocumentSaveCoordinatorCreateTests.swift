@@ -704,7 +704,11 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         coordinator.discardPendingWork(documentID: root.id)
 
         XCTAssertNil(createStore.create(for: root.id))
-        XCTAssertEqual(createStore.create(for: child.id)?.parentID, nil, "the open one becomes a root")
+        // Asserted as "the record exists AND is a root", not as `?.parentID == nil`: the record
+        // being deleted outright satisfies that too, which is the outcome under test.
+        let promoted = createStore.create(for: child.id)
+        XCTAssertNotNil(promoted, "the open one survives")
+        XCTAssertNil(promoted?.parentID, "as a root")
         XCTAssertEqual(draftStore.draft(for: child.id)?.markdown, "# On screen", "with its body intact")
         XCTAssertEqual(
             createStore.create(for: grandchild.id)?.parentID, child.id,
@@ -747,6 +751,27 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
 
         XCTAssertTrue(coordinator.hasPendingLocalChildren(documentID: root.id))
         XCTAssertFalse(coordinator.hasPendingLocalChildren(documentID: unrelated.id))
+    }
+
+    /// **It must answer for the cascade, not for the relation.** A sub-page created offline
+    /// under an ordinary *server* document is an ordinary record — `addSubpage` mints one on any
+    /// retryable POST failure — but deleting that server document takes neither cascade branch,
+    /// so the sub-page survives and the replay's probe later re-roots it. Announcing a deletion
+    /// there puts a false sentence in a destructive confirmation.
+    func testHasPendingLocalChildrenIsSilentForAServerParentTheCascadeWillNotTouch() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let serverParent = UUID()
+        let child = coordinator.createLocalDocument(
+            title: "Child", parentID: serverParent, ownerUserID: user)
+
+        XCTAssertFalse(
+            coordinator.hasPendingLocalChildren(documentID: serverParent),
+            "the delete would not take it, so the alert must not say it will")
+
+        coordinator.discardPendingWork(documentID: serverParent)
+
+        XCTAssertNotNil(createStore.create(for: child.id), "and indeed it survives")
+        XCTAssertNotNil(draftStore.draft(for: child.id))
     }
 
     /// A 404/403 on a *server* document keeps its draft (the user's unsaved work) — and

@@ -1539,9 +1539,12 @@ markdown write endpoint**. Understand this before touching the save path:
   to Home. `discardLocalSubtree` runs from **both** branches — keyed on the passed id when
   un-checkpointed, on `checkpointed.localID` otherwise, since a checkpointed parent is met
   and deleted under its *server* id while its sub-pages still name the local one
-  (`hasPendingLocalChildren`, which the confirmation alert's extra line keys off, resolves
-  both ids — and unwraps `parentID` rather than comparing Optionals, or `nil == nil` announces
-  sub-pages for every document on the device). Three ordering rules: **every record in one
+  (`hasPendingLocalChildren`, which the confirmation alert's extra line keys off, resolves both
+  ids the same way — and **answers for the cascade, not for the relation**: a sub-page created
+  offline under an ordinary *server* document is an ordinary record too, but deleting that
+  document takes neither branch, so the sub-page survives and the probe later re-roots it, and
+  announcing a deletion there would put a false sentence in a destructive confirmation).
+  Three ordering rules: **every record in one
   store write**, the root's included (`PendingDocumentCreateStore.remove(localIDs:)` — a loop
   would leave a half-deleted subtree, i.e. the dangling-record resurrection reached through a
   kill); **records before drafts** (a draft with no record is inert and the 404 rule reaps it,

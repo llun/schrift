@@ -1130,7 +1130,12 @@ happens, from **both** branches: the un-checkpointed one keyed on the id the cal
 passed, and the checkpointed one keyed on `checkpointed.localID`, since a checkpointed
 parent is met and deleted under its *server* id while its sub-pages still name the local
 one. `hasPendingLocalChildren` resolves both ids for the same reason, and is what the
-confirmation alert keys its extra line off.
+confirmation alert keys its extra line off — **answering for the cascade rather than for the
+relation**. A sub-page created offline under an ordinary *server* document is an ordinary
+record too (`addSubpage` mints one on any retryable POST failure), but deleting that document
+takes neither branch: the sub-page survives, and the probe later re-roots it, per the residual
+below. Announcing a deletion there would put a false sentence in a destructive confirmation,
+so the predicate answers false wherever the cascade would not run.
 
 Three ordering rules make it safe, all for reasons this document has met before:
 

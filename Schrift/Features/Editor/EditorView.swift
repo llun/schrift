@@ -235,8 +235,10 @@ struct EditorView: View {
         _pagesTreeViewModel = State(
             initialValue: PagesTreeViewModel(
                 rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache,
-                // So "New page" can fall back to a local page when the POST cannot land.
-                saveCoordinator: viewModel.saveCoordinator))
+                // So "New page" can fall back to a local page when the POST cannot land — and
+                // so the drawer's read-time merge scopes local pages to the same account the
+                // editor does, rather than to a second store of its own.
+                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser))
     }
 
     var body: some View {
@@ -414,7 +416,6 @@ struct EditorView: View {
                 PagesTreeDrawer(
                     viewModel: pagesTreeViewModel,
                     rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
-                    isOffline: isOffline,
                     onOpen: { document in
                         isPresentingPagesTree = false
                         onOpenDocument?(document)

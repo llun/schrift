@@ -215,13 +215,31 @@ final class PagesTreeViewModel {
             // Never treat a failure here as the document being gone: this is a
             // *different* document's children, and the editor behind the drawer
             // must not be torn down over it.
-            guard children[parentID] == nil else { return }
+            //
+            // A level whose only children are this device's own is not empty either, so it gets
+            // the same silence a cached level gets: the merge has something real to render, and
+            // collapsing would hide a page the user created here — while an error message about
+            // a level that is showing its contents is simply wrong. Reachable the moment a
+            // sub-page is created offline under a synced document, which is the ordinary way
+            // one is created at all.
+            guard children[parentID] == nil, !hasLocalChildren(of: parentID) else { return }
             failedLoads.insert(parentID)
             // Collapse it again. Left expanded it would render as a node with no
             // children — indistinguishable from a leaf, and with no way back —
             // whereas collapsed it keeps its arrow, and tapping that is the retry.
             expanded.remove(parentID)
         }
+    }
+
+    /// Whether this device has pages of its own filed under `parentID`. Asked only on the
+    /// failure path, where `pendingLocalDocuments` short-circuits before decoding any draft
+    /// unless there really are some.
+    private func hasLocalChildren(of parentID: UUID) -> Bool {
+        guard let saveCoordinator else { return false }
+        return
+            !saveCoordinator
+            .pendingLocalDocuments(parentID: parentID, currentUserID: signedInUser.userID)
+            .isEmpty
     }
 
     /// Creates a child of `parent` and slots it into the open tree, so the new

@@ -14,16 +14,20 @@ final class PagesTreeViewModelTests: XCTestCase {
 
     private var suiteName: String!
     private var defaults: UserDefaults!
+    private var contentCacheDirectory: URL!
 
     override func setUp() {
         super.setUp()
         suiteName = "PagesTreeViewModelTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
+        contentCacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PagesTreeViewModelTests-\(UUID().uuidString)", isDirectory: true)
     }
 
     override func tearDown() {
         MockURLProtocol.reset()
         defaults.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: contentCacheDirectory)
         super.tearDown()
     }
 
@@ -47,9 +51,16 @@ final class PagesTreeViewModelTests: XCTestCase {
     ) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let cache = DocumentChildrenCacheStore(userDefaults: defaults)
+        // Every store on this test's own suite — including the two the coordinator would
+        // otherwise default onto `UserDefaults.standard` — so nothing here writes app-wide
+        // storage. `createStore` is the one that must not be missed (a leaked record makes a
+        // later pass issue a real `/users/me/` that escapes MockURLProtocol and stalls the run),
+        // but a test has no business leaving the others behind either.
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let signedIn = SignedInUserStore(userDefaults: defaults)
         if let signedInUserID { signedIn.remember(signedInUserID) }
@@ -409,6 +420,30 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertEqual(env.viewModel.rows.map(\.document.id), [page!.id, nested!.id], "and expanding brings it back")
         XCTAssertEqual(log.methods.count, 0, "no level under a client-minted id is ever fetched")
         XCTAssertTrue(env.viewModel.failedLoads.isEmpty)
+    }
+
+    /// A level whose only children are this device's own gets the same silence a cached level
+    /// gets. Collapsing it would hide a page the user created here — while an error about a
+    /// level that is showing its contents is simply wrong. Reachable the ordinary way a
+    /// sub-page is created at all: offline, under a synced document.
+    func testAFailedFetchKeepsALevelWhoseOnlyChildrenAreLocal() async {
+        let env = makeLocalRootViewModel()
+        let syncedParent = UUID()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let local = env.coordinator.createLocalDocument(
+            title: "Local", parentID: syncedParent, ownerUserID: owner)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        await viewModel.loadRoot()
+
+        XCTAssertEqual(viewModel.rows.map(\.document.id), [local.id], "the local page still renders")
+        XCTAssertNil(viewModel.errorKey, "and a level that is showing its contents is not an error")
+        XCTAssertTrue(viewModel.failedLoads.isEmpty)
     }
 
     /// Minting needs an account to attribute the record to; without one it would be listed by

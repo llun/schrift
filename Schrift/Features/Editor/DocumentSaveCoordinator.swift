@@ -498,26 +498,39 @@ final class DocumentSaveCoordinator {
         createStore.remove(localIDs: present)
     }
 
-    /// Whether any document created on this device is filed under this one — the question the
-    /// delete confirmation asks, so it can say that sub-pages go with it.
+    /// Whether any document created on this device is filed under this one **and would be
+    /// deleted with it** — the question the delete confirmation asks.
     ///
-    /// Resolves **both** ids, because the two are used at different moments in a record's life:
-    /// a sub-page names its parent's `localID`, but once that parent is checkpointed
+    /// That is narrower than "has local children", and it has to be. A sub-page created offline
+    /// under an ordinary **server** document is an ordinary record too — `addSubpage` mints one
+    /// whenever the POST fails retryably — but deleting that server document takes *neither*
+    /// cascade branch in `discardPendingWork`, so the sub-page survives and the replay's probe
+    /// eventually re-roots it into Home. Announcing a deletion there would put a false sentence
+    /// in a destructive confirmation. So this resolves the id the way the cascade does, and
+    /// answers false wherever the cascade would not run.
+    ///
+    /// Both ids, because the two are used at different moments in a record's life: a sub-page
+    /// names its parent's `localID`, but once that parent is checkpointed
     /// `pendingLocalDocuments` withholds the local row and the user meets — and deletes — the
-    /// document under its *server* id. Asking only about `documentID` would answer "no
-    /// sub-pages" for precisely the parent whose sub-pages are about to be deleted.
+    /// document under its *server* id.
     ///
     /// Direct children only: a grandchild implies a child, so the copy is right either way.
+    ///
+    /// Two shapes answer true where nothing is in fact deleted, both benign. The checkpointed
+    /// branch declines to cascade while an editor holds the local id — but it declines to delete
+    /// the *document* too, restarting the record instead, so nothing is lost either way. And a
+    /// sub-page minted against a checkpointed parent's **server** id is covered by neither this
+    /// nor the cascade, which is the same residual as the plain server parent above.
     func hasPendingLocalChildren(documentID: UUID) -> Bool {
-        let localID = checkpointedRecord(forServerID: documentID)?.localID
-        return pendingCreates.values.contains { child in
-            // Unwrapped rather than compared as Optionals. `child.parentID == localID` with
-            // both nil — an ordinary document, so no checkpointed record, against a record that
-            // is a root — is `true`, which would announce sub-pages for every document on the
-            // device the moment one root existed.
-            guard let parentID = child.parentID else { return false }
-            return parentID == documentID || parentID == localID
+        let localID: UUID
+        if isPendingCreate(documentID: documentID) {
+            localID = documentID
+        } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
+            localID = checkpointed.localID
+        } else {
+            return false
         }
+        return pendingCreates.values.contains { $0.parentID == localID }
     }
 
     /// The local documents filed under this one, **parents before their own children**, with
@@ -537,6 +550,14 @@ final class DocumentSaveCoordinator {
     /// because a skipped record left naming a deleted parent is one no gate holds any more: it
     /// would POST under a dead local id and be re-rooted by the probe anyway, just later and
     /// without the user's screen surviving intact. Its own sub-pages stay with it.
+    ///
+    /// **Unscoped, like `isPendingCreate` and unlike the two listings** — it matches on
+    /// `parentID` alone, with no owner or origin test. Safe because the relation it follows can
+    /// only be built by `createLocalDocument`, which stamps the minting session's own account on
+    /// the child: a record belonging to someone else cannot name one of this session's local ids
+    /// as its parent. Scoping it would be worse than redundant, since a record it then declined
+    /// to visit would be left naming a parent this call is about to remove — the dangling-record
+    /// re-root the cascade exists to prevent.
     private func localDescendantsToDiscard(of parentLocalID: UUID) -> [UUID] {
         var ordered: [UUID] = []
         var visited: Set<UUID> = [parentLocalID]

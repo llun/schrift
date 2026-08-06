@@ -92,7 +92,12 @@ final class EditorViewModel {
     /// Whose local documents may be minted here — see `SignedInUserStore`. Nil withholds the
     /// sub-page fallback entirely, which fails closed rather than minting an unattributable
     /// record nothing would ever list or replay.
-    private let signedInUser: SignedInUserStore
+    /// Internal, like `client` and `saveCoordinator`, because the view forwards it to the Pages
+    /// drawer's view model. Letting that one default instead gave the drawer a *second* store:
+    /// the same answer in production (both read `UserDefaults.standard`), but the two could
+    /// silently disagree the moment either is injected, and a drawer whose `userID` is nil shows
+    /// none of this device's own pages.
+    let signedInUser: SignedInUserStore
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration

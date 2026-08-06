@@ -145,12 +145,19 @@ final class OptionsViewModelTests: XCTestCase {
         XCTAssertNil(env.drafts.draft(for: child.id))
     }
 
-    /// The warning is about *local* sub-pages only. An ordinary server document's children are
-    /// the server's to cascade, and it has always done so silently.
-    func testAnOrdinaryDocumentNeverAnnouncesSubpages() {
+    /// The warning is about what *this delete* will take, not about the relation. A sub-page
+    /// created offline under an ordinary server document is a perfectly ordinary record — and
+    /// deleting that server document does not take it, so saying it would be a false sentence
+    /// in a destructive confirmation. Staged with a real local child, since asking about a
+    /// document that has none can only ever pass.
+    func testAServerDocumentNeverAnnouncesSubpagesItsDeleteWouldNotTake() {
         let env = makeLocalEnvironment()
+        let serverParent = UUID()
+        env.coordinator.createLocalDocument(
+            title: "Child", parentID: serverParent,
+            ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
         let viewModel = OptionsViewModel(
-            client: env.client, documentID: UUID(), isFavorite: false, saveCoordinator: env.coordinator)
+            client: env.client, documentID: serverParent, isFavorite: false, saveCoordinator: env.coordinator)
 
         XCTAssertFalse(viewModel.hasLocalSubpages)
     }

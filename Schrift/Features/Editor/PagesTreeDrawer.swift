@@ -26,7 +26,6 @@ enum PagesTreeLayout {
 struct PagesTreeDrawer: View {
     @Bindable var viewModel: PagesTreeViewModel
     let rootTitle: String
-    var isOffline: Bool = false
     var onOpen: (Document) -> Void
     var onClose: () -> Void
 
@@ -280,7 +279,7 @@ private func previewViewModel(variant: String) -> PagesTreeViewModel {
 #Preview("Pages tree — dark, offline") {
     let viewModel = previewViewModel(variant: "offline")
     PagesTreeDrawer(
-        viewModel: viewModel, rootTitle: "Team handbook", isOffline: true, onOpen: { _ in }, onClose: {}
+        viewModel: viewModel, rootTitle: "Team handbook", onOpen: { _ in }, onClose: {}
     )
     .task { await viewModel.loadRoot() }
     .environment(LocalizationStore())
