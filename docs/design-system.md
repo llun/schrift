@@ -936,3 +936,40 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   hex-only. The `DocsColorHex`/`DocsColorHexDark` palette is untouched — it is
 >   the design system's colour definition, complete whether or not every entry is
 >   currently spent.
+
+> **Amended: 2026-08-05 (the save status took half the editor).**
+> `maxHeight: .infinity` was the wrong half of the tap-target technique above
+> for the editing save-status row, and the bug was very visible: the document
+> title and first line of content sat mid-screen with the keyboard up.
+>
+> A flexible frame answers the **proposal**, clamped into the bounds you give it,
+> and falls back to its child where the proposal is unspecified or a bound is
+> missing — so an unbounded max means "all of it" as soon as an ancestor hands
+> down a concrete height. Both halves matter here: in the height axis the drawer's
+> label and the old save label were identically bounded (no min, infinite max), so
+> only the proposal separates them.
+> That is the real test, not "is an ancestor bounded". `editingSurface` is a
+> `VStack(spacing: 0)` of the row and the canvas in a height-bounded container,
+> so the Save/retry label answered 874pt to an 874pt proposal, the stack saw two
+> greedy children and split the free height between them. `PagesTreeDrawer`
+> keeps the same technique and is *not* greedy, because a scroll view proposes an
+> unspecified height along its scroll axis, so its rows are ideal-sized — the
+> distinction that tells the two call sites apart. (Whether that modifier still
+> buys the drawer's row its full 44pt tap *shape* under such a proposal is a
+> different question from greed, and is being checked separately.)
+>
+> `SaveStatusIndicator` now floors each state itself
+> (`minHeight: DocsSpacing.rowMinHeight`), which never claims a proposal and
+> still grows with Dynamic Type. It is also the *bigger* target: the row pads 8pt
+> below before its own 44pt floor, so a fill-the-row label only ever got 36pt at
+> the row's floor — 44pt was reached only while the row was inflating. The three
+> passive states carry the same floor so the canvas cannot resize as the status
+> moves Save → Saving → Saved. That levelling is a **default-size** property: a
+> floor only equalises states whose own text fits inside it, so a phrase that
+> grows past 44pt is text-sized again — the right trade, since capping it would
+> clip the text. `SaveStatusIndicatorTests` measures the hosted component at the
+> width the row actually offers it (the screen less the row's gutters), against a
+> full-screen proposal, a 10pt proposal and the largest accessibility size, in
+> English through an isolated `LocalizationStore` — a width floor only binds while
+> the label is narrower than the floor, which "Save" is and its translations need
+> not be.

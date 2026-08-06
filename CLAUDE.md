@@ -909,9 +909,40 @@ new code reads like the surrounding code.
   therefore ends its label with **`.contentShape(Rectangle())`** (`ListRow`,
   `ProfileTrailingRow`, `SharedRow`, `SubpageRow`, `PagesTreeDrawer`), and a label
   that must fill a taller container takes **`.frame(maxHeight: .infinity)` first**
-  — a `Text` is only as tall as its line, so the shape it hands over is that line
-  (`SaveStatusIndicator`'s Save/retry, whose row supplies the height so it can't
-  jump between save states). Two shapes this rule takes:
+  — a `Text` is only as tall as its line, so the shape it hands over is that line.
+  **But `maxHeight: .infinity` fills whatever it is *proposed*, so it is only
+  safe where the proposal is one you want filled.** A flexible frame answers the
+  proposal clamped into the bounds you give it, and falls back to its child where
+  the proposal is unspecified or a bound is missing — so an unbounded max means
+  "all of it" the moment any ancestor hands down a concrete height. **The
+  operative question is the proposal, not whether an ancestor caps it.** Both
+  shipping call sites are worth knowing: a **scroll view** proposes an
+  unspecified height along its scroll axis, so `PagesTreeDrawer`'s rows are
+  ideal-sized rather than greedy — which is why the same modifier is harmless
+  there (whether it still buys that row its full tap *shape* under such a
+  proposal is a separate question, and being checked); a **stack in a
+  height-bounded container** hands its children a concrete proposal, which is
+  what `editingSurface`'s
+  `VStack(spacing: 0)` does, and there `SaveStatusIndicator`'s Save/retry filled
+  the row and the row filled the screen — offered 874pt it answered 874pt, the
+  `VStack` saw two greedy children, split the free height between them, and
+  parked the document title and first line of content mid-screen whenever the
+  keyboard was up. **In the second case, floor the label itself** —
+  `.frame(minHeight: DocsSpacing.rowMinHeight)` never claims a proposal and still
+  grows with Dynamic Type, which the rule above *requires* (a fixed `height:`
+  clips). Note the floor is also the *larger* target: the row applies
+  `.padding(.bottom, 8)` before its own `.frame(minHeight: 44)`, so a
+  fill-the-row label only ever got 36pt at the row's floor — it reached 44 only
+  while inflating the row. Give every sibling state the same floor
+  (`SaveStatusIndicator`'s three passive states do) or the content below resizes
+  as the state changes. That levelling is a **default-size** property: a floor
+  only equalises states whose own text fits inside it, so once a phrase grows past
+  44pt that state is text-sized again — the right trade, since capping it would
+  clip the text. `SaveStatusIndicatorTests` pins what is invariant: content-sized
+  against a full-screen proposal, ≥44pt tall when offered less, and ≥44pt wide for
+  the short "Save" label — measured in English through an isolated
+  `LocalizationStore`, because a width floor only binds while the label is
+  narrower than the floor. Two shapes this rule takes:
   - a small glyph inside a bigger target keeps the glyph fixed and pads *outside*
     it — that is what `IconButton` does, and why an icon-only control should go
     through `IconButton` rather than wrapping a bare `MaterialSymbol` in a
@@ -922,9 +953,13 @@ new code reads like the surrounding code.
     back with **symmetric negative padding**
     (`.padding(x).contentShape(Rectangle()).padding(-x)`): same layout, bigger
     target.
-  None of this is visible in a screenshot or catchable by the test suite, which
-  is why it survived a whole design refresh on `Delete document`, `Sign out` and
-  both conflict-resolution rows. Check it by tapping the *padding*, not the text.
+  The hit *shape* is invisible in a screenshot and uncatchable by the suite,
+  which is why it survived a whole design refresh on `Delete document`,
+  `Sign out` and both conflict-resolution rows — check that by tapping the
+  *padding*, not the text. The *geometry* a fill-the-row label demands is not
+  invisible: host the view and measure it (`SaveStatusIndicatorTests`,
+  `EditorFormattingBarTests`), because a control that claims the height or width
+  it is offered takes it out of whatever it shares a stack with.
 - **Inter-row hairlines are opt-in per call site, not a `ListSection`
   parameter.** There is no `divided:` flag in the Swift code (that's the React
   handoff's prop) — a section draws separators only where its own body

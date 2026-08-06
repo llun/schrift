@@ -148,6 +148,15 @@ struct PagesTreeDrawer: View {
                 // Fill the row's height before taking the tap shape: a label is
                 // only as tall as its text, so without this the row *looks* 44pt
                 // but only its middle strip opens the page.
+                //
+                // Safe here, unlike the editor's save-status row, which had to
+                // swap the same modifier for a `minHeight:` floor: an unbounded
+                // max fills whatever it is *proposed*, and these rows sit in a
+                // `ScrollView`, which proposes an unspecified height along its
+                // scroll axis — so the row resolves to its ideal 44pt instead of
+                // claiming the drawer. Don't "fix" this to match that one; do
+                // reach for the floor in any stack that hands down a concrete
+                // height. See CLAUDE.md's tap-target rule.
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }

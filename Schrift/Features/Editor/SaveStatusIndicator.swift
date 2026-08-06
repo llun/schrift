@@ -9,7 +9,14 @@ import SwiftUI
 
 /// What the editing session's status slot shows. A resolved value, not a raw save state:
 /// a recorded conflict outranks the save state (see `saveStatusDisplay`).
-enum SaveStatusDisplay: Equatable {
+///
+/// `CaseIterable` so `SaveStatusIndicatorTests` can derive the list of visible
+/// states rather than restate it: a sixth case added to `body`'s switch without
+/// the height floor every other state carries would otherwise slip past the whole
+/// file green — sized to its own text, so the canvas resizes when the status
+/// changes to it, and free to reach for the `maxHeight: .infinity` that took half
+/// the editor.
+enum SaveStatusDisplay: Equatable, CaseIterable {
     case none
     /// Tappable — flushes the in-progress edit to disk (and pushes it, unless held).
     case save
@@ -66,16 +73,25 @@ struct SaveStatusIndicator: View {
                 Text(loc[.editor_save])
                     .font(DocsFont.footnote.weight(.semibold))
                     .foregroundStyle(DocsColor.textBrand)
-                    // Fill the row before taking the tap shape. A footnote line
-                    // is ~16pt tall, so the drawn text was less than half the
-                    // 44pt target on its own; the enclosing row supplies the
-                    // height (see `EditorView.saveStatusRow`). The width floor
+                    // Reach the tap target before taking the tap shape. A footnote
+                    // line is ~19pt tall, less than half the 44pt target on its
+                    // own. The floor is this label's own — *not* `maxHeight:
+                    // .infinity`, which is what put the title mid-screen: an
+                    // unbounded max fills whatever height it is **proposed**, and
+                    // `editingSurface` is a `VStack(spacing: 0)` in a
+                    // height-bounded container, so a whole screen was proposed
+                    // and answered in full, leaving the canvas the remainder.
+                    // (`saveStatusRow`'s `minHeight:` could not stop it: a floor
+                    // is not a cap.) The width floor
                     // matters here and nowhere else in this switch: "Save" is
                     // four characters, narrower than 44pt at the default text
                     // size, where every other state is a whole phrase.
                     // `.leading`, or widening the box would shift the word off
                     // the row's leading edge where every other state starts.
-                    .frame(minWidth: DocsSpacing.rowMinHeight, maxHeight: .infinity, alignment: .leading)
+                    .frame(
+                        minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight,
+                        alignment: .leading
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -89,6 +105,14 @@ struct SaveStatusIndicator: View {
                     .font(DocsFont.footnote)
                     .foregroundStyle(DocsColor.textTertiary)
             }
+            // The passive states carry the same floor as the two tappable ones —
+            // they need no tap target, but sized to their own text the canvas
+            // below would resize as the status moved Save → Saving → Saved. A
+            // floor only levels states whose own text fits inside it, so this is
+            // a default-size property: once a phrase grows past 44pt the state is
+            // text-sized again, which is the right trade — capping it would clip
+            // the text.
+            .frame(minHeight: DocsSpacing.rowMinHeight)
 
         case .saved:
             HStack(spacing: DocsSpacing.space3xs) {
@@ -97,6 +121,8 @@ struct SaveStatusIndicator: View {
                     .font(DocsFont.footnote)
             }
             .foregroundStyle(DocsColor.textTertiary)
+            // The shared floor, as in `.saving`.
+            .frame(minHeight: DocsSpacing.rowMinHeight)
 
         case .savedOnDevice:
             // The width-constrained editing status uses the compact "Saved on this
@@ -110,6 +136,8 @@ struct SaveStatusIndicator: View {
                     .font(DocsFont.footnote)
             }
             .foregroundStyle(DocsColor.textTertiary)
+            // The shared floor, as in `.saving`.
+            .frame(minHeight: DocsSpacing.rowMinHeight)
 
         case .retry:
             Button(action: onTap) {
@@ -121,8 +149,10 @@ struct SaveStatusIndicator: View {
                 .foregroundStyle(DocsColor.danger)
                 // The only retry affordance there is while editing, and the only
                 // thing that unpins a document whose revalidations `reconcileDraft`
-                // no-ops. It has to be reachable.
-                .frame(maxHeight: .infinity)
+                // no-ops. It has to be reachable — floored here rather than left
+                // unbounded for the row to bound, for the reason spelled out on
+                // `.save`.
+                .frame(minHeight: DocsSpacing.rowMinHeight)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
