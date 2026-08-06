@@ -1151,15 +1151,20 @@ final class EditorViewModel {
         _ = saveCoordinator.pendingCreatesVersion
         let local = saveCoordinator.pendingLocalDocuments(
             parentID: documentID, currentUserID: signedInUser.userID)
-        guard !local.isEmpty else { return subpages }
+        // A document the server has never seen provably holds nothing *there*, so its level is
+        // known-**empty** rather than unknown. Without this it stays nil forever — `loadChildren`
+        // is gated for exactly the same reason and never fills it in — and the section renders a
+        // bare "Subpages" heading: no rows, and not even the line that says there are none.
+        guard !local.isEmpty else { return isLocalDocument ? [] : subpages }
         // A nil (never-fetched) level stays distinguishable from an empty one: local children
         // are a real answer about this device, so they make the level known.
         return mergedWithLocalDocuments(fetched: subpages ?? [], local: local)
     }
 
     func loadChildren() async {
-        // A local document has no children on the server to list — and cannot: nothing may be
-        // created under it until it has a server id (v1 scope), so the empty list stands.
+        // A local document has no children on the server to list — and cannot, since the server
+        // has never heard of the id. Sub-pages created under it live in the create records and
+        // reach the screen through `mergedSubpages`, which reports that level as known-empty.
         guard !isLocalDocument else { return }
         childrenGeneration += 1
         let generation = childrenGeneration
@@ -1209,6 +1214,28 @@ final class EditorViewModel {
 
     func addSubpage() async -> Document? {
         clearError()
+        // **A parent the server has never seen is minted straight away, with no request.** It
+        // has no children route to POST to: the call would address
+        // `documents/{local-uuid}/children/` and take a 404, which `retryableSaveFailure`
+        // rightly refuses to retry — so the fallback below would never fire and the user would
+        // get "Couldn't add the subpage" for something perfectly possible. The replay orders
+        // the two creates, POSTing this parent before the sub-page that names it.
+        //
+        // Nothing is appended to `subpages` here. For a local parent it is provably nil (the
+        // children fetch is gated and the cache is never keyed by a local id), so `appendChild`
+        // would do nothing but bump a fetch generation; `createLocalDocument` bumps
+        // `pendingCreatesVersion`, which is what `mergedSubpages` reads to put the row on
+        // screen.
+        if isLocalDocument {
+            guard let ownerUserID = signedInUser.userID else {
+                // No account id has ever been learned from `/users/me/`, so a record minted here
+                // would be unattributable: never listed, never replayed. Better to say so.
+                showError(.editor_error_add_subpage)
+                return nil
+            }
+            return saveCoordinator.createLocalDocument(
+                title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
+        }
         let child: Document
         do {
             child = try await client.createChild(documentID: documentID, title: "Untitled subpage")
@@ -1221,14 +1248,10 @@ final class EditorViewModel {
             // a 400) keeps the error — minting there would promise a replay the server will
             // decline again. `.sessionExpired` likewise stays an error; the re-login sheet is
             // already up.
-            // The parent must itself be synced. Unreachable from the UI (the button is
-            // hidden for a local parent), but stated here rather than left to the view: a
-            // local child of a local parent POSTs `documents/{local-uuid}/children/`, 404s,
-            // probes the parent, 404s again, and is **silently re-rooted** — an irreversible
-            // placement change on evidence that proves nothing. Its sibling in
-            // `PagesTreeViewModel` carries the same conjunct.
+            // Only the *synced*-parent path reaches here; a local parent returned above without
+            // ever issuing a request.
             if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
-                !isLocalDocument, let ownerUserID = signedInUser.userID
+                let ownerUserID = signedInUser.userID
             {
                 let local = saveCoordinator.createLocalDocument(
                     title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)

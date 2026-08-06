@@ -847,33 +847,30 @@ struct EditorView: View {
                 }
                 // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
 
-                // No longer gated on `isOffline` — a failed POST falls back to a local
-                // sub-page the replay sends later. Gated instead on the *parent* being local:
-                // a child of an unsynced parent is out of v1 scope, because the replay has no
-                // way to order the two creates (the child's `parentID` names an id the server
-                // has never seen). `abilities.childrenCreate` on a synthetic document records
-                // the same intent, but nothing reads it — this is the gate that enforces it.
-                if !viewModel.isLocalDocument {
-                    Button {
-                        Task {
-                            if let child = await viewModel.addSubpage() {
-                                onOpenDocument?(child)
-                            }
+                // Ungated. Neither being offline nor the parent being unsynced stops this any
+                // more: `addSubpage` mints locally in both cases, and the replay POSTs the
+                // parent before the sub-page that names it. The gate that used to live here
+                // was the whole reason a document created offline offered nothing but a
+                // "Subpages" heading.
+                Button {
+                    Task {
+                        if let child = await viewModel.addSubpage() {
+                            onOpenDocument?(child)
                         }
-                    } label: {
-                        HStack(spacing: DocsSpacing.spaceXS) {
-                            MaterialSymbol(.add, size: 22)
-                            Text(loc[.editor_add_subpage])
-                                .docsScaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
-                        }
-                        .foregroundStyle(DocsColor.textBrand)
-                        .padding(.horizontal, DocsSpacing.spaceXS)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                } label: {
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        MaterialSymbol(.add, size: 22)
+                        Text(loc[.editor_add_subpage])
+                            .docsScaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
+                    }
+                    .foregroundStyle(DocsColor.textBrand)
+                    .padding(.horizontal, DocsSpacing.spaceXS)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
             .padding(.top, DocsSpacing.spaceBase)
         }

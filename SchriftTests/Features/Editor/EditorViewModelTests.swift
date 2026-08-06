@@ -85,9 +85,13 @@ final class EditorViewModelTests: XCTestCase {
 
     /// A local document's editor: the coordinator holds a real create record, and the view
     /// model is keyed on the *minted* id rather than the suite's fixed one.
-    private func makeLocalEnvironment() -> (
+    /// `signedInUserID` is what the account-scoped paths read; pass nil for the shape where
+    /// `/users/me/` has never answered on this install, which is the one that cannot mint.
+    private func makeLocalEnvironment(
+        signedInUserID: UUID? = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+    ) -> (
         viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator, document: Document,
-        draftStore: PendingDraftStore
+        draftStore: PendingDraftStore, children: DocumentChildrenCacheStore
     ) {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelTests.local.\(UUID().uuidString)"
@@ -104,13 +108,13 @@ final class EditorViewModelTests: XCTestCase {
             title: "Untitled document", parentID: nil,
             ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
         let signedIn = SignedInUserStore(userDefaults: defaults)
-        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        if let signedInUserID { signedIn.remember(signedInUserID) }
         let viewModel = EditorViewModel(
             client: client, documentID: document.id, title: document.title ?? "Untitled document",
             saveCoordinator: coordinator, signedInUser: signedIn,
             contentCache: contentCache, childrenCache: childrenCache,
             autosaveInterval: .seconds(10), remoteChangeDebounce: .milliseconds(600))
-        return (viewModel, coordinator, document, draftStore)
+        return (viewModel, coordinator, document, draftStore, childrenCache)
     }
 
     /// The registration is tied to `deinit` rather than to `onDisappear`, which fires on mere
@@ -241,19 +245,59 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .editor_error_add_subpage)
     }
 
-    /// And a child of a **local** parent is never minted: the POST would name a client-minted
-    /// id, 404, probe the parent, 404 again, and silently re-root the child — an irreversible
-    /// placement change on evidence that proves nothing. Out of v1 scope by design.
-    func testAddSubpageNeverMintsAChildOfALocalParent() async {
-        MockURLProtocol.stubHandler = { _ in
-            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+    /// A sub-page of a **local** parent is minted with no request at all. Trying the POST first
+    /// would address `documents/{local-uuid}/children/` and take a 404 — not retryable, so the
+    /// transport fallback above would never fire and the user would be told this is impossible.
+    /// The replay orders the two creates instead.
+    func testAddSubpageUnderALocalParentMintsLocallyWithoutAnyRequest() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
         }
         let env = makeLocalEnvironment()
 
         let child = await env.viewModel.addSubpage()
 
+        XCTAssertNotNil(child)
+        XCTAssertEqual(log.methods.count, 0, "no request may name a client-minted id")
+        XCTAssertNil(env.viewModel.errorKey)
+        XCTAssertTrue(env.coordinator.isPendingCreate(documentID: child!.id))
+        XCTAssertEqual(
+            env.coordinator.pendingCreateForTesting(localID: child!.id)?.parentID, env.document.id,
+            "and it is filed under the parent, which is what the replay reorders on")
+        XCTAssertEqual(env.viewModel.mergedSubpages?.map(\.id), [child!.id], "and it shows immediately")
+    }
+
+    /// Minting needs an account to attribute the record to: without one it would be listed by
+    /// nothing and replayed by nothing, so saying so beats a document that silently never syncs.
+    func testAddSubpageUnderALocalParentReportsWhenNoAccountIsKnown() async {
+        let env = makeLocalEnvironment(signedInUserID: nil)
+
+        let child = await env.viewModel.addSubpage()
+
         XCTAssertNil(child)
         XCTAssertEqual(env.viewModel.errorKey, .editor_error_add_subpage)
+    }
+
+    /// The server has never seen this document, so it provably holds nothing under it — the
+    /// level is known-**empty**, not unknown. Reporting nil left the section a bare "Subpages"
+    /// heading with no rows and not even the line saying there are none.
+    func testALocalDocumentReportsAKnownEmptySubpagesLevel() async {
+        let env = makeLocalEnvironment()
+
+        XCTAssertEqual(env.viewModel.mergedSubpages?.count, 0)
+    }
+
+    /// A synthetic row must never reach `DocumentChildrenCacheStore`: it is neither
+    /// account-scoped nor cleared on sign-out, so a level keyed by a local parent id would
+    /// serve the previous user's document to the next one.
+    func testAddSubpageUnderALocalParentWritesNoChildrenCacheLevel() async {
+        let env = makeLocalEnvironment()
+
+        _ = await env.viewModel.addSubpage()
+
+        XCTAssertNil(env.children.children(for: env.document.id))
     }
 
     /// Opening a locally-created document must issue **no** request. Its id is client-minted,
