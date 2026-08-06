@@ -100,7 +100,7 @@ enum Strings_nl {
         .options_share: "Delen",
         .options_delete_document: "Document verwijderen",
         .options_delete_confirm_title: "Dit document verwijderen?",
-        .options_delete_confirm_subpages: "Subpagina's die op dit apparaat zijn opgeslagen, worden mee verwijderd.",
+        .options_delete_confirm_subpages: "Subpagina's die op dit apparaat zijn opgeslagen, worden ook verwijderd.",
         .options_delete: "Verwijderen",
         .options_error_toggle_favorite: "Kan favoriet niet bijwerken. Probeer het opnieuw.",
         .options_error_delete: "Kan document niet verwijderen. Probeer het opnieuw.",
