@@ -422,25 +422,55 @@ final class DocumentSaveCoordinator {
     /// emptiness one — so overlaying "" (or "   ") would produce a blank row.
     func pendingLocalDocuments(parentID: UUID?, currentUserID: UUID?) -> [Document] {
         let listed = pendingCreates.values
-            .filter {
-                belongsToSession($0, currentUserID: currentUserID) && $0.syncedServerID == nil
-                    && $0.parentID == parentID
-            }
+            .filter { isListable($0, currentUserID: currentUserID) && $0.parentID == parentID }
             .sorted { orderedByCreation($1, $0) }
         guard !listed.isEmpty else { return [] }
-        // One decode for the whole list: `draftStore.draft(for:)` re-decodes every draft —
-        // document bodies included — on each call, and this is a main-actor list path.
-        let draftTitles = Dictionary(
-            draftStore.allDrafts().map { ($0.documentID, $0.title) }, uniquingKeysWith: { _, latest in latest })
-        return listed.map { create in
-            var document = localDocument(from: create)
-            if let draftTitle = draftTitles[create.localID],
-                !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                document.title = draftTitle
-            }
-            return document
+        let draftTitles = draftTitlesByDocument()
+        return listed.map { listedLocalDocument($0, draftTitles: draftTitles) }
+    }
+
+    /// The same listing grouped by parent — what the Pages drawer needs, since it draws many
+    /// levels at once and must also know which **collapsed** rows have local children, to give
+    /// them a disclosure arrow. Asking `pendingLocalDocuments` per visible row would mean one
+    /// full draft decode each.
+    ///
+    /// Roots are excluded: they are nobody's children, and the drawer's own root is the
+    /// document behind it rather than the top of the account.
+    func pendingLocalDocumentsByParent(currentUserID: UUID?) -> [UUID: [Document]] {
+        let grouped = Dictionary(
+            grouping: pendingCreates.values.filter {
+                isListable($0, currentUserID: currentUserID) && $0.parentID != nil
+            },
+            by: { $0.parentID ?? $0.localID })
+        guard !grouped.isEmpty else { return [:] }
+        let draftTitles = draftTitlesByDocument()
+        return grouped.mapValues { records in
+            records
+                .sorted { orderedByCreation($1, $0) }
+                .map { listedLocalDocument($0, draftTitles: draftTitles) }
         }
+    }
+
+    /// Shown to this session, and not yet the server's — the filter both listings share.
+    private func isListable(_ create: PendingDocumentCreate, currentUserID: UUID?) -> Bool {
+        belongsToSession(create, currentUserID: currentUserID) && create.syncedServerID == nil
+    }
+
+    /// One decode for a whole listing: `draftStore.draft(for:)` re-decodes every draft —
+    /// document bodies included — on each call, and these are main-actor list paths.
+    private func draftTitlesByDocument() -> [UUID: String] {
+        Dictionary(
+            draftStore.allDrafts().map { ($0.documentID, $0.title) }, uniquingKeysWith: { _, latest in latest })
+    }
+
+    private func listedLocalDocument(_ create: PendingDocumentCreate, draftTitles: [UUID: String]) -> Document {
+        var document = localDocument(from: create)
+        if let draftTitle = draftTitles[create.localID],
+            !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            document.title = draftTitle
+        }
+        return document
     }
 
     /// Drop a local document's record. **A record may only be removed together with a

@@ -415,7 +415,6 @@ struct EditorView: View {
                     viewModel: pagesTreeViewModel,
                     rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
                     isOffline: isOffline,
-                    isRootLocal: viewModel.isLocalDocument,
                     onOpen: { document in
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
