@@ -216,6 +216,11 @@ struct AttachmentCardView: View {
     /// surfaces an error — a missing thumbnail is not something the user can act
     /// on.
     private func refreshThumbnail() async {
+        // The thumbnail generator is the *same* QuickLook subsystem as the
+        // preview and uses the same per-type renderers, so gating only the
+        // preview left the disclosure wide open — and worse than before, since
+        // this path runs automatically on appear with no tap at all.
+        guard attachmentIsPreviewable(display) else { return }
         guard case .cached(let fileURL) = state else { return }
         // Keyed by the rendered size as well as the file: a thumbnail generated
         // at the default text size would be resampled soft at an accessibility

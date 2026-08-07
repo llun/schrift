@@ -62,7 +62,7 @@ final class AttachmentCardViewTests: XCTestCase {
     func testMarkupTypesAreNeverPreviewable() throws {
         for ext in [
             "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
-            "mht", "mhtml", "webarchive", "epub", "webloc", "url",
+            "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx",
         ] {
             XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: ext)), "\(ext) must not be previewable")
         }

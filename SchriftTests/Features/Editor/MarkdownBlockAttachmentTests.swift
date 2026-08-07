@@ -88,10 +88,18 @@ final class MarkdownBlockAttachmentTests: XCTestCase {
         XCTAssertEqual(prose, plain, accuracy: 1)
     }
 
-    func testTheOfflineFlagReachesTheCard() {
-        // Offline is chrome, so the card still renders at card height. The
-        // interesting part is that it renders *at all* while offline — the state
-        // resolver's offline branch is covered by AttachmentCardViewTests.
+    /// A card renders offline too — an attachment that is merely uncached must
+    /// still be shown and named rather than vanishing.
+    ///
+    /// Deliberately **not** asserted here: that `isOffline` reaches the card.
+    /// Geometry cannot see it — `.offlineAndUncached` and `.downloading` draw
+    /// the same row, differing only in a subtitle string and a `ProgressView`
+    /// inside a height already set by the 40pt thumbnail box — so an assertion
+    /// on height would pass with the parameter deleted. The flag's actual
+    /// consequences are pinned where they are observable: `attachmentCardState`
+    /// in `AttachmentCardViewTests`, and `allowsNetwork` in
+    /// `AttachmentLoaderTests`.
+    func testACardStillRendersWhileOffline() {
         XCTAssertGreaterThanOrEqual(height(of: "[f](\(attachmentURL()))", isOffline: true), DocsSpacing.rowMinHeight)
     }
 

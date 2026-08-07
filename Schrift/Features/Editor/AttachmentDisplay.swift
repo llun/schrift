@@ -184,7 +184,7 @@ func attachmentDisplayTitle(_ display: AttachmentDisplay) -> String {
 func attachmentIsPreviewable(_ display: AttachmentDisplay) -> Bool {
     ![
         "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
-        "mht", "mhtml", "webarchive", "epub", "webloc", "url",
+        "mht", "mhtml", "webarchive", "epub", "webloc", "url", "eml", "emlx",
     ].contains(display.fileExtension.lowercased())
 }
 

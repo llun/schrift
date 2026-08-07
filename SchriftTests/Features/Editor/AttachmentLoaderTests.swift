@@ -247,6 +247,54 @@ final class AttachmentLoaderTests: XCTestCase {
         XCTAssertTrue(log.methods.isEmpty)
     }
 
+    // MARK: - The loader owns its downloads
+
+    /// A card is torn down routinely — tapping a block swaps the reading surface
+    /// for the editing one — and a structured download died with it, recording a
+    /// cancellation the card could not tell from a real failure. Since
+    /// `loadIfNeeded` never auto-retries `.failed`, one ordinary tap stranded
+    /// the attachment behind a retry nothing had asked for.
+    func testADownloadSurvivesCancellationOfTheTaskThatStartedIt() async throws {
+        let cache = makeCache()
+        let display = try makeDisplay()
+        let loader = makeLoader(cache: cache)
+        stub(Data([7, 7, 7]), delay: 0.2)
+
+        // Exactly what SwiftUI does to a `.task` when its view goes away.
+        let carrier = Task { await loader.loadIfNeeded(display) }
+        try await Task.sleep(for: .milliseconds(40))
+        carrier.cancel()
+        _ = await carrier.value
+
+        await waitUntil { if case .cached = loader.state(for: display) { return true } else { return false } }
+        guard case .cached(let url) = loader.state(for: display) else {
+            return XCTFail("Expected .cached, got \(String(describing: loader.state(for: display)))")
+        }
+        XCTAssertEqual(try Data(contentsOf: url), Data([7, 7, 7]))
+        XCTAssertNotNil(cache.cachedFileURL(for: display))
+    }
+
+    /// The successor used to return at the in-flight guard and the cancelled
+    /// predecessor then cleared the state behind it, leaving a card spinning on
+    /// `.downloading` with nothing left to resolve it. Joining fixes that.
+    func testASecondCallerJoinsTheRunningDownloadRatherThanGivingUp() async throws {
+        let display = try makeDisplay()
+        let loader = makeLoader()
+        let log = RequestRecorder()
+        stub(Data([5]), delay: 0.15, log: log)
+
+        let first = Task { await loader.loadIfNeeded(display) }
+        try await Task.sleep(for: .milliseconds(30))
+        // The second caller must not return before the download resolves.
+        await loader.loadIfNeeded(display)
+
+        guard case .cached = loader.state(for: display) else {
+            return XCTFail("the joining caller returned before the state resolved")
+        }
+        _ = await first.value
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 1)
+    }
+
     // MARK: - Failure and retry
 
     func testAFailedDownloadPublishesFailed() async throws {

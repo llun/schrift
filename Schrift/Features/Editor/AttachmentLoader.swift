@@ -43,7 +43,10 @@ enum AttachmentLoadState: Equatable, Sendable {
     private let client: DocsAPIClient
     private let serverOrigin: String
     private let cache: AttachmentCacheStore
-    private var inFlight: Set<String> = []
+    /// Download handles, not just keys: a concurrent caller **joins** the
+    /// running download instead of returning, and the loader owns the task so
+    /// a torn-down card cannot cancel it.
+    private var inFlight: [String: Task<Void, Never>] = [:]
 
     init(client: DocsAPIClient, serverOrigin: String, cache: AttachmentCacheStore = AttachmentCacheStore()) {
         self.client = client
@@ -67,9 +70,10 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// the user scrolls past a document full of attachments. `retry` is the way
     /// back, and it is one tap on the card the user is already looking at.
     ///
-    /// Concurrent callers do not join the download; they simply return. The
-    /// state is observable, so every card watching this url re-renders when it
-    /// resolves.
+    /// Concurrent callers **join** the running download rather than returning:
+    /// returning early let a superseded task's late `catch` clear the state
+    /// after its successor had already given up, leaving a card spinning on
+    /// `.downloading` with nothing left to resolve it.
     /// `allowsNetwork` false means "answer from disk or not at all" — what the
     /// card passes while the app believes it is offline.
     ///
@@ -83,7 +87,10 @@ enum AttachmentLoadState: Equatable, Sendable {
     func loadIfNeeded(_ display: AttachmentDisplay, allowsNetwork: Bool = true) async {
         let key = display.urlString
         if case .failed = states[key] { return }
-        guard !inFlight.contains(key) else { return }
+        if let running = inFlight[key] {
+            await running.value
+            return
+        }
 
         // The disk is consulted even when the state is already `.cached`, for
         // two reasons. Eviction can delete the file out from under a card that
@@ -112,7 +119,10 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// this does not short-circuit on `.failed` — it is the deliberate way back
     /// from one.
     func retry(_ display: AttachmentDisplay) async {
-        guard !inFlight.contains(display.urlString) else { return }
+        if let running = inFlight[display.urlString] {
+            await running.value
+            return
+        }
         if let url = cache.cachedFileURL(for: display) {
             states[display.urlString] = .cached(url)
             return
@@ -122,6 +132,15 @@ enum AttachmentLoadState: Equatable, Sendable {
 
     // MARK: - Private
 
+    /// Runs the GET in a task the **loader** owns, so the work outlives the view
+    /// that asked for it.
+    ///
+    /// A card is torn down routinely — tapping a block swaps the reading surface
+    /// for the editing one — and a structured download died with it, which
+    /// recorded a cancellation the card could not tell from a real failure. This
+    /// is the same reason `DocumentSaveCoordinator` owns its save tasks, and it
+    /// costs nothing: the bytes were already on the wire, and finishing means
+    /// the next appearance finds them cached.
     private func download(_ display: AttachmentDisplay) async {
         let key = display.urlString
         // Defense in depth. `parseAttachmentLink` already proved this url is on
@@ -134,31 +153,25 @@ enum AttachmentLoadState: Equatable, Sendable {
         }
 
         states[key] = .downloading
-        inFlight.insert(key)
-        defer { inFlight.remove(key) }
+        let task = Task { [weak self] () -> Void in
+            await self?.fetch(display, path: path)
+        }
+        inFlight[key] = task
+        await task.value
+        inFlight[key] = nil
+    }
 
-        let data: Data
+    private func fetch(_ display: AttachmentDisplay, path: String) async {
+        let key = display.urlString
         do {
-            data = try await client.mediaData(path: path)
+            let data = try await client.mediaData(path: path)
+            // A cache write that fails (a full disk) costs the offline copy, not
+            // the download: `.failed` so the card offers a retry rather than
+            // claiming a file that isn't there.
+            states[key] = cache.store(data, for: display).map(AttachmentLoadState.cached) ?? .failed
         } catch {
-            // A cancelled download is not a failure, and recording one would
-            // strand the card: `loadIfNeeded` never retries `.failed`, so the
-            // "Couldn't download · Tap to retry" would sit there for the rest of
-            // the session. Cancellation is routine here — tapping a block swaps
-            // the reading surface for the editing one, which tears the card's
-            // `.task` down mid-flight. Clearing the entry lets the next appear
-            // start over.
-            states[key] = Task.isCancelled ? nil : .failed
-            return
-        }
-        // A cache write that fails (a full disk) costs the offline copy, not the
-        // download: fall back to `.failed` so the card offers a retry rather than
-        // claiming a file that isn't there.
-        guard let url = cache.store(data, for: display) else {
             states[key] = .failed
-            return
         }
-        states[key] = .cached(url)
     }
 }
 
