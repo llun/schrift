@@ -803,6 +803,33 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertEqual(announcements.ids, [serverID])
     }
 
+    /// The coordinator is app-scoped and outlives every screen, so a strong closure per
+    /// observer would accumulate one entry for every document ever opened. A dead observer is
+    /// dropped rather than merely skipped.
+    func testADeadObserverIsDroppedRatherThanKeptForever() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        var liveCalls = 0
+        let live = Announcements()
+        env.coordinator.observeDocumentDeleted(live) { _ in liveCalls += 1 }
+        // Registered, then released before anything is announced.
+        do {
+            let transient = Announcements()
+            env.coordinator.observeDocumentDeleted(transient) { _ in
+                XCTFail("a deallocated observer must never be called")
+            }
+        }
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(liveCalls, 1, "the live observer still hears about it")
+        XCTAssertEqual(
+            env.coordinator.documentDeletedObserverCountForTesting, 1,
+            "and the dead one is gone, not merely skipped")
+    }
+
     /// The `.forbidden` refusal must **not** announce: the document is still there, and the
     /// row it restores is a real one.
     func testAForbiddenDeletionAnnouncesNothing() async {

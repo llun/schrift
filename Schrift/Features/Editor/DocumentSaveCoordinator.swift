@@ -202,20 +202,32 @@ final class DocumentSaveCoordinator {
     ///
     /// `@ObservationIgnored` and fired last, on the same terms as `onDocumentMigrated`.
     @ObservationIgnored
-    private var documentDeletedObservers: [ObjectIdentifier: @MainActor (UUID) -> Void] = [:]
+    private var documentDeletedObservers: [ObjectIdentifier: DocumentDeletedObserver] = [:]
 
-    /// Subscribe to landed deletions. Keyed on the observer's identity, so re-registering
-    /// replaces rather than duplicates and a deallocated screen's entry can be dropped.
+    /// Subscribe to landed deletions.
+    ///
+    /// The owner is held **weakly** and its entry pruned on the next announcement, because
+    /// this coordinator is app-scoped and outlives every screen: a strong closure per
+    /// `EditorViewModel` would accumulate one entry for every document ever opened, for the
+    /// life of the process. Weak storage also makes `ObjectIdentifier` reuse harmless — a new
+    /// object allocated at a dead one's address simply replaces its entry, and a dead entry
+    /// can never be called.
+    ///
+    /// Keyed on identity, so re-registering replaces rather than duplicates.
     func observeDocumentDeleted(_ owner: AnyObject, _ handler: @escaping @MainActor (UUID) -> Void) {
-        documentDeletedObservers[ObjectIdentifier(owner)] = handler
+        documentDeletedObservers[ObjectIdentifier(owner)] = DocumentDeletedObserver(
+            owner: owner, handler: handler)
     }
 
-    func removeDocumentDeletedObserver(_ owner: AnyObject) {
-        documentDeletedObservers[ObjectIdentifier(owner)] = nil
-    }
+    /// Test seam: that the pruning really prunes, rather than the dictionary growing for the
+    /// life of the process.
+    var documentDeletedObserverCountForTesting: Int { documentDeletedObservers.count }
 
     private func announceDocumentDeleted(_ documentID: UUID) {
-        for handler in documentDeletedObservers.values { handler(documentID) }
+        // Prune as we go: an observer whose owner is gone is not merely skipped but dropped,
+        // so the dictionary tracks live screens rather than every screen there has ever been.
+        documentDeletedObservers = documentDeletedObservers.filter { $0.value.owner != nil }
+        for observer in documentDeletedObservers.values { observer.handler(documentID) }
     }
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
@@ -3157,4 +3169,11 @@ final class DocumentSaveCoordinator {
             start(documentID: documentID, save: next)
         }
     }
+}
+
+/// A weakly-held subscriber to landed deletions — see
+/// `DocumentSaveCoordinator.observeDocumentDeleted`.
+private struct DocumentDeletedObserver {
+    weak var owner: AnyObject?
+    let handler: @MainActor (UUID) -> Void
 }
