@@ -1,0 +1,83 @@
+Schrift/Features/Editor/AttachmentDisplay.swift
+  s_810ae103ae38c6::t_00b8de3bca741f 205,214
+  s_810ae103ae38c6::t_2bdcf5cc61fbc0 124-131,136-138,143-153
+  s_810ae103ae38c6::t_c3f255154bc65c 209
+  s_810ae103ae38c6::t_892bcf6c48fbf7 154,164-179,186-190
+  s_810ae103ae38c6::t_0ec737a6570f5e 155,191
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_810ae103ae38c6::t_4b04f9c34d25bb 354-360,362,364,366-371,373-375
+Schrift/Features/Editor/AttachmentCacheStore.swift
+  s_810ae103ae38c6::t_6eb044338b65ae 117-121,127
+Schrift/Core/Localization/L10nKey.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 282-285
+Schrift/Core/Localization/Strings+fr.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 250
+Schrift/Core/Localization/Strings+pt.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 249
+Schrift/Core/Localization/Strings+en.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 249
+Schrift/Core/Localization/Strings+sl.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 258
+Schrift/Core/Localization/Strings+th.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 246
+Schrift/Core/Localization/Strings+nl.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 250
+docs/architecture.md
+  s_810ae103ae38c6::t_117d836d01178e 1023-1049
+  s_810ae103ae38c6::t_3cc8f30ce82531 1058-1068,1072-1086
+docs/offline-and-sync.md
+  s_810ae103ae38c6::t_957c67f8dc914b 1056,1060-1064,1068-1080
+Schrift/Core/Localization/Strings+it.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 248
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 244
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 244
+Schrift/Core/Localization/Strings+es.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 253
+SchriftTests/Features/Editor/AttachmentCacheStoreTests.swift
+  s_810ae103ae38c6::t_b0c3470ca7cd56 174,224-225,305
+  s_810ae103ae38c6::t_618f42c1f0044e 175,177-213
+  s_810ae103ae38c6::t_4d4e399bf1b8ae 176
+SchriftTests/Features/Editor/AttachmentCardViewTests.swift
+  s_810ae103ae38c6::t_45712693edc24d 57-82
+  s_810ae103ae38c6::t_96bdc547fe9a6e 7-14
+SchriftTests/Features/Editor/MarkdownBlockAttachmentTests.swift
+  s_810ae103ae38c6::t_45c704be4eed52 1-113
+Schrift/Features/Editor/AttachmentCardView.swift
+  s_810ae103ae38c6::t_03d7cfb96b23f0 239-248
+  s_810ae103ae38c6::t_82560505ad9c2e 130,147
+  s_810ae103ae38c6::t_8148f2acd6c40f 73-76,79-86,97-121,125-128
+  s_810ae103ae38c6::t_9b51ef5234aae2 224-226
+  s_810ae103ae38c6::t_a6b34df99f05bd 161-164
+CLAUDE.md
+  s_810ae103ae38c6::t_a5c83368f47d9f 1398-1422
+Schrift/Core/Localization/Strings+de.swift
+  s_810ae103ae38c6::t_0fdfd5afa16d62 252
+SchriftTests/Features/Editor/AttachmentLoaderTests.swift
+  s_810ae103ae38c6::t_1c601c1756ab2d 192-230
+  s_810ae103ae38c6::t_b0c3470ca7cd56 70,135
+  s_810ae103ae38c6::t_7002b29c503eda 296-322
+  s_810ae103ae38c6::t_498ed61dc8f660 40,44
+Schrift/Features/Editor/AttachmentLoader.swift
+  s_810ae103ae38c6::t_7119dcca0c5138 134-145
+  s_810ae103ae38c6::t_f70d5e4461ec49 73-83
+  s_810ae103ae38c6::t_168d0e35adef42 101
+  s_810ae103ae38c6::t_a5639e96af5f59 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "b875539cf435482778acc95f695ed6233b18e931",
+  "prompts": {},
+  "sessions": {
+    "s_810ae103ae38c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6236ca4-0d88-477c-a92c-8da77f1291e9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
