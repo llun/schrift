@@ -1,0 +1,93 @@
+Schrift/Features/Home/HomeViewModel.swift
+  s_a90ba1763f1ea9::t_029006c571516a 295-310
+  s_a90ba1763f1ea9::t_47ccb5a8262197 311-318
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_a90ba1763f1ea9::t_029006c571516a 162-176
+Schrift/Core/Localization/Strings+en.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 66-68
+Schrift/Core/Localization/Strings+es.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 68-73
+Schrift/Core/Localization/L10nKey.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 76-81
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_a90ba1763f1ea9::t_7e73e87ae7580a 439-461
+  s_a90ba1763f1ea9::t_db1a059f7522fe 63
+Schrift/Core/Localization/Strings+it.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 66-71
+Schrift/Features/Editor/EditorView.swift
+  s_a90ba1763f1ea9::t_189ee4b6933ee8 248-250,252-254
+  s_a90ba1763f1ea9::t_6a9a3f7f9e0438 437-442,866-878
+  s_a90ba1763f1ea9::t_bc7927d3c3edc9 183-185
+Schrift/Features/Editor/PendingDeleteUndo.swift
+  s_a90ba1763f1ea9::t_969e0c6d5fcea8 1-48
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 64-69
+SchriftTests/Features/Shared/SharedViewModelTests.swift
+  s_a90ba1763f1ea9::t_a9514cdb8cf01c 360-410
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_a90ba1763f1ea9::t_7e73e87ae7580a 274-314
+Schrift/Core/Localization/Strings+pt.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 67-72
+Schrift/Features/Shared/SharedRow.swift
+  s_a90ba1763f1ea9::t_d9d1f058036e48 7-13,26-27,38-41,55-58,79-82
+Schrift/Core/Localization/Strings+de.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 68-73
+Schrift/Features/Search/SearchScreen.swift
+  s_a90ba1763f1ea9::t_9e28525dd55fa7 42-44
+  s_a90ba1763f1ea9::t_d1e7912e100971 9-10,152-159
+Schrift/Features/Shared/SharedScreen.swift
+  s_a90ba1763f1ea9::t_d1e7912e100971 9-10,68-79
+  s_a90ba1763f1ea9::t_9e28525dd55fa7 105-107
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_a90ba1763f1ea9::t_4c00528ce8351d 933-981
+  s_a90ba1763f1ea9::t_250d9c7c66762d 81
+Schrift/Features/Home/DocumentListView.swift
+  s_a90ba1763f1ea9::t_42543d9eb5fabb 15-16,197-209
+  s_a90ba1763f1ea9::t_47ccb5a8262197 72-74
+SchriftTests/DesignSystem/Components/DocRowTests.swift
+  s_a90ba1763f1ea9::t_445e93a0340fd7 59-99
+Schrift/Core/Localization/Strings+fr.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 66-71
+Schrift/Core/Localization/Strings+sl.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 74-79
+Schrift/Features/Shared/SharedViewModel.swift
+  s_a90ba1763f1ea9::t_9e28525dd55fa7 64-73
+  s_a90ba1763f1ea9::t_f3dfea07aa125e 21-24,36-38,43-44,51-63
+  s_a90ba1763f1ea9::t_3c50a2049efe5f 74
+Schrift/Core/Localization/Strings+nl.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 67-72
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 64-69
+Schrift/Features/Editor/SubpageRow.swift
+  s_a90ba1763f1ea9::t_a58a83c9852e2f 5-8,34-35,57-63,71-74,98-115
+  s_a90ba1763f1ea9::t_47774d7e52de1f 116
+Schrift/Features/Home/MainTabView.swift
+  s_a90ba1763f1ea9::t_6a9a3f7f9e0438 63-69
+Schrift/Features/Search/SearchViewModel.swift
+  s_a90ba1763f1ea9::t_f3dfea07aa125e 15-18,20-24,27-28,32-44
+  s_a90ba1763f1ea9::t_9e28525dd55fa7 45,47-55
+  s_a90ba1763f1ea9::t_954162972f9aef 46
+Schrift/Core/Localization/Strings+th.swift
+  s_a90ba1763f1ea9::t_939ae5dd046df4 66-71
+Schrift/DesignSystem/Components/DocRow.swift
+  s_a90ba1763f1ea9::t_88d9e76b366119 21-22,34-39,81-88,129,144-145,157-161,198-200,212-214
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a90ba1763f1ea9::t_029006c571516a 1234-1248
+  s_a90ba1763f1ea9::t_981cec9779c0e8 1249-1257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "d0f2b117ec57cfc4e744f2221d6178b5de1abd29",
+  "prompts": {},
+  "sessions": {
+    "s_a90ba1763f1ea9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e46053b-a8b8-469e-bbcf-4e106ab549b5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
