@@ -180,6 +180,9 @@ struct EditorView: View {
     /// toast inside one would be torn down before it could be read.
     @State private var toastMessage: ToastMessage?
     @State private var isPresentingPagesTree = false
+    /// The struck-through sub-page (or drawer page) the user tapped — see
+    /// `pendingDeleteUndoAlert`.
+    @State private var documentPendingUndo: Document?
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -242,7 +245,13 @@ struct EditorView: View {
     }
 
     var body: some View {
+        // The undo alert is applied here, before the long modifier chain below, purely to
+        // keep that chain inside the type-checker's budget — it belongs to the whole screen
+        // either way (a struck-through row can be tapped in the Subpages list or the drawer).
         mainContent
+            .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
+                viewModel.undoPendingDelete(document)
+            }
             .background(DocsColor.surfacePage)
             // While editing, clear the formatting bar the canvas floats at the
             // same edge — Copy Link is reachable from the toolbar mid-edit, so
@@ -398,8 +407,16 @@ struct EditorView: View {
             shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
             onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
             onShare: { pendingShareAfterOptions = true },
-            onDeleted: {
-                viewModel.handleDidDelete()
+            onDeleted: { queued in
+                // A *queued* deletion is still cancellable, so the teardown must not purge:
+                // the draft, the create record and the cached body are what the undo puts
+                // back. `DocumentSaveCoordinator.completePendingDelete` removes them once the
+                // DELETE has really landed.
+                if queued {
+                    viewModel.handleDidQueueDelete()
+                } else {
+                    viewModel.handleDidDelete()
+                }
                 onDeleted?()
             }
         )
@@ -417,6 +434,12 @@ struct EditorView: View {
                     viewModel: pagesTreeViewModel,
                     rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
                     onOpen: { document in
+                        // A page on its way out is not opened from the drawer either.
+                        guard !viewModel.isDeletePending(document) else {
+                            isPresentingPagesTree = false
+                            documentPendingUndo = document
+                            return
+                        }
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
                     },
@@ -426,6 +449,10 @@ struct EditorView: View {
                     // Nothing announces an overlay the way it would a sheet, so
                     // say the screen changed and let VoiceOver land in the drawer.
                     AccessibilityNotification.ScreenChanged().post()
+                    // A document queued for deletion is asked nothing — the same rule
+                    // `load`/`revalidate`/`refresh` follow, and this is the one other path
+                    // that would GET its children.
+                    guard !viewModel.isDocumentPendingDelete else { return }
                     await pagesTreeViewModel.loadRoot()
                 }
             }
@@ -494,7 +521,15 @@ struct EditorView: View {
                 .accessibilityLabel(loc[.editor_update_available_a11y])
             }
 
-            if let errorKey = viewModel.errorKey {
+            // A queued deletion is not a failure, so it is neither drawn in `danger` nor left
+            // without a way out. **This is the only undo affordance that does not depend on
+            // finding a list row**, which matters because the rows are account-scoped while
+            // the gate is not: a tombstone this session cannot see — another account's, or
+            // one whose owner is unknown — would otherwise leave the document permanently
+            // unopenable with nothing anywhere in the app to clear it.
+            if viewModel.isDocumentPendingDelete {
+                pendingDeleteNotice
+            } else if let errorKey = viewModel.errorKey {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(loc[errorKey])
                         .font(DocsFont.footnote)
@@ -520,6 +555,24 @@ struct EditorView: View {
                 readingSurface
             }
         }
+    }
+
+    /// Shown instead of the body for a document whose deletion is queued, with the undo beside
+    /// it. Deliberately not `errorKey`/`danger` styling: nothing has failed, the deletion is
+    /// simply waiting — and the button is what keeps this screen from being a dead end.
+    private var pendingDeleteNotice: some View {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            Text(loc[.editor_pending_delete])
+                .font(DocsFont.footnote)
+                .foregroundStyle(DocsColor.textSecondary)
+            DocsButton(title: loc[.pending_delete_undo], variant: .secondary, size: .medium) {
+                viewModel.undoPendingDeleteForThisDocument()
+                Task { await viewModel.load() }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.top, DocsSpacing.spaceXS)
     }
 
     // MARK: - Editing
@@ -674,7 +727,12 @@ struct EditorView: View {
                 headerBlock
 
                 if viewModel.blocks.isEmpty {
-                    if viewModel.errorKey == nil {
+                    // `isDocumentPendingDelete` joins the error check for the same reason the
+                    // error is here at all: the gated load leaves `blocks` empty *and* — since the
+                    // notice is rendered from the predicate rather than an `errorKey` — no error to
+                    // suppress this. Without it the screen claims a document with content is empty
+                    // and offers "Start writing", which `canStartEditing` makes a silent no-op.
+                    if viewModel.errorKey == nil, !viewModel.isDocumentPendingDelete {
                         emptyContent
                     }
                 } else {
@@ -784,8 +842,10 @@ struct EditorView: View {
     /// lose the first's identity map / seed state).
     private func requestCollaborationSessionIfNeeded() {
         // First, before the bridge is even built: a document the server has never seen has no
-        // collaboration room to join — the socket dials a URL containing its id.
-        guard !viewModel.isLocalDocument else { return }
+        // collaboration room to join — the socket dials a URL containing its id. A document
+        // queued for deletion is the same shape for a different reason: it is on its way out,
+        // and "no requests for a tombstoned document" has to include the socket.
+        guard !viewModel.isLocalDocument, !viewModel.isDocumentPendingDelete else { return }
         if liveEditingBridge == nil {
             let bridge = LiveEditingBridge(
                 documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,
@@ -890,7 +950,19 @@ struct EditorView: View {
                     } else {
                         VStack(spacing: 0) {
                             ForEach(subpages) { child in
-                                SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+                                SubpageRow(
+                                    document: child,
+                                    // Reading the predicate here registers the `@Observable` dependency, so a
+                                    // sub-page deleted from its own screen strikes through the moment the user
+                                    // pops back, with no children refetch — which offline never comes.
+                                    pendingDelete: viewModel.isDeletePending(child),
+                                    onOpen: {
+                                        if viewModel.isDeletePending(child) {
+                                            documentPendingUndo = child
+                                        } else {
+                                            onOpenDocument?(child)
+                                        }
+                                    })
                             }
                         }
                     }

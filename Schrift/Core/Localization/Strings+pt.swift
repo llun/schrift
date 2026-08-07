@@ -64,6 +64,12 @@ enum Strings_pt {
         .docrow_public: "Público",
         .docrow_available_offline: "Disponível offline",
 
+        .docrow_pending_delete: "A aguardar eliminação",
+
+        .pending_delete_alert_message: "Este documento será eliminado assim que for possível contactar o servidor.",
+
+        .pending_delete_undo: "Manter este documento",
+
         .docrow_on_this_device: "Neste dispositivo, aguardando sincronização",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Apenas pessoas convidadas",
@@ -187,6 +193,7 @@ enum Strings_pt {
             "As versões substituídas podem ser restauradas pelo histórico de versões na web.",
 
         // Editor - errors
+        .editor_pending_delete: "Este documento está a aguardar eliminação.",
         .editor_error_load: "Não foi possível carregar este documento. Puxe para atualizar e tente novamente.",
         .editor_error_refresh: "Não foi possível atualizar. Tente novamente.",
         .editor_error_add_subpage: "Não foi possível adicionar a subpágina. Tente novamente.",

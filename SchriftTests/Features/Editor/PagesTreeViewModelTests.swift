@@ -60,6 +60,7 @@ final class PagesTreeViewModelTests: XCTestCase {
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let signedIn = SignedInUserStore(userDefaults: defaults)
@@ -392,6 +393,142 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertEqual(
             env.cache.children(for: syncedParent)?.map(\.id), [childID],
             "and the synthetic never reaches the shared cache")
+    }
+
+    /// The drawer's twin of the editor's stale-row bug. A page created offline under a
+    /// **synced** parent — the transport-fallback shape — used to be appended into the loaded
+    /// level, where nothing could take it back out: `mergedChildren` returns `children`
+    /// untouched once the record dies, so deleting the page left its row in the tree pointing
+    /// at an id no record names. It reaches the tree through the merge instead.
+    func testDeletingAnOfflineFallbackPageRemovesItsDrawerRow() async {
+        let env = makeLocalRootViewModel()
+        let syncedParent = UUID()
+        let ownerUserID = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        // A *known* level — the shape where the old code appended, and the only one where this
+        // can fail. With an unknown level the append block declined anyway.
+        MockURLProtocol.stubHandler = { [childID] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(childID, "From the server")]), error: nil)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(ownerUserID)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        await viewModel.loadRoot()
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let created = await viewModel.addPage(under: syncedParent)
+        XCTAssertNotNil(created)
+        XCTAssertNil(viewModel.createErrorKey, "kept on the device, not reported")
+        XCTAssertEqual(
+            Set(viewModel.rows.map(\.document.id)), [childID, created!.id],
+            "precondition: the merge puts it in the tree")
+        XCTAssertEqual(
+            env.cache.children(for: syncedParent)?.map(\.id), [childID],
+            "and the synthetic never reaches the shared cache")
+
+        env.coordinator.discardPendingWork(documentID: created!.id)
+
+        XCTAssertEqual(
+            viewModel.rows.map(\.document.id), [childID], "the row goes with the record")
+    }
+
+    /// The drawer annotates too, so a page deleted from its own screen stops looking alive
+    /// here — and taps into the undo instead of opening.
+    func testAPageIsAnnotatedOnceItsDeletionIsQueued() async {
+        let env = makeLocalRootViewModel()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let page = document(UUID(), title: "Doomed")
+        XCTAssertFalse(env.viewModel.isDeletePending(page))
+
+        env.coordinator.recordPendingDelete(documentID: page.id, ownerUserID: owner)
+
+        XCTAssertTrue(env.viewModel.isDeletePending(page))
+
+        env.coordinator.cancelPendingDelete(documentID: page.id)
+        XCTAssertFalse(env.viewModel.isDeletePending(page), "and the undo takes it off again")
+    }
+
+    /// The drawer is the fifth surface that strikes rows, so it owes the same drop when the
+    /// deletion lands — and its hazard is the sharpest: this view model outlives the drawer,
+    /// and a non-root level is refetched only when its node is toggled, so a reopened drawer
+    /// would show the row again, **un-struck**, indefinitely.
+    func testALandedDeletionTakesThePageOutOfTheTree() async {
+        let env = makeLocalRootViewModel()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let doomed = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+        MockURLProtocol.stubHandler = { [doomed] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(owner)
+        let syncedParent = UUID()
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        await viewModel.loadRoot()
+        env.coordinator.recordPendingDelete(documentID: doomed, ownerUserID: owner)
+        XCTAssertTrue(viewModel.isDeletePending(viewModel.rows[0].document), "precondition: struck through")
+
+        env.coordinator.announceDocumentDeletedForTesting(doomed)
+
+        XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the row leaves rather than un-striking")
+    }
+
+    /// **The drop must survive a level being fetched for the first time**, which is the case
+    /// the earlier conditional bump missed: `children[parent]` is nil, so the row is in the
+    /// response and nowhere else yet. Without the bump the fetch lands after the deletion and
+    /// writes the row back — into the shared cache too.
+    ///
+    /// The negative control is the second half: with the level *already* loaded and no fetch in
+    /// flight, nothing is discarded and the fetched rows still apply.
+    func testALandedDeletionSurvivesAFirstTimeLevelFetch() async {
+        let env = makeLocalRootViewModel()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let syncedParent = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        let doomed = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        MockURLProtocol.stubHandler = { [doomed] _ in
+            .init(
+                statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil,
+                delay: 0.2)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(owner)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        let fetching = Task { await viewModel.loadRoot() }
+        try? await Task.sleep(for: .milliseconds(60))
+        env.coordinator.announceDocumentDeletedForTesting(doomed)
+        await fetching.value
+
+        XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the stale first fetch is not applied")
+        XCTAssertNil(env.cache.children(for: syncedParent), "and never reaches the shared cache")
+
+        // Negative control: nothing announced, same fetch, and the level does load.
+        MockURLProtocol.stubHandler = { [doomed] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil)
+        }
+        let control = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        await control.loadRoot()
+        XCTAssertEqual(
+            control.rows.map(\.document.id), [doomed],
+            "so the assertion above is about the deletion, not about the fetch never working")
+    }
+
+    /// Without a coordinator the predicate answers false rather than trapping.
+    func testAPageIsNeverAnnotatedWithoutACoordinator() {
+        let (viewModel, _) = makeViewModel()
+
+        XCTAssertFalse(viewModel.isDeletePending(document(UUID(), title: "Doc")))
     }
 
     /// A synthetic carries `numchild: 0` — it has no server bookkeeping at all — so without

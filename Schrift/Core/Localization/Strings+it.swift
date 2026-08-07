@@ -63,6 +63,13 @@ enum Strings_it {
         .docrow_public: "Pubblico",
         .docrow_available_offline: "Disponibile offline",
 
+        .docrow_pending_delete: "In attesa di eliminazione",
+
+        .pending_delete_alert_message:
+            "Questo documento verrà eliminato non appena sarà possibile raggiungere il server.",
+
+        .pending_delete_undo: "Conserva questo documento",
+
         .docrow_on_this_device: "Su questo dispositivo, in attesa di sincronizzazione",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Solo le persone invitate",
@@ -186,6 +193,7 @@ enum Strings_it {
             "Le versioni sovrascritte possono essere ripristinate dalla cronologia delle versioni sul web.",
 
         // Editor - errors
+        .editor_pending_delete: "Questo documento è in attesa di eliminazione.",
         .editor_error_load: "Impossibile caricare questo documento. Trascina per aggiornare e riprova.",
         .editor_error_refresh: "Impossibile aggiornare. Riprova.",
         .editor_error_add_subpage: "Impossibile aggiungere la sottopagina. Riprova.",

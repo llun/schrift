@@ -29,6 +29,14 @@ final class RequestRecorder: @unchecked Sendable {
         defer { lock.unlock() }
         return entries.filter { $0.method == method && $0.url.contains(substring) }.count
     }
+
+    /// Where a request sits in the recorded sequence — for asserting the **order** two things
+    /// happened in, which a count cannot express. nil when nothing matched.
+    func indexOfFirstRequest(method: String, urlContaining substring: String) -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.firstIndex { $0.method == method && $0.url.contains(substring) }
+    }
 }
 
 /// Thread-safe monotonic counter for stub handlers that must distinguish the

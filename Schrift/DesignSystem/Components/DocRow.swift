@@ -18,6 +18,8 @@ func docRowAccessibilityLabel(
     pinned: Bool,
     pendingSync: Bool = false,
     pendingSyncLabel: String = "",
+    pendingDelete: Bool = false,
+    pendingDeleteLabel: String = "",
     pinnedLabel: String,
     sharedWithOrganizationLabel: String,
     publicLabel: String
@@ -29,7 +31,12 @@ func docRowAccessibilityLabel(
     // The badge itself is `accessibilityHidden` — the row ignores its children and composes
     // one label — so a state whose *only* visual signal is that glyph has to be spoken here
     // or it is invisible to VoiceOver.
-    if pendingSync, !pendingSyncLabel.isEmpty {
+    // Ahead of `pendingSync` for the same reason its glyph is: a document waiting to be
+    // deleted is the more actionable fact, and the two can never both be true anyway
+    // (tombstones name server ids, `pendingSync` rows client-minted ones).
+    if pendingDelete, !pendingDeleteLabel.isEmpty {
+        parts.append(pendingDeleteLabel)
+    } else if pendingSync, !pendingSyncLabel.isEmpty {
         parts.append(pendingSyncLabel)
     }
     switch reach {
@@ -71,6 +78,14 @@ struct DocRow: View {
     /// this is the more actionable of the two, because it is *why* the document is missing
     /// from the web.
     var pendingSync: Bool = false
+    /// Deleted on this device, waiting for the server to be told. The row stays visible and
+    /// struck through rather than vanishing, because the deletion is still undoable — tapping
+    /// it offers exactly that instead of opening the document.
+    ///
+    /// Mutually exclusive with `pendingSync` in practice: a tombstone names a **server** id,
+    /// a `pendingSync` row a client-minted one. The ordering below states the precedence
+    /// anyway rather than relying on that.
+    var pendingDelete: Bool = false
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
@@ -111,6 +126,7 @@ struct DocRow: View {
             docRowAccessibilityLabel(
                 title: title, reach: reach, date: date, pinned: pinned,
                 pendingSync: pendingSync, pendingSyncLabel: loc[.docrow_on_this_device],
+                pendingDelete: pendingDelete, pendingDeleteLabel: loc[.docrow_pending_delete],
                 pinnedLabel: loc[.docrow_pinned],
                 sharedWithOrganizationLabel: loc[.docrow_shared_with_organization],
                 publicLabel: loc[.docrow_public]
@@ -125,7 +141,8 @@ struct DocRow: View {
         HStack(spacing: DocsSpacing.space2xs) {
             Text(title)
                 .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                .strikethrough(pendingDelete)
                 .lineLimit(isStacked ? 3 : 1)
 
             if let indicatorIcon = docRowReachIndicatorIcon(reach: reach) {
@@ -137,7 +154,11 @@ struct DocRow: View {
 
     @ViewBuilder
     private var offlineIndicator: some View {
-        if pendingSync {
+        if pendingDelete {
+            MaterialSymbol(.delete, size: 16)
+                .foregroundStyle(DocsColor.gray350)
+                .accessibilityLabel(loc[.docrow_pending_delete])
+        } else if pendingSync {
             MaterialSymbol(.cloud_off, size: 16)
                 .foregroundStyle(DocsColor.gray350)
                 .accessibilityLabel(loc[.docrow_on_this_device])
@@ -174,6 +195,9 @@ struct DocRow: View {
         DocRow(
             emoji: "✏️", title: "Offline and unsynced", reach: .restricted, date: "Just now",
             offlineAvailable: true, pendingSync: true)
+        DocRow(
+            emoji: "🗑️", title: "Deleted while offline", reach: .restricted, date: "Just now",
+            pendingDelete: true)
     }
     .environment(LocalizationStore())
 }
@@ -185,7 +209,25 @@ struct DocRow: View {
         DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
         DocRow(emoji: "📊", title: "Roadmap", reach: .authenticated, date: "Yesterday")
         DocRow(title: "Public notes", reach: .public, date: "Last week")
+        DocRow(
+            emoji: "🗑️", title: "Deleted while offline", reach: .restricted, date: "Just now",
+            pendingDelete: true)
     }
     .environment(LocalizationStore())
     .dynamicTypeSize(.accessibility3)
+}
+
+/// The new pending-deletion state in dark. A `textTertiary` title with a strikethrough and a
+/// `gray350` glyph has a different contrast story from the light half, and a token's dark
+/// counterpart existing is not proof it reads correctly beside one.
+#Preview("Pending deletion (dark)") {
+    VStack(spacing: 0) {
+        DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
+        DocRow(
+            emoji: "🗑️", title: "Deleted while offline", reach: .restricted, date: "Just now",
+            pendingDelete: true)
+    }
+    .background(DocsColor.surfacePage)
+    .environment(LocalizationStore())
+    .preferredColorScheme(.dark)
 }

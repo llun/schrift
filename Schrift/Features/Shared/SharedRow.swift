@@ -4,6 +4,13 @@ struct SharedRow: View {
     let title: String
     let subtitle: String
     var memberNames: [String] = []
+    /// Deleted on this device, waiting for the server to be told — struck through, with a
+    /// delete glyph, and tapping offers the undo instead of opening the document.
+    var pendingDelete: Bool = false
+    /// The localized phrase for that state, resolved by the caller (this component takes no
+    /// `LocalizationStore`) and folded into the composed label — the glyph itself is
+    /// `accessibilityHidden`, so it is otherwise invisible to VoiceOver.
+    var pendingDeleteLabel: String = ""
     var onTap: (() -> Void)? = nil
 
     var body: some View {
@@ -16,7 +23,8 @@ struct SharedRow: View {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(title)
                         .font(DocsFont.body)
-                        .foregroundStyle(DocsColor.textPrimary)
+                        .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                        .strikethrough(pendingDelete)
                         .lineLimit(1)
 
                     Text(subtitle)
@@ -27,7 +35,10 @@ struct SharedRow: View {
 
                 Spacer(minLength: DocsSpacing.spaceXS)
 
-                if !memberNames.isEmpty {
+                if pendingDelete {
+                    MaterialSymbol(.delete, size: 16)
+                        .foregroundStyle(DocsColor.gray350)
+                } else if !memberNames.isEmpty {
                     AvatarGroup(names: memberNames, size: 28, max: 3)
                 }
             }
@@ -41,7 +52,10 @@ struct SharedRow: View {
         // group is otherwise dropped by `children: .ignore`, so its members are
         // folded into the label — the subtitle only names the sharer.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(([title, subtitle] + memberNames).joined(separator: ", "))
+        .accessibilityLabel(
+            ([title] + (pendingDelete && !pendingDeleteLabel.isEmpty ? [pendingDeleteLabel] : [])
+                + [subtitle] + (pendingDelete ? [] : memberNames)).joined(separator: ", ")
+        )
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -62,6 +76,10 @@ private var sharedRowPreview: some View {
             memberNames: ["Amandine Salambo", "Charlie Saris", "Alfredo Levin", "Cam Moreau"]
         )
         SharedRow(title: "Bibliography", subtitle: "Shared · Last week")
+        SharedRow(
+            title: "Deleted while offline", subtitle: "Shared · Just now",
+            memberNames: ["Amandine Salambo"], pendingDelete: true,
+            pendingDeleteLabel: "Waiting to be deleted")
     }
     .background(DocsColor.surfacePage)
     .padding()

@@ -344,6 +344,8 @@ Schrift/
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
 │                        ConflictSheetView), documents created on-device
 │                        (PendingDocumentCreateStore + the replay; Home/editor create UI),
+│                        documents deleted on-device (PendingDocumentDeleteStore + runDeletePass,
+│                        strikethrough rows + PendingDeleteUndo),
 │                        photo insert (ImagePreparation),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
@@ -1869,6 +1871,99 @@ markdown write endpoint**. Understand this before touching the save path:
   it actually **observed** — the create response
   on a fresh POST, where `markdown: ""` is provable, and a `formattedContent` fetch
   on a resume, where it is not.
+- **A document deleted while the server is out of reach is queued as a *tombstone*, and
+  every other pipeline is held off that id until it lands.**
+  `PendingDocumentDeleteStore` (`dev.llun.Schrift.pendingDeletes` + quarantine, sticky
+  `holdsUnreadableData`, backup-included, survives sign-out) records
+  `PendingDocumentDelete { documentID, requestedAt, serverOrigin, ownerUserID }`, mirrored
+  into the coordinator behind the observable `pendingDeletesVersion`. **`documentID` is
+  always a *server* id** — that is what keeps tombstones and create records from ever
+  describing the same thing, since a create record names an id the server has never seen.
+  A document that exists only here has nothing to DELETE, so `OptionsViewModel` completes
+  that case locally and never mints one; a *checkpointed* record is tombstoned under its
+  `syncedServerID`.
+  **Two predicates, and the split is the same one `isPendingCreate`/`isListable` makes.**
+  `isPendingDelete` is unscoped — protection is unconditional, and `runSyncPass` walks
+  every draft on the device regardless of origin. `isListablePendingDelete` is scoped to
+  origin **and** owner and is the only one the UI may ask: tombstones survive sign-out and
+  the metadata caches are neither account-scoped nor cleared, so an unscoped row predicate
+  would strike user A's document through user B's list and offer B a button cancelling A's
+  deletion. It reads `pendingDeletesVersion` first, which is what makes a row strike (and
+  un-strike on undo) without a list fetch.
+  **Queue time never reads `isOffline`** (derived from Home's last *list* fetch, so wrong
+  in both directions): `retryableSaveFailure` plus a known `ownerUserID` queues, anything
+  else keeps the error, and an unattributable deletion errors rather than silently going
+  nowhere. Both server-addressed branches take the split — note the *common* checkpointed
+  delete arrives through the **plain** one, since a checkpointed record is met under its
+  server id — and the plain branch also gained the `.notFound` carve-out the checkpointed
+  one always had. The queued path clears nothing local; see `handleDidQueueDelete` under
+  the conflict-lifecycle rule below.
+  **Five suppressions, each for a named failure.** `runSyncPass` skips a tombstoned draft
+  pre-fetch and restates it at **both** deleting lines (the draft is the undo's only
+  payload, and the 404 a queued deletion predicts is indistinguishable from a co-author's
+  delete). `runCreatePass` holds a record whose `parentID` is tombstoned — that parent is
+  a *real* server document, so the POST would **succeed** and file a new sub-page into
+  something about to be deleted — and refuses to resume a record whose `syncedServerID` is
+  tombstoned, **which is the resurrection guard**: past it the resume reads the expected
+  404 as "gone", clears the checkpoint, and the next pass re-POSTs the document the user
+  deleted. No `finishMigration` change is needed.
+  **`runDeletePass` runs first in the `syncPendingDrafts` funnel**, with its own
+  `/users/me/` (not hoisted — that would reorder `runCreatePass`'s gates, several pinned
+  by "not even `/users/me/`" tests), the session gate **before** the send (a foreign
+  tombstone would take DRF's 403-as-404, which the ladder reads as "already deleted"), and
+  an explicit outcome ladder rather than `retryableSaveFailure`, which lumps `.notFound`,
+  `.forbidden` and `.routeNotFound` together where here they are three different answers:
+  2xx/`.notFound` complete, `.forbidden` is **terminal and gives the document back** (this
+  session may not make the deletion, so retrying forever would strike the row through for
+  good), everything else keeps the tombstone.
+  **The undo can lose its race, and leaving the local side untouched is not enough.** With
+  the tombstone gone every suppression is off, so `runSyncPass` — later in the *same* pass —
+  finds a draft whose document now 404s (because the pass just deleted it), passes all four
+  guards, and reaps it: the user pressed "keep this document" and lost their text.
+  `reviveAsLocalDocument` honours the undo instead, re-minting the document locally with the
+  body carried over so the create replay POSTs it — the same recovery the checkpointed path
+  already got from its `.notFound` start-over. Accepted: it comes back as a root, under a new
+  id.
+  **`enqueue` holds for a tombstoned id.** The deleting screen pops and every fresh editor is
+  gated at `load()`, but a *second, already-loaded* editor (same document pushed in two tabs)
+  goes through neither.
+  Both paths that clear a tombstone — `cancelPendingDelete` and the `.forbidden` refusal —
+  **unwedge** that slot, because `runSyncPass` skips any document with a non-nil `queued` slot
+  and a save left parked wedges it out of the replay for good. They clear it *without sending*:
+  `releaseHeldSave` goes straight to `start`, a full overwrite with no reconciliation, and a
+  tombstone survives launches so the parked body can be days old. The draft is write-ahead, so
+  clearing the slot hands the body back to `runSyncPass` to reconcile normally. Neither touches
+  a slot a **conflict** hold owns — that one is the pill's payload.
+  `releaseHeldSave` itself refuses for a tombstoned id on the terms it already refuses for a
+  pending create, and gained the **conflict** check its two sibling paths to `start` always
+  had: safe to omit while `clearResolvedConflict` (which nils the conflict on the line before)
+  was its only caller, and a full-overwrite of the co-author the moment a second caller
+  appeared.
+  **A landed deletion is announced** to every surface that strikes rows — Home, Shared, Search,
+  the Pages drawer and the editor's Subpages — as a *fan-out*, since each keeps its own array
+  and a single closure would let one subscriber overwrite another. Observers are held weakly
+  and pruned (the coordinator outlives every screen), and each drops the row **and invalidates
+  its in-flight fetch** — invariant 0b: one issued before the DELETE landed completes after it
+  and writes the row, and the cache entry, straight back.
+  **An editor whose own document is announced goes terminal**, not merely discarded. Latching
+  `isDocumentDiscarded` while leaving `hasLoadedContent` true and no message meant every
+  keystroke afterwards reached neither disk, nor server, nor an error — a live Save button that
+  did nothing. The revive is the one completion that runs with an editor open, so it is
+  reachable.
+  **An unreadable delete store withholds the create pass's resume start-over**
+  (`deleteStoreUnreadable`) — unknown tombstones disarm the resurrection guard, and a
+  re-POSTed deleted document is the one consequence here no later launch can undo. Scoped to
+  that branch, not the whole resume: nothing clears the quarantine, so withholding the resume
+  outright would strand every checkpointed record on the install permanently.
+  **`completePendingDelete` removes the tombstone last** — cleanup first, so a crash
+  mid-way re-sends, takes the 404 and finishes idempotently — then fires `onDocumentDeleted`
+  so a list holding the row drops it instead of letting it **un-strike** back into looking
+  alive. The reverse order has a
+  window where the deletion is forgotten while the draft and record survive: the row comes
+  back and a checkpointed resume re-POSTs it. Same argument and direction as
+  `migrateCreatedDocument`'s "the record is removed last". `DocumentCacheStore
+  .removeDocument` never fabricates a list that was never cached (nil ≠ `[]`).
+  See [`docs/offline-and-sync.md`](docs/offline-and-sync.md) for the accepted residuals.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
@@ -2123,9 +2218,16 @@ markdown write endpoint**. Understand this before touching the save path:
   before it discards** (a failed fetch must not cost the user the only copy of their
   work). Every purge path (`discardPendingWork`, `suppressLocalWriteThrough`,
   `handleDidDelete`, the create migration's **adopt-the-server** branch, which deletes
-  every local trace for that id, and the replay's **start-over**, whose id is now dead)
+  every local trace for that id, the replay's **start-over**, whose id is now dead, and
+  `completePendingDelete`, which runs `discardPendingWork` first for exactly this reason)
   clears the record, or the enqueue-hold
-  wedges the document's save pipeline permanently. **Invariant: a conflict is only ever recorded with no save in
+  wedges the document's save pipeline permanently. **`handleDidQueueDelete` is the one
+  sanctioned non-clearing sibling** — a *deferral*, not a purge: it ends the editing
+  session for a deletion that is queued and still cancellable, keeping the draft, the
+  record and the caches because those are what the undo restores. It cannot wedge
+  anything, because nothing can enqueue for a tombstoned id (the sync pass skips it, the
+  create pass will not resume onto it, and the screen is on its way out), and it is
+  discharged by exactly two terminals: the undo, or the completion. **Invariant: a conflict is only ever recorded with no save in
   flight** (`apply` diverts whenever `pendingSave != nil`, so `reconcileDraft` is
   unreachable during a save; `syncPendingDrafts` guards on both; the **create
   migration** holds by an explicit check, *not* by the tempting argument that the
@@ -2616,6 +2718,8 @@ markdown write endpoint**. Understand this before touching the save path:
   a document that exists nowhere else, that record and its draft are the only
   copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by
   `serverOrigin` alone, which identifies the server and not the account) nor the
+  tombstones in `PendingDocumentDeleteStore` (a queued deletion is work the user asked
+  for that has not happened yet, scoped the same way by `ownerUserID`) nor the
   queued photos in `PendingAttachmentStore` (records *and* JPEG bytes, backup-included
   and owner-scoped for exactly the same reason — an un-uploaded photo exists nowhere
   else); only the full bodies in `DocumentContentCacheStore` are. That clearing lives in

@@ -137,9 +137,20 @@ struct PagesTreeDrawer: View {
                     DocIcon(size: 16)
                     Text(title(of: row.document))
                         .font(DocsFont.subhead)
-                        .foregroundStyle(DocsColor.textPrimary)
+                        // Read **here**, in the body, not only in the tap handler: a predicate
+                        // called from `onOpen` registers no `@Observable` dependency, so the
+                        // row would keep drawing as an ordinary page while tapping it popped
+                        // an undo alert about a deletion nothing on screen had announced.
+                        .foregroundStyle(
+                            isDeletePending(row) ? DocsColor.textTertiary : DocsColor.textPrimary
+                        )
+                        .strikethrough(isDeletePending(row))
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    if isDeletePending(row) {
+                        MaterialSymbol(.delete, size: 14)
+                            .foregroundStyle(DocsColor.gray350)
+                    }
                 }
                 // Fill the row's height before taking the tap shape: a label is
                 // only as tall as its text, so without this the row *looks* 44pt
@@ -157,10 +168,26 @@ struct PagesTreeDrawer: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // On the **title button**, not the row: the row's `HStack` also holds the
+            // disclosure control, which carries its own label, and a bare label on the
+            // container would either rename that chevron or swallow it as a separate
+            // element. `MaterialSymbol` is `accessibilityHidden`, so a state carried only
+            // by that glyph and a strikethrough has to be spoken here or VoiceOver cannot
+            // tell this row from a live page.
+            .accessibilityLabel(
+                isDeletePending(row)
+                    ? "\(title(of: row.document)), \(loc[.docrow_pending_delete])"
+                    : title(of: row.document))
         }
         .padding(.leading, CGFloat(row.depth) * PagesTreeLayout.indentPerLevel)
         .padding(.horizontal, DocsSpacing.space3xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
+    }
+
+    /// Whether this row's document is waiting to be deleted. Wraps the view model so the
+    /// three places the row consults it cannot drift apart.
+    private func isDeletePending(_ row: PagesTreeRow) -> Bool {
+        viewModel.isDeletePending(row.document)
     }
 
     /// The arrow is its own control: tapping it expands, tapping the title opens

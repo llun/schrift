@@ -61,6 +61,12 @@ enum Strings_zhHans {
         .docrow_public: "公开",
         .docrow_available_offline: "可离线使用",
 
+        .docrow_pending_delete: "等待删除",
+
+        .pending_delete_alert_message: "此文档将在下次能连接到服务器时删除。",
+
+        .pending_delete_undo: "保留此文档",
+
         .docrow_on_this_device: "在此设备上，等待同步",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "仅受邀请的人",
@@ -182,6 +188,7 @@ enum Strings_zhHans {
         .editor_conflict_restore_hint: "被覆盖的版本可从网页端的版本历史中恢复。",
 
         // Editor - errors
+        .editor_pending_delete: "此文档正在等待删除。",
         .editor_error_load: "无法加载此文档。下拉刷新以重试。",
         .editor_error_refresh: "无法刷新。请重试。",
         .editor_error_add_subpage: "无法添加子页面。请重试。",

@@ -59,6 +59,7 @@ final class EditorViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client,
@@ -105,6 +106,7 @@ final class EditorViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache,
             createStore: createStore,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,
@@ -209,6 +211,143 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(
             viewModel.mergedSubpages?.map(\.id), [child!.id],
             "but the screen still shows the local child")
+    }
+
+    /// The fallback-minted sub-page reaches the screen through the **merge**, never through
+    /// `subpages` itself. That is what makes it removable: the merge withholds it the instant
+    /// its record dies, while a row pushed into the fetched array is one nothing can take back.
+    func testAnOfflineSubpageNeverEntersTheFetchedChildrenArray() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        // A *known* level — the shape where the old code appended, and the only one where this
+        // assertion can fail. With a nil level `appendChild` declined anyway.
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNotNil(child)
+        XCTAssertEqual(viewModel.subpages?.map(\.id), [], "the fetched level stays the server's")
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [child!.id], "the merge is what shows it")
+    }
+
+    /// **The reported bug.** Deleting a sub-page created offline under an ordinary *server*
+    /// parent left its row rendering under Subpages with nothing to say it was gone — and
+    /// tapping it opened an editor for an id no record names. `appendChild` had pushed a
+    /// synthetic into `subpages`; once the record died `mergedSubpages` short-circuits
+    /// (`guard !local.isEmpty`) and hands back `subpages` unfiltered, and offline nothing
+    /// refetches the level to correct it.
+    func testDeletingAnOfflineSubpageUnderAServerParentRemovesItsRow() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let child = await viewModel.addSubpage()
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [child!.id], "precondition: on screen")
+
+        // What `OptionsViewModel.delete()` does for a document that exists only here.
+        env.coordinator.discardPendingWork(documentID: child!.id)
+
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [], "the row goes with the record")
+    }
+
+    /// **The drop must survive its own in-flight children fetch** (invariant 0b). A
+    /// `listChildren` issued before the DELETE landed still names the sub-page, and on
+    /// resolving would write it back into `subpages` *and* re-create the children-cache entry
+    /// the coordinator just purged — a tappable row for a deleted document, restored durably
+    /// on disk and surviving relaunch.
+    func testALandedSubpageDeletionSurvivesAnInFlightChildrenFetch() async {
+        let doomed = UUID(uuidString: "66666666-6666-4666-8666-666666666666")!
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: childrenCache)
+        let body = Data(
+            """
+            {"count":1,"next":null,"previous":null,"results":[{
+              "id": "\(doomed.uuidString.lowercased())", "title": "Doomed", "excerpt": null,
+              "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null,
+              "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 2,
+              "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "00010001",
+              "updated_at": "2026-01-15T10:30:00Z", "user_role": "owner", "is_favorite": false}]}
+            """.utf8)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.2)
+        }
+
+        let fetching = Task { await viewModel.loadChildren() }
+        // The deletion lands while that fetch is still on the wire.
+        try? await Task.sleep(for: .milliseconds(60))
+        env.coordinator.announceDocumentDeletedForTesting(doomed)
+        await fetching.value
+
+        XCTAssertEqual(viewModel.subpages?.map(\.id) ?? [], [], "the stale fetch is not applied")
+        XCTAssertNil(
+            childrenCache.children(for: documentID),
+            "and never re-creates the cache entry the deletion purged")
+    }
+
+    /// A sub-page deleted from its own screen strikes through in the parent's list the
+    /// moment the user pops back — no children refetch, which offline never comes.
+    func testASubpageIsAnnotatedOnceItsDeletionIsQueued() async {
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(userID: user))
+        let child = Document(
+            id: UUID(), title: "Doomed", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 2, numchild: 0,
+            path: "0002", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+        XCTAssertFalse(viewModel.isDeletePending(child))
+
+        env.coordinator.recordPendingDelete(documentID: child.id, ownerUserID: user)
+        XCTAssertTrue(viewModel.isDeletePending(child))
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
+        viewModel.undoPendingDelete(child)
+        XCTAssertFalse(viewModel.isDeletePending(child), "and the undo takes it off again")
+    }
+
+    /// Never another account's deletion: the create/children caches outlive sign-out, so an
+    /// unscoped predicate would strike one user's document through another's list.
+    func testASubpageIsNeverAnnotatedForAnotherAccountsDeletion() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator,
+            signedInUser: makeSignedInUser(userID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!))
+        let child = Document(
+            id: UUID(), title: "Doomed", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 2, numchild: 0,
+            path: "0002", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+
+        env.coordinator.recordPendingDelete(
+            documentID: child.id, ownerUserID: UUID(uuidString: "99999999-9999-4999-8999-999999999999")!)
+
+        XCTAssertFalse(viewModel.isDeletePending(child))
     }
 
     /// A transport failure on "Add a subpage" keeps the page on the device rather than
@@ -2109,6 +2248,102 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertNil(contentCache.content(for: documentID))
         XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// A **queued** deletion is still cancellable, so the teardown purges nothing: the draft
+    /// and the cached body are exactly what the undo restores.
+    /// `DocumentSaveCoordinator.completePendingDelete` removes them when the DELETE really
+    /// lands, in an order a crash cannot tear.
+    func testHandleDidQueueDeleteEndsTheSessionWithoutPurging() async {
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        draftStore.save(PendingDraft(documentID: documentID, title: "D", markdown: "# D", updatedAt: Date()))
+
+        viewModel.handleDidQueueDelete()
+
+        XCTAssertNotNil(contentCache.content(for: documentID), "kept for the undo")
+        XCTAssertNotNil(draftStore.draft(for: documentID), "and so is the body")
+        XCTAssertTrue(viewModel.isDocumentDiscarded, "but nothing here may write again")
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    /// The revive is the one completion that runs with an editor open — deferring it would let
+    /// the sync pass reap the draft instead — so this screen can be left live on an id the
+    /// server no longer has. A keystroke there would write a fresh draft under the dead id and
+    /// have it reaped by the *next launch's* pass, when the in-memory `.failed` that protected
+    /// it is gone. Ending the session is what stops those edits going somewhere that loses them.
+    func testALandedDeletionOfThisDocumentEndsTheSession() async {
+        let env = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: RequestRecorder())
+        await env.viewModel.load()
+        XCTAssertFalse(env.viewModel.isDocumentDiscarded, "precondition: a live session")
+
+        env.coordinator.announceDocumentDeletedForTesting(documentID)
+
+        XCTAssertTrue(env.viewModel.isDocumentDiscarded, "nothing here may write again")
+        XCTAssertNil(env.contentCache.content(for: documentID), "and its local copies are gone")
+    }
+
+    /// Opening a document whose deletion is queued says so and asks the server nothing — the
+    /// whole point of a deletion queued offline. `hasLoadedContent` stays false, so
+    /// `startEditing` cannot fire and no funnel here can enqueue.
+    func testLoadingATombstonedDocumentShowsTheMessageWithoutAnyRequest() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.contentCache.save(cachedEntry(markdown: "# Cached"))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        env.coordinator.recordPendingDelete(
+            documentID: documentID, ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        await env.viewModel.load()
+
+        // The notice is rendered from the predicate, not from `errorKey` — a key set here would
+        // be invisible while the tombstone stands (the view shows the notice instead) and then
+        // latch into view, danger-styled, the moment the deletion is undone or refused.
+        XCTAssertTrue(env.viewModel.isDocumentPendingDelete, "the state the notice renders from")
+        XCTAssertNil(env.viewModel.errorKey, "and nothing left to latch once it is undone")
+        XCTAssertEqual(log.methods.count, 0, "nothing is asked about a document being deleted")
+        XCTAssertFalse(env.viewModel.hasLoadedContent, "so editing can never begin")
+        XCTAssertTrue(env.viewModel.blocks.isEmpty, "and the body it would restore stays off screen")
+    }
+
+    /// And it is not terminal: undoing the deletion makes the next load behave normally.
+    func testUndoingTheDeletionLetsTheDocumentOpenAgain() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log)
+        env.coordinator.recordPendingDelete(
+            documentID: documentID, ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        await env.viewModel.load()
+        XCTAssertEqual(log.methods.count, 0, "precondition: nothing asked")
+
+        env.coordinator.cancelPendingDelete(documentID: documentID)
+        await env.viewModel.load()
+
+        XCTAssertNil(env.viewModel.errorKey)
+        XCTAssertFalse(env.viewModel.isDocumentPendingDelete)
+        XCTAssertTrue(env.viewModel.hasLoadedContent)
+    }
+
+    /// Pull-to-refresh is the other way in, and takes the same gate: a 404 here is what the
+    /// document's own queued DELETE predicts, and `becomeUnavailable` would bury an undoable
+    /// state under a permanent one.
+    func testRefreshingATombstonedDocumentAsksNothing() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log)
+        await env.viewModel.load()
+        let asked = log.methods.count
+        env.coordinator.recordPendingDelete(
+            documentID: documentID, ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        await env.viewModel.refresh()
+
+        XCTAssertEqual(log.methods.count, asked, "no further requests")
+        XCTAssertFalse(env.viewModel.isUnavailable, "and not torn down either")
     }
 
     /// The revalidation counterpart of

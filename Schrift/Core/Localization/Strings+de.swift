@@ -65,6 +65,12 @@ enum Strings_de {
         .docrow_public: "Öffentlich",
         .docrow_available_offline: "Offline verfügbar",
 
+        .docrow_pending_delete: "Wartet auf Löschung",
+
+        .pending_delete_alert_message: "Dieses Dokument wird gelöscht, sobald der Server wieder erreichbar ist.",
+
+        .pending_delete_undo: "Dokument behalten",
+
         .docrow_on_this_device: "Auf diesem Gerät, wartet auf Synchronisierung",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Nur eingeladene Personen",
@@ -190,6 +196,7 @@ enum Strings_de {
             "Überschriebene Versionen können im Web aus dem Versionsverlauf wiederhergestellt werden.",
 
         // Editor - errors
+        .editor_pending_delete: "Dieses Dokument wartet auf die Löschung.",
         .editor_error_load: "Dieses Dokument konnte nicht geladen werden. Zum Aktualisieren nach unten ziehen.",
         .editor_error_refresh: "Aktualisierung fehlgeschlagen. Bitte versuche es erneut.",
         .editor_error_add_subpage: "Unterseite konnte nicht hinzugefügt werden. Bitte versuche es erneut.",

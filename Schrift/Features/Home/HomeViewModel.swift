@@ -87,6 +87,18 @@ final class HomeViewModel {
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable).
     private var loadGeneration = 0
+    /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
+    /// before the DELETE and still names them, so its results are filtered through this before
+    /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
+    /// away every *other* row it carries, and on Home would discard a load fired from inside
+    /// the sync pass that announced the deletion).
+    ///
+    /// **Never cleared.** A screen can have more than one fetch in flight, so clearing when one
+    /// lands strips the others' protection mid-flight. A stale entry is inert rather than
+    /// merely harmless: server ids are never reused — the revive mints a *new* local id — so an
+    /// id that named a deleted document can never name a live one. It grows by one `UUID` per
+    /// landed deletion per process.
+    private var deletedSinceLoad: Set<UUID> = []
 
     init(
         client: DocsAPIClient,
@@ -131,6 +143,26 @@ final class HomeViewModel {
                 self.hasKnownFetchedList = true
             }
             Task { await self.load() }
+        }
+        // A queued deletion that has now landed: drop the row from the lists this view model
+        // is holding. `completePendingDelete` purged the caches, but these arrays are its own
+        // — and leaving the row would do worse than linger, since the tombstone is gone and
+        // the row would *un-strike* back into looking like a live document.
+        self.saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
+            guard let self else { return }
+            self.pinnedDocuments.removeAll { $0.id == documentID }
+            self.fetchedRecentDocuments.removeAll { $0.id == documentID }
+            // The inline search field on this very screen is a third list of server documents.
+            self.searchResults.removeAll { $0.id == documentID }
+            // **A list fetch already in flight was issued before the DELETE landed**, so it
+            // still names the document and would write it back — into the cache as well
+            // (invariant 0b). Bumping `loadGeneration` here is the obvious move and the wrong
+            // one: `load()` captures a generation, kicks `recoverDrafts()`, *then* awaits the
+            // list calls, so a deletion landing in that window is fired from inside the load
+            // it would be cancelling. That discards the whole fetch rather than one row —
+            // list stale, `isOffline` unset, and `isLoading` stuck true, because the guarded
+            // early return skips the line that clears it. Filter instead.
+            self.deletedSinceLoad.insert(documentID)
         }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
@@ -189,9 +221,13 @@ final class HomeViewModel {
                 isCreatorMe: nil,
                 ordering: "-updated_at"
             )
-            let pinned = try await pinnedPage.results
-            let recent = try await recentPage.results
+            let fetchedPinned = try await pinnedPage.results
+            let fetchedRecent = try await recentPage.results
             guard generation == loadGeneration else { return }
+            // Anything deleted while this was in flight is dropped before it can be applied or
+            // cached — the fetch predates the DELETE and cannot know.
+            let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
+            let recent = fetchedRecent.filter { !deletedSinceLoad.contains($0.id) }
             pinnedDocuments = pinned
             fetchedRecentDocuments = recent
             cache.savePinnedDocuments(pinned)
@@ -267,7 +303,7 @@ final class HomeViewModel {
         let marker = diagnostics?.marker()
         do {
             let page = try await client.searchDocuments(query: trimmed)
-            searchResults = page.results
+            searchResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
             errorKey = .home_error_search
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
@@ -289,6 +325,29 @@ final class HomeViewModel {
     func refreshSignedInUser() async {
         guard let user = try? await client.currentUser() else { return }
         signedInUser.remember(user.id)
+    }
+
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and these caches are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID)
+    }
+
+    /// Cancel a queued deletion. Kicks the sync funnel as well: a draft this document had was
+    /// suppressed while the tombstone stood, and undoing is exactly when it becomes replayable
+    /// again — waiting for an unrelated foreground or reconnect would leave it stalled.
+    func undoPendingDelete(_ document: Document) {
+        saveCoordinator.cancelPendingDelete(documentID: document.id)
+        Task { await saveCoordinator.syncPendingDrafts() }
     }
 
     /// Whether this row is a document created here that the server has not seen yet.

@@ -65,6 +65,13 @@ enum Strings_es {
         .docrow_public: "Público",
         .docrow_available_offline: "Disponible sin conexión",
 
+        .docrow_pending_delete: "Pendiente de eliminación",
+
+        .pending_delete_alert_message:
+            "Este documento se eliminará la próxima vez que se pueda conectar con el servidor.",
+
+        .pending_delete_undo: "Conservar este documento",
+
         .docrow_on_this_device: "En este dispositivo, esperando sincronización",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Solo personas invitadas",
@@ -190,6 +197,7 @@ enum Strings_es {
             "Las versiones sobrescritas se pueden restaurar desde el historial de versiones en la web.",
 
         // Editor - errors
+        .editor_pending_delete: "Este documento está pendiente de eliminación.",
         .editor_error_load:
             "No se pudo cargar este documento. Desliza hacia abajo para actualizar e inténtalo de nuevo.",
         .editor_error_refresh: "No se pudo actualizar. Inténtalo de nuevo.",

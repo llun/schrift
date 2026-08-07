@@ -81,4 +81,55 @@ final class SearchViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.recentSearches.first, "Roadmap")
     }
+
+    // MARK: - Rows for documents whose deletion is queued
+
+    /// Search annotates too, so a document deleted from its own screen stops looking alive in
+    /// results — and taps into the undo instead of opening.
+    func testAResultIsAnnotatedOnceItsDeletionIsQueued() {
+        let suiteName = "SearchViewModelTests.coordinator.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(user)
+        let viewModel = SearchViewModel(
+            client: client, store: makeStore(), saveCoordinator: coordinator, signedInUser: signedIn)
+        let document = searchDocument()
+        XCTAssertFalse(viewModel.isDeletePending(document))
+
+        coordinator.recordPendingDelete(documentID: document.id, ownerUserID: user)
+        XCTAssertTrue(viewModel.isDeletePending(document))
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
+        viewModel.undoPendingDelete(document)
+        XCTAssertFalse(viewModel.isDeletePending(document), "and the undo takes it off again")
+        XCTAssertFalse(coordinator.isPendingDelete(documentID: document.id))
+    }
+
+    /// Without a coordinator — every `#Preview`, and any screen that has none — both members
+    /// answer harmlessly rather than trapping.
+    func testTheDeletionMembersAreInertWithoutACoordinator() {
+        let viewModel = makeViewModel()
+        let document = searchDocument()
+
+        XCTAssertFalse(viewModel.isDeletePending(document))
+        viewModel.undoPendingDelete(document)
+    }
+
+    private func searchDocument() -> Document {
+        Document(
+            id: UUID(uuidString: "22222222-2222-4222-8222-222222222222")!, title: "Doomed",
+            excerpt: nil, abilities: DocumentAbilities(), linkReach: .restricted, linkRole: .reader,
+            isFavorite: false, depth: 1, numchild: 0, path: "0001",
+            createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+    }
 }

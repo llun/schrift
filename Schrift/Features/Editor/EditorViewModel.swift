@@ -226,6 +226,13 @@ final class EditorViewModel {
         self.remoteChangeDebounce = remoteChangeDebounce
         self.diagnostics = diagnostics
         self.savedTitle = title
+        // A sub-page whose deletion has landed leaves the Subpages list. The children cache is
+        // purged by the coordinator, but `subpages` is this view model's own array — and
+        // leaving the row does worse than linger, since the tombstone is gone and it would
+        // **un-strike** back into looking like a live document that opens a 404.
+        saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.noteDocumentDeleted(documentID)
+        }
     }
 
     var isEditing: Bool { mode != .reading }
@@ -318,6 +325,19 @@ final class EditorViewModel {
         saveCoordinator.isPendingCreate(documentID: documentID)
     }
 
+    /// The user has asked for this document to be deleted and the server has not been told
+    /// yet. Reachable even though every list strikes such a row through and offers an undo
+    /// instead of opening it: an in-document link names an id directly, a pushed
+    /// `NavigationPath` value outlives the deletion, and on iPad the detail column can still
+    /// be holding it.
+    ///
+    /// Unscoped on purpose (`isPendingDelete`, not its listable sibling): whether *this*
+    /// session may see the strikethrough is a question about rows, but a document being
+    /// deleted is one nothing should be fetching or editing whoever queued it.
+    var isDocumentPendingDelete: Bool {
+        saveCoordinator.isPendingDelete(documentID: documentID)
+    }
+
     /// A screen is now writing under this document's id — defer any create replay that would
     /// re-key it. Idempotent, and **held for this view model's lifetime rather than the
     /// view's visibility.**
@@ -371,6 +391,23 @@ final class EditorViewModel {
     }
 
     func load() async {
+        // **A document waiting to be deleted is not opened.** Say so and stop — before the
+        // local phase, which would otherwise render the body from the draft the undo is
+        // holding and let the user edit a document they have thrown away, and before any
+        // request, which is the whole point of a deletion queued offline. `hasLoadedContent`
+        // stays false, so `startEditing` cannot fire and no funnel here can enqueue.
+        //
+        // Not terminal like `becomeUnavailable`: the state is undoable, and the next `load()`
+        // after an undo finds the tombstone gone and proceeds normally.
+        if isDocumentPendingDelete {
+            // **No `errorKey`.** `EditorView` renders `pendingDeleteNotice` from the predicate
+            // itself, so setting one is redundant while the tombstone stands — and it latches:
+            // nothing on the un-tombstoning side clears view-model state, so the moment the
+            // deletion is undone or refused the key becomes *visible*, as a danger-styled
+            // "waiting to be deleted" about a document that is not.
+            isLoading = false
+            return
+        }
         // The terminal 404/403 message survives until a fetch actually puts content
         // back on screen (`markAvailableAgain`). Clearing it here would leave the
         // user staring at revoked content — or at nothing — with no warning.
@@ -445,6 +482,10 @@ final class EditorViewModel {
     private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
         // A client-minted id 404s, and this is the path whose catch calls `becomeUnavailable`.
         guard !isLocalDocument else { return }
+        // And a document queued for deletion is one we are deliberately not asking about — a
+        // 404 here is what its own DELETE predicts, and this catch would turn that into the
+        // terminal "no longer available", burying an undoable state under a permanent one.
+        guard !isDocumentPendingDelete else { return }
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -531,8 +572,10 @@ final class EditorViewModel {
         }
         clearError()
         // A local document has nothing to ask the server about, and asking would 404
-        // into the same teardown `revalidate` guards against.
-        guard !isLocalDocument else { return }
+        // into the same teardown `revalidate` guards against. A document queued for
+        // deletion is the same shape for a different reason: the 404 is expected, and
+        // reading it as terminal would bury an undoable state under a permanent one.
+        guard !isLocalDocument, !isDocumentPendingDelete else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
@@ -1125,6 +1168,39 @@ final class EditorViewModel {
         isDocumentDiscarded = true
     }
 
+    /// A deletion that was **queued** rather than made: end the editing session, but purge
+    /// nothing.
+    ///
+    /// The sibling of `handleDidDelete`, and the difference is the whole point. That one runs
+    /// when the server has confirmed the document is gone, so every local copy is dead weight
+    /// worth destroying. This one runs while the deletion is still *cancellable*, and the
+    /// draft, the create record and the cached body are exactly what the undo restores — so
+    /// they stay. `DocumentSaveCoordinator.completePendingDelete` removes them when the
+    /// DELETE really lands, in an order a crash cannot tear.
+    ///
+    /// Everything that could still *write* is stopped, though, for the same reasons
+    /// `handleDidDelete` stops it: the flush on disappear would PATCH a document being
+    /// deleted, and an in-flight fetch landing afterwards would re-cache it. Nothing is lost
+    /// by stopping them — the draft already holds whatever was typed, and if the deletion is
+    /// undone the screen reloads from it.
+    ///
+    /// This is a deliberate exception to "every purge path clears the record": it is not a
+    /// purge but a deferral, discharged by exactly two terminals (the undo, or the
+    /// completion). It cannot wedge the save pipeline, because nothing can enqueue for a
+    /// tombstoned id — the sync pass skips it, the create pass will not resume onto it, and
+    /// this screen is on its way out.
+    func handleDidQueueDelete() {
+        childrenGeneration += 1
+        revalidationGeneration += 1
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        remoteChangeTask?.cancel()
+        remoteChangeTask = nil
+        dirtySince = nil
+        isDirty = false
+        isDocumentDiscarded = true
+    }
+
     /// Installs the fetched server copy and records it in the content cache.
     private func installFetched(_ formatted: FormattedDocumentContent) {
         let now = Date()
@@ -1207,6 +1283,107 @@ final class EditorViewModel {
         return mergedWithLocalDocuments(fetched: subpages ?? [], local: local)
     }
 
+    /// A sub-page whose deletion has landed leaves the level, rather than un-striking back
+    /// into a row that opens a 404. `childrenCache.removeDocument` purged the cache; this is
+    /// the in-memory array beside it.
+    /// This screen's own document is gone from the server, and this screen was not the one
+    /// that deleted it — so nothing pops it, and it has to make itself terminal.
+    ///
+    /// `handleDidDelete` alone is not enough and was actively worse than doing nothing: it
+    /// latches `isDocumentDiscarded` while leaving `hasLoadedContent` true, no message, and the
+    /// body on screen. `flushPendingChanges` and `saveNow` both return on that latch, so every
+    /// keystroke after it reached neither disk nor server nor an error — a live **Save** button
+    /// that does nothing, forever. Before, those keystrokes at least produced a draft and a
+    /// visible "Couldn't save · tap to retry".
+    ///
+    /// So the purge runs *and* the screen goes terminal, exactly as a 404/403 revalidation
+    /// leaves it: content cleared, `hasLoadedContent` false so editing cannot begin, and the
+    /// "no longer available" message on screen. Pull-to-refresh is then the honest recovery —
+    /// it re-fetches, 404s, and says the same thing.
+    private func handleDeletionLanded() {
+        // Order matters: end the session and purge first, then clear the screen. The reverse
+        // would serialize an emptied block list into a draft, which is the trap
+        // `becomeUnavailable`'s own flush-first comment describes from the other direction.
+        handleDidDelete()
+        mode = .reading
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
+        blocks = []
+        rawMarkdown = ""
+        displayedSourceMarkdown = ""
+        displaySource = .none
+        subpages = nil
+        hasLocalCopy = false
+        lastSyncedAt = nil
+        updateAvailable = false
+        pendingFreshContent = nil
+        isUnavailable = true
+        hasLoadedContent = false
+        errorKey = unavailableMessageKey
+        errorDetail = nil
+    }
+
+    private func noteDocumentDeleted(_ documentID: UUID) {
+        // **This screen's own document.** The revive is the one completion that runs with an
+        // editor open (deferring it would let the sync pass reap the draft instead), so this
+        // screen can be left live on an id the server no longer has — where a keystroke would
+        // write a fresh draft under it, PATCH into a 404, and have that draft reaped by the
+        // *next launch's* pass, when the in-memory `.failed` state that protected it is gone.
+        // Ending the session here is what stops those edits being written somewhere that can
+        // only lose them; the body as of the undo is already safe in the revived document.
+        guard documentID != self.documentID else {
+            handleDeletionLanded()
+            return
+        }
+        subpages?.removeAll { $0.id == documentID }
+        // **And invalidate any children fetch in flight** — invariant 0b, the same reason
+        // `appendChild` and `handleDidDelete` bump it. A `listChildren` issued before the
+        // DELETE landed still names this sub-page, and on resolving would write it back into
+        // `subpages` *and* re-create the children-cache entry the coordinator just purged: a
+        // tappable row for a deleted document, restored durably on disk and surviving relaunch.
+        childrenGeneration += 1
+    }
+
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and the lists that show them are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID)
+    }
+
+    /// Cancel the queued deletion of **this** document — the escape hatch on the gated screen.
+    ///
+    /// Deliberately keyed on the unscoped predicate, unlike the row annotations: this is the
+    /// only affordance that does not require finding a list row, and the rows are
+    /// account-scoped. A tombstone this session cannot see would otherwise leave the document
+    /// permanently unopenable with nothing anywhere able to clear it. Letting whoever is in
+    /// front of the screen cancel it is recoverable in a way that dead end is not — the
+    /// deletion can simply be made again.
+    func undoPendingDeleteForThisDocument() {
+        saveCoordinator.cancelPendingDelete(documentID: documentID)
+        let coordinator = saveCoordinator
+        Task { await coordinator.syncPendingDrafts() }
+    }
+
+    /// Cancel a queued deletion for a sub-page, and kick the sync funnel: its draft was
+    /// suppressed while the tombstone stood, and undoing is exactly when it becomes
+    /// replayable again — waiting for an unrelated foreground or reconnect would strand it.
+    func undoPendingDelete(_ document: Document) {
+        saveCoordinator.cancelPendingDelete(documentID: document.id)
+        let coordinator = saveCoordinator
+        Task { await coordinator.syncPendingDrafts() }
+    }
+
     func loadChildren() async {
         // A local document has no children on the server to list — and cannot, since the server
         // has never heard of the id. Sub-pages created under it live in the create records and
@@ -1271,6 +1448,16 @@ final class EditorViewModel {
         // has removed, and with nothing left to gate it the replay POSTs it, the probe 404s, and
         // it is re-rooted. A document the user threw away comes back as a stray root.
         guard !isDocumentDiscarded else { return nil }
+        // Nor inside one whose deletion is queued. The screen that deleted it popped and every
+        // fresh editor is gated at `load()`, but this one may have been reached by a link or
+        // been open already. A child filed here is held by `runCreatePass`'s parent gate until
+        // the deletion lands, after which the probe re-roots it — a document the user never
+        // asked for, from a parent they threw away.
+        // No error is set: `EditorView` renders `pendingDeleteNotice` instead of `errorKey`
+        // whenever this predicate is true, so any key set here is unrenderable by construction
+        // — and would latch into view once the deletion is undone. The notice is already on
+        // screen saying why nothing can be filed here.
+        guard !isDocumentPendingDelete else { return nil }
         // **A parent the server has never seen is minted straight away, with no request.** It
         // has no children route to POST to: the call would address
         // `documents/{local-uuid}/children/` and take a 404, which `retryableSaveFailure`
@@ -1310,10 +1497,18 @@ final class EditorViewModel {
             if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
                 let ownerUserID = signedInUser.userID
             {
-                let local = saveCoordinator.createLocalDocument(
+                // **Nothing is appended.** `mergedSubpages` merges the scoped
+                // `pendingLocalDocuments` on every read, so the row is on screen either way —
+                // but a synthetic pushed into `subpages` is one nothing can ever take back
+                // out. `mergedSubpages` short-circuits (`guard !local.isEmpty`) once the
+                // record dies and returns `subpages` unfiltered, so deleting this sub-page
+                // left its row rendering, tappable, and opening an editor for an id no
+                // record names — and offline nothing refetches the level to correct it
+                // (`revalidate` fails before it reaches `loadChildren`). The same reasoning
+                // the local-parent branch above and `appendChild`'s cache filter already
+                // give: the merge layer is the single source of local rows.
+                return saveCoordinator.createLocalDocument(
                     title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
-                appendChild(local)
-                return local
             }
             // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a 403
             // here means "you may not add children to this document", not "this document

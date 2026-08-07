@@ -18,10 +18,26 @@ final class SharedViewModel {
     let client: DocsAPIClient
     private let cache: DocumentCacheStore
     private let userDefaults: UserDefaults
+    /// Optional: nil simply means "no queued deletions to annotate here", which is what every
+    /// existing call site and `#Preview` gets.
+    private let saveCoordinator: DocumentSaveCoordinator?
+    private let signedInUser: SignedInUserStore
     /// Monotonic guard: a completing fetch (list or enrichment) applies its
     /// outcome only if no newer load() superseded it (.task refires on every
     /// tab revisit and races .refreshable).
     private var loadGeneration = 0
+    /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
+    /// before the DELETE and still names them, so its results are filtered through this before
+    /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
+    /// away every *other* row it carries, and on Home would discard a load fired from inside
+    /// the sync pass that announced the deletion).
+    ///
+    /// **Never cleared.** A screen can have more than one fetch in flight, so clearing when one
+    /// lands strips the others' protection mid-flight. A stale entry is inert rather than
+    /// merely harmless: server ids are never reused — the revive mints a *new* local id — so an
+    /// id that named a deleted document can never name a live one. It grows by one `UUID` per
+    /// landed deletion per process.
+    private var deletedSinceLoad: Set<UUID> = []
     /// True once a real local list exists (cached or fetched). An unknown list
     /// must never render as "0 documents"; nil ≠ empty.
     private var hasLoaded = false
@@ -29,15 +45,61 @@ final class SharedViewModel {
     init(
         client: DocsAPIClient,
         cache: DocumentCacheStore = DocumentCacheStore(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        signedInUser: SignedInUserStore = SignedInUserStore()
     ) {
         self.client = client
         self.cache = cache
         self.userDefaults = userDefaults
+        self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
+        // A landed deletion: drop the row from the array this view model holds. The caches are
+        // purged by the coordinator, but these are its own — and leaving the row does worse
+        // than linger, since the tombstone is gone and it would **un-strike** back into
+        // looking like a live document.
+        saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.dropDeletedDocument(documentID)
+        }
+
         if let withMe = cache.loadSharedWithMeDocuments() {
             documents = withMe
             hasLoaded = true
         }
+    }
+
+    private func dropDeletedDocument(_ documentID: UUID) {
+        documents.removeAll { $0.id == documentID }
+        enrichment[documentID] = nil
+        // A fetch already in flight was issued before the DELETE and would write the row back,
+        // into the cache as well (invariant 0b). Filtered rather than cancelled by a generation
+        // bump — see `HomeViewModel`'s note: the announcement can fire from inside the very
+        // load it would be discarding.
+        deletedSinceLoad.insert(documentID)
+    }
+
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and these caches are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator?.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID) ?? false
+    }
+
+    /// Cancel a queued deletion, and kick the sync funnel: a draft this document had was
+    /// suppressed while the tombstone stood, and undoing is exactly when it becomes replayable
+    /// again.
+    func undoPendingDelete(_ document: Document) {
+        guard let saveCoordinator else { return }
+        saveCoordinator.cancelPendingDelete(documentID: document.id)
+        Task { await saveCoordinator.syncPendingDrafts() }
     }
 
     /// Spinner only while fetching a list that has no local copy yet. A cached
@@ -89,8 +151,11 @@ final class SharedViewModel {
             return
         }
         guard generation == loadGeneration else { return }
-        documents = withMe
-        cache.saveSharedWithMeDocuments(withMe)
+        // Anything deleted while this was in flight is dropped before it can be applied or
+        // cached — the fetch predates the DELETE and cannot know.
+        let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
+        documents = surviving
+        cache.saveSharedWithMeDocuments(surviving)
         hasLoaded = true
         isOffline = false
         isLoading = false
@@ -98,13 +163,13 @@ final class SharedViewModel {
         // shared can't keep showing stale avatars, and the dictionary can't grow
         // without bound across a long session. Surviving entries are overwritten
         // as fresh accesses land.
-        let currentIDs = Set(withMe.map(\.id))
+        let currentIDs = Set(surviving.map(\.id))
         enrichment = enrichment.filter { currentIDs.contains($0.key) }
 
         // Enrichment runs *outside* the list-load do/catch above and never
         // throws — so a decorative accesses failure can never be caught there
         // and misreported as a failed document list (offline / errorKey).
-        await enrich(documents: withMe, generation: generation)
+        await enrich(documents: surviving, generation: generation)
     }
 
     /// Fetch each document's accesses concurrently and resolve avatars +
@@ -133,7 +198,9 @@ final class SharedViewModel {
             }
             for await (id, result) in group {
                 guard generation == loadGeneration else { continue }
-                if let result { enrichment[id] = result }
+                // Not for a document deleted while this was in flight — the observer nil'd
+                // its entry, and writing the result back would re-populate it one await later.
+                if let result, !deletedSinceLoad.contains(id) { enrichment[id] = result }
             }
         }
     }

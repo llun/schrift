@@ -123,6 +123,37 @@ final class DocumentCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.loadSharedWithMeDocuments(), [withMe])
     }
 
+    /// What a landed deletion owes the lists that were showing the document. Without it the
+    /// row survives until the next *successful* fetch — which is exactly what a deletion
+    /// queued offline does not have.
+    func testRemoveDocumentStripsItFromEveryCachedList() {
+        let store = makeStore()
+        let doomed = makeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Doomed")
+        let kept = makeDocument(id: "22222222-2222-4222-8222-222222222222", title: "Kept")
+        store.savePinnedDocuments([doomed, kept])
+        store.saveRecentDocuments([kept, doomed])
+        store.saveSharedWithMeDocuments([doomed])
+
+        store.removeDocument(doomed.id)
+
+        XCTAssertEqual(store.loadPinnedDocuments(), [kept])
+        XCTAssertEqual(store.loadRecentDocuments(), [kept])
+        XCTAssertEqual(store.loadSharedWithMeDocuments(), [], "cached and empty, which is a real answer")
+    }
+
+    /// **Never fabricates.** nil (never fetched) and `[]` (fetched, empty) are read as
+    /// different everywhere — nil is what lets a screen show its one first-run placeholder —
+    /// so a list that never existed must not be written into being by a deletion.
+    func testRemoveDocumentNeverFabricatesAnUncachedList() {
+        let store = makeStore()
+
+        store.removeDocument(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        XCTAssertNil(store.loadRecentDocuments())
+        XCTAssertNil(store.loadSharedWithMeDocuments())
+        XCTAssertNil(userDefaults.data(forKey: "dev.llun.Schrift.cachedPinnedDocuments"))
+    }
+
     func testInitClearsStrandedSharedByMeCache() {
         // A previous app version cached a shared-by-me list; a new store must
         // drop that now-unread key on init.

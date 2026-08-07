@@ -6,6 +6,8 @@ struct SearchScreen: View {
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
+    @State private var documentPendingUndo: Document?
     @AppStorage("schrift.workOffline") private var workOffline = false
 
     private var trimmedQuery: String {
@@ -37,6 +39,9 @@ struct SearchScreen: View {
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
+            viewModel.undoPendingDelete(document)
+        }
         .navigationTitle(loc[.search_title])
         .navigationSubtitle(serverHost)
         // The system field, bound to the tab's search role: tapping the tab
@@ -144,7 +149,14 @@ struct SearchScreen: View {
                     pinned: document.isFavorite,
                     reach: document.linkReach,
                     date: documentRowDate(document, locale: loc.locale),
-                    onOpen: { onOpenDocument(document) }
+                    pendingDelete: viewModel.isDeletePending(document),
+                    onOpen: {
+                        if viewModel.isDeletePending(document) {
+                            documentPendingUndo = document
+                        } else {
+                            onOpenDocument(document)
+                        }
+                    }
                 )
             }
         }

@@ -71,6 +71,12 @@ enum Strings_sl {
         .docrow_public: "Javno",
         .docrow_available_offline: "Na voljo brez povezave",
 
+        .docrow_pending_delete: "Čaka na izbris",
+
+        .pending_delete_alert_message: "Ta dokument bo izbrisan, ko bo strežnik spet dosegljiv.",
+
+        .pending_delete_undo: "Obdrži ta dokument",
+
         .docrow_on_this_device: "V tej napravi, čaka na sinhronizacijo",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Samo povabljeni",
@@ -196,6 +202,7 @@ enum Strings_sl {
         .editor_conflict_restore_hint: "Prepisane različice je mogoče obnoviti iz zgodovine različic na spletu.",
 
         // Editor - errors
+        .editor_pending_delete: "Ta dokument čaka na izbris.",
         .editor_error_load: "Tega dokumenta ni bilo mogoče naložiti. Povlecite za osvežitev in poskusite znova.",
         .editor_error_refresh: "Ni bilo mogoče osvežiti. Poskusite znova.",
         .editor_error_add_subpage: "Podstrani ni bilo mogoče dodati. Poskusite znova.",

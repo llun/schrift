@@ -12,17 +12,81 @@ final class SearchViewModel {
 
     let client: DocsAPIClient
     private let store: RecentSearchesStore
+    /// Optional: nil simply means "no queued deletions to annotate here", which is what every
+    /// existing call site and `#Preview` gets.
+    private let saveCoordinator: DocumentSaveCoordinator?
+    private let signedInUser: SignedInUserStore
+    /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
+    /// before the DELETE and still names them, so its results are filtered through this before
+    /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
+    /// away every *other* row it carries, and on Home would discard a load fired from inside
+    /// the sync pass that announced the deletion).
+    ///
+    /// **Never cleared.** A screen can have more than one fetch in flight, so clearing when one
+    /// lands strips the others' protection mid-flight. A stale entry is inert rather than
+    /// merely harmless: server ids are never reused — the revive mints a *new* local id — so an
+    /// id that named a deleted document can never name a live one. It grows by one `UUID` per
+    /// landed deletion per process.
+    private var deletedSinceLoad: Set<UUID> = []
 
-    init(client: DocsAPIClient, store: RecentSearchesStore = RecentSearchesStore()) {
+    init(
+        client: DocsAPIClient, store: RecentSearchesStore = RecentSearchesStore(),
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        signedInUser: SignedInUserStore = SignedInUserStore()
+    ) {
         self.client = client
         self.store = store
+        self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
         recentSearches = store.searches
+        // A landed deletion: drop the row from the array this view model holds. The caches are
+        // purged by the coordinator, but these are its own — and leaving the row does worse
+        // than linger, since the tombstone is gone and it would **un-strike** back into
+        // looking like a live document.
+        saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.dropDeletedDocument(documentID)
+        }
+
+    }
+
+    private func dropDeletedDocument(_ documentID: UUID) {
+        results.removeAll { $0.id == documentID }
+        quickAccess.removeAll { $0.id == documentID }
+        deletedSinceLoad.insert(documentID)
+    }
+    /// Search caches nothing, so there is no durable resurrection to prevent — but an
+    /// in-flight fetch can still write the row back on screen. "The next keystroke replaces it"
+    /// covers `search`, whose results the user is actively retyping over; it does **not** cover
+    /// `loadQuickAccess`, which is not query-driven and assigns unconditionally. Both filter.
+
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and these caches are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator?.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID) ?? false
+    }
+
+    /// Cancel a queued deletion, and kick the sync funnel: a draft this document had was
+    /// suppressed while the tombstone stood, and undoing is exactly when it becomes replayable
+    /// again.
+    func undoPendingDelete(_ document: Document) {
+        guard let saveCoordinator else { return }
+        saveCoordinator.cancelPendingDelete(documentID: document.id)
+        Task { await saveCoordinator.syncPendingDrafts() }
     }
 
     func loadQuickAccess() async {
         do {
             let page = try await client.favoriteDocuments()
-            quickAccess = page.results
+            quickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
             errorKey = .search_error_quick
         }
@@ -46,7 +110,7 @@ final class SearchViewModel {
         do {
             let page = try await client.searchDocuments(query: trimmed)
             if Task.isCancelled { return }
-            results = page.results
+            results = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
             if Task.isCancelled { return }
             errorKey = .search_error_search

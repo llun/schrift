@@ -56,6 +56,47 @@ final class DocRowTests: XCTestCase {
         )
     }
 
+    /// The glyph is `accessibilityHidden` (a Private-Use-Area character with no spoken text)
+    /// and the row ignores its children, so a state carried only by that glyph and a
+    /// strikethrough is invisible to VoiceOver unless it is said here.
+    func testAccessibilityLabelIncludesAQueuedDeletion() {
+        XCTAssertEqual(
+            docRowAccessibilityLabel(
+                title: "Old notes", reach: .restricted, date: "Just now", pinned: false,
+                pendingDelete: true, pendingDeleteLabel: "Waiting to be deleted",
+                pinnedLabel: "Pinned", sharedWithOrganizationLabel: "Shared with organization",
+                publicLabel: "Public"),
+            "Old notes, Waiting to be deleted, Just now"
+        )
+    }
+
+    /// The two can never both be true in practice — a tombstone names a server id, a
+    /// `pendingSync` row a client-minted one — but the precedence is stated rather than
+    /// assumed, and a queued deletion is the more actionable fact of the two.
+    func testAQueuedDeletionOutranksPendingSyncInTheLabel() {
+        XCTAssertEqual(
+            docRowAccessibilityLabel(
+                title: "Old notes", reach: .restricted, date: "Just now", pinned: false,
+                pendingSync: true, pendingSyncLabel: "On this device, waiting to sync",
+                pendingDelete: true, pendingDeleteLabel: "Waiting to be deleted",
+                pinnedLabel: "Pinned", sharedWithOrganizationLabel: "Shared with organization",
+                publicLabel: "Public"),
+            "Old notes, Waiting to be deleted, Just now"
+        )
+    }
+
+    /// An empty phrase is dropped rather than producing a stray ", " in the spoken label.
+    func testAQueuedDeletionWithNoPhraseIsOmitted() {
+        XCTAssertEqual(
+            docRowAccessibilityLabel(
+                title: "Old notes", reach: .restricted, date: "Just now", pinned: false,
+                pendingDelete: true, pendingDeleteLabel: "",
+                pinnedLabel: "Pinned", sharedWithOrganizationLabel: "Shared with organization",
+                publicLabel: "Public"),
+            "Old notes, Just now"
+        )
+    }
+
     func testAccessibilityLabelOmitsEmptyDate() {
         XCTAssertEqual(
             docRowAccessibilityLabel(

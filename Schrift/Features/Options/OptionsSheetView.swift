@@ -4,7 +4,11 @@ struct OptionsSheetView: View {
     @Bindable var viewModel: OptionsViewModel
     let shareURL: URL?
     var onShare: (() -> Void)? = nil
-    var onDeleted: (() -> Void)? = nil
+    /// Called once the deletion has been made **or queued**, with `queued: true` for the
+    /// latter. The presenter needs the distinction: a completed delete purges every local
+    /// copy, while a queued one must leave the draft and the record alone — they are what the
+    /// undo restores.
+    var onDeleted: ((_ queued: Bool) -> Void)? = nil
     /// Called when the link reached the pasteboard, so the presenter can
     /// confirm it after this sheet closes.
     var onLinkCopied: (() -> Void)? = nil
@@ -24,7 +28,7 @@ struct OptionsSheetView: View {
         shareURL: URL?,
         onLinkCopied: (() -> Void)? = nil,
         onShare: (() -> Void)? = nil,
-        onDeleted: (() -> Void)? = nil
+        onDeleted: ((_ queued: Bool) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.shareURL = shareURL
@@ -104,7 +108,7 @@ struct OptionsSheetView: View {
                     await viewModel.delete()
                     if viewModel.didDelete {
                         dismiss()
-                        onDeleted?()
+                        onDeleted?(viewModel.didQueueDelete)
                     }
                 }
             }

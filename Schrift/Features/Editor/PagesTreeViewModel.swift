@@ -125,6 +125,37 @@ final class PagesTreeViewModel {
         self.userDefaults = userDefaults
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
+        // The drawer strikes rows through like the other four surfaces, so it owes the same
+        // drop when a deletion lands. Its own hazard is sharper: this view model is `@State`
+        // on the editor and outlives the drawer, and a non-root level is refetched only when
+        // its node is toggled — so a closed-and-reopened drawer would show the row again,
+        // un-struck, indefinitely.
+        saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.dropDeletedPage(documentID)
+        }
+    }
+
+    /// A page whose deletion has landed leaves every level that held it. The children cache is
+    /// purged by the coordinator; `children` is this view model's own copy.
+    private func dropDeletedPage(_ documentID: UUID) {
+        for (parentID, documents) in children where documents.contains(where: { $0.id == documentID }) {
+            children[parentID] = documents.filter { $0.id != documentID }
+        }
+        children[documentID] = nil
+        expanded.remove(documentID)
+        failedLoads.remove(documentID)
+        // **The drop must survive every fetch in flight** — invariant 0b. A `listChildren`
+        // issued before the DELETE landed completes after it and writes both `children[parent]`
+        // and the shared cache entry the coordinator just purged, restoring the row un-struck
+        // and durably.
+        //
+        // Bumped for **every** loading level, not only the ones that already hold the row: the
+        // unprotected case is the common one, a level being fetched for the first time
+        // (`children[parent] == nil`), where the row is in the response and in nothing else
+        // yet. The deleted document's own level is included, or an in-flight fetch of *its*
+        // children re-creates the cache entry `childrenCache.remove(parentID:)` just dropped.
+        for parentID in loading { mutations[parentID, default: 0] += 1 }
+        mutations[documentID, default: 0] += 1
     }
 
     var rows: [PagesTreeRow] {
@@ -157,6 +188,21 @@ final class PagesTreeViewModel {
             merged[parentID] = mergedWithLocalDocuments(fetched: children[parentID] ?? [], local: documents)
         }
         return merged
+    }
+
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and the lists that show them are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator?.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID) ?? false
     }
 
     /// Loads the root level. Safe to call on every appearance — a level already
@@ -245,6 +291,18 @@ final class PagesTreeViewModel {
     /// Creates a child of `parent` and slots it into the open tree, so the new
     /// page appears where it belongs instead of only after a reload.
     func addPage(under parent: UUID) async -> Document? {
+        // Nothing may be filed inside a document whose deletion is queued — the twin of
+        // `EditorViewModel.addSubpage`'s gate, and reachable from the same drawer whose level
+        // fetch is already gated two lines away. Online this would POST
+        // `documents/{tombstoned}/children/`; offline it would mint a record naming a doomed
+        // parent, which the create pass holds until the deletion lands and the probe then
+        // silently re-roots — a document the user never asked for, from a parent they threw away.
+        if saveCoordinator?.isPendingDelete(documentID: parent) == true {
+            // Not `pages_error_create` — "Please try again" invites a retry that cannot
+            // succeed while the parent is on its way out. State the reason instead.
+            createErrorKey = .editor_pending_delete
+            return nil
+        }
         let child: Document
         // A parent the server has never seen is minted straight away, with no request — the
         // same reasoning as `EditorViewModel.addSubpage`: the POST would address
@@ -277,8 +335,18 @@ final class PagesTreeViewModel {
                 createErrorKey = .pages_error_create
                 return nil
             }
-            child = coordinator.createLocalDocument(
+            // Returns *here* rather than falling through to the append below, exactly as the
+            // local-parent branch does. `mergedChildren` supplies the row on every read, and
+            // a synthetic pushed into `children[parent]` is one nothing can take back out:
+            // `mergedChildren` returns `children` untouched once the record dies
+            // (`guard !local.isEmpty`), so deleting this page left its row in the drawer
+            // pointing at an id no record names. `mutations` is deliberately not bumped
+            // either — that stamp defends an append we actually made.
+            let local = coordinator.createLocalDocument(
                 title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
+            expanded.insert(parent)
+            createErrorKey = nil
+            return local
         }
         expanded.insert(parent)
         // Only when the level is actually known (fetched or cached). Appending
