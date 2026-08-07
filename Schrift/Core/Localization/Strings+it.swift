@@ -98,6 +98,7 @@ enum Strings_it {
         .options_share: "Condividi",
         .options_delete_document: "Elimina documento",
         .options_delete_confirm_title: "Eliminare questo documento?",
+        .options_delete_confirm_subpages: "Le sottopagine salvate su questo dispositivo verranno eliminate con esso.",
         .options_delete: "Elimina",
         .options_error_toggle_favorite: "Impossibile aggiornare il preferito. Riprova.",
         .options_error_delete: "Impossibile eliminare il documento. Riprova.",

@@ -73,6 +73,35 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
         XCTAssertEqual(store.create(for: kept.localID), kept)
     }
 
+    /// What the sub-page delete removes in one write. The single-write property itself is not
+    /// observable from here — a `UserDefaults` blob has no torn state to catch — so this pins
+    /// the reachable half: the whole set goes, and nothing outside it does.
+    func testRemovingSeveralRecordsTakesThemAllAndLeavesTheRest() {
+        let store = makeStore()
+        let parent = record(title: "Parent")
+        let child = record(title: "Child", parentID: parent.localID)
+        let unrelated = record(title: "Other")
+        for created in [parent, child, unrelated] { store.save(created) }
+
+        store.remove(localIDs: [child.localID, parent.localID])
+
+        XCTAssertNil(store.create(for: parent.localID))
+        XCTAssertNil(store.create(for: child.localID))
+        XCTAssertEqual(store.allCreates().map(\.localID), [unrelated.localID])
+    }
+
+    /// Removing an id the store never held is not an error, and must not disturb the rest —
+    /// `removePendingCreates` filters against the mirror, which can legitimately disagree.
+    func testRemovingAnAbsentRecordLeavesTheStoreAlone() {
+        let store = makeStore()
+        let kept = record(title: "Kept")
+        store.save(kept)
+
+        store.remove(localIDs: [UUID(), UUID()])
+
+        XCTAssertEqual(store.allCreates().map(\.localID), [kept.localID])
+    }
+
     /// Replay order: a child created after its parent must never be POSTed first.
     func testAllCreatesAreOldestFirst() {
         let store = makeStore()
@@ -137,9 +166,10 @@ final class PendingDocumentCreateStoreTests: XCTestCase {
 
     /// Abilities are the honest set for a document that exists only here: editing works,
     /// and nothing else does yet — every other ability is a server call against an id the
-    /// server has never seen. `childrenCreate` false records the same intent for
-    /// children-of-local-parents — but **nothing reads it**, so keeping them out of scope is
-    /// the create UI's job, not this value's.
+    /// server has never seen. `childrenCreate` is false for the same reason, and reads by
+    /// nobody: creating a sub-page under a local parent *does* work — it mints a second
+    /// record, which the replay sends once this one has a server id — but the server would
+    /// still answer `POST documents/{local-uuid}/children/` with a 404.
     func testTheSyntheticDocumentClaimsOnlyLocallyTrueAbilities() {
         let document = localDocument(from: record())
 

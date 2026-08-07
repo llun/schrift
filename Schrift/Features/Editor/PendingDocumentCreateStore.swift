@@ -19,15 +19,22 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     /// The title at creation time. A rename made before the replay lives on the draft,
     /// which is what the replay actually POSTs — this is the fallback.
     let title: String
-    /// The **server** id of the parent, or nil for a root document. v1 never creates
-    /// under a parent that is itself pending, so this is always a real server id and the
-    /// replay needs no dependency ordering. `var` because the replay rewrites it to nil and
-    /// retries as a root create — degrading the document's *placement* rather than stranding
-    /// its content — but **only on the one answer that justifies it**: the probe finding the
-    /// parent **gone** (404). Never a bare 403 — an ancestor-access recompute 403s transiently
-    /// and would 403 the create too — and never on the bare create failure alone. A reachable
-    /// parent means the create was rejected on its own merits, which is terminal rather than a
-    /// re-parent. See `handleCreateFailure`'s probe.
+    /// The parent's id — a **server** id, nil for a root document, or the `localID` of
+    /// another record that has not been POSTed yet (a sub-page created under a document this
+    /// device also created). The last case is why `runCreatePass` carries a dependency gate:
+    /// it refuses to send a record whose `parentID` still names a pending one, because that
+    /// POST would address `documents/{local-uuid}/children/`.
+    ///
+    /// `var` for two rewrites, and they are not the same kind of thing. **The dependency
+    /// rewrite** is bookkeeping: `migrateCreatedDocument` repoints every child at the id the
+    /// server just assigned, immediately before dropping the parent's record, which is what
+    /// lets the pass carry on and send them. **The promote-to-root rewrite** is a degradation:
+    /// the replay sets it to nil and retries as a root create, trading the document's
+    /// *placement* to avoid stranding its content — and only on the one answer that justifies
+    /// it, the probe finding the parent **gone** (404). Never a bare 403 — an ancestor-access
+    /// recompute 403s transiently and would 403 the create too — and never on the bare create
+    /// failure alone. A reachable parent means the create was rejected on its own merits,
+    /// which is terminal rather than a re-parent. See `handleCreateFailure`'s probe.
     var parentID: UUID?
     /// Replay order, and the synthetic document's dates.
     let createdAt: Date
@@ -186,6 +193,17 @@ final class PendingDocumentCreateStore {
     }
 
     func remove(localID: UUID) {
+        remove(localIDs: [localID])
+    }
+
+    /// Remove several records in **one** write, which the sub-page delete needs and a loop of
+    /// `remove(localID:)` cannot give it. Every method here is a read-modify-write of a single
+    /// blob, so a loop leaves intermediate states on disk in which part of a subtree is gone
+    /// and the rest is not — and a record whose parent's record has been removed is one
+    /// `runCreatePass`'s dependency gate no longer holds, so it would POST under an id the
+    /// server has never seen, be re-rooted by the probe, and resurrect as a root document the
+    /// user had just deleted. One write makes that state unrepresentable.
+    func remove(localIDs: [UUID]) {
         // Same reasoning as `save`: this is a read-modify-write, so on a corrupt blob the
         // `loadAll` below reads `[:]` and the `persist` overwrites it. Unreachable through
         // the coordinator today — `removePendingCreate` returns early when the id isn't in
@@ -193,7 +211,7 @@ final class PendingDocumentCreateStore {
         // has to quarantine, or the guarantee depends on which caller happens to run first.
         quarantineUnreadableDataIfNeeded()
         var creates = loadAll()
-        creates[localID.uuidString] = nil
+        for localID in localIDs { creates[localID.uuidString] = nil }
         persist(creates)
     }
 
@@ -203,9 +221,13 @@ final class PendingDocumentCreateStore {
     ///
     /// It is deterministic, not a guarantee about arrival: `runCreatePass` `continue`s past a
     /// record that is skipped, blocked or failed, so a newer record can still reach the server
-    /// before an older one that was passed over. Harmless in v1, where records carry no
-    /// inter-record dependencies — sub-pages of *local* parents are out of scope precisely
-    /// because a replay cannot order them — but do not build ordering on this.
+    /// before an older one that was passed over. **Do not build ordering on this** — records
+    /// do carry a dependency now (a sub-page names the parent that must exist first), and what
+    /// enforces it is `runCreatePass`'s gate on the parent's record still being pending, not
+    /// this order. The order is only an optimization on top: because a parent is minted before
+    /// any child of it, oldest-first usually lets the whole chain replay in a single pass
+    /// rather than one level per trigger. A clock change that reverses two of them costs a
+    /// trigger and nothing else.
     func allCreates() -> [PendingDocumentCreate] {
         loadAll().values.sorted { orderedByCreation($0, $1) }
     }
@@ -317,10 +339,11 @@ func orderedByCreation(_ lhs: PendingDocumentCreate, _ rhs: PendingDocumentCreat
 /// Delete — the Options sheet asks `isLocalDocument` and takes the local branch — so
 /// flipping it would change no behaviour, while leaving it false keeps this dictionary
 /// meaning one thing throughout: *what the server would let you do with this id*, which is
-/// nothing, because it does not know the id. `childrenCreate` is false for the same reason
-/// and likewise reads by nobody: children-of-local-parents are out of v1 scope because the
-/// replay cannot order the two creates, and the affordances enforce that themselves (the
-/// button is hidden, and `addSubpage` carries the guard).
+/// nothing, because it does not know the id. `childrenCreate` is false for the same reason,
+/// and reads by nobody — creating a sub-page under a local parent *does* work now (it mints
+/// a second record, which the replay sends once the parent has a server id), and the
+/// affordances decide that for themselves. Flipping this to true would say the server would
+/// allow a `POST documents/{local-uuid}/children/`, which it would answer with a 404.
 ///
 /// `title` is the record's, i.e. the title at creation time. Callers that can see the
 /// draft should prefer the draft's — the user may have renamed the document since, and

@@ -14,16 +14,20 @@ final class PagesTreeViewModelTests: XCTestCase {
 
     private var suiteName: String!
     private var defaults: UserDefaults!
+    private var contentCacheDirectory: URL!
 
     override func setUp() {
         super.setUp()
         suiteName = "PagesTreeViewModelTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
+        contentCacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PagesTreeViewModelTests-\(UUID().uuidString)", isDirectory: true)
     }
 
     override func tearDown() {
         MockURLProtocol.reset()
         defaults.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: contentCacheDirectory)
         super.tearDown()
     }
 
@@ -33,6 +37,39 @@ final class PagesTreeViewModelTests: XCTestCase {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let cache = DocumentChildrenCacheStore(userDefaults: defaults)
         return (PagesTreeViewModel(rootID: rootID, client: client, cache: cache, userDefaults: defaults), cache)
+    }
+
+    /// A drawer rooted at a document created **on this device**, with the coordinator wired.
+    ///
+    /// Every store shares this test's isolated suite — the draft store and the create store
+    /// especially. A coordinator whose `createStore` falls back to `UserDefaults.standard`
+    /// writes real records into the shared domain, and a later pass then issues a genuine
+    /// `/users/me/` that escapes `MockURLProtocol` and stalls the run for a minute.
+    private func makeLocalRootViewModel(signedInUserID: UUID? = UUID()) -> (
+        viewModel: PagesTreeViewModel, coordinator: DocumentSaveCoordinator, root: Document,
+        cache: DocumentChildrenCacheStore
+    ) {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let cache = DocumentChildrenCacheStore(userDefaults: defaults)
+        // Every store on this test's own suite — including the two the coordinator would
+        // otherwise default onto `UserDefaults.standard` — so nothing here writes app-wide
+        // storage. `createStore` is the one that must not be missed (a leaked record makes a
+        // later pass issue a real `/users/me/` that escapes MockURLProtocol and stalls the run),
+        // but a test has no business leaving the others behind either.
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        if let signedInUserID { signedIn.remember(signedInUserID) }
+        let root = coordinator.createLocalDocument(
+            title: "Root", parentID: nil, ownerUserID: signedInUserID ?? UUID())
+        let viewModel = PagesTreeViewModel(
+            rootID: root.id, client: client, cache: cache, userDefaults: defaults,
+            saveCoordinator: coordinator, signedInUser: signedIn)
+        return (viewModel, coordinator, root, cache)
     }
 
     private func document(_ id: UUID, title: String, numchild: Int = 0) -> Document {
@@ -287,5 +324,136 @@ final class PagesTreeViewModelTests: XCTestCase {
         await first
 
         XCTAssertEqual(log.methods.count, 1, "the in-flight guard collapses the second call")
+    }
+
+    // MARK: - Pages under a document created on this device
+
+    /// The drawer's root can be a document the server has never seen. Creating under it must
+    /// issue nothing: the POST would address `documents/{local-uuid}/children/` and take a
+    /// non-retryable 404, so the transport fallback could not catch it.
+    func testAddingAPageUnderALocalRootMintsLocallyWithoutAnyRequest() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalRootViewModel()
+
+        let created = await env.viewModel.addPage(under: env.root.id)
+
+        XCTAssertNotNil(created)
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertNil(env.viewModel.createErrorKey)
+        XCTAssertEqual(
+            env.coordinator.pendingCreateForTesting(localID: created!.id)?.parentID, env.root.id)
+        XCTAssertEqual(env.viewModel.rows.map(\.document.id), [created!.id], "and it shows in the tree")
+    }
+
+    /// The gap this closes: the row is merged in at **read** time, so it survives the view
+    /// model being rebuilt — which is what happens every time the editor screen is recreated.
+    func testALocalPageSurvivesAViewModelRecreation() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
+        let env = makeLocalRootViewModel()
+        let created = await env.viewModel.addPage(under: env.root.id)
+
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        let rebuilt = PagesTreeViewModel(
+            rootID: env.root.id, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        XCTAssertEqual(rebuilt.rows.map(\.document.id), [created!.id])
+    }
+
+    /// And a *successful* level fetch, which replaces the level wholesale with an answer that
+    /// cannot mention a document the server has never seen.
+    func testALocalPageSurvivesALevelRefetch() async {
+        let env = makeLocalRootViewModel()
+        // A page created under a **synced** parent, since a local root is never fetched at all.
+        let syncedParent = UUID()
+        let local = env.coordinator.createLocalDocument(
+            title: "Local", parentID: syncedParent,
+            ownerUserID: env.coordinator.pendingCreateForTesting(
+                localID: env.root.id)!.ownerUserID!)
+        MockURLProtocol.stubHandler = { [childID] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(childID, "From the server")]), error: nil)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        await viewModel.loadRoot()
+
+        XCTAssertEqual(
+            Set(viewModel.rows.map(\.document.id)), [childID, local.id],
+            "the fetched level is the server's, and the local page is merged back on top")
+        XCTAssertEqual(
+            env.cache.children(for: syncedParent)?.map(\.id), [childID],
+            "and the synthetic never reaches the shared cache")
+    }
+
+    /// A synthetic carries `numchild: 0` — it has no server bookkeeping at all — so without
+    /// the loaded-level half of the rule a local page with local pages inside it draws as a
+    /// leaf, with no way to open it.
+    func testALocalPageWithItsOwnPagesGetsADisclosureAndExpandsWithoutAFetch() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalRootViewModel()
+        let page = await env.viewModel.addPage(under: env.root.id)
+        let nested = await env.viewModel.addPage(under: page!.id)
+
+        // Creating under a page expands it, so both are on screen already.
+        XCTAssertEqual(env.viewModel.rows.map(\.document.id), [page!.id, nested!.id])
+        XCTAssertEqual(env.viewModel.rows.map(\.depth), [0, 1])
+        XCTAssertEqual(env.viewModel.rows.first?.hasChildren, true, "and it keeps its arrow when collapsed")
+
+        await env.viewModel.toggle(page!)
+        XCTAssertEqual(env.viewModel.rows.map(\.document.id), [page!.id], "collapsing hides what is inside it")
+
+        await env.viewModel.toggle(page!)
+
+        XCTAssertEqual(env.viewModel.rows.map(\.document.id), [page!.id, nested!.id], "and expanding brings it back")
+        XCTAssertEqual(log.methods.count, 0, "no level under a client-minted id is ever fetched")
+        XCTAssertTrue(env.viewModel.failedLoads.isEmpty)
+    }
+
+    /// A level whose only children are this device's own gets the same silence a cached level
+    /// gets. Collapsing it would hide a page the user created here — while an error about a
+    /// level that is showing its contents is simply wrong. Reachable the ordinary way a
+    /// sub-page is created at all: offline, under a synced document.
+    func testAFailedFetchKeepsALevelWhoseOnlyChildrenAreLocal() async {
+        let env = makeLocalRootViewModel()
+        let syncedParent = UUID()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let local = env.coordinator.createLocalDocument(
+            title: "Local", parentID: syncedParent, ownerUserID: owner)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        await viewModel.loadRoot()
+
+        XCTAssertEqual(viewModel.rows.map(\.document.id), [local.id], "the local page still renders")
+        XCTAssertNil(viewModel.errorKey, "and a level that is showing its contents is not an error")
+        XCTAssertTrue(viewModel.failedLoads.isEmpty)
+    }
+
+    /// Minting needs an account to attribute the record to; without one it would be listed by
+    /// nothing and replayed by nothing.
+    func testAddingAPageUnderALocalRootReportsWhenNoAccountIsKnown() async {
+        let env = makeLocalRootViewModel(signedInUserID: nil)
+
+        let created = await env.viewModel.addPage(under: env.root.id)
+
+        XCTAssertNil(created)
+        XCTAssertEqual(env.viewModel.createErrorKey, .pages_error_create)
     }
 }

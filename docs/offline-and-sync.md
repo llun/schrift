@@ -163,9 +163,10 @@ amendment above; when this was written, editing offline was still blocked.)
   no server id has nothing for the draft pipeline to PATCH) was answered by giving such
   a document a client-minted id, a record, and a replay that POSTs it and migrates the
   draft onto the real id. Home's `+`, "Add a subpage" and the drawer's "New page" all
-  create locally when the network cannot take the POST; the only remaining gate is the
-  *parent* being unsynced, which stays out of scope because the replay cannot order two
-  dependent creates. See "Documents created on this device" below.
+  create locally when the network cannot take the POST. The last gate — the *parent*
+  being unsynced — went on **2026-08-06**: the replay now orders two dependent creates,
+  so a sub-page can be created under a document this device has also not sent yet, to any
+  depth. See "Documents created on this device" below.
 - ~~**Offline editing / sync queue**~~ — **withdrawn 2026-08-01** (see the
   amendment at the top). Editing a previously-opened document offline is
   supported: the edit is written to `PendingDraftStore` before any network
@@ -852,10 +853,15 @@ ordering; the local phase never blocks on it. `subpages` becomes optional
 (`[Document]?`, nil = not fetched this session): the subpages empty-state copy
 ("Organize this document by creating subpages.") is suppressed until a fetch has
 succeeded this session — render nothing (or just the eyebrow) in the meantime, so
-the instant/offline path doesn't falsely claim "no subpages". The "Add a subpage" button is hidden when the *parent* is locally created (until
-  2026-08-02 it was hidden when `isOffline`; `createChild` is a network POST, and a failure
-surfaces `editor_error_add_subpage`, "Couldn't add the subpage. Please try
-again.").
+the instant/offline path doesn't falsely claim "no subpages". The **one exception** is a
+document created on this device: the server provably holds nothing under an id it has never
+seen, so `mergedSubpages` reports that level as known-**empty** and the empty-state copy is
+right rather than premature (2026-08-06 — before it, such a document showed a bare
+"Subpages" eyebrow with no rows and no copy). The "Add a subpage" button is now **ungated**:
+it was hidden when `isOffline` until 2026-08-02 and when the parent was local until
+2026-08-06, and today `addSubpage` mints locally in both cases. A failure on the
+synced-parent path still surfaces `editor_error_add_subpage`, "Couldn't add the subpage.
+Please try again."
 Caching the subpage list is deferred (Non-goals): if
 it were added to `CachedDocumentContent`, the coordinator's save-success cache
 write would have to preserve the prior entry's subpages, so the fetched-flag
@@ -1113,6 +1119,67 @@ while the record is **un-checkpointed**, though: once `syncedServerID` is set th
 POST has landed and a real server object exists — while `isPendingCreate` is still
 true — so that branch runs for exactly the case where it is false. See the delete-branch handling in the owed-work list below.
 
+**And it takes the whole local subtree with it (2026-08-06).** Sub-pages created on this
+device under a local document are its subtree exactly as they would be on the server, and
+leaving them is not the conservative option: an orphaned record is listed by *nothing*
+(no level is keyed by a dead id, and Home asks for `nil`) while
+still holding a whole document body — and, worse, it is a record no gate holds any more,
+so the replay would POST it under a dead local id, the probe would re-root it, and a
+deleted document would come back in Home as a root. `discardLocalSubtree` is where that
+happens, from **both** branches: the un-checkpointed one keyed on the id the caller
+passed, and the checkpointed one keyed on `checkpointed.localID`, since a checkpointed
+parent is met and deleted under its *server* id while its sub-pages still name the local
+one. `hasPendingLocalChildren` resolves both ids for the same reason, and is what the
+confirmation alert keys its extra line off — **answering for the cascade rather than for the
+relation**. A sub-page created offline under an ordinary *server* document is an ordinary
+record too (`addSubpage` mints one on any retryable POST failure), but deleting that document
+takes neither branch: the sub-page survives, and the probe later re-roots it, per the residual
+below. Announcing a deletion there would put a false sentence in a destructive confirmation,
+so the predicate answers false wherever the cascade would not run.
+
+**The *listings* do the opposite, and the difference is the point.** A checkpointed parent
+has two ids at once, and for the whole window both are live: sub-pages minted before the
+checkpoint name its `localID`, ones minted during it name the `serverID` (that is the screen
+the user was on), and it is *asked* about under both — the editor's `documentID` is a `let`,
+and an editor still holding the local id is itself one of the things deferring the
+migration, so that pairing is the characteristic one rather than a rare one. So
+`parentIDAliases` is a **union, never a substitution**, and both `pendingLocalDocuments` and
+`pendingLocalDocumentsByParent` answer for every id a level can be known by. Resolving to
+one id does not fix the blank level, it only moves it: mapping server→local hides the
+during-the-window cohort, mapping local→server blanks the drawer for a screen still on the
+local id. Both were tried, and each shipped the other's bug. Over-answering costs nothing
+here, since the two ids never appear as separate nodes in one tree — the local row is
+withheld exactly while the server one is available.
+
+`hasPendingLocalChildren` and the cascade deliberately do **not** use it: they ask what a
+delete would *take*, which is only ever the `localID` cohort, where the listings ask what a
+level *contains*. Conflating the two is what put the false sentence in the confirmation.
+
+Three ordering rules make it safe, all for reasons this document has met before:
+
+- **Every record goes in one store write, the root's included** — `PendingDocumentCreateStore
+  .remove(localIDs:)`. Each method there is a read-modify-write of a single blob, so a loop
+  leaves states on disk in which part of a subtree is gone and the rest is not, which is the
+  dangling-record resurrection above reached through a kill rather than a bug.
+- **Records before drafts**, the same order the single-document delete already uses: a draft
+  with no record is inert and the sync pass's ordinary 404 rule reaps it, where a record with
+  no draft POSTs an empty document under its mint title.
+- **A sub-page whose editor is open is re-parented to the root rather than deleted.** Every
+  other record remover in the coordinator defers to an open editor, and this is the only one
+  that would take a live screen's disk backing with it. Promoted rather than skipped, because
+  a record left naming a deleted parent would be re-rooted by the probe anyway — just later,
+  and without the screen surviving. Its own sub-pages stay with it. Unreachable through
+  navigation today, since a parent's Options sheet can only open while the parent's own
+  editor is topmost.
+
+Two things it deliberately does not do. It issues **no server `DELETE`** for a descendant:
+the dependency gate held every one of them back for as long as this parent's record
+existed, which is exactly the window in which the cascade runs, so a descendant is provably
+un-checkpointed. And it does not purge the content cache for them, for the same reason —
+only a confirmed save or a fetch writes that cache, and neither is reachable for an id the
+server has never seen. The walk itself is iterative and `visited`-guarded: it reads decoded
+data, where the shape is a tree only by construction.
+
 **Synthetic `Document`s never enter a persisted metadata cache.**
 `localDocument(from:)` fills the server-owned fields with inert placeholders
 (`path: ""`, `depth: 1`, `numchild: 0`) and claims only locally-true abilities
@@ -1127,11 +1194,11 @@ whose id de-duplication is a cheap guard against overlapping lists and
 id filter can match them; `pendingLocalDocuments` withholds a checkpointed record
 instead. It also overlays the draft's title, so a document renamed since it was
 minted does not read "Untitled document" in every list.
-`abilities.childrenCreate` is false — but **nothing reads it**, so that records the
-intent rather than enforcing it: children-of-local-parents are out of scope until a
-replay can order them, and it is the create UI that must not offer the affordance
-(the affordances enforce it: the button is hidden for a local parent, and `addSubpage`
-carries the guard).
+`abilities.childrenCreate` is false, and **nothing reads it** — creating a sub-page under
+a local parent works (it mints a second record, which the replay sends once the parent has
+a server id), and the affordances decide that for themselves. It stays false because this
+dictionary means one thing throughout: *what the server would allow for this id*, and a
+`POST documents/{local-uuid}/children/` is a 404.
 
 **Protection and permission are separate things, and conflating them cost the
 content.** `isPendingCreate` is deliberately *not* origin-scoped: a record minted
@@ -1243,6 +1310,21 @@ already-recorded ghost residual below, not a new one.
   visibility is the wrong signal. A leaked retain is not harmless *within* a
   session: that document never replays while the caption says "syncs when
   online".
+- **Deleting a *server* parent still promotes its local sub-pages to roots.** The cascade is
+  scoped to a parent that is itself a pending-create record, which is the only case where
+  deleting is purely a local act. A sub-page created under a synced document whose parent is
+  then deleted takes the pre-existing route instead: the replay's `createChild` 404s, the
+  probe 404s, and it is re-rooted — placement lost, content kept, which is the trade that
+  path was designed around. Closing it means the delete flow learning to ask the coordinator
+  about local children of a *server* id, and deciding whether re-rooting or deleting is the
+  kinder answer when the user never saw those sub-pages listed.
+- **A sub-page whose parent is permanently stranded is stranded with it.** The dependency gate
+  is unconditional, so a parent parked by `replayBlockedAt`, by a terminal `.failed`, or by
+  belonging to another account holds every descendant behind it — invisible in Home (they are
+  not roots), reachable only through the parent's own editor, bodies safe on disk. This is the
+  same shape as the revoked-parent item below and wants the same affordance; note it also
+  costs one `/users/me/` per trigger, since the pass's cheap pre-flight gate stays permissive
+  and cannot see that the only sendable-looking records are gated children.
 - **A local sub-page under a parent whose access is revoked is stranded with no route.**
   The replay's `createChild` 403s, the parent probe 403s too (terminal, since only a *404*
   promotes to root), and the record goes `.failed`, which `runCreatePass` skips — `init`
@@ -1262,13 +1344,15 @@ already-recorded ghost residual below, not a new one.
   way: the guard can only cause an *earlier return*, and every early return in that function
   is lossless by construction (record survives, both bodies stay on disk, the next trigger
   resumes or starts over). A bug *in* the guard cannot lose content; only its absence can.
-- **The Pages drawer has no read-time merge**, so since synthetics are no longer persisted
-  its local page vanishes on any view-model recreation. It stays reachable one screen over,
-  in the parent's Subpages section, which does merge.
-  <!-- continues --> The editor's Subpages section merges local
-  children; `PagesTreeViewModel` renders from `children`/the shared cache and does not, so a
-  local sub-page vanishes from the drawer on the next successful level fetch even though it
-  is still listed one screen over. Same fix shape as the editor's `mergedSubpages`.
+- ~~**The Pages drawer has no read-time merge**~~ — **landed 2026-08-06.**
+  `PagesTreeViewModel.rows` now flattens over `mergedChildren`, which folds the
+  session-scoped `pendingLocalDocumentsByParent` into the loaded levels at read time (never
+  into `children` or the cache, for the reasons `EditorViewModel.appendChild` records). A
+  page created in the drawer survives a view-model recreation and a successful level refetch.
+  The disclosure rule gained a second, additive clause with it — `numchild > 0` **or** a
+  level we already hold — because a synthetic carries `numchild: 0`, as does a synced
+  document whose only children were created here, so both drew as leaves with no way to open
+  them.
 - **The replay's own child insert does not invalidate an in-flight fetch.**
   `insertIntoListCaches` bumps neither `childrenGeneration` nor `PagesTreeViewModel
   .mutations`, so a `listChildren` issued before the migration can land after it and
@@ -1405,9 +1489,64 @@ needs the account, and this is the layer that *can* await it. A failure (offline
 or a server that omits the id) simply leaves every record unreplayable, which is
 the right answer rather than a reason to guess.
 
-Per record, in `createdAt` order: skip anything `.failed` (a retry the user can
-see), skip anything whose editor is **open** (below), then POST — `createChild`
-for a sub-page, `createDocument` for a root.
+Per record, in `createdAt` order: skip anything whose **parent is itself still
+pending** (below), skip anything `.failed` (a retry the user can see), skip anything
+whose editor is **open** (below), then POST — `createChild` for a sub-page,
+`createDocument` for a root.
+
+#### Ordering two dependent creates (2026-08-06)
+
+A sub-page created under a document this device has also not sent yet names that
+document's **client-minted** id in its own `parentID`. POSTing it would address
+`documents/{local-uuid}/children/`, take a 404, send `handleCreateFailure` to probe
+the parent, take a second 404, and **silently re-root** a document the user filed
+deliberately. That is why children of unsynced parents were out of scope; two small
+pieces close it.
+
+**The gate.** `runCreatePass` skips any record whose `parentID` names a record still
+in `pendingCreates`. It is keyed on `isPendingCreate`, which stays true through
+checkpointing, so the child waits for the parent's **full migration** — the migration,
+not the POST, is what repoints it.
+
+**The rewrite.** `migrateCreatedDocument` walks the mirror for records naming this
+`localID` and repoints each at the server id, immediately **before**
+`removePendingCreate`. Because the pass re-reads every record from the mirror, the
+gate opens on a later iteration of the *same* pass: a parent and its sub-pages replay
+in one go, to any depth.
+
+**Why that order, and not the other.** Each `updatePendingCreate` is its own whole-store
+write, so a parent with N sub-pages means N+1 writes and a kill can land between any two.
+The property is therefore not that the window is small — it is that **the record's
+presence is what gates every child, whatever subset of the rewrites has landed.** Record
+still present ⇒ every child is still gated, rewritten or not, and the next pass redoes the
+migration from the checkpoint. Record gone ⇒ the loop ran to completion, so every child
+names a live server id and `POST documents/{serverID}/children/` is valid, the checkpoint
+being what proves that document exists. Neither is lossy. The reverse order breaks exactly
+that, admitting a state where the record is gone while a child still names the dead local
+id with nothing gating it — the silent re-root above, reached through a kill instead of a
+bug.
+
+**`allCreates()`' oldest-first order is now an optimization, not a correctness
+property.** Its own doc comment already warned against building ordering on it (the
+pass `continue`s past skipped, blocked and failed records). Correctness comes from the
+gate; the order merely means the common case completes in one pass instead of one level
+per trigger. A clock change that reverses two records costs a trigger.
+
+**What a waiting sub-page inherits.** Every reason the parent is held holds it too, and
+each clears the same way the parent's does:
+
+| Parent | Sub-page | Clears on |
+|---|---|---|
+| POST failed retryably | gated | the next trigger; chains in the same pass |
+| `.failed` (rejected on the merits) | gated | a relaunch — `init` re-seeds `.pendingSync` |
+| replay-blocked (build-scoped) | gated | a build that can read the create response |
+| editor open | gated | `releaseOpenEditor` kicking the funnel |
+| checkpointed, migration deferred | gated | that deferral's own escape |
+| foreign / unattributable | gated, and itself unreplayable | the owner signing back in |
+
+In every one the body stays on disk and protected: this costs a sub-page its sync, never
+its content. The one real cost is that a **permanently** stranded parent strands its
+sub-pages with it — the same recovery already owed for the parent alone.
 
 **The order of what follows is the safety property.**
 

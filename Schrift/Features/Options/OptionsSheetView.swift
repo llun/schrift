@@ -108,6 +108,13 @@ struct OptionsSheetView: View {
                     }
                 }
             }
+        } message: {
+            // Only when there is something extra to lose. A document with no sub-pages of its
+            // own — every document on a server-backed screen — keeps the bare title it has
+            // always had, so this cannot become chrome the user learns to skip past.
+            if viewModel.hasLocalSubpages {
+                Text(loc[.options_delete_confirm_subpages])
+            }
         }
         .sheet(isPresented: $isPresentingVersionHistory) {
             VersionHistorySheetView(viewModel: versionHistoryViewModel, restoreURL: restoreURL)

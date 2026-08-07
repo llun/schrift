@@ -102,6 +102,7 @@ enum Strings_de {
         .options_share: "Teilen",
         .options_delete_document: "Dokument löschen",
         .options_delete_confirm_title: "Dieses Dokument löschen?",
+        .options_delete_confirm_subpages: "Auf diesem Gerät gespeicherte Unterseiten werden ebenfalls gelöscht.",
         .options_delete: "Löschen",
         .options_error_toggle_favorite: "Favorit konnte nicht aktualisiert werden. Bitte versuche es erneut.",
         .options_error_delete: "Dokument konnte nicht gelöscht werden. Bitte versuche es erneut.",

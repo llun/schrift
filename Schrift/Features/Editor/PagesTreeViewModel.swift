@@ -13,7 +13,11 @@ struct PagesTreeRow: Equatable, Identifiable {
     let parentID: UUID
     let depth: Int
     /// From the server's `numchild`, so a disclosure arrow appears without
-    /// having to fetch a level first.
+    /// having to fetch a level first — or, failing that, from a level we already
+    /// hold. The second half is not redundant: a page created on this device has
+    /// `numchild: 0` (it has no server bookkeeping at all), and so does a synced
+    /// document whose only children were created here, so `numchild` alone draws
+    /// both as leaves with no way to open them.
     let hasChildren: Bool
     let isExpanded: Bool
 
@@ -52,7 +56,9 @@ func pagesTreeRows(
             document: document,
             parentID: parentID,
             depth: depth,
-            hasChildren: document.numchild > 0,
+            // Additive: a stale `numchild` on a level that has since been fetched empty keeps
+            // its arrow, exactly as before.
+            hasChildren: document.numchild > 0 || !(children[document.id] ?? []).isEmpty,
             isExpanded: isExpanded
         )
         guard isExpanded else { return [row] }
@@ -122,7 +128,35 @@ final class PagesTreeViewModel {
     }
 
     var rows: [PagesTreeRow] {
-        pagesTreeRows(parentID: rootID, children: children, expanded: expanded)
+        pagesTreeRows(parentID: rootID, children: mergedChildren, expanded: expanded)
+    }
+
+    /// The loaded levels with this device's own unsynced pages folded in, at **read** time.
+    ///
+    /// Never written back into `children` or the cache. A level fetch replaces its array and
+    /// its cache entry wholesale, so an inserted synthetic vanishes on the next successful
+    /// load — and a *persisted* one is worse than useless: `DocumentChildrenCacheStore` is
+    /// neither account-scoped nor cleared on sign-out, so it would serve the previous user's
+    /// document to the next. Merging on every read is what survives both, and only for the
+    /// owner, since `pendingLocalDocumentsByParent` is session-scoped.
+    ///
+    /// The same merge `EditorViewModel.mergedSubpages` does one screen over. Without it a page
+    /// created here vanished from the drawer on any view-model recreation or level refetch,
+    /// while still showing in the parent's Subpages list — which was already recorded as owed.
+    private var mergedChildren: [UUID: [Document]] {
+        guard let saveCoordinator else { return children }
+        // Read so `@Observable` re-runs the body when a page is minted or migrates.
+        _ = saveCoordinator.pendingCreatesVersion
+        let local = saveCoordinator.pendingLocalDocumentsByParent(currentUserID: signedInUser.userID)
+        guard !local.isEmpty else { return children }
+        var merged = children
+        for (parentID, documents) in local {
+            // A local child is a real answer about this device, so it makes an unfetched level
+            // known — which is what lets an expanded local page show what is filed under it
+            // without a request that could only 404.
+            merged[parentID] = mergedWithLocalDocuments(fetched: children[parentID] ?? [], local: documents)
+        }
+        return merged
     }
 
     /// Loads the root level. Safe to call on every appearance — a level already
@@ -181,7 +215,14 @@ final class PagesTreeViewModel {
             // Never treat a failure here as the document being gone: this is a
             // *different* document's children, and the editor behind the drawer
             // must not be torn down over it.
-            guard children[parentID] == nil else { return }
+            //
+            // A level whose only children are this device's own is not empty either, so it gets
+            // the same silence a cached level gets: the merge has something real to render, and
+            // collapsing would hide a page the user created here — while an error message about
+            // a level that is showing its contents is simply wrong. Reachable the moment a
+            // sub-page is created offline under a synced document, which is the ordinary way
+            // one is created at all.
+            guard children[parentID] == nil, !hasLocalChildren(of: parentID) else { return }
             failedLoads.insert(parentID)
             // Collapse it again. Left expanded it would render as a node with no
             // children — indistinguishable from a leaf, and with no way back —
@@ -190,21 +231,48 @@ final class PagesTreeViewModel {
         }
     }
 
+    /// Whether this device has pages of its own filed under `parentID`. Asked only on the
+    /// failure path, where `pendingLocalDocuments` short-circuits before decoding any draft
+    /// unless there really are some.
+    private func hasLocalChildren(of parentID: UUID) -> Bool {
+        guard let saveCoordinator else { return false }
+        return
+            !saveCoordinator
+            .pendingLocalDocuments(parentID: parentID, currentUserID: signedInUser.userID)
+            .isEmpty
+    }
+
     /// Creates a child of `parent` and slots it into the open tree, so the new
     /// page appears where it belongs instead of only after a reload.
     func addPage(under parent: UUID) async -> Document? {
         let child: Document
+        // A parent the server has never seen is minted straight away, with no request — the
+        // same reasoning as `EditorViewModel.addSubpage`: the POST would address
+        // `documents/{local-uuid}/children/` and take a 404, which is not retryable, so the
+        // fallback below could never catch it. The replay orders the two creates.
+        if let coordinator = saveCoordinator, coordinator.isPendingCreate(documentID: parent) {
+            guard let ownerUserID = signedInUser.userID else {
+                createErrorKey = .pages_error_create
+                return nil
+            }
+            child = coordinator.createLocalDocument(
+                title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
+            expanded.insert(parent)
+            createErrorKey = nil
+            // Nothing is appended: `children[parent]` is nil for a local page (its level is
+            // never fetched and never cached), so the block below would decline anyway, and
+            // `mergedChildren` is what puts the row on screen.
+            return child
+        }
         do {
             child = try await client.createChild(documentID: parent, title: "Untitled subpage")
         } catch {
             // Same split as the editor's own "Add a subpage": a failure worth retrying falls
             // back to a local page (a `.network` timeout can hide an applied POST — the
             // accepted cost is one orphaned *empty* child) the replay sends later; a rejection
-            // on the merits keeps the error. The parent must itself be synced — a child of an
-            // unsynced parent is out of v1 scope, since the replay cannot order the two.
+            // on the merits keeps the error.
             guard let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
-                let coordinator = saveCoordinator, !coordinator.isPendingCreate(documentID: parent),
-                let ownerUserID = signedInUser.userID
+                let coordinator = saveCoordinator, let ownerUserID = signedInUser.userID
             else {
                 createErrorKey = .pages_error_create
                 return nil

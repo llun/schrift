@@ -39,6 +39,18 @@ final class PagesTreeRowsTests: XCTestCase {
         XCTAssertEqual(rows.first?.isExpanded, false)
     }
 
+    /// The other half of the rule. A page created on this device has `numchild: 0` — it has no
+    /// server bookkeeping at all — and so does a synced document whose only children were
+    /// created here, so `numchild` alone draws both as leaves with no way to open them.
+    func testDisclosureAlsoFollowsALevelWeAlreadyHold() {
+        let children = [
+            root: [document(a, title: "A", numchild: 0)],
+            a: [document(a1, title: "A1")],
+        ]
+        let rows = pagesTreeRows(parentID: root, children: children, expanded: [])
+        XCTAssertEqual(rows.first?.hasChildren, true)
+    }
+
     func testCollapsedNodeHidesItsLoadedChildren() {
         let children = [
             root: [document(a, title: "A", numchild: 1)],

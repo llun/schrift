@@ -26,10 +26,6 @@ enum PagesTreeLayout {
 struct PagesTreeDrawer: View {
     @Bindable var viewModel: PagesTreeViewModel
     let rootTitle: String
-    var isOffline: Bool = false
-    /// The drawer's root document exists only on this device, so nothing may be created
-    /// under it yet.
-    var isRootLocal: Bool = false
     var onOpen: (Document) -> Void
     var onClose: () -> Void
 
@@ -201,13 +197,11 @@ struct PagesTreeDrawer: View {
         }
     }
 
-    @ViewBuilder
     private var newPageButton: some View {
-        // No longer gated on `isOffline` — a failed POST falls back to a local page the
-        // replay sends later. The remaining constraint is the *parent*: a child of an
-        // unsynced page is out of v1 scope (the replay cannot order the two creates), which
-        // `addPage` enforces per-parent, and the drawer's root is gated here.
-        if !isRootLocal {
+        // Ungated. Neither being offline nor the root being unsynced stops this: `addPage`
+        // mints locally in both cases, and the replay POSTs a parent before the page that
+        // names it.
+        VStack(spacing: 0) {
             Divider().overlay(DocsColor.borderDefault)
             Button {
                 Task {
@@ -285,7 +279,7 @@ private func previewViewModel(variant: String) -> PagesTreeViewModel {
 #Preview("Pages tree — dark, offline") {
     let viewModel = previewViewModel(variant: "offline")
     PagesTreeDrawer(
-        viewModel: viewModel, rootTitle: "Team handbook", isOffline: true, onOpen: { _ in }, onClose: {}
+        viewModel: viewModel, rootTitle: "Team handbook", onOpen: { _ in }, onClose: {}
     )
     .task { await viewModel.loadRoot() }
     .environment(LocalizationStore())

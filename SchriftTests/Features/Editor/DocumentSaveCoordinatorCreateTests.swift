@@ -651,6 +651,222 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertFalse(coordinator.isPendingCreate(documentID: document.id))
     }
 
+    /// Deleting a local document takes what was filed inside it, to any depth — the same as
+    /// deleting one on the server does. Leaving them is not the conservative option: an
+    /// orphaned record is listed by nothing — no level is keyed by the parent that has gone,
+    /// and Home asks for roots — while it still holds a whole document body.
+    func testDiscardingALocalDocumentTakesItsWholeLocalSubtree() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        let grandchild = coordinator.createLocalDocument(title: "Grandchild", parentID: child.id, ownerUserID: user)
+        coordinator.enqueue(documentID: child.id, title: "Child", markdown: "# Typed offline")
+        coordinator.enqueue(documentID: grandchild.id, title: "Grandchild", markdown: "# Also typed offline")
+
+        coordinator.discardPendingWork(documentID: root.id)
+
+        for (name, id) in [("root", root.id), ("child", child.id), ("grandchild", grandchild.id)] {
+            XCTAssertNil(createStore.create(for: id), "the \(name)'s record is gone")
+            XCTAssertNil(draftStore.draft(for: id), "and so is its body")
+            XCTAssertFalse(coordinator.isPendingCreate(documentID: id))
+            XCTAssertEqual(coordinator.state(for: id), .idle)
+        }
+    }
+
+    /// A sibling subtree is not collateral: the walk follows `parentID`, not the store.
+    func testDiscardingALocalDocumentLeavesUnrelatedLocalDocumentsAlone() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        let other = coordinator.createLocalDocument(title: "Other", parentID: nil, ownerUserID: user)
+        let othersChild = coordinator.createLocalDocument(title: "Other's child", parentID: other.id, ownerUserID: user)
+
+        coordinator.discardPendingWork(documentID: root.id)
+
+        XCTAssertNotNil(createStore.create(for: other.id))
+        XCTAssertNotNil(createStore.create(for: othersChild.id))
+        XCTAssertNotNil(draftStore.draft(for: othersChild.id))
+    }
+
+    /// The one document the cascade will not take. Every other record remover in the
+    /// coordinator defers to an open editor, and this is the only one that would pull a live
+    /// screen's draft — the disk backing of content the user can see — out from under it.
+    /// Promoted rather than skipped, because a record left naming a deleted parent is one no
+    /// gate holds any more: it would POST under a dead local id and be re-rooted anyway.
+    func testASubpageWithAnOpenEditorIsPromotedRatherThanDeletedWithItsParent() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        let grandchild = coordinator.createLocalDocument(title: "Grandchild", parentID: child.id, ownerUserID: user)
+        coordinator.enqueue(documentID: child.id, title: "Child", markdown: "# On screen")
+        coordinator.retainOpenEditor(documentID: child.id)
+
+        coordinator.discardPendingWork(documentID: root.id)
+
+        XCTAssertNil(createStore.create(for: root.id))
+        // Asserted as "the record exists AND is a root", not as `?.parentID == nil`: the record
+        // being deleted outright satisfies that too, which is the outcome under test.
+        let promoted = createStore.create(for: child.id)
+        XCTAssertNotNil(promoted, "the open one survives")
+        XCTAssertNil(promoted?.parentID, "as a root")
+        XCTAssertEqual(draftStore.draft(for: child.id)?.markdown, "# On screen", "with its body intact")
+        XCTAssertEqual(
+            createStore.create(for: grandchild.id)?.parentID, child.id,
+            "and what was filed inside it stays filed inside it")
+    }
+
+    /// A checkpointed parent is met — and deleted — under its **server** id, while its
+    /// sub-pages still name the local one. Resolving only the id the caller passed would leave
+    /// every one of them orphaned.
+    func testDeletingACheckpointedLocalDocumentStillTakesItsSubpages() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+
+        XCTAssertTrue(
+            coordinator.hasPendingLocalChildren(documentID: serverID),
+            "the confirmation has to be able to say so under the id the user is actually offered")
+
+        coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertNil(createStore.create(for: root.id))
+        XCTAssertNil(createStore.create(for: child.id))
+        XCTAssertNil(draftStore.draft(for: child.id))
+    }
+
+    /// **A checkpointed parent is met under its server id, and must still show what is filed
+    /// inside it.** Its sub-pages keep naming the local id until the migration re-keys them, so
+    /// a strict match would blank the level for the whole checkpointed window — usually
+    /// microseconds, but a crash or any deferred migration stretches it indefinitely.
+    /// **Both cohorts, under both ids.** A checkpointed parent has two at once — sub-pages
+    /// minted before the checkpoint name its `localID`, ones minted during the window name the
+    /// `serverID`, because that is the screen the user was on — and it is asked about under both
+    /// too: an editor's `documentID` is a `let`, and an editor still holding the local id is
+    /// itself one of the things deferring the migration. Resolving to *either* id blanks one of
+    /// the four combinations, which is how the first attempt at this shipped a regression.
+    func testALocalSubpageStaysListedWhicheverIDItsCheckpointedParentIsAskedBy() {
+        let (coordinator, _, _) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let beforeCheckpoint = coordinator.createLocalDocument(
+            title: "Before", parentID: root.id, ownerUserID: user)
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+        // Created while the parent sat checkpointed, from the screen that meets it under its
+        // server id — so this one names the server id, not the local one.
+        let duringWindow = coordinator.createLocalDocument(
+            title: "During", parentID: serverID, ownerUserID: user)
+        let both = Set([beforeCheckpoint.id, duringWindow.id])
+
+        for askedBy in [("server id", serverID), ("local id", root.id)] {
+            XCTAssertEqual(
+                Set(coordinator.pendingLocalDocuments(parentID: askedBy.1, currentUserID: user).map(\.id)),
+                both, "the Subpages list must answer under the \(askedBy.0)")
+            XCTAssertEqual(
+                Set(coordinator.pendingLocalDocumentsByParent(currentUserID: user)[askedBy.1]?.map(\.id) ?? []),
+                both, "and so must the drawer, keyed by the \(askedBy.0)")
+        }
+    }
+
+    /// The union must not leak sideways: an unrelated parent gains nothing from it, and roots
+    /// still mean roots.
+    func testTheParentIDUnionDoesNotWidenUnrelatedLevels() {
+        let (coordinator, _, _) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+
+        XCTAssertTrue(coordinator.pendingLocalDocuments(parentID: UUID(), currentUserID: user).isEmpty)
+        XCTAssertTrue(
+            coordinator.pendingLocalDocuments(parentID: nil, currentUserID: user).isEmpty,
+            "the checkpointed root is withheld, and a sub-page is not a root")
+        XCTAssertNil(coordinator.pendingLocalDocumentsByParent(currentUserID: user)[UUID()])
+    }
+
+    /// Newest first, which the union must not disturb — it changes which records match, never
+    /// how the matches are ordered. Pinned here because the checkpointed-parent test compares
+    /// as a `Set` (it has to: the two cohorts are keyed differently), so it cannot see order.
+    func testLocalSubpagesAreListedNewestFirst() {
+        let (coordinator, _, _) = makeCoordinator()
+        let parent = UUID()
+        let older = coordinator.createLocalDocument(title: "Older", parentID: parent, ownerUserID: user)
+        let newer = coordinator.createLocalDocument(title: "Newer", parentID: parent, ownerUserID: user)
+
+        XCTAssertEqual(
+            coordinator.pendingLocalDocuments(parentID: parent, currentUserID: user).map(\.id),
+            [newer.id, older.id])
+        XCTAssertEqual(
+            coordinator.pendingLocalDocumentsByParent(currentUserID: user)[parent]?.map(\.id),
+            [newer.id, older.id])
+    }
+
+    /// The one shape the confirmation over-warns about, pinned so it stays *over*-warning: a
+    /// live screen on the local id makes the checkpointed branch restart the record instead of
+    /// dropping it, so the sub-pages go with the document that re-POSTs, not into the bin.
+    func testDeletingACheckpointedParentWithALiveLocalScreenKeepsItsSubpages() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let serverID = UUID()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let child = coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+        coordinator.enqueue(documentID: child.id, title: "Child", markdown: "# Kept")
+        var checkpointed = coordinator.pendingCreateForTesting(localID: root.id)!
+        checkpointed.syncedServerID = serverID
+        coordinator.savePendingCreateForTesting(checkpointed)
+        coordinator.retainOpenEditor(documentID: root.id)
+
+        coordinator.discardPendingWork(documentID: serverID)
+
+        XCTAssertNotNil(createStore.create(for: root.id), "the record restarts rather than going")
+        XCTAssertNil(createStore.create(for: root.id)?.syncedServerID, "with its checkpoint cleared")
+        XCTAssertEqual(
+            createStore.create(for: child.id)?.parentID, root.id, "and the sub-page stays filed under it")
+        XCTAssertEqual(draftStore.draft(for: child.id)?.markdown, "# Kept")
+    }
+
+    /// What the delete confirmation keys off.
+    func testHasPendingLocalChildrenOnlyReportsDocumentsFiledUnderThisOne() {
+        let (coordinator, _, _) = makeCoordinator()
+        let root = coordinator.createLocalDocument(title: "Root", parentID: nil, ownerUserID: user)
+        let unrelated = coordinator.createLocalDocument(title: "Other", parentID: nil, ownerUserID: user)
+
+        XCTAssertFalse(coordinator.hasPendingLocalChildren(documentID: root.id))
+        XCTAssertFalse(coordinator.hasPendingLocalChildren(documentID: UUID()), "and never for a server document")
+
+        coordinator.createLocalDocument(title: "Child", parentID: root.id, ownerUserID: user)
+
+        XCTAssertTrue(coordinator.hasPendingLocalChildren(documentID: root.id))
+        XCTAssertFalse(coordinator.hasPendingLocalChildren(documentID: unrelated.id))
+    }
+
+    /// **It must answer for the cascade, not for the relation.** A sub-page created offline
+    /// under an ordinary *server* document is an ordinary record — `addSubpage` mints one on any
+    /// retryable POST failure — but deleting that server document takes neither cascade branch,
+    /// so the sub-page survives and the replay's probe later re-roots it. Announcing a deletion
+    /// there puts a false sentence in a destructive confirmation.
+    func testHasPendingLocalChildrenIsSilentForAServerParentTheCascadeWillNotTouch() {
+        let (coordinator, draftStore, createStore) = makeCoordinator()
+        let serverParent = UUID()
+        let child = coordinator.createLocalDocument(
+            title: "Child", parentID: serverParent, ownerUserID: user)
+
+        XCTAssertFalse(
+            coordinator.hasPendingLocalChildren(documentID: serverParent),
+            "the delete would not take it, so the alert must not say it will")
+
+        coordinator.discardPendingWork(documentID: serverParent)
+
+        XCTAssertNotNil(createStore.create(for: child.id), "and indeed it survives")
+        XCTAssertNotNil(draftStore.draft(for: child.id))
+    }
+
     /// A 404/403 on a *server* document keeps its draft (the user's unsaved work) — and
     /// a local document can never legitimately reach that path, so nothing there may
     /// touch the create record either.

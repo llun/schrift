@@ -107,6 +107,7 @@ enum Strings_sl {
         .options_share: "Deli",
         .options_delete_document: "Izbriši dokument",
         .options_delete_confirm_title: "Izbrišem ta dokument?",
+        .options_delete_confirm_subpages: "Podstrani, shranjene v tej napravi, bodo izbrisane skupaj z njim.",
         .options_delete: "Izbriši",
         .options_error_toggle_favorite: "Priljubljene ni bilo mogoče posodobiti. Poskusite znova.",
         .options_error_delete: "Dokumenta ni bilo mogoče izbrisati. Poskusite znova.",
