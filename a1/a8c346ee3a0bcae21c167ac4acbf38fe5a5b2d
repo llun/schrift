@@ -1,0 +1,162 @@
+Schrift/Core/Networking/DocumentSave.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 76-79
+Schrift/Features/Editor/SlashMenu.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 4,8-19,82-84,94-102,109
+SchriftTests/Features/Editor/EditorBlockMutationTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 186-235
+Schrift/Core/Localization/L10nKey.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 180-181,233-236,255,299-310
+  s_a90ba1763f1ea9::t_31509bdd441eae 311
+Schrift/Core/Localization/Strings+th.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 249-258
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-567
+SchriftTests/Features/Editor/AttachmentCardViewTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-99
+SchriftTests/Features/Editor/AttachmentBlockParsingTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-171
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 107
+Schrift/Features/Editor/MarkdownSerializer.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 58-62,93-97
+Schrift/Core/Localization/Strings+pt.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 252-261
+Schrift/Features/Editor/AttachmentDisplay.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-237
+CLAUDE.md
+  s_a90ba1763f1ea9::t_59a4c93801b437 2704
+  s_a90ba1763f1ea9::t_db09df16ec4e69 340-341,621-625,1324-1326,1335-1338,1372-1488,2079-2160,2705-2707
+Schrift/Features/Shared/SharedViewModel.swift
+  s_a90ba1763f1ea9::t_5d1dd1544d9bbe 29-39,201-203
+SchriftTests/Features/Editor/AttachmentDisplayTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-266
+SchriftTests/Features/Editor/AttachmentPreparationTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-157
+SchriftTests/Features/Editor/SlashMenuTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 42,45-76
+SchriftTests/Features/Editor/AttachmentLoaderTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-419
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 82-87,95-103,194-195,202,215,1220,1576,1678-1681,1712-1713,1715,1749,1889-1892,1894,1912-1916,1925-1930,1986-1989,2071-2189,2194-2196,2206,2562-2576,2587,2639-2661,2684-2690
+Schrift/Core/Localization/Strings+it.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 252-261
+SchriftTests/Features/Editor/MarkdownBlockAttachmentTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-127
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 247-256
+Schrift/Features/Editor/AttachmentCacheStore.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-161
+Schrift/Features/Search/SearchViewModel.swift
+  s_a90ba1763f1ea9::t_5d1dd1544d9bbe 19-23,25-29
+Schrift/Core/Localization/Strings+de.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 255-264
+SchriftTests/Core/Networking/AttachmentEndpointsClientTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 125-196
+Schrift/Features/Home/MainTabView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 240
+Schrift/Features/Editor/AttachmentCardView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-351
+docs/offline-and-sync.md
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1029-1092,1147-1150,2323-2437
+Schrift/Features/Editor/EditorBlock.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 17-27,56-57,60
+Schrift/Features/Editor/EditorView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 589,598-603,622-634,686,689,701,725-726,1089-1090,1098
+Schrift/Features/Editor/SlashMenuView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 7
+SchriftTests/Core/Yjs/MarkdownYjsTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 10-13,15,18,25,99,158,164-224
+Schrift/Core/Yjs/BlockNoteDocument.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 36
+Schrift/Core/Localization/Strings+en.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 249-258
+SchriftTests/Features/Editor/PendingAttachmentStoreTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-254
+Schrift/Features/Editor/PendingAttachmentStore.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-320
+Schrift/Core/Localization/Strings+es.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 257-266
+Schrift/Features/Editor/MarkdownParser.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 15-31,41-46,103-105,183-186,193-201,216-221,224,229-338
+  s_a90ba1763f1ea9::t_34e44acdae8c56 339
+SchriftTests/Features/Editor/EditorAttachmentInsertionTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-403
+Schrift/Features/Editor/AttachmentLoader.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-189
+SchriftTests/Features/Editor/MarkdownParserTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 380-585
+Schrift/Features/Editor/BlockTextView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 75-78
+SchriftTests/Core/Networking/DocumentSaveTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 105-161
+SchriftTests/Core/Yjs/BlockNoteWriteTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 197
+docs/architecture.md
+  s_a90ba1763f1ea9::t_db09df16ec4e69 43-47,946-1193
+  s_a90ba1763f1ea9::t_c84635be46a40d 1194
+Schrift/App/RootView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 34,81-84,149,186-189
+Schrift/Features/Editor/BlockEditorView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 7-9,11-14,35-36,71,99-104,189-205
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_a90ba1763f1ea9::t_91bbfee1d8e2fb 3136-3137,3139-3146,3154
+  s_a90ba1763f1ea9::t_d5e4a49dc4f9f9 3592,3594
+  s_a90ba1763f1ea9::t_db09df16ec4e69 93-95,107-109,171-178,336,341-342,350,355-356,404-408,908-909,967-1065,1091-1092,1103-1111,1855-1869,2333-2337,2339-2346,2371-2377,2380,2450-2454,2726-2875,2891-2900,3130-3131,3148-3153,3260-3262,3287-3289,3584-3590,3593
+  s_a90ba1763f1ea9::t_88a489569c5b7c 2331-2332,2338,2348
+  s_a90ba1763f1ea9::t_54f10cf50d863f 1094
+Schrift/Core/Yjs/MarkdownYjs.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 18-26,30-33,36-37,126-145
+  s_a90ba1763f1ea9::t_259ec44813de6f 146-148
+Schrift/Features/Editor/EditorScreen.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 46
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 281,314,386,431,486,534,582,598
+Schrift/Core/Localization/Strings+nl.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 253-262
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentHoldTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-284
+Schrift/Core/Localization/Strings+fr.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 253-262
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 68-69,73-75,156-171,331-344,351-382,388,395
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 417
+Schrift/Core/Localization/Strings+sl.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 261-270
+Schrift/Core/Networking/AttachmentEndpoints.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 104-155
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 247-256
+SchriftTests/Features/Editor/AttachmentCacheStoreTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-309
+SchriftTests/Core/Yjs/YBlockProjectionRenderTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 30-34
+Schrift/Features/Home/HomeViewModel.swift
+  s_a90ba1763f1ea9::t_5d1dd1544d9bbe 90,92-100,306
+SchriftTests/Core/Yjs/YBlockProjectionTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 22-26
+Schrift/Features/Editor/AttachmentPreparation.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 1-116
+Schrift/Features/Home/HomeSplitView.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 79
+SchriftTests/Core/Yjs/YjsEncoderTests.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 197-231
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_a90ba1763f1ea9::t_db09df16ec4e69 49-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "a1a8c346ee3a0bcae21c167ac4acbf38fe5a5b2d",
+  "prompts": {},
+  "sessions": {
+    "s_a90ba1763f1ea9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e46053b-a8b8-469e-bbcf-4e106ab549b5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
