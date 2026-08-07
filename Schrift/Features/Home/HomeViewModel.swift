@@ -87,6 +87,10 @@ final class HomeViewModel {
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable).
     private var loadGeneration = 0
+    /// Documents whose deletion landed while a list fetch was in flight. That fetch was issued
+    /// before the DELETE and still names them, so its results are filtered through this before
+    /// being applied or cached. Cleared once consumed — it only has to outlive the one fetch.
+    private var deletedSinceLoad: Set<UUID> = []
 
     init(
         client: DocsAPIClient,
@@ -140,10 +144,15 @@ final class HomeViewModel {
             guard let self else { return }
             self.pinnedDocuments.removeAll { $0.id == documentID }
             self.fetchedRecentDocuments.removeAll { $0.id == documentID }
-            // And invalidate any list fetch already in flight: issued before the DELETE
-            // landed, it completes after and writes the row back — into the cache as well.
-            // CLAUDE.md invariant 0b, the same reason the editor bumps its generations.
-            self.loadGeneration += 1
+            // **A list fetch already in flight was issued before the DELETE landed**, so it
+            // still names the document and would write it back — into the cache as well
+            // (invariant 0b). Bumping `loadGeneration` here is the obvious move and the wrong
+            // one: `load()` captures a generation, kicks `recoverDrafts()`, *then* awaits the
+            // list calls, so a deletion landing in that window is fired from inside the load
+            // it would be cancelling. That discards the whole fetch rather than one row —
+            // list stale, `isOffline` unset, and `isLoading` stuck true, because the guarded
+            // early return skips the line that clears it. Filter instead.
+            self.deletedSinceLoad.insert(documentID)
         }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
@@ -202,9 +211,14 @@ final class HomeViewModel {
                 isCreatorMe: nil,
                 ordering: "-updated_at"
             )
-            let pinned = try await pinnedPage.results
-            let recent = try await recentPage.results
+            let fetchedPinned = try await pinnedPage.results
+            let fetchedRecent = try await recentPage.results
             guard generation == loadGeneration else { return }
+            // Anything deleted while this was in flight is dropped before it can be applied or
+            // cached — the fetch predates the DELETE and cannot know.
+            let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
+            let recent = fetchedRecent.filter { !deletedSinceLoad.contains($0.id) }
+            deletedSinceLoad.removeAll()
             pinnedDocuments = pinned
             fetchedRecentDocuments = recent
             cache.savePinnedDocuments(pinned)

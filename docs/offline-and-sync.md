@@ -2149,6 +2149,15 @@ array would tell Home it had fetched and found nothing.
 
 ### What the user sees
 
+When a deletion lands, every list holding the row **drops it** — and *filters* it out of any
+fetch already in flight rather than cancelling that fetch. Bumping a load generation is the
+obvious way to satisfy invariant 0b here and the wrong one: `HomeViewModel.load()` captures a
+generation, kicks `recoverDrafts()`, then awaits the list calls, so a deletion landing in that
+window fires from **inside** the load it would be cancelling — discarding the whole fetch
+rather than one row, leaving the list stale, `isOffline` unset and the spinner stuck on. The
+Pages drawer is the exception that keeps its per-level bump: discarding a stale level fetch is
+exactly what it wants there, and its `loading` flag is cleared in a `defer`.
+
 When a deletion lands, every list holding the row **drops it** rather than letting it
 un-strike back into looking alive — `observeDocumentDeleted` is a fan-out precisely because
 Home, Shared, Search, the Pages drawer and the editor's Subpages each keep their own array, and a single

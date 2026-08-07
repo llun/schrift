@@ -26,6 +26,8 @@ final class SharedViewModel {
     /// outcome only if no newer load() superseded it (.task refires on every
     /// tab revisit and races .refreshable).
     private var loadGeneration = 0
+    /// Documents whose deletion landed while a fetch was in flight — see `dropDeletedDocument`.
+    private var deletedSinceLoad: Set<UUID> = []
     /// True once a real local list exists (cached or fetched). An unknown list
     /// must never render as "0 documents"; nil ≠ empty.
     private var hasLoaded = false
@@ -59,9 +61,11 @@ final class SharedViewModel {
     private func dropDeletedDocument(_ documentID: UUID) {
         documents.removeAll { $0.id == documentID }
         enrichment[documentID] = nil
-        // A list fetch already in flight was issued before the DELETE landed and would write
-        // the row back — into the cache as well. CLAUDE.md invariant 0b.
-        loadGeneration += 1
+        // A fetch already in flight was issued before the DELETE and would write the row back,
+        // into the cache as well (invariant 0b). Filtered rather than cancelled by a generation
+        // bump — see `HomeViewModel`'s note: the announcement can fire from inside the very
+        // load it would be discarding.
+        deletedSinceLoad.insert(documentID)
     }
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through
@@ -137,8 +141,12 @@ final class SharedViewModel {
             return
         }
         guard generation == loadGeneration else { return }
-        documents = withMe
-        cache.saveSharedWithMeDocuments(withMe)
+        // Anything deleted while this was in flight is dropped before it can be applied or
+        // cached — the fetch predates the DELETE and cannot know.
+        let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
+        deletedSinceLoad.removeAll()
+        documents = surviving
+        cache.saveSharedWithMeDocuments(surviving)
         hasLoaded = true
         isOffline = false
         isLoading = false

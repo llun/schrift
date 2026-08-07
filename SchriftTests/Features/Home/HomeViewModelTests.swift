@@ -940,6 +940,42 @@ final class HomeViewModelTests: XCTestCase {
             path: "0001", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
     }
 
+    /// **A landed deletion must not make Home discard its own list fetch.** `load()` captures a
+    /// generation, kicks `recoverDrafts()`, then awaits the two list calls — so a deletion
+    /// landing in that window fires the observer *inside* the load. Bumping the shared
+    /// generation there is far too blunt: it throws away the whole fetch, not just the deleted
+    /// row, leaving the list stale and the offline flag unset.
+    func testALandedDeletionDoesNotDiscardAnInFlightListFetch() async {
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser(userID: user))
+        let doomed = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let kept = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
+        let pinnedBody = Self.paginatedFixture(
+            id: doomed.uuidString.lowercased(), title: "Doomed", isFavorite: true)
+        let recentBody = Self.paginatedFixture(
+            id: kept.uuidString.lowercased(), title: "Kept", isFavorite: false)
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            return .init(
+                statusCode: 200, headers: [:],
+                body: url.contains("favorite_list") ? pinnedBody : recentBody, error: nil, delay: 0.2)
+        }
+
+        let loading = Task { await viewModel.load() }
+        // Lands while the two list calls are still in flight.
+        try? await Task.sleep(for: .milliseconds(60))
+        viewModel.saveCoordinator.announceDocumentDeletedForTesting(doomed)
+        await loading.value
+
+        XCTAssertEqual(
+            viewModel.recentDocuments.map(\.id), [kept],
+            "the fetch was applied rather than thrown away")
+        XCTAssertFalse(viewModel.isLoading, "and the load finished")
+        XCTAssertTrue(
+            viewModel.pinnedDocuments.isEmpty,
+            "with the deleted row filtered out of what it applied")
+    }
+
     func testARowIsAnnotatedOnceItsDeletionIsQueued() {
         let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let viewModel = makeViewModel(signedInUser: makeSignedInUser(userID: user))
