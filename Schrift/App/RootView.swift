@@ -31,6 +31,7 @@ func collaborationScenePhaseAction(_ phase: ScenePhase) -> CollaborationScenePha
 private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
+    @State private var attachments: AttachmentLoader
     let serverURL: URL
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
@@ -77,6 +78,10 @@ private struct AuthenticatedHomeContainer: View {
                     return LocalAwarenessState(name: name, color: avatarColorHexString(for: name))
                 },
                 socketFactory: URLSessionWebSocket.factory()))
+        // App-scoped for the same reason the manager is: the same attachment can
+        // be on screen in more than one place, and one owner is what gives
+        // in-flight de-duplication and a single authority over the disk cache.
+        _attachments = State(initialValue: AttachmentLoader(client: client, serverOrigin: origin))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
@@ -141,6 +146,7 @@ private struct AuthenticatedHomeContainer: View {
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .environment(collaboration)
+        .environment(attachments)
         .task {
             // Learn whether this deployment runs the collaboration server, so the
             // availability gate can open once the toggle is on, and our own
@@ -177,6 +183,10 @@ struct RootView: View {
                     // recorded decision, see the 2026-07-03 spec and the
                     // instant-local-doc-lists plan.
                     DocumentContentCacheStore().removeAll()
+                    // Downloaded attachment bytes are document content too, and
+                    // are re-downloadable, so they go with the session for the
+                    // same reason.
+                    AttachmentCacheStore().removeAll()
                     // The account id goes with the session. Pending-create records
                     // deliberately survive — for a document that exists nowhere else the
                     // record and its draft are the only copies — and what keeps that safe is

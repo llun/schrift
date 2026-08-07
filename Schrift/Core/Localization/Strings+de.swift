@@ -245,6 +245,11 @@ enum Strings_de {
         .editor_image_loading_named_a11y: "Bild wird geladen: %@",
         .editor_image_external: "Externes Bild · Zum Laden tippen",
         .editor_image_external_a11y: "Externes Bild von %@. Zum Laden tippen.",
+        .editor_attachment_downloading: "Wird geladen…",
+        .editor_attachment_failed_retry: "Download fehlgeschlagen · Zum Wiederholen tippen",
+        .editor_attachment_offline: "Verfügbar, sobald online",
+        .editor_attachment_a11y: "Anhang: %@. %@",
+        .editor_attachment_not_previewable: "Kann hier nicht angezeigt werden",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Absatz am Ende hinzufügen",

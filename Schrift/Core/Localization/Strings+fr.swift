@@ -243,6 +243,11 @@ enum Strings_fr {
         .editor_image_loading_named_a11y: "Chargement de l’image : %@",
         .editor_image_external: "Image externe · Appuyez pour charger",
         .editor_image_external_a11y: "Image externe depuis %@. Appuyez pour charger.",
+        .editor_attachment_downloading: "Téléchargement…",
+        .editor_attachment_failed_retry: "Échec du téléchargement · Appuyez pour réessayer",
+        .editor_attachment_offline: "Disponible une fois en ligne",
+        .editor_attachment_a11y: "Pièce jointe : %@. %@",
+        .editor_attachment_not_previewable: "Aperçu impossible ici",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Ajouter un paragraphe à la fin",

@@ -65,10 +65,14 @@ func markdownHeadingFont(level: Int) -> Font {
 
 struct MarkdownBlockView: View {
     let block: EditorBlock
-    /// Origin the embedded image gate compares against (`imageLoadPolicy`).
+    /// Origin the embedded image gate compares against (`imageLoadPolicy`), and
+    /// the one an attachment link must be on to render as a card at all.
     /// Required (no default) so a new render site can't silently skip the gate.
     let serverOrigin: String
     var numberedIndex: Int = 1
+    /// Chrome only: it changes what an *uncached* attachment card says, never
+    /// whether a cached one opens.
+    var isOffline: Bool = false
 
     var body: some View {
         switch block.kind {
@@ -78,9 +82,18 @@ struct MarkdownBlockView: View {
                 .foregroundStyle(DocsColor.textPrimary)
 
         case .paragraph:
-            Text(markdownInlineText(block.text))
-                .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
+            // An uploaded attachment reaches the app as an ordinary standalone
+            // link — the server's markdown export flattens the web editor's
+            // `file`/`pdf` blocks to one. Nothing else marks it, so the url
+            // shape and the server origin decide (`attachmentDisplay`), and
+            // anything that isn't provably an attachment stays plain prose.
+            if let attachment = attachmentDisplay(for: block, serverOrigin: serverOrigin) {
+                AttachmentCardView(display: attachment, isOffline: isOffline)
+            } else {
+                Text(markdownInlineText(block.text))
+                    .font(DocsFont.body)
+                    .foregroundStyle(DocsColor.textPrimary)
+            }
 
         case .bulletItem:
             HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
@@ -308,22 +321,70 @@ private struct MarkdownBlockCatalog: View {
                 MarkdownBlockView(
                     block: EditorBlock(kind: .image(alt: "tracker", url: "https://tracker.example/beacon.png")),
                     serverOrigin: serverOrigin)
+                // Same-origin uploaded attachment: renders as a card, not a link.
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .paragraph, text: "[Q3 report.pdf](\(attachmentURL))"),
+                    serverOrigin: serverOrigin)
+                // The same card with nothing cached and no network.
+                MarkdownBlockView(
+                    block: EditorBlock(kind: .paragraph, text: "[Notes.docx](\(attachmentURL))"),
+                    serverOrigin: serverOrigin, isOffline: true)
+                // Off-origin link of the same shape: stays ordinary prose.
+                MarkdownBlockView(
+                    block: EditorBlock(
+                        kind: .paragraph,
+                        text: "[elsewhere.pdf](https://files.example/media/\(previewDocumentID)/attachments/x.pdf)"),
+                    serverOrigin: serverOrigin)
             }
             .padding()
         }
     }
 
     private let serverOrigin = "https://docs.llun.dev"
+    private let previewDocumentID = "11111111-1111-4111-8111-111111111111"
+    private var attachmentURL: String {
+        "\(serverOrigin)/media/\(previewDocumentID)/attachments/22222222-2222-4222-8222-222222222222.pdf"
+    }
+}
+
+/// The card reads `AttachmentLoader` from the environment, so every preview that
+/// can render one must inject it — transitively, for any parent that embeds this
+/// view (see the environment-store rule in CLAUDE.md).
+///
+/// The **cache** is pre-seeded rather than the loader's state table, because
+/// `loadIfNeeded` re-checks the disk even for an already-`.cached` entry (it has
+/// to: eviction can delete a file out from under a live card). Seeding a state
+/// alone would fall straight through to a real network request from the canvas.
+/// A seeded file shows the state worth reviewing — a ready attachment — and asks
+/// for nothing. The downloading/failed/offline states are pinned by
+/// `attachmentCardState`'s tests.
+@MainActor private func previewAttachmentLoader() -> AttachmentLoader {
+    let origin = "https://docs.llun.dev"
+    let ready =
+        "\(origin)/media/11111111-1111-4111-8111-111111111111/attachments/"
+        + "22222222-2222-4222-8222-222222222222.pdf"
+    let cache = AttachmentCacheStore(
+        directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("SchriftPreviewAttachments", isDirectory: true))
+    if let display = parseAttachmentLink("[preview](\(ready))", serverOrigin: origin) {
+        _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: display)
+    }
+    return AttachmentLoader(
+        client: DocsAPIClient(baseURL: URL(string: "\(origin)/api/v1.0/")!),
+        serverOrigin: origin,
+        cache: cache)
 }
 
 #Preview("Light") {
     MarkdownBlockCatalog()
         .environment(LocalizationStore())
+        .environment(previewAttachmentLoader())
         .preferredColorScheme(.light)
 }
 
 #Preview("Dark") {
     MarkdownBlockCatalog()
         .environment(LocalizationStore())
+        .environment(previewAttachmentLoader())
         .preferredColorScheme(.dark)
 }

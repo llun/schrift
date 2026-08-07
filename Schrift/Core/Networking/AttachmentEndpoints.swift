@@ -101,4 +101,24 @@ extension DocsAPIClient {
         guard isSameOriginPath(path) else { throw DocsAPIError.network("Invalid media-check path") }
         return try await get(path)
     }
+
+    /// Downloads an attachment's bytes from a rooted `/media/…` path, resolving
+    /// against the host root exactly as `checkMedia` does.
+    ///
+    /// The path derives from a url embedded in document content — authored by a
+    /// co-author, a web client or a live peer — so it carries the same guard for
+    /// the same reason: an unchecked `//evil.com/x` would resolve off-origin and
+    /// leak the reader's IP, User-Agent and reading time to a host they never
+    /// chose. `attachmentMediaPath(for:serverOrigin:)` already proves the origin
+    /// and rebuilds the path from validated parts; this re-checks because it is
+    /// the layer that actually issues the request.
+    ///
+    /// Cookies authenticate it via the shared storage, like every other request.
+    /// Known residual, shared with `MarkdownImageView`: `URLSession` follows
+    /// redirects, so a same-origin path the trusted server 302s off-origin still
+    /// leaks. A redirect-blocking session is the fix and is a separate change.
+    func mediaData(path: String) async throws -> Data {
+        guard isSameOriginPath(path) else { throw DocsAPIError.network("Invalid media path") }
+        return try await getRawData(path)
+    }
 }

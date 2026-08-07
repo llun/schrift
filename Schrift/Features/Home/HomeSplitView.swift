@@ -76,4 +76,5 @@ struct HomeSplitView: View {
         serverOrigin: "https://docs.llun.dev"
     )
     .environment(LocalizationStore())
+    .environment(AttachmentLoader.inert())
 }

@@ -232,4 +232,5 @@ struct MainTabView: View {
     )
     .environment(LocalizationStore())
     .environment(AppearanceStore())
+    .environment(AttachmentLoader.inert())
 }

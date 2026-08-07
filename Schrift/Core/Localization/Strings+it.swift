@@ -241,6 +241,11 @@ enum Strings_it {
         .editor_image_loading_named_a11y: "Caricamento immagine: %@",
         .editor_image_external: "Immagine esterna · Tocca per caricare",
         .editor_image_external_a11y: "Immagine esterna da %@. Tocca per caricare.",
+        .editor_attachment_downloading: "Download in corso…",
+        .editor_attachment_failed_retry: "Download non riuscito · Tocca per riprovare",
+        .editor_attachment_offline: "Disponibile quando sei online",
+        .editor_attachment_a11y: "Allegato: %@. %@",
+        .editor_attachment_not_previewable: "Non può essere visualizzato qui",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Aggiungi paragrafo alla fine",

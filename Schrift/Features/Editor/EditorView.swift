@@ -646,7 +646,8 @@ struct EditorView: View {
                         ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
                             MarkdownBlockView(
                                 block: block, serverOrigin: serverOrigin,
-                                numberedIndex: numberedIndex(of: index, in: viewModel.blocks)
+                                numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                isOffline: isOffline
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -1003,4 +1004,5 @@ struct EditorView: View {
     )
     .environment(LocalizationStore())
     .environment(DocumentCollaborationManager.inert())
+    .environment(AttachmentLoader.inert())
 }

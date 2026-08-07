@@ -271,6 +271,19 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_image_external = "editor.image.external"  // "External image · Tap to load"
     case editor_image_external_a11y = "editor.image.external_a11y"  // "External image from %@. Tap to load."
 
+    // Editor - file attachment cards (AttachmentCardView). The file's name is
+    // document content and is never localized; these are the state line beneath
+    // it. `a11y` takes the name and whichever state phrase is showing (or the
+    // file type, e.g. "PDF", once the bytes are cached).
+    case editor_attachment_downloading = "editor.attachment.downloading"  // "Downloading…"
+    case editor_attachment_failed_retry = "editor.attachment.failed_retry"  // "Couldn't download · Tap to retry"
+    case editor_attachment_offline = "editor.attachment.offline"  // "Available when online"
+    case editor_attachment_a11y = "editor.attachment.a11y"  // "Attachment: %@. %@"
+    // Cached, but deliberately never handed to QuickLook: it renders HTML
+    // through WebKit, which would fetch remote subresources chosen by the
+    // document's author (see `attachmentIsPreviewable`).
+    case editor_attachment_not_previewable = "editor.attachment.not_previewable"  // "Can't be previewed here"
+
     // Editor - block canvas accessibility labels (BlockEditorView)
     case editor_add_paragraph_a11y = "editor.add_paragraph_a11y"  // "Add paragraph at end"
     case editor_divider_a11y = "editor.divider_a11y"  // "Divider"
