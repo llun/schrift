@@ -4,9 +4,10 @@ import SwiftUI
 /// popovers are unreliable on iOS; this mirrors mobile Notion).
 struct SlashMenuView: View {
     let query: String
-    /// Drops the uploading items (Photo, File) — it POSTs an attachment, which has no offline queue.
+    /// Drops **File**, which POSTs an attachment with no offline queue. Photo is offered —
+    /// a queued photo is stored on the device and uploaded by the replay.
     var isOffline: Bool = false
-    /// No server id to upload against — see `canOfferPhotoInsertion`.
+    /// No server id to upload against — see `SlashMenuAction.requiresImmediateUpload`.
     var isLocalDocument: Bool = false
     var onSelect: (SlashMenuItem) -> Void
 
@@ -16,7 +17,7 @@ struct SlashMenuView: View {
     @ScaledMetric(relativeTo: .body) private var maxHeight: CGFloat = 4 * DocsSpacing.rowMinHeight
 
     var body: some View {
-        let items = filteredSlashItems(query: query, isOffline: isOffline, isLocalDocument: isLocalDocument)
+        let items = filteredSlashItems(query: query)
         if !items.isEmpty {
             ScrollView {
                 VStack(spacing: 0) {
@@ -80,8 +81,6 @@ private var slashMenuPreview: some View {
         VStack {
             SlashMenuView(query: "", onSelect: { _ in })
             SlashMenuView(query: "head", onSelect: { _ in })
-            // Offline: same list minus Photo, the one item that POSTs.
-            SlashMenuView(query: "", isOffline: true, onSelect: { _ in })
         }
         .padding()
     }

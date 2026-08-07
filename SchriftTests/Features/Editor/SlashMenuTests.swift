@@ -34,29 +34,36 @@ final class SlashMenuTests: XCTestCase {
         XCTAssertTrue(filteredSlashItems(query: "zzzz").isEmpty)
     }
 
-    /// Editing offline is supported because the draft pipeline queues every edit —
-    /// but a photo POSTs a multipart attachment, and there is no queue for one. Offered
-    /// offline it would open the picker and re-encode the chosen image only to fail, so
-    /// it is withheld like "Add a subpage" and "New page". Everything else is a local
-    /// block transformation and stays available.
-    func testOfflineWithholdsEveryUploadAndKeepsEveryLocalTransformation() {
+    /// Offline withholds only what has nowhere to go. **File** still POSTs with no queue
+    /// behind it; **Photo** is offered, because a queued photo is stored on the device and
+    /// uploaded by the attachment replay.
+    func testOfflineWithholdsOnlyTheFileItem() {
         let offline = filteredSlashItems(query: "", isOffline: true)
 
-        XCTAssertFalse(offline.contains { $0.action.requiresUpload })
-        // Exactly the uploading items are missing; every local transformation
-        // stays, because the draft pipeline queues those like any other edit.
-        XCTAssertEqual(offline.count, allSlashMenuItems.filter { !$0.action.requiresUpload }.count)
-        XCTAssertEqual(allSlashMenuItems.filter { $0.action.requiresUpload }.count, 2, "photo and file")
+        XCTAssertFalse(offline.contains { $0.action == .insertAttachment })
+        XCTAssertTrue(offline.contains { $0.action == .insertPhoto })
+        XCTAssertEqual(offline.count, allSlashMenuItems.count - 1)
+        XCTAssertEqual(
+            allSlashMenuItems.filter { $0.action.requiresImmediateUpload }.count, 1,
+            "file only — photo has a queue now")
 
         let online = filteredSlashItems(query: "", isOffline: false)
         XCTAssertTrue(online.contains { $0.action == .insertPhoto })
         XCTAssertTrue(online.contains { $0.action == .insertAttachment })
     }
 
-    func testALocalDocumentWithholdsEveryUploadToo() {
-        // A client-minted id has nothing to upload against.
+    func testALocalDocumentWithholdsTheFileItemButOffersPhoto() {
+        // A client-minted id has nothing to upload against — but a queued photo waits for the
+        // document's own create and uploads after it, so it is offered.
         let local = filteredSlashItems(query: "", isLocalDocument: true)
-        XCTAssertFalse(local.contains { $0.action.requiresUpload })
+        XCTAssertFalse(local.contains { $0.action == .insertAttachment })
+        XCTAssertTrue(local.contains { $0.action == .insertPhoto })
+    }
+
+    /// The gate applies to a search that names it too, not just the unfiltered list.
+    func testPhotoIsFoundByAMatchingQueryEvenOffline() {
+        XCTAssertEqual(filteredSlashItems(query: "photo", isOffline: true).map(\.id), ["photo"])
+        XCTAssertTrue(filteredSlashItems(query: "file", isOffline: true).isEmpty)
     }
 
     func testTheFileItemMatchesTheWordsSomeoneWouldType() {
@@ -68,19 +75,15 @@ final class SlashMenuTests: XCTestCase {
     }
 
     func testTheFileItemUsesABundledIcon() {
-        // `.description` is in the subset font; naming an unbundled glyph would
-        // render as a blank box.
-        // `.description` is in the bundled subset; naming an unbundled Material
-        // glyph would render as a blank box. (Asserting membership in
-        // `MaterialIcon.allCases` would prove nothing — every case is in it.)
+        // `.description` is in the bundled subset; naming an unbundled Material glyph would
+        // render as a blank box. (Asserting membership in `MaterialIcon.allCases` would prove
+        // nothing — every case is in it.)
         XCTAssertEqual(allSlashMenuItems.first { $0.action == .insertAttachment }?.icon, .description)
     }
 
-    /// The gate applies to a search that names it too, not just the unfiltered list —
-    /// otherwise typing "/photo" would walk straight past it.
-    func testOfflineWithholdsPhotoFromAMatchingQuery() {
-        XCTAssertTrue(filteredSlashItems(query: "photo", isOffline: true).isEmpty)
-        XCTAssertEqual(filteredSlashItems(query: "photo", isOffline: false).map(\.id), ["photo"])
+    /// And a search that names it finds it, not just the unfiltered list.
+    func testPhotoIsFoundByAMatchingQuery() {
+        XCTAssertEqual(filteredSlashItems(query: "photo").map(\.id), ["photo"])
     }
 
     // MARK: - Actions

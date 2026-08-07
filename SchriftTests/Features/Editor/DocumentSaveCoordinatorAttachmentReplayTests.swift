@@ -525,7 +525,8 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
         env.coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "![](\(placeholder))")
         var observed: [(String, String)] = []
         env.coordinator.setPendingAttachmentRewriteObserver(
-            { placeholder, resolved in observed.append((placeholder, resolved)) }, for: documentID)
+            { placeholder, resolved in observed.append((placeholder, resolved)) },
+            for: documentID, token: UUID())
 
         await env.coordinator.syncPendingDrafts()
         await waitUntil { self.contentPatches(log) == 1 }
@@ -535,6 +536,52 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
         XCTAssertEqual(observed.count, 1)
         XCTAssertEqual(observed.first?.0, placeholder)
         XCTAssertEqual(observed.first?.1, Self.mediaURL)
+    }
+
+    func testEveryOpenEditorOnADocumentIsNotified() async {
+        let log = RequestRecorder()
+        stubPipeline(log: log)
+        let defaults = makeDefaults()
+        let placeholder = seedPhoto(defaults)
+        let env = makeEnvironment(sharing: defaults)
+        env.coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "![](\(placeholder))")
+        var first: [String] = []
+        var second: [String] = []
+        // Two screens on one document — two tabs, or iPad split view. A single slot per document
+        // was last-write-wins, so the first screen kept a placeholder its next flush would
+        // reintroduce with no record left to resolve it.
+        env.coordinator.setPendingAttachmentRewriteObserver(
+            { _, resolved in first.append(resolved) }, for: documentID, token: UUID())
+        env.coordinator.setPendingAttachmentRewriteObserver(
+            { _, resolved in second.append(resolved) }, for: documentID, token: UUID())
+
+        await env.coordinator.syncPendingDrafts()
+        await waitUntil { self.contentPatches(log) == 1 }
+
+        XCTAssertEqual(first, [Self.mediaURL])
+        XCTAssertEqual(second, [Self.mediaURL])
+    }
+
+    func testClearingOneEditorsObserverLeavesAnothersInPlace() async {
+        let log = RequestRecorder()
+        stubPipeline(log: log)
+        let defaults = makeDefaults()
+        let placeholder = seedPhoto(defaults)
+        let env = makeEnvironment(sharing: defaults)
+        env.coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "![](\(placeholder))")
+        let goingAway = UUID()
+        var survivor: [String] = []
+        env.coordinator.setPendingAttachmentRewriteObserver({ _, _ in }, for: documentID, token: goingAway)
+        env.coordinator.setPendingAttachmentRewriteObserver(
+            { _, resolved in survivor.append(resolved) }, for: documentID, token: UUID())
+        // A popped screen's teardown is deferred a turn, so it can land after a freshly-pushed
+        // screen has registered. It must remove only its own.
+        env.coordinator.setPendingAttachmentRewriteObserver(nil, for: documentID, token: goingAway)
+
+        await env.coordinator.syncPendingDrafts()
+        await waitUntil { self.contentPatches(log) == 1 }
+
+        XCTAssertEqual(survivor, [Self.mediaURL])
     }
 }
 

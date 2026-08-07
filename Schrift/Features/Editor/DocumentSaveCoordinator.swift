@@ -172,9 +172,16 @@ final class DocumentSaveCoordinator {
     /// Bumped on every mutation, so an `@Observable` consumer (the image leaf's pending/failed
     /// state) re-reads. Same role `pendingCreatesVersion` plays for local documents.
     private(set) var pendingAttachmentsVersion = 0
-    /// Per-document callbacks that rewrite an *open editor's* in-memory copy in the same turn the
-    /// draft is rewritten. See `commitResolvedAttachment` for why that turn must not be split.
-    private var attachmentRewriteObservers: [UUID: @MainActor (String, String) -> Void] = [:]
+    /// Callbacks that rewrite an *open editor's* in-memory copy in the same turn the draft is
+    /// rewritten. See `commitResolvedAttachment` for why that turn must not be split.
+    ///
+    /// Keyed by document **and** by a per-registration token, so several editors on one document
+    /// (two tabs, iPad split view) each get called. A single slot per document was last-write-
+    /// wins: the second screen's registration silently disabled the first, and a pop-then-push
+    /// could have the first screen's deferred teardown clear the second's — after which that
+    /// editor's next flush would reintroduce a placeholder whose record is gone, which is
+    /// precisely the wedge this observer exists to prevent.
+    private var attachmentRewriteObservers: [UUID: [UUID: @MainActor (String, String) -> Void]] = [:]
     /// Fired after a locally-created document has been re-keyed onto its server id.
     ///
     /// The list that was showing it needs to *refetch*, not merely re-derive: the local row is
@@ -896,12 +903,23 @@ final class DocumentSaveCoordinator {
     }
 
     /// Registered by an editor while it is on screen, so a replay can rewrite its in-memory
-    /// blocks in the same turn it rewrites the draft. Pass nil to clear.
+    /// blocks in the same turn it rewrites the draft.
+    ///
+    /// `token` identifies this registration: passing nil removes only that one, so a screen
+    /// tearing down cannot clear an observer another screen installed for the same document.
     func setPendingAttachmentRewriteObserver(
         _ observer: (@MainActor (_ placeholderURL: String, _ resolvedURL: String) -> Void)?,
-        for documentID: UUID
+        for documentID: UUID,
+        token: UUID
     ) {
-        attachmentRewriteObservers[documentID] = observer
+        if let observer {
+            attachmentRewriteObservers[documentID, default: [:]][token] = observer
+        } else {
+            attachmentRewriteObservers[documentID]?[token] = nil
+            if attachmentRewriteObservers[documentID]?.isEmpty == true {
+                attachmentRewriteObservers[documentID] = nil
+            }
+        }
     }
 
     private func hasOpenEditor(documentID: UUID) -> Bool {
@@ -2322,7 +2340,10 @@ final class DocumentSaveCoordinator {
             }
         }
         // The open editor's own copy, so its next flush cannot reintroduce what was just cleared.
-        attachmentRewriteObservers[documentID]?(pendingAttachmentPlaceholderURL(for: localID), resolvedURL)
+        let placeholderURL = pendingAttachmentPlaceholderURL(for: localID)
+        for observer in attachmentRewriteObservers[documentID]?.values ?? [:].values {
+            observer(placeholderURL, resolvedURL)
+        }
 
         removePendingAttachment(localID: localID)
 
