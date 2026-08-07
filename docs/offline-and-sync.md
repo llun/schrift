@@ -2156,7 +2156,17 @@ generation, kicks `recoverDrafts()`, then awaits the list calls, so a deletion l
 window fires from **inside** the load it would be cancelling — discarding the whole fetch
 rather than one row, leaving the list stale, `isOffline` unset and the spinner stuck on. The
 Pages drawer is the exception that keeps its per-level bump: discarding a stale level fetch is
-exactly what it wants there, and its `loading` flag is cleared in a `defer`.
+exactly what it wants there, and its `loading` flag is cleared in a `defer`. It bumps for
+**every** loading level rather than only the ones already holding the row — the unprotected
+case is the common one, a level being fetched for the first time, where the row is in the
+response and nowhere else yet — plus the deleted document's own level, or an in-flight fetch of
+*its* children re-creates the entry the purge just dropped. The editor's Subpages list bumps
+`childrenGeneration` for the identical reason.
+
+**An unreadable delete store also suppresses the 404 reap.** `pendingDeletes` is empty then, so
+`isPendingDelete` answers false for every tombstoned document and a 404 caused by the app's own
+DELETE reads as a co-author's delete — taking the undo's only payload. Same asymmetry the
+create store's guard states: cleaning up nothing is recoverable, deleting the only copy is not.
 
 When a deletion lands, every list holding the row **drops it** rather than letting it
 un-strike back into looking alive — `observeDocumentDeleted` is a fan-out precisely because
