@@ -1085,9 +1085,99 @@ does for an off-origin image's tap-to-load. The states that draw no button
 (downloading, offline-and-uncached, and a markup type) still enter editing, and
 the toolbar's Edit action always does.
 
-**Not yet.** Inserting an attachment from the app, and modelling `file`/`pdf`
-nodes in `YBlockProjection` (they project `.opaque` today, which correctly keeps
-a document holding one out of live editing while the default-off flag is off).
+**Not yet.** Modelling `file`/`pdf` nodes in `YBlockProjection` (they project
+`.opaque` today, which correctly keeps a document holding one out of live
+editing while the default-off flag is off).
+
+## File attachments (write side)
+
+*Added 2026-08-07.* An attachment stops being a paragraph that happens to hold a
+link and becomes a first-class leaf block, so a document saved from the app
+renders on the web as a real file chip rather than as text.
+
+### `BlockKind.attachment`, and why classification lives where it does
+
+`parseEditorBlocks(_:serverOrigin:)` mints `.attachment(name:url:)` for a
+standalone link that `parseAttachmentLink` accepts. The origin parameter
+**defaults to `""`, which classifies nothing** — so every existing caller keeps
+today's behavior, and the parameter is passed only where the distinction
+matters: the encoder, and the editor.
+
+Classification happens in `flushPending`'s single-line branch, *not* in
+`parseClassifiedLine`, and that placement is the whole design. A `.attachment`
+serializes back to the identical line and joins its neighbours exactly as the
+paragraph it came from would (it is deliberately not column-zero-classified), so:
+
+> for every input, `serializeMarkdown(parse(md, origin))` ==
+> `serializeMarkdown(parse(md))`
+
+That identity — `testAttachmentClassificationNeverChangesSerializedMarkdown` — is
+what lets `canonicalMarkdown`, `draftSyncDecision`, `markdownSurvivesRoundTrip`
+and the whole save coordinator go on parsing without an origin and stay correct.
+Classify in `parseClassifiedLine` instead and it breaks immediately: an
+attachment line adjacent to prose would split into two blocks under one parse and
+stay one `.unknown` under the other, and the sync machinery would start seeing
+differences that aren't real.
+
+The origin reaches the encoder without threading through the save coordinator at
+all: `MarkdownYjs.encode(markdown:serverOrigin:)` is called from exactly one
+production site, `saveDocumentContent`, which runs on the `DocsAPIClient` actor
+and reads `serverOrigin` straight off its own `baseURL`. It is **not** defaulted
+there — a boundary that moves saved bytes should be impossible to cross by
+forgetting an argument.
+
+### The `file` node, and why never `pdf`
+
+`.attachment` encodes as BlockNote's stock **`file`** node — a leaf with four
+props (`backgroundColor`, `name`, `url`, `caption`; no `textAlignment`, no
+`textColor`, no `showPreview`, no `previewWidth`) — for **every** attachment
+type, PDFs included.
+
+docs' own `pdf` node is deliberately never written. Its `showPreview` defaults to
+true, and a `pdf` block with preview on exports to *nothing* through the server's
+markdown exporter (see the read-side section above), so emitting one would make
+the block invisible to this app and the next full-overwrite save would destroy
+it. A chip the web renders is the safe parity point until the upstream export is
+fixed.
+
+The golden fixture (`YjsEncoderTests.testFileBlockIsLeafWithProps`) was captured
+from real yjs 13.6.31 driving `@blocknote/server-util@0.51.4`'s
+`blocksToYXmlFragment` into a `Y.Doc` whose clientID was pinned before any
+content existed — and the harness was validated by reproducing the committed
+image fixture byte for byte first. **The bytes are the authority on prop order**,
+not the image block's prop list, which is longer and differently ordered.
+
+> ⚠️ **This changed saved bytes.** A document containing a standalone
+> same-origin attachment link — exactly what the web's `file` block and a
+> preview-off `pdf` block export — used to re-save as a paragraph plus a link and
+> now re-saves as a `file` node. That is the intended round-trip repair, but it
+> is a representation change to web-authored content, the same class as the
+> `_`-emphasis change, and it was signed off as such. Every pre-existing golden
+> fixture is unmoved (they parse with the origin-less default).
+
+### Inserting
+
+Slash-menu **File** → `.fileImporter` (out of process, so no usage description
+and no `project.yml` change) → `loadPickedAttachmentFile` → the same
+`attachment-upload` endpoint and media-check poll photos use →
+`insertAttachmentBlock`.
+
+`insertAttachmentBlock` is a structural twin of `insertImageBlock` and must stay
+one: it never resurrects a discarded document, never re-parses the whole document
+(which would re-mint every block id and make a live forward diff as delete-all +
+reinsert), and verifies against the **saved** markdown before committing — a
+neighbouring fence can swallow the line even when the block array looks right.
+
+`sanitizedAttachmentFileName` enforces the union of two unrelated requirements:
+multipart-header safety (no quote, CR, LF) *and* markdown-label safety (no
+brackets or parens), because the picked name is interpolated into both. Size is
+refused from the file system's own answer **before** the bytes are read; the
+server's 10 MB default remains the cap users normally meet, and it gets its own
+copy rather than a useless "please try again".
+
+Both uploading affordances — photo and file — are withheld offline and on a
+document with no server id, now expressed as `SlashMenuAction.requiresUpload` so
+a third one cannot forget the rule. Only one upload runs at a time.
 
 ## Screens
 

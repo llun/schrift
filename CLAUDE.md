@@ -1367,14 +1367,14 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorBlock.id` can't auto-load. **Known accepted residual:** `AsyncImage` follows
   redirects, so a same-origin URL the trusted server 302s off-origin still leaks; the
   fix (a redirect-blocking `URLSession` delegate) is a follow-up.
-- **A generic file attachment (PDF, docx, …) is recognised, never parsed.** The
-  web's BlockNote `file` block and docs' custom `pdf` block both export as a
-  standalone `[name](url)` line, so `AttachmentDisplay.swift`'s
-  `parseAttachmentLink` classifies one at **render** time and the reading surface
-  draws an `AttachmentCardView` instead of link text. Nothing in the parser,
-  serializer or encoder knows about attachments — a save re-serializes the same
-  paragraph it always did, and every golden hex fixture is untouched. Three gates
-  must all pass, and each is load-bearing: the link shape is unambiguous (the
+- **A generic file attachment (PDF, docx, …) is a first-class leaf block, and
+  classification is enabled by an origin.** The web's BlockNote `file` block and
+  docs' custom `pdf` block both export as a standalone `[name](url)` line, so
+  `parseEditorBlocks(_:serverOrigin:)` mints `BlockKind.attachment(name:url:)`
+  for one `parseAttachmentLink` accepts. The origin **defaults to `""`, which
+  classifies nothing**, so every caller that doesn't pass one keeps today's exact
+  behavior. Three gates must all pass, and each is load-bearing: the link shape is
+  unambiguous (the
   `parseImageLine` conservatism — anything doubtful stays prose, which is
   lossless); `siteOrigin(for: url) == serverOrigin`, which is **what makes
   auto-download safe with no consent flow** (an off-origin url is never an
@@ -1386,6 +1386,50 @@ markdown write endpoint**. Understand this before touching the save path:
   multi-line `.unknown` block, and a card there would misrepresent what a save
   writes back. An `-unsafe` key is routine (a `.docx` sniffs as `zip`), not a
   danger signal — only the server's `Content-Disposition` differs.
+- **Classification lives in `flushPending`'s single-line branch and must stay
+  there.** A `.attachment` serializes back to the identical line and is
+  deliberately *not* column-zero-classified, so an origin-aware parse and an
+  origin-less one produce the **same serialized markdown for every input**
+  (`testAttachmentClassificationNeverChangesSerializedMarkdown`). That identity is
+  the entire reason `canonicalMarkdown`, `draftSyncDecision`,
+  `markdownSurvivesRoundTrip` and the save coordinator can go on parsing without
+  an origin and stay correct. Move it into `parseClassifiedLine` and it breaks at
+  once: an attachment line adjacent to prose splits into two blocks under one
+  parse and stays one `.unknown` under the other, and the sync machinery starts
+  seeing differences that aren't real. The origin reaches the **encoder** without
+  passing through the coordinator at all — `MarkdownYjs.encode(markdown:serverOrigin:)`
+  has one production caller, `saveDocumentContent`, which reads it off the client's
+  own `baseURL`; it is not defaulted there, because a boundary that moves saved
+  bytes must not be crossable by forgetting an argument.
+- **`.attachment` encodes as BlockNote's `file` node — never `pdf`, for any
+  type.** Four props (`backgroundColor`, `name`, `url`, `caption`); no
+  `textAlignment`, no `textColor`, no `showPreview`, no `previewWidth` — a
+  *different and shorter* set than the image block's, so read the golden fixture
+  rather than copying the image's prop list. The `pdf` node is refused because its
+  `showPreview` defaults to true and such a block exports to nothing (see below),
+  which would make it invisible here and let the next full-overwrite save destroy
+  it. Landing this **changed saved bytes** for documents holding a standalone
+  attachment link and required sign-off, exactly as the `_`-emphasis change did;
+  all pre-existing goldens are unmoved because they parse origin-less.
+- **`.attachment` is a leaf like `.image`**: deletes as a unit
+  (`mergeBlockWithPrevious`), never converted (`convertBlock` refuses), never
+  receives inline markers, `rendersInlineMarkdown` false, no `BlockTextView`. Both
+  surfaces render the same `AttachmentCardView`, and both fall back to plain link
+  text when the url no longer matches this server (a document opened after
+  switching servers) rather than drawing a card that could never load.
+- **Inserting an attachment mirrors the photo path exactly** — `.fileImporter`
+  (out of process; no usage description, no `project.yml` change) → the same
+  `attachment-upload` + media-check poll → `insertAttachmentBlock`, which is a
+  structural twin of `insertImageBlock` down to verifying against the **saved**
+  markdown before committing and never re-parsing the document (that would
+  re-mint every block id and make a live forward diff as delete-all + reinsert).
+  `sanitizedAttachmentFileName` enforces the union of two unrelated requirements,
+  because the picked name is interpolated into both: multipart-header safety (no
+  quote, CR, LF) *and* markdown-label safety (no brackets or parens, or the
+  block's own `[name](url)` line stops parsing back as one link). Size is refused
+  from the file system's answer **before** the bytes are read. Both uploading
+  affordances are withheld offline and on a local document via
+  `SlashMenuAction.requiresUpload`, and only one upload runs at a time.
 - **Attachment bytes go through `AttachmentLoader`, and its file names are the
   server's, never the author's.** The loader is app-scoped (built in `RootView`
   beside the collaboration manager, injected through the environment) so two
