@@ -206,6 +206,11 @@ enum L10nKey: String, CaseIterable, Sendable {
 
     // Editor - errors
     case editor_error_load = "editor.error.load"  // "Couldn't load this document. Pull to refresh to try again."
+    /// Shown instead of the body when a document the user deleted offline is opened anyway
+    /// — an in-document link, a pushed navigation value, or the iPad detail column still
+    /// holding it. Not a failure: the deletion is still undoable from any list that shows
+    /// the document, which is why the copy says what is waiting rather than what went wrong.
+    case editor_pending_delete = "editor.pending_delete"  // "This document is waiting to be deleted when you're back online."
     case editor_error_refresh = "editor.error.refresh"  // "Couldn't refresh. Please try again."
     case editor_error_add_subpage = "editor.error.add_subpage"  // "Couldn't add the subpage. Please try again."
     case editor_error_open_link = "editor.error.open_link"  // "Couldn't open that link. Please try again."

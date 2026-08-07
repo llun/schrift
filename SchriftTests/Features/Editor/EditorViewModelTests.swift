@@ -59,6 +59,7 @@ final class EditorViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: UserDefaults(suiteName: suiteName)!),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client,
@@ -105,6 +106,7 @@ final class EditorViewModelTests: XCTestCase {
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: draftStore, contentCache: contentCache,
             createStore: createStore,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.com", backgroundTasks: .noop)
         let document = coordinator.createLocalDocument(
             title: "Untitled document", parentID: nil,
@@ -2167,6 +2169,80 @@ final class EditorViewModelTests: XCTestCase {
 
         XCTAssertNil(contentCache.content(for: documentID))
         XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
+    /// A **queued** deletion is still cancellable, so the teardown purges nothing: the draft
+    /// and the cached body are exactly what the undo restores.
+    /// `DocumentSaveCoordinator.completePendingDelete` removes them when the DELETE really
+    /// lands, in an order a crash cannot tear.
+    func testHandleDidQueueDeleteEndsTheSessionWithoutPurging() async {
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry())
+        draftStore.save(PendingDraft(documentID: documentID, title: "D", markdown: "# D", updatedAt: Date()))
+
+        viewModel.handleDidQueueDelete()
+
+        XCTAssertNotNil(contentCache.content(for: documentID), "kept for the undo")
+        XCTAssertNotNil(draftStore.draft(for: documentID), "and so is the body")
+        XCTAssertTrue(viewModel.isDocumentDiscarded, "but nothing here may write again")
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    /// Opening a document whose deletion is queued says so and asks the server nothing — the
+    /// whole point of a deletion queued offline. `hasLoadedContent` stays false, so
+    /// `startEditing` cannot fire and no funnel here can enqueue.
+    func testLoadingATombstonedDocumentShowsTheMessageWithoutAnyRequest() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.contentCache.save(cachedEntry(markdown: "# Cached"))
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        env.coordinator.recordPendingDelete(
+            documentID: documentID, ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        await env.viewModel.load()
+
+        XCTAssertEqual(env.viewModel.errorKey, .editor_pending_delete)
+        XCTAssertEqual(log.methods.count, 0, "nothing is asked about a document being deleted")
+        XCTAssertFalse(env.viewModel.hasLoadedContent, "so editing can never begin")
+        XCTAssertTrue(env.viewModel.blocks.isEmpty, "and the body it would restore stays off screen")
+    }
+
+    /// And it is not terminal: undoing the deletion makes the next load behave normally.
+    func testUndoingTheDeletionLetsTheDocumentOpenAgain() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log)
+        env.coordinator.recordPendingDelete(
+            documentID: documentID, ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        await env.viewModel.load()
+        XCTAssertEqual(log.methods.count, 0, "precondition: nothing asked")
+
+        env.coordinator.cancelPendingDelete(documentID: documentID)
+        await env.viewModel.load()
+
+        XCTAssertNil(env.viewModel.errorKey)
+        XCTAssertTrue(env.viewModel.hasLoadedContent)
+    }
+
+    /// Pull-to-refresh is the other way in, and takes the same gate: a 404 here is what the
+    /// document's own queued DELETE predicts, and `becomeUnavailable` would bury an undoable
+    /// state under a permanent one.
+    func testRefreshingATombstonedDocumentAsksNothing() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: log)
+        await env.viewModel.load()
+        let asked = log.methods.count
+        env.coordinator.recordPendingDelete(
+            documentID: documentID, ownerUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+
+        await env.viewModel.refresh()
+
+        XCTAssertEqual(log.methods.count, asked, "no further requests")
+        XCTAssertFalse(env.viewModel.isUnavailable, "and not torn down either")
     }
 
     /// The revalidation counterpart of

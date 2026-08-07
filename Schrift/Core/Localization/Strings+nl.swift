@@ -182,6 +182,7 @@ enum Strings_nl {
             "Overschreven versies kunnen worden hersteld via de versiegeschiedenis op het web.",
 
         // Editor - errors
+        .editor_pending_delete: "Dit document wordt verwijderd zodra je weer online bent.",
         .editor_error_load: "Kan dit document niet laden. Trek omlaag om het opnieuw te proberen.",
         .editor_error_refresh: "Vernieuwen mislukt. Probeer het opnieuw.",
         .editor_error_add_subpage: "Kan de subpagina niet toevoegen. Probeer het opnieuw.",

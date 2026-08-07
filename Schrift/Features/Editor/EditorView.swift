@@ -398,8 +398,16 @@ struct EditorView: View {
             shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
             onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
             onShare: { pendingShareAfterOptions = true },
-            onDeleted: {
-                viewModel.handleDidDelete()
+            onDeleted: { queued in
+                // A *queued* deletion is still cancellable, so the teardown must not purge:
+                // the draft, the create record and the cached body are what the undo puts
+                // back. `DocumentSaveCoordinator.completePendingDelete` removes them once the
+                // DELETE has really landed.
+                if queued {
+                    viewModel.handleDidQueueDelete()
+                } else {
+                    viewModel.handleDidDelete()
+                }
                 onDeleted?()
             }
         )

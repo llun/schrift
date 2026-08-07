@@ -182,6 +182,7 @@ enum Strings_fr {
             "Les versions remplacées peuvent être restaurées depuis l’historique des versions sur le web.",
 
         // Editor - errors
+        .editor_pending_delete: "Ce document sera supprimé dès que vous serez de nouveau en ligne.",
         .editor_error_load: "Impossible de charger ce document. Tirez vers le bas pour réessayer.",
         .editor_error_refresh: "Impossible d’actualiser. Veuillez réessayer.",
         .editor_error_add_subpage: "Impossible d’ajouter la sous-page. Veuillez réessayer.",

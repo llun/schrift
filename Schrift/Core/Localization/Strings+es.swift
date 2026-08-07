@@ -184,6 +184,7 @@ enum Strings_es {
             "Las versiones sobrescritas se pueden restaurar desde el historial de versiones en la web.",
 
         // Editor - errors
+        .editor_pending_delete: "Este documento se eliminará cuando vuelvas a estar en línea.",
         .editor_error_load:
             "No se pudo cargar este documento. Desliza hacia abajo para actualizar e inténtalo de nuevo.",
         .editor_error_refresh: "No se pudo actualizar. Inténtalo de nuevo.",

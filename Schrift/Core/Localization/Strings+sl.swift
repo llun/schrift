@@ -190,6 +190,7 @@ enum Strings_sl {
         .editor_conflict_restore_hint: "Prepisane različice je mogoče obnoviti iz zgodovine različic na spletu.",
 
         // Editor - errors
+        .editor_pending_delete: "Ta dokument bo izbrisan, ko boste spet povezani.",
         .editor_error_load: "Tega dokumenta ni bilo mogoče naložiti. Povlecite za osvežitev in poskusite znova.",
         .editor_error_refresh: "Ni bilo mogoče osvežiti. Poskusite znova.",
         .editor_error_add_subpage: "Podstrani ni bilo mogoče dodati. Poskusite znova.",

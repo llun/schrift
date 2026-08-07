@@ -12,18 +12,32 @@ final class OptionsViewModel {
     var errorKey: L10nKey?
     private(set) var didDelete = false
 
+    /// Whether the deletion `didDelete` reports was **queued** rather than made.
+    ///
+    /// The screen has to tell the two apart, and only at this moment: a completed delete
+    /// tears everything down, while a queued one must leave the draft, the create record and
+    /// the caches exactly where they are, because they are what the undo restores. See
+    /// `EditorViewModel.handleDidQueueDelete`.
+    private(set) var didQueueDelete = false
+
     private let client: DocsAPIClient
     private let documentID: UUID
 
     /// Optional so every existing call site and `#Preview` keeps working; nil simply means
     /// "no local documents here", which is true of every screen that does not own one.
     private let saveCoordinator: DocumentSaveCoordinator?
+    /// Who is signed in, for the tombstone's `ownerUserID`. A queued deletion nobody can be
+    /// attributed to is neither sent nor shown, so a deletion that could not name the user
+    /// reports the ordinary error instead of silently going nowhere.
+    private let signedInUser: SignedInUserStore
 
     init(
         client: DocsAPIClient, documentID: UUID, isFavorite: Bool,
-        saveCoordinator: DocumentSaveCoordinator? = nil
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        signedInUser: SignedInUserStore = SignedInUserStore()
     ) {
         self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
         self.client = client
         self.documentID = documentID
         self.isFavorite = isFavorite
@@ -81,9 +95,18 @@ final class OptionsViewModel {
                     // is provably nothing left to strand, which is precisely when clearing is
                     // the safe direction.
                 } catch {
-                    // Anything else — transport, 5xx, 403 — leaves everything: the record may
-                    // still name a live document, and discarding the local trace would strand
-                    // it permanently with no affordance to reach it.
+                    // Worth retrying — offline, a 5xx, a rate limit — so queue it and let the
+                    // replay send it. **Nothing local is cleared on this path**, deliberately:
+                    // the record, its draft and its subtree are what the undo restores, and
+                    // `completePendingDelete` is what removes them once the DELETE has really
+                    // landed. Note the tombstone names `serverID` — the id that exists — while
+                    // every local trace stays keyed on the local one.
+                    if queueDeletion(of: serverID, coordinator: coordinator, failure: error) {
+                        return
+                    }
+                    // Rejected on the merits, or nothing to attribute the deletion to: leave
+                    // everything. The record may still name a live document, and discarding
+                    // the local trace would strand it permanently with no way to reach it.
                     errorKey = .options_error_delete
                     return
                 }
@@ -97,8 +120,42 @@ final class OptionsViewModel {
         do {
             try await client.deleteDocument(documentID: documentID)
             didDelete = true
+        } catch let error as DocsAPIError where error == .notFound {
+            // **Already gone reads as deleted, not as a failure.** The same reasoning the
+            // checkpointed branch has always had, which this branch was simply missing: a 404
+            // is what a co-author's delete looks like, and reporting "Couldn't delete
+            // document" about a document that is already gone asks the user to retry
+            // something that has no work left in it.
+            didDelete = true
         } catch {
+            if let coordinator = saveCoordinator,
+                queueDeletion(of: documentID, coordinator: coordinator, failure: error)
+            {
+                return
+            }
             errorKey = .options_error_delete
         }
+    }
+
+    /// Queue the deletion for the replay if this failure is worth retrying and we can say
+    /// whose deletion it is. Returns whether it was queued, so the caller falls through to
+    /// its own error when it was not.
+    ///
+    /// Never gated on `isOffline`: that flag is derived from Home's last *list* fetch, so it
+    /// is wrong in both directions here. What decides is the failure the server actually gave
+    /// us, exactly as the create fallbacks decide.
+    ///
+    /// A deletion nobody can be attributed to would be neither sent nor shown — it would
+    /// vanish, leaving a row that looks alive — so an unknown account reports the error
+    /// instead, the same rule `createLocalDocument`'s required `ownerUserID` enforces at the
+    /// mint site.
+    private func queueDeletion(of serverID: UUID, coordinator: DocumentSaveCoordinator, failure: Error) -> Bool {
+        guard let apiError = failure as? DocsAPIError, retryableSaveFailure(apiError),
+            let ownerUserID = signedInUser.userID
+        else { return false }
+        coordinator.recordPendingDelete(documentID: serverID, ownerUserID: ownerUserID)
+        didQueueDelete = true
+        didDelete = true
+        return true
     }
 }

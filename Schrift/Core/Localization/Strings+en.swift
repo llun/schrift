@@ -180,6 +180,7 @@ enum Strings_en {
         .editor_conflict_restore_hint: "Overwritten versions can be restored from version history on the web.",
 
         // Editor - errors
+        .editor_pending_delete: "This document is waiting to be deleted when you're back online.",
         .editor_error_load: "Couldn't load this document. Pull to refresh to try again.",
         .editor_error_refresh: "Couldn't refresh. Please try again.",
         .editor_error_add_subpage: "Couldn't add the subpage. Please try again.",

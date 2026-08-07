@@ -184,6 +184,7 @@ enum Strings_de {
             "Überschriebene Versionen können im Web aus dem Versionsverlauf wiederhergestellt werden.",
 
         // Editor - errors
+        .editor_pending_delete: "Dieses Dokument wird gelöscht, sobald Sie wieder online sind.",
         .editor_error_load: "Dieses Dokument konnte nicht geladen werden. Zum Aktualisieren nach unten ziehen.",
         .editor_error_refresh: "Aktualisierung fehlgeschlagen. Bitte versuche es erneut.",
         .editor_error_add_subpage: "Unterseite konnte nicht hinzugefügt werden. Bitte versuche es erneut.",

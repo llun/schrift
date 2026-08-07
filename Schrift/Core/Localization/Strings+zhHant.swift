@@ -176,6 +176,7 @@ enum Strings_zhHant {
         .editor_conflict_restore_hint: "被覆寫的版本可從網頁端的版本歷史中還原。",
 
         // Editor - errors
+        .editor_pending_delete: "此文件將在您重新連線後刪除。",
         .editor_error_load: "無法載入此文件。下拉重新整理以再試一次。",
         .editor_error_refresh: "無法重新整理。請再試一次。",
         .editor_error_add_subpage: "無法新增子頁面。請再試一次。",

@@ -178,6 +178,7 @@ enum Strings_th {
         .editor_conflict_restore_hint: "เวอร์ชันที่ถูกเขียนทับสามารถกู้คืนได้จากประวัติเวอร์ชันบนเว็บ",
 
         // Editor - errors
+        .editor_pending_delete: "เอกสารนี้จะถูกลบเมื่อคุณกลับมาออนไลน์",
         .editor_error_load: "โหลดเอกสารนี้ไม่ได้ ดึงลงเพื่อรีเฟรชแล้วลองอีกครั้ง",
         .editor_error_refresh: "รีเฟรชไม่ได้ โปรดลองอีกครั้ง",
         .editor_error_add_subpage: "เพิ่มหน้าย่อยไม่ได้ โปรดลองอีกครั้ง",

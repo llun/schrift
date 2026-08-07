@@ -180,6 +180,7 @@ enum Strings_it {
             "Le versioni sovrascritte possono essere ripristinate dalla cronologia delle versioni sul web.",
 
         // Editor - errors
+        .editor_pending_delete: "Questo documento verrà eliminato quando tornerai online.",
         .editor_error_load: "Impossibile caricare questo documento. Trascina per aggiornare e riprova.",
         .editor_error_refresh: "Impossibile aggiornare. Riprova.",
         .editor_error_add_subpage: "Impossibile aggiungere la sottopagina. Riprova.",

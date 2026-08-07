@@ -181,6 +181,7 @@ enum Strings_pt {
             "As versões substituídas podem ser restauradas pelo histórico de versões na web.",
 
         // Editor - errors
+        .editor_pending_delete: "Este documento será eliminado quando voltar a estar online.",
         .editor_error_load: "Não foi possível carregar este documento. Puxe para atualizar e tente novamente.",
         .editor_error_refresh: "Não foi possível atualizar. Tente novamente.",
         .editor_error_add_subpage: "Não foi possível adicionar a subpágina. Tente novamente.",
