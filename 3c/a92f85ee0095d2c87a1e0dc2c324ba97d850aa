@@ -1,0 +1,16 @@
+CLAUDE.md
+  h_580a04e334fef4 1929-1953,1955-1957
+docs/offline-and-sync.md
+  h_580a04e334fef4 2284-2294,2432-2438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "3ca92f85ee0095d2c87a1e0dc2c324ba97d850aa",
+  "prompts": {},
+  "humans": {
+    "h_580a04e334fef4": {
+      "author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+Schrift/Features/Editor/PendingDocumentDeleteStore.swift
+  s_a90ba1763f1ea9::t_6c30f044b43e51 1-168
+SchriftTests/Features/Editor/PendingDocumentDeleteStoreTests.swift
+  s_a90ba1763f1ea9::t_b5714a7b30f671 1-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "20540da85d093b3eff3a6da0fe099904c5ce99e3",
+  "prompts": {},
+  "sessions": {
+    "s_a90ba1763f1ea9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e46053b-a8b8-469e-bbcf-4e106ab549b5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
