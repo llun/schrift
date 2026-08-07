@@ -1269,10 +1269,18 @@ final class EditorViewModel {
             if let apiError = error as? DocsAPIError, retryableSaveFailure(apiError),
                 let ownerUserID = signedInUser.userID
             {
-                let local = saveCoordinator.createLocalDocument(
+                // **Nothing is appended.** `mergedSubpages` merges the scoped
+                // `pendingLocalDocuments` on every read, so the row is on screen either way —
+                // but a synthetic pushed into `subpages` is one nothing can ever take back
+                // out. `mergedSubpages` short-circuits (`guard !local.isEmpty`) once the
+                // record dies and returns `subpages` unfiltered, so deleting this sub-page
+                // left its row rendering, tappable, and opening an editor for an id no
+                // record names — and offline nothing refetches the level to correct it
+                // (`revalidate` fails before it reaches `loadChildren`). The same reasoning
+                // the local-parent branch above and `appendChild`'s cache filter already
+                // give: the merge layer is the single source of local rows.
+                return saveCoordinator.createLocalDocument(
                     title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
-                appendChild(local)
-                return local
             }
             // Deliberately not `becomeUnavailable()`, unlike the load/refresh paths: a 403
             // here means "you may not add children to this document", not "this document

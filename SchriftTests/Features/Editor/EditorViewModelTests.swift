@@ -211,6 +211,64 @@ final class EditorViewModelTests: XCTestCase {
             "but the screen still shows the local child")
     }
 
+    /// The fallback-minted sub-page reaches the screen through the **merge**, never through
+    /// `subpages` itself. That is what makes it removable: the merge withholds it the instant
+    /// its record dies, while a row pushed into the fetched array is one nothing can take back.
+    func testAnOfflineSubpageNeverEntersTheFetchedChildrenArray() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        // A *known* level — the shape where the old code appended, and the only one where this
+        // assertion can fail. With a nil level `appendChild` declined anyway.
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        let child = await viewModel.addSubpage()
+
+        XCTAssertNotNil(child)
+        XCTAssertEqual(viewModel.subpages?.map(\.id), [], "the fetched level stays the server's")
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [child!.id], "the merge is what shows it")
+    }
+
+    /// **The reported bug.** Deleting a sub-page created offline under an ordinary *server*
+    /// parent left its row rendering under Subpages with nothing to say it was gone — and
+    /// tapping it opened an editor for an id no record names. `appendChild` had pushed a
+    /// synthetic into `subpages`; once the record died `mergedSubpages` short-circuits
+    /// (`guard !local.isEmpty`) and hands back `subpages` unfiltered, and offline nothing
+    /// refetches the level to correct it.
+    func testDeletingAnOfflineSubpageUnderAServerParentRemovesItsRow() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!))
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"count":0,"next":null,"previous":null,"results":[]}"#.utf8), error: nil)
+        }
+        await viewModel.loadChildren()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let child = await viewModel.addSubpage()
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [child!.id], "precondition: on screen")
+
+        // What `OptionsViewModel.delete()` does for a document that exists only here.
+        env.coordinator.discardPendingWork(documentID: child!.id)
+
+        XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [], "the row goes with the record")
+    }
+
     /// A transport failure on "Add a subpage" keeps the page on the device rather than
     /// reporting an error, exactly as Home's create does.
     func testAddSubpageFallsBackToALocalChildOnATransportError() async {

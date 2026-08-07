@@ -394,6 +394,47 @@ final class PagesTreeViewModelTests: XCTestCase {
             "and the synthetic never reaches the shared cache")
     }
 
+    /// The drawer's twin of the editor's stale-row bug. A page created offline under a
+    /// **synced** parent — the transport-fallback shape — used to be appended into the loaded
+    /// level, where nothing could take it back out: `mergedChildren` returns `children`
+    /// untouched once the record dies, so deleting the page left its row in the tree pointing
+    /// at an id no record names. It reaches the tree through the merge instead.
+    func testDeletingAnOfflineFallbackPageRemovesItsDrawerRow() async {
+        let env = makeLocalRootViewModel()
+        let syncedParent = UUID()
+        let ownerUserID = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        // A *known* level — the shape where the old code appended, and the only one where this
+        // can fail. With an unknown level the append block declined anyway.
+        MockURLProtocol.stubHandler = { [childID] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(childID, "From the server")]), error: nil)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(ownerUserID)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        await viewModel.loadRoot()
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let created = await viewModel.addPage(under: syncedParent)
+        XCTAssertNotNil(created)
+        XCTAssertNil(viewModel.createErrorKey, "kept on the device, not reported")
+        XCTAssertEqual(
+            Set(viewModel.rows.map(\.document.id)), [childID, created!.id],
+            "precondition: the merge puts it in the tree")
+        XCTAssertEqual(
+            env.cache.children(for: syncedParent)?.map(\.id), [childID],
+            "and the synthetic never reaches the shared cache")
+
+        env.coordinator.discardPendingWork(documentID: created!.id)
+
+        XCTAssertEqual(
+            viewModel.rows.map(\.document.id), [childID], "the row goes with the record")
+    }
+
     /// A synthetic carries `numchild: 0` — it has no server bookkeeping at all — so without
     /// the loaded-level half of the rule a local page with local pages inside it draws as a
     /// leaf, with no way to open it.

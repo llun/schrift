@@ -277,8 +277,18 @@ final class PagesTreeViewModel {
                 createErrorKey = .pages_error_create
                 return nil
             }
-            child = coordinator.createLocalDocument(
+            // Returns *here* rather than falling through to the append below, exactly as the
+            // local-parent branch does. `mergedChildren` supplies the row on every read, and
+            // a synthetic pushed into `children[parent]` is one nothing can take back out:
+            // `mergedChildren` returns `children` untouched once the record dies
+            // (`guard !local.isEmpty`), so deleting this page left its row in the drawer
+            // pointing at an id no record names. `mutations` is deliberately not bumped
+            // either — that stamp defends an append we actually made.
+            let local = coordinator.createLocalDocument(
                 title: "Untitled subpage", parentID: parent, ownerUserID: ownerUserID)
+            expanded.insert(parent)
+            createErrorKey = nil
+            return local
         }
         expanded.insert(parent)
         // Only when the level is actually known (fetched or cached). Appending
