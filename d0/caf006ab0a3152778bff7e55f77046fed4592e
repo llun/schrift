@@ -1,0 +1,28 @@
+Schrift/Features/Editor/EditorView.swift
+  s_488daee090312d::t_89fe7545aba927 636-651,664-684
+CLAUDE.md
+  s_488daee090312d::t_96013c0924c08d 1977-2000
+docs/offline-and-sync.md
+  s_488daee090312d::t_96013c0924c08d 2139-2168
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_488daee090312d::t_641ff2d6bd7dc9 876-892
+  s_488daee090312d::t_b0298abff4a501 31,33,41-42,50,73-104
+  s_488daee090312d::t_1a6b6ecd14fd09 105,776-875,893-948,958-970
+  s_488daee090312d::t_afdfbfcbc4e42a 106,971
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "d0caf006ab0a3152778bff7e55f77046fed4592e",
+  "prompts": {},
+  "sessions": {
+    "s_488daee090312d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cac013ff-7735-4163-b1c2-1e4af13c84bc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
