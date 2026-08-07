@@ -75,6 +75,7 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
     private func stubPipeline(
         log: RequestRecorder,
         uploadStatus: Int = 201,
+        createStatus: Int = 201,
         mediaReady: Bool = true
     ) {
         let origin = origin
@@ -89,6 +90,17 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
                         """
                         {"id": "55555555-5555-4555-8555-555555555555", "email": "a@b.c", \
                         "full_name": "Ana", "short_name": "Ana", "language": "en"}
+                        """.utf8), error: nil)
+            case "POST" where url.hasSuffix("documents/"):
+                return .init(
+                    statusCode: createStatus, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Local", \
+                        "abilities": {"destroy": true, "partial_update": true}, "content": "", \
+                        "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z", \
+                        "depth": 1, "numchild": 0, "path": "00000A", "link_reach": "restricted", \
+                        "link_role": "reader", "user_role": "owner"}
                         """.utf8), error: nil)
             case "POST" where url.contains("attachment-upload"):
                 return .init(
@@ -296,7 +308,8 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
 
     func testAPhotoInALocallyCreatedDocumentWaitsForItsCreate() async {
         let log = RequestRecorder()
-        stubPipeline(log: log)
+        // The create cannot land, so the document keeps its client-minted id for the whole pass.
+        stubPipeline(log: log, createStatus: 503)
         let env = makeEnvironment()
         let localDoc = env.coordinator.createLocalDocument(
             title: "Local", parentID: nil, ownerUserID: owner
@@ -442,6 +455,63 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
         XCTAssertEqual(uploads(log), 2)
         XCTAssertNil(env.attachments.attachment(for: pendingAttachmentID(fromPlaceholderURL: first)!))
         XCTAssertNil(env.attachments.attachment(for: pendingAttachmentID(fromPlaceholderURL: second)!))
+    }
+
+    // MARK: - What re-enqueuing buys over releasing the parked save
+
+    func testADraftLeftByAPreviousProcessIsPushedWithNoQueuedSaveToRelease() async {
+        let log = RequestRecorder()
+        stubPipeline(log: log)
+        let defaults = makeDefaults()
+        let placeholder = seedPhoto(defaults)
+        // A relaunch: the draft is on disk, but `queued` is in-memory and therefore empty. There
+        // is no parked save to release, so a release-based hand-back would upload the photo,
+        // rewrite the draft, and then never push it — the document would sit resolved-but-unsent
+        // until an unrelated keystroke. Re-enqueuing is what closes that.
+        PendingDraftStore(userDefaults: defaults)
+            .save(
+                PendingDraft(
+                    documentID: documentID, title: "Doc", markdown: "![](\(placeholder))",
+                    updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+        let env = makeEnvironment(sharing: defaults)
+        XCTAssertNil(env.coordinator.pendingSave(documentID: documentID), "no parked save to release")
+
+        await env.coordinator.syncPendingDrafts()
+
+        await waitUntil { self.contentPatches(log) == 1 }
+        XCTAssertEqual(uploads(log), 1)
+    }
+
+    // MARK: - Migration
+
+    func testMigrationReKeysQueuedPhotosOntoTheServerID() async {
+        let log = RequestRecorder()
+        stubPipeline(log: log)
+        let env = makeEnvironment()
+        let localDoc = env.coordinator.createLocalDocument(
+            title: "Local", parentID: nil, ownerUserID: owner
+        ).id
+        let placeholder = env.coordinator.queuePendingAttachment(
+            documentID: localDoc, ownerUserID: owner, jpegData: Data([0xFF, 0xD8, 0xFF]))!
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        env.coordinator.enqueue(documentID: localDoc, title: "Local", markdown: "![](\(placeholder))")
+
+        // The create replay POSTs the document and migrates everything keyed by its local id.
+        await env.coordinator.syncPendingDrafts()
+
+        // Without the re-key the photo still names a dead client-minted id: its upload would POST
+        // `documents/<local-uuid>/attachment-upload/` and 404, and collection — which reads the
+        // localID draft the migration removed — would delete the only copy of the photo.
+        // Either it has been re-keyed onto the server id, or it has already been uploaded and
+        // collected under it — both mean the re-key happened. What must never happen is the
+        // record surviving under the dead local id, or its bytes being deleted as unreferenced.
+        await waitUntil {
+            env.attachments.attachment(for: localID)?.documentID == self.documentID
+                || (env.attachments.attachment(for: localID) == nil && self.uploads(log) == 1)
+        }
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: localDoc.uuidString.lowercased()), 0,
+            "nothing may be POSTed against the dead client-minted id")
     }
 
     // MARK: - The open editor's in-memory copy
