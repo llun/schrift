@@ -476,6 +476,40 @@ final class MarkdownParserTests: XCTestCase {
             source)
     }
 
+    func testAPlaceholderSchemeThatNamesNoRecordStaysUnknown() {
+        // The classification and the hold must agree by construction. A URL carrying the app's
+        // privileged scheme but a shape `pendingAttachmentID` does not recognise would otherwise
+        // be a real `.image` block that no hold engages on — pushed to the server as a URL no
+        // client can resolve. Falling to `.unknown` round-trips it verbatim instead.
+        let uuid = "11111111-1111-4111-8111-111111111111"
+        for url in [
+            "schrift-attachment://\(uuid)?x=1",
+            "schrift-attachment:\(uuid)",
+            "schrift-attachment://\(uuid)/x",
+            "schrift-attachment:///\(uuid)",
+            "schrift-attachment://not-a-uuid",
+        ] {
+            assertParses("![a](\(url))", [EditorBlock(kind: .unknown, text: "![a](\(url))")])
+            XCTAssertFalse(markdownReferencesPendingAttachment("![a](\(url))"), "should not hold: \(url)")
+        }
+    }
+
+    func testEveryPlaceholderImageBlockIsHeldByThePredicate() {
+        // The invariant the two functions exist to keep: if it classifies as an image with our
+        // scheme, the hold engages. Anything else is a leak.
+        for url in [
+            pendingAttachmentPlaceholderURL(for: placeholderID),
+            "SCHRIFT-ATTACHMENT://\(placeholderID.uuidString.lowercased())",
+            "schrift-attachment://\(placeholderID.uuidString)",
+            "schrift-attachment://\(placeholderID.uuidString.lowercased())/",
+        ] {
+            let source = "![a](\(url))"
+            let blocks = parseEditorBlocks(source)
+            guard case .image = blocks.first?.kind else { continue }
+            XCTAssertTrue(markdownReferencesPendingAttachment(source), "classified but unheld: \(url)")
+        }
+    }
+
     func testAnUppercaseSchemeIsHeldRatherThanPushed() {
         // `parseImageLine` classifies on `scheme?.lowercased()`, so this IS an image block. A
         // case-sensitive predicate would answer false, the hold would not engage, and the

@@ -1978,11 +1978,13 @@ markdown write endpoint**. Understand this before touching the save path:
     chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3, and
     past the 120s tolerance that answers `.discardServerWins` — whose launch-pass branch
     *deletes the draft*, taking the queued photo and every text edit beside it.
-  - `releaseHeldSave` also gained a **conflict** guard. It was redundant while
-    `clearResolvedConflict` was its only caller (which nils the record immediately
-    above the call); the attachment replay is a second caller with no such guarantee, and
-    releasing there would full-overwrite a diverged server body from a background pass
-    with no pill answered.
+  - `releaseHeldSave` also gained a **conflict** guard, as defence in depth rather than
+    as any path's primary gate: nothing can rewrite a parked `PendingSave` in place, so
+    the attachment replay re-`enqueue`s the rewritten body (which re-derives every hold
+    from the content) instead of releasing this slot directly. It earns its place anyway —
+    this is one of the three ways to reach `start`, and a document can pick up a conflict
+    while a photo sits queued offline, where releasing would full-overwrite a diverged
+    server body from a background pass with no pill answered.
   - `saveMarker.hadPendingSave` stays `inFlightContent != nil`: a parked save is not on
     the wire. Do not "fix" it to consult `pendingSave` — that wedges "keep the server
     version", which is the lesson the conflict hold already paid for.

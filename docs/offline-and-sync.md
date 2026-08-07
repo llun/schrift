@@ -2060,10 +2060,10 @@ block would fail that check *and* drop the document out of live-write eligibilit
 
 **What keeps it off the server is a content-keyed save hold.**
 `markdownReferencesPendingAttachment` is asked of the markdown each save is about to
-push, at all four paths that reach `start` — `enqueue`'s park (a fourth disjunct, and a
-third in the `.pendingSync` stamp, that one additionally gated on nothing being in
-flight), `releaseHeldSave`, `finish`'s queued restart — plus a pre-fetch skip in
-`runSyncPass`. Keyed on *content*, never on the store, so a store that cannot be decoded
+push, at four gates: the three paths that reach `start` — `enqueue`'s park (a fourth
+disjunct, and a third in the `.pendingSync` stamp, that one additionally gated on nothing
+being in flight), `releaseHeldSave`, and `finish`'s queued restart — plus a pre-fetch skip
+in `runSyncPass`, which reaches `start` only by way of `enqueue`. Keyed on *content*, never on the store, so a store that cannot be decoded
 stalls the replay instead of leaking a placeholder; and because each gate parses the save
 in front of it, a document holding two queued photos releases only when the last one
 lands, with no per-record bookkeeping.

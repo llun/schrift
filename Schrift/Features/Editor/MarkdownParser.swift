@@ -192,8 +192,15 @@ private func parseImageLine(_ line: String) -> (alt: String, url: String)? {
     // (`![a](u)(y)`) the line has trailing content: bail out rather than save a
     // mangled url and silently drop the tail. Balanced pairs (`x(1).png`) are fine.
     guard !urlString.contains(where: \.isWhitespace), hasBalancedParentheses(urlString) else { return nil }
+    // The placeholder scheme classifies only when it resolves to an actual record id. Comparing
+    // the scheme alone would let `schrift-attachment://<uuid>?x=1`, `schrift-attachment:<uuid>`
+    // and friends through as image blocks that `pendingAttachmentID` does not recognise — so no
+    // save hold would engage and the unresolvable URL would reach collaborators. Deferring to
+    // the same function the hold uses makes the two exact by construction rather than by two
+    // tests kept in sync; anything it declines falls to `.unknown` and round-trips verbatim.
     guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
-        scheme == "http" || scheme == "https" || scheme == pendingAttachmentURLScheme
+        scheme == "http" || scheme == "https"
+            || (scheme == pendingAttachmentURLScheme && pendingAttachmentID(fromPlaceholderURL: urlString) != nil)
     else { return nil }
     return (alt, urlString)
 }

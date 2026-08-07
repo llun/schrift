@@ -204,10 +204,12 @@ final class PendingAttachmentStore {
         var attachments = loadAll()
         for localID in localIDs { attachments[localID.uuidString] = nil }
         // Records first, then bytes — the mirror of `saveData`'s rule, and for the same reason.
-        // `persist` swallows an encode failure, so deleting the files first could leave a record
-        // pointing at bytes that no longer exist; this way a failure leaves bytes with no record,
-        // which is inert and collectable.
-        persist(attachments)
+        // Deleting the files first could leave a record pointing at bytes that no longer exist;
+        // this way a failure leaves bytes with no record, which is inert and collectable. That
+        // only holds if the write is actually known to have landed, which is why `persist`
+        // reports rather than swallowing: an unreported failure would delete the bytes anyway and
+        // reach the very state the ordering exists to prevent, just from the other side.
+        guard persist(attachments) else { return }
         for localID in localIDs { removeData(for: localID) }
     }
 
@@ -302,9 +304,11 @@ final class PendingAttachmentStore {
         return attachments
     }
 
-    private func persist(_ attachments: [String: PendingAttachment]) {
-        guard let data = try? encoder.encode(attachments) else { return }
+    @discardableResult
+    private func persist(_ attachments: [String: PendingAttachment]) -> Bool {
+        guard let data = try? encoder.encode(attachments) else { return false }
         userDefaults.set(data, forKey: Self.attachmentsKey)
+        return true
     }
 }
 
