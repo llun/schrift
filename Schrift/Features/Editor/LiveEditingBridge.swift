@@ -211,6 +211,14 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     /// Returns `true` when the edit was integrated live (peers notified + a snapshot
     /// scheduled) so the classic REST autosave must NOT run; `false` downgrades to
     /// classic, which persists the same on-screen content — the edit is never lost.
+    /// `forwardLocalEdit`'s guard, minus every side effect — see the protocol for why the
+    /// photo-insert path needs to ask before it acts rather than after.
+    var isHandlingLocalEditsLive: Bool {
+        let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
+        return canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection)
+            && lastAppliedBlocks != nil
+    }
+
     func forwardLocalEdit() -> Bool {
         let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
         guard canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection),

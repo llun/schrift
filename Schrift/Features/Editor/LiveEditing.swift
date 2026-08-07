@@ -185,6 +185,18 @@ protocol EditorLiveWriteCoordinating: AnyObject {
     /// fail-safed), in which case the caller proceeds down the classic path —
     /// this is the downgrade to classic.
     func forwardLocalEdit() -> Bool
+    /// Whether a local edit made **right now** would be handled live rather than by the
+    /// classic REST path — `forwardLocalEdit`'s own condition, evaluated without any of its
+    /// side effects.
+    ///
+    /// It exists for one caller: queueing a photo offline. A queued photo enters the document
+    /// as a `schrift-attachment://` placeholder, which the save coordinator's gates keep off
+    /// the server — but the live write path never *becomes* a save. `markDirty` forwards here
+    /// and returns without enqueuing, so an edit made while live editing is engaged is
+    /// broadcast straight to peers, and `canEngageLiveWrite` cannot catch it because
+    /// `YBlockProjection` models any string url, placeholder included. So the insert refuses
+    /// to queue while this is true rather than relying on gates that never see the edit.
+    var isHandlingLocalEditsLive: Bool { get }
     /// Fire any pending debounced live snapshot immediately (Done / background /
     /// disappear). A no-op when nothing is pending.
     func flushPendingLiveSnapshot()

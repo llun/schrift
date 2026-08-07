@@ -7,14 +7,19 @@ enum SlashMenuAction: Equatable, Sendable {
     case insertPhoto
     case insertAttachment
 
-    /// True for the actions that POST an attachment. These are the only items
-    /// withheld offline or on a document that has no server id yet — everything
-    /// else is a local block transformation the draft pipeline queues like any
-    /// other edit.
-    var requiresUpload: Bool {
+    /// True for the actions that must reach the server **now** — the only items withheld
+    /// offline or on a document that has no server id yet.
+    ///
+    /// `.insertPhoto` is deliberately *not* one of them any more. A queued photo is stored on
+    /// this device as a `schrift-attachment://` placeholder, held off the wire by the save
+    /// coordinator's gates, and uploaded by `runAttachmentPass` when there is a network and a
+    /// server id — so offering it offline costs nothing. `.insertAttachment` has no equivalent
+    /// yet: giving it one means a placeholder shape the parser classifies, a hold that
+    /// recognises it, and a replay branch that uploads it. Until that exists, it stays gated.
+    var requiresImmediateUpload: Bool {
         switch self {
-        case .insertPhoto, .insertAttachment: return true
-        case .convert: return false
+        case .insertAttachment: return true
+        case .insertPhoto, .convert: return false
         }
     }
 }
@@ -91,22 +96,21 @@ func slashQuery(text: String, kind: BlockKind) -> String? {
     return String(text.dropFirst())
 }
 
-/// Offline drops the items that upload — **Photo** and **File**. Every other item is a
-/// local block transformation that the draft pipeline queues like any other edit, but an
-/// upload POSTs a multipart attachment and there is no queue for one, so offered offline
-/// it would open the picker, read whatever the user chose, and only then fail. "Add a
-/// subpage" and the drawer's "New page" were withheld for the same reason and no longer
-/// are — a failed POST falls back to a local document — so these two are the last
-/// affordances gated this way, and on `isLocalDocument` as well, since a client-minted id
-/// has nothing to upload against. (Editing itself is *not* gated — its edits are durable
-/// the moment the flush writes the draft.)
+/// Offline drops only what has nowhere to go. **File** still POSTs a multipart attachment
+/// with no queue behind it, so offered offline it would open the picker, read whatever the
+/// user chose, and only then fail — and on a document with no server id the POST would
+/// address a client-minted uuid and 404. **Photo is no longer withheld**: a photo picked
+/// offline is stored on the device and uploaded by the attachment replay, exactly as an
+/// offline text edit is queued and pushed.
+///
+/// That asymmetry is the whole reason `requiresImmediateUpload` exists rather than a blanket
+/// "does this upload" test — see it for what giving File the same treatment would take.
 func filteredSlashItems(
-    query: String, isOffline: Bool = false, isLocalDocument: Bool = false,
+    query: String,
     items: [SlashMenuItem] = allSlashMenuItems
 ) -> [SlashMenuItem] {
-    // A local document has no server id to upload against — see `canOfferPhotoInsertion`.
     let available =
-        isOffline || isLocalDocument ? items.filter { !$0.action.requiresUpload } : items
+        isOffline || isLocalDocument ? items.filter { !$0.action.requiresImmediateUpload } : items
     let trimmed = query.trimmingCharacters(in: .whitespaces).lowercased()
     guard !trimmed.isEmpty else { return available }
     return available.filter { item in

@@ -318,3 +318,15 @@ func orderedByAttachmentCreation(_ lhs: PendingAttachment, _ rhs: PendingAttachm
     if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
     return lhs.localID.uuidString < rhs.localID.uuidString
 }
+
+/// What the editor should render for a queued photo's placeholder block.
+///
+/// `.missing` is the escape hatch as much as a state: a placeholder whose record or bytes are
+/// gone — hand-authored content, a corrupted store, another account's photo — holds the
+/// document's saves, and the only way out is removing the block. A card that says so, with a
+/// Remove button, is what makes that reachable.
+enum PendingAttachmentDisplay: Equatable {
+    case pending(Data)
+    case failed(Data)
+    case missing
+}

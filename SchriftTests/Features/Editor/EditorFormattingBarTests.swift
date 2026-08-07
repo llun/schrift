@@ -80,20 +80,19 @@ final class EditorFormattingBarTests: XCTestCase {
 
     // MARK: - Photo availability
 
-    /// Editing offline is supported because every other action in this bar is a local
-    /// block transformation the draft pipeline queues. A photo POSTs a multipart
-    /// attachment with no queue behind it, so it is withheld — offered offline it would
-    /// open the picker and re-encode the chosen image only to fail.
-    func testPhotoIsWithheldOfflineEvenWithAFocusedBlockAndNoUploadInFlight() {
-        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: true, isOffline: true))
-        XCTAssertTrue(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: true, isOffline: false))
+    /// Photo is no longer withheld offline: a photo picked with no network is stored on the
+    /// device and uploaded by the attachment replay, exactly as an offline text edit is queued
+    /// and pushed. The parameters are gone rather than ignored, so the gate cannot quietly
+    /// return — this test would stop compiling, not silently pass.
+    func testPhotoIsOfferedWithAFocusedBlockAndNoUploadInFlight() {
+        XCTAssertTrue(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: true))
     }
 
     /// The pre-existing reasons still stand on their own: nothing to insert into, or an
     /// upload already running (which `canInsertPhoto` also uses to mean "content loaded").
     func testPhotoStillNeedsATargetAndAnIdleUploader() {
-        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: true, isOffline: false))
-        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: false, isOffline: false))
-        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: true, isOffline: true))
+        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: true))
+        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: false))
+        XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: false))
     }
 }

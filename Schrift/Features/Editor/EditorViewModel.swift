@@ -339,12 +339,24 @@ final class EditorViewModel {
     func noteEditorAppeared() {
         guard openEditorRegistration == nil else { return }
         saveCoordinator.retainOpenEditor(documentID: documentID)
+        // Registered here, and released by the same token, so it exists for exactly as long as
+        // this screen does. It lets the attachment replay rewrite this editor's in-memory copy
+        // in the same turn it rewrites the draft — without it, a flush after the record was
+        // dropped would reintroduce a placeholder nothing could resolve. Captured weakly: the
+        // coordinator outlives every editor.
+        saveCoordinator.setPendingAttachmentRewriteObserver(
+            { [weak self] placeholder, resolved in
+                self?.adoptResolvedAttachmentURL(placeholder: placeholder, resolved: resolved)
+            }, for: documentID)
         let coordinator = saveCoordinator
         let id = documentID
         openEditorRegistration = OpenEditorRegistration {
             // `deinit` is nonisolated, so hop rather than call directly. A turn's delay is
             // harmless: the only consumer is the replay, which is itself trigger-driven.
-            Task { @MainActor in coordinator.releaseOpenEditor(documentID: id) }
+            Task { @MainActor in
+                coordinator.setPendingAttachmentRewriteObserver(nil, for: id)
+                coordinator.releaseOpenEditor(documentID: id)
+            }
         }
     }
 
@@ -1740,17 +1752,32 @@ final class EditorViewModel {
         isPhotoPickerPresented = true
     }
 
-    /// Runs the picked photo through prepare → upload → readiness poll and
-    /// inserts the resulting `.image` block. A cancelled pick (`nil` data) is a
-    /// silent no-op; any failure sets friendly copy and inserts nothing, so a
-    /// broken upload can never leave a placeholder in the document.
-    func insertPhoto(loadingData: @Sendable () async throws -> Data?) async {
+    /// Runs the picked photo through prepare → upload → readiness poll and inserts the
+    /// resulting `.image` block — or, when the upload cannot happen now, queues the photo on
+    /// this device and inserts a placeholder the replay resolves later.
+    ///
+    /// A cancelled pick (`nil` data) is a silent no-op. The three routes:
+    ///
+    /// - **Offline, or a document the server has never seen** — queue directly. Attempting the
+    ///   POST would fail by construction: a client-minted id 404s, and a 404 is not retryable.
+    /// - **A transient failure** (offline mid-upload, 5xx, rate limit) — fall back to the queue,
+    ///   mirroring what Home's create button does with a create it cannot land.
+    /// - **Anything else** — the server rejected this photo on its merits, or the session
+    ///   expired. Friendly copy, nothing inserted, exactly as before.
+    ///
+    /// `isOffline` comes from the view rather than being held here: it is derived from Home's
+    /// last *list* fetch, so it selects a **path**, never durability. Every route ends with the
+    /// photo either in the document or reported — none of them can silently drop it.
+    func insertPhoto(isOffline: Bool = false, loadingData: @Sendable () async throws -> Data?) async {
         guard canInsertPhoto else { return }
         // Clear a previous failure's copy, like every other async intent method —
         // otherwise a successful retry leaves the red banner on screen.
         clearError()
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
+        // Held outside the `do` so the retryable catch can queue the very bytes the upload
+        // failed to send, rather than asking the picker for them again.
+        var preparedData: Data?
         do {
             guard let originalData = try await loadingData() else { return }
             // Decoding a 48 MP HEIC and re-encoding it must not block the main
@@ -1763,6 +1790,13 @@ final class EditorViewModel {
                 reportPhotoFailure()
                 return
             }
+            preparedData = jpegData
+            // No point attempting an upload that cannot land: offline it fails, and for a
+            // document the server has never seen it 404s at an id only this device knows.
+            if isOffline || isLocalDocument {
+                queuePendingPhoto(jpegData)
+                return
+            }
             let mediaCheckPath = try await client.uploadAttachment(
                 documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: jpegData)
             guard let urlString = await readyMediaURLString(fromMediaCheckPath: mediaCheckPath) else {
@@ -1770,6 +1804,14 @@ final class EditorViewModel {
                 return
             }
             insertImageBlock(url: urlString)
+        } catch let error as DocsAPIError where retryableSaveFailure(error) {
+            // The network went away, or the server is briefly unwell. The photo is already
+            // prepared and the replay exists to send it — losing it here would be gratuitous.
+            guard let jpegData = preparedData else {
+                reportPhotoFailure()
+                return
+            }
+            queuePendingPhoto(jpegData)
         } catch {
             reportPhotoFailure()
         }
@@ -1778,6 +1820,102 @@ final class EditorViewModel {
     /// The document can go away mid-upload (404 revalidation, or a delete). Its
     /// terminal message must not be masked by copy inviting a retry that the now
     /// disabled button can't perform.
+    /// Store the prepared photo on this device and put a placeholder in the document for the
+    /// replay to resolve.
+    ///
+    /// **The live-editing guard is the load-bearing line here**, and it has to sit *before* the
+    /// insert rather than after. `insertImageBlock` calls `markDirty()`, whose first act is to
+    /// forward the edit to the live bridge and return **without enqueuing** — so with a live
+    /// session engaged the placeholder would be broadcast straight to peers and never become a
+    /// save for the coordinator's gates to hold. `canEngageLiveWrite` cannot catch it either:
+    /// `YBlockProjection` models any string url, so a placeholder block is `isFullyModeled`.
+    /// Refusing here is what keeps the placeholder a purely local artefact.
+    ///
+    /// A `nil` delegate — every screen without a live session, and every existing test — reads
+    /// false, so this is the ordinary path.
+    private func queuePendingPhoto(_ jpegData: Data) {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        guard liveWrite?.isHandlingLocalEditsLive != true else {
+            reportPhotoFailure()
+            return
+        }
+        // The replay needs to know whose photo this is: records survive sign-out, and origin
+        // identifies the server rather than the account.
+        guard let ownerUserID = signedInUser.userID else {
+            reportPhotoFailure()
+            return
+        }
+        guard
+            let placeholderURL = saveCoordinator.queuePendingAttachment(
+                documentID: documentID, ownerUserID: ownerUserID, jpegData: jpegData)
+        else {
+            reportPhotoFailure()
+            return
+        }
+        // A fenced code block can swallow the inserted line whole, in which case the document
+        // never gained an image and the record we just minted names nothing. Drop it rather
+        // than leave a photo on disk that no pass will ever collect against a real reference.
+        guard insertImageBlock(url: placeholderURL) else {
+            saveCoordinator.discardPendingAttachment(
+                localID: pendingAttachmentID(fromPlaceholderURL: placeholderURL) ?? UUID())
+            return
+        }
+    }
+
+    /// Called by the save coordinator in the **same turn** it rewrites the stored draft, so this
+    /// screen's in-memory copy can never reintroduce a placeholder the replay has just resolved.
+    ///
+    /// Rewrites the block's kind in place, keeping `EditorBlock.id`: the live-editing diff is
+    /// keyed on those ids, and re-minting one would read as a whole-block replace. Deliberately
+    /// does **not** call `markDirty` — the draft already holds the resolved URL, so dirtying
+    /// would enqueue a save that says nothing new.
+    func adoptResolvedAttachmentURL(placeholder: String, resolved: String) {
+        guard let localID = pendingAttachmentID(fromPlaceholderURL: placeholder) else { return }
+        for index in blocks.indices {
+            guard case .image(let alt, let url) = blocks[index].kind,
+                pendingAttachmentID(fromPlaceholderURL: url) == localID
+            else { continue }
+            blocks[index].kind = .image(alt: alt, url: resolved)
+        }
+        rawMarkdown = markdownRewritingPendingAttachment(rawMarkdown, localID: localID, resolvedURL: resolved)
+        savedMarkdown = markdownRewritingPendingAttachment(savedMarkdown, localID: localID, resolvedURL: resolved)
+    }
+
+    /// What the image leaf should render for a queued photo.
+    func pendingAttachmentDisplay(forPlaceholderURL url: String) -> PendingAttachmentDisplay? {
+        guard let localID = pendingAttachmentID(fromPlaceholderURL: url) else { return nil }
+        // Reading the version is what makes this recompute when the replay advances a record.
+        _ = saveCoordinator.pendingAttachmentsVersion
+        guard let record = saveCoordinator.pendingAttachment(localID: localID),
+            record.ownerUserID == signedInUser.userID
+        else {
+            // No record, or another account's — nothing here can resolve it, and showing one
+            // user's photo inside another's session would be a disclosure.
+            return .missing
+        }
+        guard let data = saveCoordinator.pendingAttachmentData(localID: localID) else { return .missing }
+        return record.failedAt == nil ? .pending(data) : .failed(data)
+    }
+
+    func retryPendingAttachment(placeholderURL: String) {
+        guard let localID = pendingAttachmentID(fromPlaceholderURL: placeholderURL) else { return }
+        saveCoordinator.retryPendingAttachment(localID: localID)
+    }
+
+    /// Remove a queued photo's block and its record together. The block goes first so the
+    /// flush below writes a draft that no longer references it; dropping the record first would
+    /// leave a placeholder nothing can resolve if the flush then failed to run.
+    func removePendingAttachment(blockID: UUID) {
+        guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }
+        guard case .image(_, let url) = blocks[index].kind else { return }
+        blocks.remove(at: index)
+        markDirty()
+        flushPendingChanges()
+        if let localID = pendingAttachmentID(fromPlaceholderURL: url) {
+            saveCoordinator.discardPendingAttachment(localID: localID)
+        }
+    }
+
     private func reportPhotoFailure() {
         guard hasLoadedContent, !isDocumentDiscarded else { return }
         showError(Self.photoErrorKey)
@@ -1807,11 +1945,14 @@ final class EditorViewModel {
     /// sets `.reading`), so this must not be keyed off the mode. Flushing enqueues
     /// on the app-scoped save coordinator, which owns its `Task`s precisely so
     /// navigating away can never cancel a save.
-    private func insertImageBlock(url: String) {
+    /// Returns whether the document actually gained the image, so a caller that minted state
+    /// for it (a queued photo's record) can drop that state rather than leave it naming nothing.
+    @discardableResult
+    private func insertImageBlock(url: String) -> Bool {
         // The document may have been deleted, or gone 404, while the photo was
         // uploading. Saving now would resurrect it — `discardPendingWork` has
         // already removed its draft, and `enqueue` would write a fresh one.
-        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        guard hasLoadedContent, !isDocumentDiscarded else { return false }
         defer { flushPendingChanges() }
 
         // The session already ended (Done was tapped while the upload was in
@@ -1827,7 +1968,7 @@ final class EditorViewModel {
             // room, and never report success without producing an image.
             guard addsImage(to: source, after: appended, url: url) else {
                 reportPhotoFailure()
-                return
+                return false
             }
             rawMarkdown = appended
             // Append only the new image block rather than re-parsing the whole
@@ -1841,7 +1982,7 @@ final class EditorViewModel {
             // block's identity.
             blocks.append(EditorBlock(kind: .image(alt: "", url: url)))
             markDirty()
-            return
+            return true
         }
 
         let image = EditorBlock(kind: .image(alt: "", url: url))
@@ -1866,11 +2007,12 @@ final class EditorViewModel {
         // representation, not the block array.
         guard addsImage(to: currentMarkdown(), after: serializeMarkdown(updated), url: url) else {
             reportPhotoFailure()
-            return
+            return false
         }
         blocks = updated
         focusBlock(trailing.id, cursorAt: 0)
         markDirty()
+        return true
     }
 
     // MARK: - File attachments

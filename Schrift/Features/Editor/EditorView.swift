@@ -551,8 +551,7 @@ struct EditorView: View {
                             }
                             if let query = viewModel.slashQueryText {
                                 SlashMenuView(
-                                    query: query, isOffline: isOffline,
-                                    isLocalDocument: viewModel.isLocalDocument,
+                                    query: query,
                                     onSelect: { viewModel.applySlashSelection($0) })
                             }
                             EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
@@ -584,7 +583,9 @@ struct EditorView: View {
             // Clear immediately so re-picking the same asset fires onChange again.
             selectedPhotoItem = nil
             Task {
-                await viewModel.insertPhoto(loadingData: { try await newItem.loadTransferable(type: Data.self) })
+                await viewModel.insertPhoto(
+                    isOffline: isOffline,
+                    loadingData: { try await newItem.loadTransferable(type: Data.self) })
             }
         }
         // `.sheet(item:)` rather than `isPresented`: the request carries the
