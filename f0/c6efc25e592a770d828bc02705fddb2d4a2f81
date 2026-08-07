@@ -21,6 +21,7 @@ Schrift/Features/Editor/BlockEditorView.swift
   s_488daee090312d::t_1b84d21f418f60 206-212,216
 Schrift/Features/Editor/SlashMenu.swift
   s_488daee090312d::t_961d12b709f98b 105,109
+  s_488daee090312d::t_13bec6aa218156 10-19,21-22,99-104,106-107,113
 Schrift/Core/Localization/Strings+sl.swift
   s_488daee090312d::t_6f6fed1a3aa457 158-163
 Schrift/Features/Editor/EditorView.swift
@@ -31,6 +32,7 @@ SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
 SchriftTests/Features/Editor/SlashMenuTests.swift
   s_488daee090312d::t_1c94d0a76f1882 84-85
   s_488daee090312d::t_68287d66984168 86
+  s_488daee090312d::t_5fe4e6dad20f83 37-40,43-48,55-57,59-66,78-80
 Schrift/Core/Localization/Strings+th.swift
   s_488daee090312d::t_6f6fed1a3aa457 147-152
 Schrift/Features/Editor/EditorFormattingBar.swift
@@ -53,6 +55,7 @@ Schrift/Core/Localization/Strings+zhHans.swift
   s_488daee090312d::t_6f6fed1a3aa457 145-150
 Schrift/Features/Editor/SlashMenuView.swift
   s_488daee090312d::t_cc9e0f267e51fb 20
+  s_488daee090312d::t_5fe4e6dad20f83 7-8,10
 Schrift/Core/Localization/Strings+de.swift
   s_488daee090312d::t_6f6fed1a3aa457 151-156
 Schrift/Core/Localization/Strings+it.swift
