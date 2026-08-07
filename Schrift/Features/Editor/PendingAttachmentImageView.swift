@@ -24,13 +24,15 @@ struct PendingAttachmentImageView: View {
             photo(data)
                 .overlay(alignment: .bottomLeading) { badge }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(loc[.editor_attachment_pending_a11y])
+                .accessibilityLabel(label(loc[.editor_attachment_pending_a11y]))
         case .failed(let data):
             VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
                 photo(data).opacity(0.5)
                 message(loc[.editor_attachment_failed], icon: .error)
                 actions(showsRetry: true)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(label(loc[.editor_attachment_failed]))
         case .missing:
             VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
                 message(loc[.editor_attachment_missing], icon: .image)
@@ -41,6 +43,12 @@ struct PendingAttachmentImageView: View {
             .background(DocsColor.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         }
+    }
+
+    /// The photo's own description, when it has one, ahead of the state — `MaterialSymbol` is
+    /// accessibility-hidden and the badge text alone would not say what the image is.
+    private func label(_ state: String) -> String {
+        alt.isEmpty ? state : "\(alt), \(state)"
     }
 
     @ViewBuilder
@@ -65,7 +73,14 @@ struct PendingAttachmentImageView: View {
         .foregroundStyle(DocsColor.textOnBrand)
         .padding(.horizontal, DocsSpacing.spaceXS)
         .padding(.vertical, DocsSpacing.space3xs)
-        .background(Capsule().fill(DocsColor.textPrimary.opacity(0.75)))
+        // Pinned to the light-scheme ink in *both* schemes: this scrim sits on the user's photo,
+        // not on an app surface, so inverting it would put white text on a near-white capsule in
+        // dark mode.
+        .background(
+            Capsule().fill(
+                Color(lightHex: DocsColorHex.textPrimary, darkHex: DocsColorHex.textPrimary)
+                    .opacity(0.75))
+        )
         .padding(DocsSpacing.spaceXS)
     }
 
@@ -81,17 +96,27 @@ struct PendingAttachmentImageView: View {
     private func actions(showsRetry: Bool) -> some View {
         HStack(spacing: DocsSpacing.spaceSM) {
             if showsRetry {
-                Button(loc[.editor_attachment_retry], action: onRetry)
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.brandFill)
+                actionButton(loc[.editor_attachment_retry], tint: DocsColor.brandFill, action: onRetry)
             }
-            Button(loc[.editor_attachment_remove], action: onRemove)
-                .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.danger)
+            actionButton(loc[.editor_attachment_remove], tint: DocsColor.danger, action: onRemove)
         }
-        // A bare `Button` hit-tests the shape its label draws, so floor the row rather than
-        // leaving two short text targets.
-        .frame(minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
+    }
+
+    /// A bare `Button` hit-tests the shape its **label** draws, so a floor on the enclosing
+    /// `HStack` buys nothing — the stack grows and the labels stay their own text height. The
+    /// floor and the `contentShape` go inside, exactly as `SaveStatusIndicator` does it.
+    private func actionButton(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(DocsFont.footnote)
+                .foregroundStyle(tint)
+                .frame(
+                    minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight,
+                    alignment: .leading
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

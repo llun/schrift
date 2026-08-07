@@ -33,8 +33,6 @@ func canOfferPhotoInsertion(hasTarget: Bool, canInsertPhoto: Bool) -> Bool {
 /// inline markers). Never a blind append: everything is selection-aware.
 struct EditorFormattingBar: View {
     @Bindable var viewModel: EditorViewModel
-    /// Disables Photo — it POSTs an attachment, which has no offline queue.
-    var isOffline: Bool = false
 
     @Environment(LocalizationStore.self) private var loc
 

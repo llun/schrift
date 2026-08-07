@@ -775,7 +775,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
     }
     // MARK: - Queueing when the upload cannot happen now
 
-    func testInsertingOfflineQueuesTheePhotoAndPostsNothing() async {
+    func testInsertingOfflineQueuesThePhotoAndPostsNothing() async {
         let log = RequestRecorder()
         stubUploadPipeline(log: log)
         let (viewModel, attachments) = makeQueueingViewModel()
@@ -928,10 +928,40 @@ final class EditorPhotoInsertionTests: XCTestCase {
 
         viewModel.removePendingAttachment(blockID: blockID)
 
-        // This is the escape from the hold, so both halves have to go.
+        // This is the escape from the hold, so both halves have to go — and the body that
+        // actually gets saved must lose it, not just the block array.
         XCTAssertNil(queuedPlaceholder(in: viewModel))
+        XCTAssertFalse(markdownReferencesPendingAttachment(viewModel.currentMarkdown()))
         XCTAssertNil(attachments.attachment(for: localID))
         XCTAssertNil(attachments.data(for: localID))
+    }
+
+    func testRemovingAQueuedPhotoFromTheReadingSurfaceClearsTheSavedBodyToo() async {
+        // The reading surface is a *different* source of truth: `currentMarkdown()` returns
+        // `rawMarkdown` there, not a serialization of `blocks`. Dropping only the block left the
+        // placeholder in the body that gets saved, the flush saw no change and wrote nothing,
+        // and the record was discarded anyway — parking every future save on a placeholder
+        // nothing could resolve, with no image left on screen to offer Remove. The hold's own
+        // escape hatch destroyed the escape.
+        stubUploadPipeline()
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        XCTAssertEqual(viewModel.mode, .reading, "no startEditing — this is the reading path")
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+        let placeholder = queuedPlaceholder(in: viewModel)!
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        let blockID = viewModel.blocks.first { block in
+            if case .image(_, let url) = block.kind { return url == placeholder }
+            return false
+        }!.id
+
+        viewModel.removePendingAttachment(blockID: blockID)
+
+        XCTAssertFalse(
+            markdownReferencesPendingAttachment(viewModel.currentMarkdown()),
+            "the saved body still names a photo whose record is gone")
+        XCTAssertFalse(markdownReferencesPendingAttachment(viewModel.rawMarkdown))
+        XCTAssertNil(attachments.attachment(for: localID))
     }
 
     func testAPlaceholderWithNoRecordRendersAsMissingSoItCanBeRemoved() async {

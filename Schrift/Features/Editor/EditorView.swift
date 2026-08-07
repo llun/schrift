@@ -554,7 +554,7 @@ struct EditorView: View {
                                     query: query,
                                     onSelect: { viewModel.applySlashSelection($0) })
                             }
-                            EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
+                            EditorFormattingBar(viewModel: viewModel)
                         }
                     }
                     .padding(.horizontal, DocsSpacing.gutter)

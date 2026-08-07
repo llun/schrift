@@ -104,6 +104,11 @@ final class EditorViewModel {
     /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
     /// hold — see `noteEditorAppeared`.
     private var openEditorRegistration: OpenEditorRegistration?
+    /// Identifies this screen's rewrite-observer registration, so its deferred teardown removes
+    /// only its own.
+    private var attachmentObserverToken: UUID?
+    private var attachmentDataCache: [UUID: Data?] = [:]
+    private var attachmentDataCacheVersion = -1
     /// Whose local documents may be minted here — see `SignedInUserStore`. Nil withholds the
     /// sub-page fallback entirely, which fails closed rather than minting an unattributable
     /// record nothing would ever list or replay.
@@ -344,17 +349,22 @@ final class EditorViewModel {
         // in the same turn it rewrites the draft — without it, a flush after the record was
         // dropped would reintroduce a placeholder nothing could resolve. Captured weakly: the
         // coordinator outlives every editor.
+        // Token-scoped, because the teardown below is deferred: without it a screen that has
+        // just been popped could clear the observer a freshly-pushed screen installed for the
+        // same document, and two screens on one document would overwrite each other outright.
+        let token = UUID()
+        attachmentObserverToken = token
         saveCoordinator.setPendingAttachmentRewriteObserver(
             { [weak self] placeholder, resolved in
                 self?.adoptResolvedAttachmentURL(placeholder: placeholder, resolved: resolved)
-            }, for: documentID)
+            }, for: documentID, token: token)
         let coordinator = saveCoordinator
         let id = documentID
         openEditorRegistration = OpenEditorRegistration {
             // `deinit` is nonisolated, so hop rather than call directly. A turn's delay is
             // harmless: the only consumer is the replay, which is itself trigger-driven.
             Task { @MainActor in
-                coordinator.setPendingAttachmentRewriteObserver(nil, for: id)
+                coordinator.setPendingAttachmentRewriteObserver(nil, for: id, token: token)
                 coordinator.releaseOpenEditor(documentID: id)
             }
         }
@@ -1879,6 +1889,11 @@ final class EditorViewModel {
         }
         rawMarkdown = markdownRewritingPendingAttachment(rawMarkdown, localID: localID, resolvedURL: resolved)
         savedMarkdown = markdownRewritingPendingAttachment(savedMarkdown, localID: localID, resolvedURL: resolved)
+        // The comparison basis for `serverChanged(fetched:)`. Left stale, the next revalidation
+        // reads the replay's own push as a remote edit — a spurious "Document updated" banner
+        // mid-edit, or a needless `install()` that re-mints every block id and drops the caret.
+        displayedSourceMarkdown = markdownRewritingPendingAttachment(
+            displayedSourceMarkdown, localID: localID, resolvedURL: resolved)
     }
 
     /// What the image leaf should render for a queued photo.
@@ -1887,14 +1902,29 @@ final class EditorViewModel {
         // Reading the version is what makes this recompute when the replay advances a record.
         _ = saveCoordinator.pendingAttachmentsVersion
         guard let record = saveCoordinator.pendingAttachment(localID: localID),
-            record.ownerUserID == signedInUser.userID
+            let owner = record.ownerUserID, owner == signedInUser.userID
         else {
             // No record, or another account's — nothing here can resolve it, and showing one
             // user's photo inside another's session would be a disclosure.
             return .missing
         }
-        guard let data = saveCoordinator.pendingAttachmentData(localID: localID) else { return .missing }
+        guard let data = cachedAttachmentData(localID: localID) else { return .missing }
         return record.failedAt == nil ? .pending(data) : .failed(data)
+    }
+
+    /// Memoized, because this is read from a view body: every keystroke re-evaluates the row,
+    /// and `pendingAttachmentData` is an uncached `Data(contentsOf:)` over a JPEG. Keyed on the
+    /// store's version so a resolved or discarded record drops out.
+    private func cachedAttachmentData(localID: UUID) -> Data? {
+        let version = saveCoordinator.pendingAttachmentsVersion
+        if attachmentDataCacheVersion != version {
+            attachmentDataCacheVersion = version
+            attachmentDataCache = [:]
+        }
+        if let cached = attachmentDataCache[localID] { return cached }
+        let data = saveCoordinator.pendingAttachmentData(localID: localID)
+        attachmentDataCache[localID] = data
+        return data
     }
 
     func retryPendingAttachment(placeholderURL: String) {
@@ -1902,18 +1932,32 @@ final class EditorViewModel {
         saveCoordinator.retryPendingAttachment(localID: localID)
     }
 
-    /// Remove a queued photo's block and its record together. The block goes first so the
-    /// flush below writes a draft that no longer references it; dropping the record first would
-    /// leave a placeholder nothing can resolve if the flush then failed to run.
+    /// Remove a queued photo's block and its record together.
+    ///
+    /// **Both representations have to lose it, not just `blocks`.** In reading mode
+    /// `currentMarkdown()` is `rawMarkdown` — the authoritative source `insertImageBlock`'s own
+    /// reading branch maintains — so dropping the block alone leaves the placeholder in the body
+    /// that gets saved. The flush would then see no change, write no draft, and the record would
+    /// be discarded anyway: the document's saves parked forever on a placeholder nothing can
+    /// resolve, with no image left on screen to offer Remove. That is the exact wedge this
+    /// button exists to clear.
+    ///
+    /// The record goes **last**, and only once the body provably no longer names it — the record
+    /// is what makes the placeholder resolvable, so it must outlive any state that still refers
+    /// to one.
     func removePendingAttachment(blockID: UUID) {
         guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }
-        guard case .image(_, let url) = blocks[index].kind else { return }
+        guard case .image(_, let url) = blocks[index].kind,
+            let localID = pendingAttachmentID(fromPlaceholderURL: url)
+        else { return }
         blocks.remove(at: index)
+        rawMarkdown = markdownRemovingPendingAttachment(rawMarkdown, localID: localID)
         markDirty()
         flushPendingChanges()
-        if let localID = pendingAttachmentID(fromPlaceholderURL: url) {
-            saveCoordinator.discardPendingAttachment(localID: localID)
-        }
+        // If anything still names it, keep the record: a resolvable placeholder is recoverable,
+        // an unresolvable one is not.
+        guard !markdownReferencesPendingAttachment(currentMarkdown(), localID: localID) else { return }
+        saveCoordinator.discardPendingAttachment(localID: localID)
     }
 
     private func reportPhotoFailure() {
