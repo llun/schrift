@@ -172,9 +172,20 @@ func attachmentDisplayTitle(_ display: AttachmentDisplay) -> String {
 ///
 /// Keyed on the extension rather than the `-unsafe` flag, which is far too
 /// broad — a `.docx` sniffs as `zip` and is flagged routinely.
+///
+/// This is a **denylist**, and a denylist is a judgement rather than a proof:
+/// the set of types QuickLook renders is open-ended, and one that fetches remote
+/// subresources and is not named here would not be caught. It is the right shape
+/// anyway, because the alternative — allowing only types named here — would
+/// refuse the long tail of perfectly ordinary documents (`.pages`, `.epub`,
+/// `.heic`, …) and make the feature useless for them. What is listed is
+/// everything that renders as web content: HTML and its variants, the archive
+/// formats that wrap it, and SVG/XML, which carry external references.
 func attachmentIsPreviewable(_ display: AttachmentDisplay) -> Bool {
-    !["html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "mht", "mhtml", "webarchive"]
-        .contains(display.fileExtension.lowercased())
+    ![
+        "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
+        "mht", "mhtml", "webarchive", "epub", "webloc", "url",
+    ].contains(display.fileExtension.lowercased())
 }
 
 // MARK: - Private

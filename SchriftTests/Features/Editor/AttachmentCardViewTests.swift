@@ -60,7 +60,10 @@ final class AttachmentCardViewTests: XCTestCase {
     /// — reopening, by another route, exactly the IP/User-Agent/timing
     /// disclosure the origin gate and `imageLoadPolicy` exist to close.
     func testMarkupTypesAreNeverPreviewable() throws {
-        for ext in ["html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "mht", "mhtml", "webarchive"] {
+        for ext in [
+            "html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "xsl", "xslt",
+            "mht", "mhtml", "webarchive", "epub", "webloc", "url",
+        ] {
             XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: ext)), "\(ext) must not be previewable")
         }
     }
