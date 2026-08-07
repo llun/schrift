@@ -121,4 +121,36 @@ extension DocsAPIClient {
         guard isSameOriginPath(path) else { throw DocsAPIError.network("Invalid media path") }
         return try await getRawData(path)
     }
+
+    /// Polls a media-check path until the upload reads ready, then answers the **absolute**
+    /// media URL to embed — the form the web client persists and `extract_attachments()`
+    /// regex-matches.
+    ///
+    /// The fallback is the point of the whole function: when readiness can't be confirmed within
+    /// the budget, the URL is derived from the upload's own `?key=` rather than reporting
+    /// failure. The upload has already succeeded by then, and treating a slow scanner as a lost
+    /// photo would throw away bytes the server is holding. Only a media-check path with no
+    /// usable key — which no successful upload produces — answers nil.
+    ///
+    /// Shared by the editor's interactive insert and the offline replay pass so the two can
+    /// never disagree about when an upload counts as landed.
+    func readyMediaURLString(
+        fromMediaCheckPath path: String,
+        maxAttempts: Int,
+        retryInterval: Duration
+    ) async -> String? {
+        for attempt in 0..<maxAttempts {
+            if attempt > 0 { try? await Task.sleep(for: retryInterval) }
+            if let response = try? await checkMedia(path: path),
+                response.status == MediaCheckResponse.readyStatus, let file = response.file,
+                let absolute = absoluteServerURL(for: file)
+            {
+                return absolute.absoluteString
+            }
+        }
+        guard let key = attachmentKey(fromMediaCheckPath: path),
+            let absolute = absoluteServerURL(for: "/media/" + key)
+        else { return nil }
+        return absolute.absoluteString
+    }
 }
