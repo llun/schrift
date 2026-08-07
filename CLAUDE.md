@@ -2040,13 +2040,17 @@ markdown write endpoint**. Understand this before touching the save path:
     `forwardLocalEdit`'s own condition without its side effects, and a nil delegate reads
     false so every classic path is unchanged. Keep this guard: it is the one case where
     "the save hold catches it" is false.
-  - **Insertion is un-gated, and the parameters are gone rather than ignored.**
-    `canOfferPhotoInsertion(hasTarget:canInsertPhoto:)` and `filteredSlashItems(query:)`
-    dropped `isOffline`/`isLocalDocument` (the `editorToolbarActions` discipline).
-    `insertPhoto` queues directly when offline or local, falls back to the queue on a
-    retryable failure, and errors on a rejection on the merits. `insertImageBlock` now
-    **reports** whether the image landed, so a queued photo swallowed by a fenced code
-    block drops its record instead of stranding bytes.
+  - **Photo insertion is un-gated; File insertion is not, and the asymmetry is
+    deliberate.** `canOfferPhotoInsertion(hasTarget:canInsertPhoto:)` dropped
+    `isOffline`/`isLocalDocument` (the `editorToolbarActions` discipline), while
+    `filteredSlashItems` keeps them and filters on
+    `SlashMenuAction.requiresImmediateUpload` — true for `.insertAttachment` alone. A
+    photo has somewhere to go when the network doesn't; a file does not yet, and giving it
+    one means a placeholder shape the parser classifies, a hold that recognises it, and a
+    replay branch that uploads it. `insertPhoto` queues directly when offline or local,
+    falls back to the queue on a retryable failure, and errors on a rejection on the
+    merits. `insertImageBlock` now **reports** whether the image landed, so a queued photo
+    swallowed by a fenced code block drops its record instead of stranding bytes.
   - **Rendering branches ahead of `MarkdownImageView`** at both surfaces: a placeholder
     can never match an http(s) origin, so `imageLoadPolicy` would fail closed to a
     tap-to-load card whose host is a UUID. `PendingAttachmentImageView` reads the bytes

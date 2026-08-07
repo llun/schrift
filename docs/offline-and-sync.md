@@ -2148,12 +2148,19 @@ an idempotent rewrite. The reverse order would both POST a dead local id *and* l
 read the removed local draft as "unreferenced" and delete the photo. The placeholder names
 the *attachment's* id, so no markdown needs rewriting there — the hold follows the content.
 
-**Insertion** is no longer gated on connectivity. `canOfferPhotoInsertion` and
-`filteredSlashItems` lost their `isOffline`/`isLocalDocument` *parameters* (rather than merely
-ignoring them, so the gate cannot quietly return), and `insertPhoto` routes three ways: offline
-or a document the server has never seen queues directly, a retryable failure mid-upload falls
-back to the queue, and anything else is a rejection on the merits — friendly copy, nothing
-inserted, exactly as before.
+**Photo insertion** is no longer gated on connectivity. `canOfferPhotoInsertion` lost its
+`isOffline`/`isLocalDocument` *parameters* (rather than merely ignoring them, so that gate cannot
+quietly return), and `insertPhoto` routes three ways: offline or a document the server has never
+seen queues directly, a retryable failure mid-upload falls back to the queue, and anything else
+is a rejection on the merits — friendly copy, nothing inserted, exactly as before.
+
+**File insertion is still gated, and the asymmetry is the point.** `filteredSlashItems` keeps
+its parameters and filters on `SlashMenuAction.requiresImmediateUpload`, which is now true for
+`.insertAttachment` alone. A photo has somewhere to go when the network doesn't; a file does not
+yet. Giving File the same treatment means a placeholder shape the parser classifies, a hold that
+recognises it, and a replay branch that uploads it — the three pieces this photo work is made
+of. Until they exist, the narrower predicate is what keeps "offered offline" from meaning
+"opens the picker, reads the file, and fails".
 
 **The live-editing guard is the load-bearing line, and it sits before the insert.**
 `insertImageBlock` calls `markDirty()`, whose first act is to forward the edit to

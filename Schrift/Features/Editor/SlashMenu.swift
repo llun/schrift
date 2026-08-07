@@ -106,7 +106,7 @@ func slashQuery(text: String, kind: BlockKind) -> String? {
 /// That asymmetry is the whole reason `requiresImmediateUpload` exists rather than a blanket
 /// "does this upload" test — see it for what giving File the same treatment would take.
 func filteredSlashItems(
-    query: String,
+    query: String, isOffline: Bool = false, isLocalDocument: Bool = false,
     items: [SlashMenuItem] = allSlashMenuItems
 ) -> [SlashMenuItem] {
     let available =
