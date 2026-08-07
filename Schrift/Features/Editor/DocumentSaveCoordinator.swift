@@ -2354,6 +2354,26 @@ final class DocumentSaveCoordinator {
     /// (a draft records no parent), and it comes back under a new id, so links to the old one
     /// still point at a document that no longer exists.
     private func reviveAsLocalDocument(documentID: UUID, ownerUserID: UUID) {
+        // **A checkpointed record needs none of this, and must not go through it.** Its body
+        // still lives under the record's `localID` — the migration has not moved it — so a
+        // revive keyed on the *server* id finds nothing, falls through to the purge, and
+        // `discardPendingWork`'s checkpointed branch then cascades the local subtree and takes
+        // that body with it. The record is also all the machinery this case needs: clearing
+        // the checkpoint hands it straight back to `runCreatePass`, which POSTs it fresh under
+        // a new server id, exactly as the `.notFound` start-over does. Everything else — the
+        // record, its draft, its sub-pages — stays where it is.
+        if var checkpointed = checkpointedRecord(forServerID: documentID) {
+            checkpointed.syncedServerID = nil
+            checkpointed.postedTitle = nil
+            updatePendingCreate(checkpointed)
+            // The server copy really is gone, so its id-keyed caches are stale. The *local*
+            // id's are untouched, which is where this record's content lives.
+            contentCache.remove(documentID: documentID)
+            childrenCache.remove(parentID: documentID)
+            childrenCache.removeDocument(documentID)
+            listCache.removeDocument(documentID)
+            return
+        }
         // Prefer the draft — it is the user's newest text. The cached body is the fallback for
         // a document deleted without unsaved edits, which still deserves to come back.
         let draft = draftStore.draft(for: documentID)

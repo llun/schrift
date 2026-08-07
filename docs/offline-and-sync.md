@@ -2168,6 +2168,13 @@ So the undo is *honoured* instead. `reviveAsLocalDocument` re-mints the document
 device owns, carrying the body over from the draft (or, failing that, the cached copy), and
 the create replay POSTs it. That is exactly what the checkpointed path already got for free
 through its `.notFound` start-over; this gives the plain server document the same recovery.
+**A checkpointed record takes a different branch, and must.** Its body still lives under the
+record's `localID` — the migration has not moved it — so a revive keyed on the *server* id
+finds nothing, falls through to the purge, and `discardPendingWork`'s checkpointed branch
+then cascades the local subtree and takes that body with it. The record is also all this case
+needs: clearing the checkpoint hands it back to `runCreatePass`, which POSTs it fresh under a
+new id, exactly as the `.notFound` start-over does. Everything local stays put.
+
 Ordering follows `migrateCreatedDocument`: the new draft is written before the old one is
 removed, so the body is never nowhere. Two losses are unavoidable from here — the document
 comes back as a **root** (a draft records no parent) and under a **new id**, so links to the

@@ -783,6 +783,40 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertTrue(announced.isEmpty)
     }
 
+    /// The undo-loses-the-race path for a **checkpointed** record, where the body is not where
+    /// the revive looks for it: the tombstone names `syncedServerID`, but the draft is still
+    /// under the record's `localID` until the migration moves it. Reviving from the server id
+    /// finds nothing, and the purge that follows cascades the record's local subtree — taking
+    /// the only copy of the body with it.
+    func testAnUndoThatLosesTheRaceKeepsACheckpointedRecordsBody() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(title: "Doomed", parentID: nil, ownerUserID: user)
+        env.drafts.save(
+            PendingDraft(documentID: local.id, title: "Doomed", markdown: "typed offline", updatedAt: Date()))
+        var checkpointed = env.coordinator.pendingCreateForTesting(localID: local.id)!
+        checkpointed.syncedServerID = serverID
+        checkpointed.postedTitle = "Doomed"
+        env.coordinator.savePendingCreateForTesting(checkpointed)
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { log.methods.contains("DELETE") }
+        coordinator.cancelPendingDelete(documentID: serverID)
+        await pass.value
+
+        XCTAssertTrue(
+            env.drafts.allDrafts().map(\.markdown).contains("typed offline"),
+            "the body survives — it is the only copy the user has")
+        let record = env.creates.allCreates().first
+        XCTAssertNotNil(record, "and a record still exists to send it")
+        XCTAssertNil(
+            record?.syncedServerID,
+            "un-checkpointed, so the create replay POSTs it fresh rather than resuming onto a dead id")
+    }
+
     /// A foreign tombstone is never sent — and, because the gate is checked before the
     /// request, never *completed* either. Sending under this session's cookies would very
     /// likely take DRF's 403-as-404, which the ladder reads as "already deleted".
