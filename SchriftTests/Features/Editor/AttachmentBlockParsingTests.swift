@@ -124,6 +124,14 @@ final class AttachmentBlockParsingTests: XCTestCase {
             "# [f](\(url()))",
             "    [f](\(url()))",
             "[f](\(url())) and more",
+            // Adjacent to an *indented* unknown, in both orders. These are the
+            // only inputs `isColumnZeroClassified` can change the answer for —
+            // it is consulted nowhere else — so without them this property test
+            // passes even when `.attachment` is grouped with the column-zero
+            // constructs, and the corpus would be decorative.
+            "[f](\(url()))\n\n    indented continuation",
+            "    indented continuation\n\n[f](\(url()))",
+            "- item\n\n    indented\n\n[f](\(url()))",
             "![a](\(url("png")))",
             "```\n[f](\(url()))\n```",
             "| [f](\(url())) |",
