@@ -2148,13 +2148,38 @@ an idempotent rewrite. The reverse order would both POST a dead local id *and* l
 read the removed local draft as "unreferenced" and delete the photo. The placeholder names
 the *attachment's* id, so no markdown needs rewriting there — the hold follows the content.
 
+**Insertion** is no longer gated on connectivity. `canOfferPhotoInsertion` and
+`filteredSlashItems` lost their `isOffline`/`isLocalDocument` *parameters* (rather than merely
+ignoring them, so the gate cannot quietly return), and `insertPhoto` routes three ways: offline
+or a document the server has never seen queues directly, a retryable failure mid-upload falls
+back to the queue, and anything else is a rejection on the merits — friendly copy, nothing
+inserted, exactly as before.
+
+**The live-editing guard is the load-bearing line, and it sits before the insert.**
+`insertImageBlock` calls `markDirty()`, whose first act is to forward the edit to
+`LiveEditingBridge.forwardLocalEdit` and return **without enqueuing** — so with a live session
+engaged the placeholder would be broadcast straight to peers and never become a save for any of
+the coordinator's gates to hold. `canEngageLiveWrite` cannot catch it either, because
+`YBlockProjection` models any string url, placeholder included. `isHandlingLocalEditsLive` asks
+the bridge for `forwardLocalEdit`'s own condition without its side effects; a nil delegate reads
+false, so every classic path is unchanged. This is the one place where "the save gates hold it"
+is not the answer, and the reason those gates are described as covering the REST save path.
+
+`insertImageBlock` reports whether the document actually gained the image, so a queued photo
+whose line was swallowed by a fenced code block drops its record rather than leaving bytes that
+no draft references — work and disk spent on a document that never had the image.
+
+**Rendering** branches ahead of `MarkdownImageView` at both surfaces (the reading `ForEach` in
+`EditorView`, and `BlockEditorRow.imageLeaf`), because a placeholder can never match an http(s)
+server origin and `imageLoadPolicy` would otherwise fail closed to a tap-to-load card whose host
+is a UUID. `PendingAttachmentImageView` renders the bytes from disk and never issues a request.
+Its `.missing` state is an affordance as much as a state: a placeholder whose record or bytes are
+gone — hand-authored, corrupted, or another account's — still holds the document's saves, and
+removing the block is the only way to clear that hold. The display is **owner-scoped**, so user B
+sees "missing" rather than user A's photo.
+
 **Owed by the work that follows**, and deliberately not done here:
 
-- The **live-collaboration write path bypasses these gates entirely.** `markDirty`
-  forwards to `LiveEditingBridge.forwardLocalEdit` and returns *without enqueuing*, so an
-  edit made while a live session is engaged is broadcast to peers and never becomes a save
-  to hold; `canEngageLiveWrite` cannot catch it, because `YBlockProjection` models any
-  string url. The insert path must refuse to queue while live editing is engaged.
 - A rewritten queued save must be rebuilt **classic** (`liveSnapshot: nil`). Rewriting the
   markdown of a parked live-snapshot save would leave CRDT bytes that still encode the
   placeholder, and `start` prefers the bytes.

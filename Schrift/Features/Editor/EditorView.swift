@@ -651,6 +651,22 @@ struct EditorView: View {
 
     // MARK: - Reading
 
+    /// The queued-photo state for a block, or nil when it is not a placeholder image.
+    private func pendingAttachmentDisplay(for block: EditorBlock) -> PendingAttachmentDisplay? {
+        guard case .image(_, let url) = block.kind else { return nil }
+        return viewModel.pendingAttachmentDisplay(forPlaceholderURL: url)
+    }
+
+    private func pendingAttachmentAlt(for block: EditorBlock) -> String {
+        guard case .image(let alt, _) = block.kind else { return "" }
+        return alt
+    }
+
+    private func retryPendingAttachment(for block: EditorBlock) {
+        guard case .image(_, let url) = block.kind else { return }
+        viewModel.retryPendingAttachment(placeholderURL: url)
+    }
+
     private var readingSurface: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
@@ -663,14 +679,27 @@ struct EditorView: View {
                 } else {
                     VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
                         ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
-                            MarkdownBlockView(
-                                block: block, serverOrigin: serverOrigin,
-                                numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
-                                isOffline: isOffline
-                            )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                viewModel.startEditing(focusing: block.id)
+                            // A queued photo renders from the bytes on disk. Branched here
+                            // rather than inside `MarkdownBlockView` because the state and the
+                            // Retry/Remove intents belong to the view model, which that view
+                            // deliberately does not take — and ahead of `MarkdownImageView`,
+                            // whose fail-closed policy would otherwise show a tap-to-load card
+                            // for a URL that can never be fetched.
+                            if let display = pendingAttachmentDisplay(for: block) {
+                                PendingAttachmentImageView(
+                                    alt: pendingAttachmentAlt(for: block), display: display,
+                                    onRetry: { retryPendingAttachment(for: block) },
+                                    onRemove: { viewModel.removePendingAttachment(blockID: block.id) })
+                            } else {
+                                MarkdownBlockView(
+                                    block: block, serverOrigin: serverOrigin,
+                                    numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                    isOffline: isOffline
+                                )
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    viewModel.startEditing(focusing: block.id)
+                                }
                             }
                         }
                     }

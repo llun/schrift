@@ -28,7 +28,9 @@ final class EditorPhotoInsertionTests: XCTestCase {
     private let documentID = UUID(uuidString: "8B1B1B1B-1B1B-4B1B-8B1B-1B1B1B1B1B1B")!
     private let attachmentUUID = "22222222-2222-4222-8222-222222222222"
 
+    private let owner = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
     private var cacheDirectory: URL!
+    private var attachmentDirectory: URL!
     private var childrenSuiteName: String!
     private var draftSuiteName: String!
 
@@ -36,6 +38,8 @@ final class EditorPhotoInsertionTests: XCTestCase {
         super.setUp()
         cacheDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("EditorPhotoInsertionTests-\(UUID().uuidString)", isDirectory: true)
+        attachmentDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EditorPhotoAttachments-\(UUID().uuidString)", isDirectory: true)
         childrenSuiteName = "EditorPhotoInsertionTests.children.\(UUID().uuidString)"
         draftSuiteName = "EditorPhotoInsertionTests.drafts.\(UUID().uuidString)"
     }
@@ -43,6 +47,7 @@ final class EditorPhotoInsertionTests: XCTestCase {
     override func tearDown() {
         MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
+        try? FileManager.default.removeItem(at: attachmentDirectory)
         UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
         UserDefaults(suiteName: draftSuiteName)?.removePersistentDomain(forName: draftSuiteName)
         super.tearDown()
@@ -63,6 +68,40 @@ final class EditorPhotoInsertionTests: XCTestCase {
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
             contentCache: contentCache, childrenCache: childrenCache,
             mediaCheckRetryInterval: .zero)
+    }
+
+    /// A view model wired to its own attachment store and a known signed-in user — both are
+    /// preconditions for queueing: the record has to say whose photo it is, since records
+    /// survive sign-out and origin identifies the server rather than the account.
+    private func makeQueueingViewModel() -> (EditorViewModel, PendingAttachmentStore) {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let defaults = UserDefaults(suiteName: draftSuiteName)!
+        let attachments = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
+        let signedInUser = SignedInUserStore(userDefaults: defaults)
+        signedInUser.remember(owner)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            attachmentStore: attachments,
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let viewModel = EditorViewModel(
+            client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
+            signedInUser: signedInUser, contentCache: contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            mediaCheckRetryInterval: .zero)
+        return (viewModel, attachments)
+    }
+
+    private func queuedPlaceholder(in viewModel: EditorViewModel) -> String? {
+        viewModel.blocks.compactMap { block -> String? in
+            guard case .image(_, let url) = block.kind, pendingAttachmentID(fromPlaceholderURL: url) != nil
+            else { return nil }
+            return url
+        }.first
     }
 
     /// Loads content so `hasLoadedContent` is true (both photo entry points guard
@@ -734,6 +773,179 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .image(alt: "", url: expectedMediaURL))
         XCTAssertEqual(viewModel.blocks[1].kind, .paragraph)
     }
+    // MARK: - Queueing when the upload cannot happen now
+
+    func testInsertingOfflineQueuesTheePhotoAndPostsNothing() async {
+        let log = RequestRecorder()
+        stubUploadPipeline(log: log)
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+
+        // Attempting the upload offline would open the picker, re-encode, and fail — and the
+        // bytes are already prepared, so losing them here would be gratuitous.
+        XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
+        let placeholder = queuedPlaceholder(in: viewModel)
+        XCTAssertNotNil(placeholder, "the document should carry a placeholder image block")
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder ?? "")!
+        XCTAssertNotNil(attachments.attachment(for: localID))
+        XCTAssertNotNil(attachments.data(for: localID), "the prepared photo must be on disk")
+        XCTAssertNil(viewModel.errorKey, "queueing is a success, not a failure")
+    }
+
+    func testATransientUploadFailureFallsBackToTheQueue() async {
+        stubUploadPipeline(uploadStatus: 503)
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        // Mirrors Home's create button: a failure the replay can retry keeps the work.
+        let placeholder = queuedPlaceholder(in: viewModel)
+        XCTAssertNotNil(placeholder)
+        XCTAssertNotNil(attachments.attachment(for: pendingAttachmentID(fromPlaceholderURL: placeholder ?? "")!))
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    func testATerminalRejectionStillErrorsAndQueuesNothing() async {
+        stubUploadPipeline(uploadStatus: 400)
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+
+        await viewModel.insertPhoto(loadingData: { testPNGData(width: 8, height: 8) })
+
+        // The server rejected this photo on its merits; queueing would retry it forever.
+        XCTAssertNil(queuedPlaceholder(in: viewModel))
+        XCTAssertTrue(attachments.allAttachments().isEmpty)
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
+    }
+
+    func testALiveEditingSessionRefusesToQueueRatherThanBroadcastAPlaceholder() async {
+        stubUploadPipeline()
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+        let live = FakePhotoLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+
+        // `markDirty` forwards to the bridge and returns without enqueuing, so a placeholder
+        // inserted here would be broadcast to peers and never become a save the coordinator's
+        // gates could hold. Refusing is the only thing that keeps it a local artefact.
+        XCTAssertNil(queuedPlaceholder(in: viewModel))
+        XCTAssertTrue(attachments.allAttachments().isEmpty)
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
+        XCTAssertEqual(live.forwardCount, 0, "nothing may reach the replica")
+    }
+
+    func testQueueingIsRefusedWithNoKnownAccount() async {
+        stubUploadPipeline()
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let defaults = UserDefaults(suiteName: draftSuiteName)!
+        let attachments = PendingAttachmentStore(userDefaults: defaults, directory: attachmentDirectory)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            attachmentStore: attachments,
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        // No `remember` — an unattributable record could never be shown or sent.
+        let viewModel = EditorViewModel(
+            client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            mediaCheckRetryInterval: .zero)
+        await viewModel.load()
+        viewModel.startEditing()
+
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertTrue(attachments.allAttachments().isEmpty)
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
+    }
+
+    func testAQueuedPhotoSwallowedByAnOpenFenceDropsItsRecord() async {
+        // A source whose tail is an unterminated fence swallows the appended image line, so the
+        // document never gains the block. The record minted for it would then name nothing: no
+        // draft references it, so the replay would upload a photo the user cannot see and then
+        // collect it — work and bytes spent on a document that never had the image.
+        stubUploadPipeline(content: "Notes\\n```")
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        XCTAssertEqual(viewModel.mode, .reading)
+
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+
+        XCTAssertEqual(viewModel.errorKey, .editor_error_add_photo)
+        XCTAssertNil(queuedPlaceholder(in: viewModel))
+        XCTAssertTrue(attachments.allAttachments().isEmpty, "the orphaned record must be dropped")
+    }
+
+    // MARK: - Resolving and removing
+
+    func testAdoptingAResolvedURLRewritesInPlaceKeepingBlockIdentity() async {
+        stubUploadPipeline()
+        let (viewModel, _) = makeQueueingViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+        let placeholder = queuedPlaceholder(in: viewModel)!
+        let blockID = viewModel.blocks.first { block in
+            if case .image(_, let url) = block.kind { return url == placeholder }
+            return false
+        }!.id
+
+        viewModel.adoptResolvedAttachmentURL(placeholder: placeholder, resolved: expectedMediaURL)
+
+        // The id must survive: the live-editing diff is keyed on it, and re-minting one reads as
+        // a whole-block replace against a concurrent peer.
+        let rewritten = viewModel.blocks.first { $0.id == blockID }
+        XCTAssertEqual(rewritten?.kind, .image(alt: "", url: expectedMediaURL))
+        XCTAssertNil(queuedPlaceholder(in: viewModel))
+    }
+
+    func testRemovingAQueuedPhotoDropsTheBlockAndTheRecord() async {
+        stubUploadPipeline()
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        viewModel.startEditing()
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+        let placeholder = queuedPlaceholder(in: viewModel)!
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+        let blockID = viewModel.blocks.first { block in
+            if case .image(_, let url) = block.kind { return url == placeholder }
+            return false
+        }!.id
+
+        viewModel.removePendingAttachment(blockID: blockID)
+
+        // This is the escape from the hold, so both halves have to go.
+        XCTAssertNil(queuedPlaceholder(in: viewModel))
+        XCTAssertNil(attachments.attachment(for: localID))
+        XCTAssertNil(attachments.data(for: localID))
+    }
+
+    func testAPlaceholderWithNoRecordRendersAsMissingSoItCanBeRemoved() async {
+        stubUploadPipeline()
+        let (viewModel, _) = makeQueueingViewModel()
+        await viewModel.load()
+
+        // Hand-authored or server-authored content: it holds this document's saves, and the
+        // only way out is removing the block — which needs a card that says so.
+        let orphan = pendingAttachmentPlaceholderURL(for: UUID())
+        XCTAssertEqual(viewModel.pendingAttachmentDisplay(forPlaceholderURL: orphan), .missing)
+        XCTAssertNil(viewModel.pendingAttachmentDisplay(forPlaceholderURL: expectedMediaURL))
+    }
+
     /// Neither offline nor a locally-created document withholds the photo item any more. Both
     /// route to the queue instead: the bytes are stored on the device, and the replay uploads
     /// them once there is a network and (for a local document) a server id to upload against.
@@ -742,4 +954,18 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertTrue(filteredSlashItems(query: "").contains { $0.action == .insertPhoto })
         XCTAssertEqual(filteredSlashItems(query: "photo").map(\.id), ["photo"])
     }
+}
+
+/// A scripted live-write delegate for the photo path — only `isHandlingLocalEditsLive` matters
+/// here, but `forwardCount` proves nothing reached the replica.
+@MainActor
+private final class FakePhotoLiveWrite: EditorLiveWriteCoordinating {
+    var handleLive = false
+    private(set) var forwardCount = 0
+    var isHandlingLocalEditsLive: Bool { handleLive }
+    func forwardLocalEdit() -> Bool {
+        forwardCount += 1
+        return handleLive
+    }
+    func flushPendingLiveSnapshot() {}
 }
