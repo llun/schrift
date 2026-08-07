@@ -1231,6 +1231,30 @@ final class EditorViewModel {
         return mergedWithLocalDocuments(fetched: subpages ?? [], local: local)
     }
 
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and the lists that show them are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID)
+    }
+
+    /// Cancel a queued deletion for a sub-page, and kick the sync funnel: its draft was
+    /// suppressed while the tombstone stood, and undoing is exactly when it becomes
+    /// replayable again — waiting for an unrelated foreground or reconnect would strand it.
+    func undoPendingDelete(_ document: Document) {
+        saveCoordinator.cancelPendingDelete(documentID: document.id)
+        let coordinator = saveCoordinator
+        Task { await coordinator.syncPendingDrafts() }
+    }
+
     func loadChildren() async {
         // A local document has no children on the server to list — and cannot, since the server
         // has never heard of the id. Sub-pages created under it live in the create records and

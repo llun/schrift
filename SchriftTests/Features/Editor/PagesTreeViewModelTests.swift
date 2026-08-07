@@ -60,6 +60,7 @@ final class PagesTreeViewModelTests: XCTestCase {
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let signedIn = SignedInUserStore(userDefaults: defaults)
@@ -433,6 +434,29 @@ final class PagesTreeViewModelTests: XCTestCase {
 
         XCTAssertEqual(
             viewModel.rows.map(\.document.id), [childID], "the row goes with the record")
+    }
+
+    /// The drawer annotates too, so a page deleted from its own screen stops looking alive
+    /// here — and taps into the undo instead of opening.
+    func testAPageIsAnnotatedOnceItsDeletionIsQueued() async {
+        let env = makeLocalRootViewModel()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let page = document(UUID(), title: "Doomed")
+        XCTAssertFalse(env.viewModel.isDeletePending(page))
+
+        env.coordinator.recordPendingDelete(documentID: page.id, ownerUserID: owner)
+
+        XCTAssertTrue(env.viewModel.isDeletePending(page))
+
+        env.coordinator.cancelPendingDelete(documentID: page.id)
+        XCTAssertFalse(env.viewModel.isDeletePending(page), "and the undo takes it off again")
+    }
+
+    /// Without a coordinator the predicate answers false rather than trapping.
+    func testAPageIsNeverAnnotatedWithoutACoordinator() {
+        let (viewModel, _) = makeViewModel()
+
+        XCTAssertFalse(viewModel.isDeletePending(document(UUID(), title: "Doc")))
     }
 
     /// A synthetic carries `numchild: 0` — it has no server bookkeeping at all — so without

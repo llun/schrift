@@ -159,6 +159,21 @@ final class PagesTreeViewModel {
         return merged
     }
 
+    /// Whether this document's deletion is queued and unsent, so its row draws struck through
+    /// and its tap offers the undo instead of opening it.
+    ///
+    /// Scoped to the signed-in account (`isListablePendingDelete`, never the unscoped
+    /// protective predicate): tombstones survive sign-out and the lists that show them are neither
+    /// account-scoped nor cleared, so an unscoped answer would strike one user's document
+    /// through another's list and offer them a button that cancels a deletion they never made.
+    ///
+    /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
+    /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    func isDeletePending(_ document: Document) -> Bool {
+        saveCoordinator?.isListablePendingDelete(
+            documentID: document.id, currentUserID: signedInUser.userID) ?? false
+    }
+
     /// Loads the root level. Safe to call on every appearance — a level already
     /// loaded is refreshed silently rather than cleared and re-fetched.
     func loadRoot() async {

@@ -73,6 +73,12 @@ enum L10nKey: String, CaseIterable, Sendable {
     case docrow_public = "docrow.public"  // "Public"
     case docrow_available_offline = "docrow.available_offline"  // "Available offline"
     case docrow_on_this_device = "docrow.on_this_device"  // "On this device, waiting to sync"
+    /// Spoken and shown for a row whose deletion is queued but unsent, and reused as the
+    /// undo alert's title — the same fact stated once. Deliberately not phrased as an error:
+    /// the deletion is waiting, and is still cancellable from any list that shows it.
+    case docrow_pending_delete = "docrow.pending_delete"  // "Waiting to be deleted"
+    case pending_delete_alert_message = "pending_delete.alert_message"  // "This document will be deleted when you're back online."
+    case pending_delete_undo = "pending_delete.undo"  // "Undo delete"
 
     // LinkReachPill hints (design-system component; labels reuse reach.*)
     case linkreach_hint_restricted = "linkreach.hint.restricted"  // "Only invited people"

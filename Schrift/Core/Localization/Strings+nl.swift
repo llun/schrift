@@ -64,6 +64,12 @@ enum Strings_nl {
         .docrow_public: "Openbaar",
         .docrow_available_offline: "Offline beschikbaar",
 
+        .docrow_pending_delete: "Wacht op verwijdering",
+
+        .pending_delete_alert_message: "Dit document wordt verwijderd zodra je weer online bent.",
+
+        .pending_delete_undo: "Verwijderen ongedaan maken",
+
         .docrow_on_this_device: "Op dit apparaat, wacht op synchronisatie",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Alleen uitgenodigde personen",

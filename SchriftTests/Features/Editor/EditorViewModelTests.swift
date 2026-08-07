@@ -271,6 +271,47 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [], "the row goes with the record")
     }
 
+    /// A sub-page deleted from its own screen strikes through in the parent's list the
+    /// moment the user pops back — no children refetch, which offline never comes.
+    func testASubpageIsAnnotatedOnceItsDeletionIsQueued() async {
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(userID: user))
+        let child = Document(
+            id: UUID(), title: "Doomed", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 2, numchild: 0,
+            path: "0002", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+        XCTAssertFalse(viewModel.isDeletePending(child))
+
+        env.coordinator.recordPendingDelete(documentID: child.id, ownerUserID: user)
+        XCTAssertTrue(viewModel.isDeletePending(child))
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
+        viewModel.undoPendingDelete(child)
+        XCTAssertFalse(viewModel.isDeletePending(child), "and the undo takes it off again")
+    }
+
+    /// Never another account's deletion: the create/children caches outlive sign-out, so an
+    /// unscoped predicate would strike one user's document through another's list.
+    func testASubpageIsNeverAnnotatedForAnotherAccountsDeletion() async {
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator,
+            signedInUser: makeSignedInUser(userID: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!))
+        let child = Document(
+            id: UUID(), title: "Doomed", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 2, numchild: 0,
+            path: "0002", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+
+        env.coordinator.recordPendingDelete(
+            documentID: child.id, ownerUserID: UUID(uuidString: "99999999-9999-4999-8999-999999999999")!)
+
+        XCTAssertFalse(viewModel.isDeletePending(child))
+    }
+
     /// A transport failure on "Add a subpage" keeps the page on the device rather than
     /// reporting an error, exactly as Home's create does.
     func testAddSubpageFallsBackToALocalChildOnATransportError() async {

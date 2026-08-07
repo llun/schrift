@@ -357,4 +357,55 @@ final class SharedViewModelTests: XCTestCase {
 
         XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["With Me Doc"])
     }
+
+    // MARK: - Rows for documents whose deletion is queued
+
+    /// The Shared tab reads the coordinator too, so a document deleted from its own screen
+    /// stops looking alive here — and offers the undo — without waiting for a list fetch.
+    func testARowIsAnnotatedOnceItsDeletionIsQueued() {
+        let suiteName = "SharedViewModelTests.coordinator.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(user)
+        let viewModel = SharedViewModel(
+            client: client, cache: cache, userDefaults: preferences,
+            saveCoordinator: coordinator, signedInUser: signedIn)
+        let document = Document(
+            id: UUID(), title: "Doomed", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 1, numchild: 0,
+            path: "0001", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+        XCTAssertFalse(viewModel.isDeletePending(document))
+
+        coordinator.recordPendingDelete(documentID: document.id, ownerUserID: user)
+        XCTAssertTrue(viewModel.isDeletePending(document))
+
+        // And never another account's deletion — these caches outlive sign-out.
+        let other = SharedViewModel(
+            client: client, cache: cache, userDefaults: preferences,
+            saveCoordinator: coordinator,
+            signedInUser: SignedInUserStore(userDefaults: UserDefaults(suiteName: suiteName + ".other")!))
+        XCTAssertFalse(other.isDeletePending(document))
+        UserDefaults(suiteName: suiteName + ".other")?.removePersistentDomain(forName: suiteName + ".other")
+    }
+
+    /// Without a coordinator — every `#Preview` and any screen that has none — the predicate
+    /// simply answers false rather than trapping.
+    func testARowIsNeverAnnotatedWithoutACoordinator() {
+        let document = Document(
+            id: UUID(), title: "Doc", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 1, numchild: 0,
+            path: "0001", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+
+        XCTAssertFalse(makeViewModel().isDeletePending(document))
+    }
 }

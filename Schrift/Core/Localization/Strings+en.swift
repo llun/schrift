@@ -63,6 +63,9 @@ enum Strings_en {
         .docrow_shared_with_organization: "Shared with organization",
         .docrow_public: "Public",
         .docrow_available_offline: "Available offline",
+        .docrow_pending_delete: "Waiting to be deleted",
+        .pending_delete_alert_message: "This document will be deleted when you're back online.",
+        .pending_delete_undo: "Undo delete",
         .docrow_on_this_device: "On this device, waiting to sync",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)

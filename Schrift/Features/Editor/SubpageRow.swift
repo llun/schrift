@@ -2,6 +2,10 @@ import SwiftUI
 
 struct SubpageRow: View {
     let document: Document
+    /// Deleted on this device, waiting for the server to be told. The row stays — struck
+    /// through, with a delete glyph — because the deletion is still undoable, and the tap
+    /// offers that instead of opening the document.
+    var pendingDelete: Bool = false
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
@@ -27,7 +31,8 @@ struct SubpageRow: View {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(displayTitle)
                         .font(DocsFont.body)
-                        .foregroundStyle(DocsColor.textPrimary)
+                        .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                        .strikethrough(pendingDelete)
                         .lineLimit(1)
 
                     if let summary {
@@ -49,8 +54,13 @@ struct SubpageRow: View {
                     .foregroundStyle(DocsColor.textTertiary)
                 }
 
-                MaterialSymbol(.chevron_right, size: 18)
-                    .foregroundStyle(DocsColor.gray300)
+                if pendingDelete {
+                    MaterialSymbol(.delete, size: 16)
+                        .foregroundStyle(DocsColor.gray350)
+                } else {
+                    MaterialSymbol(.chevron_right, size: 18)
+                        .foregroundStyle(DocsColor.gray300)
+                }
             }
             .padding(.horizontal, DocsSpacing.spaceXS)
             .padding(.vertical, 10)
@@ -58,6 +68,10 @@ struct SubpageRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // `MaterialSymbol` is `accessibilityHidden` (a Private-Use-Area glyph with no spoken
+        // text), so a state carried only by that glyph and a strikethrough has to be said.
+        .accessibilityLabel(
+            pendingDelete ? "\(displayTitle), \(loc[.docrow_pending_delete])" : displayTitle)
     }
 }
 
@@ -80,6 +94,25 @@ struct SubpageRow: View {
                 userRole: nil,
                 creator: nil
             )
+        )
+        SubpageRow(
+            document: Document(
+                id: UUID(),
+                title: "Deleted while offline",
+                excerpt: nil,
+                abilities: DocumentAbilities(),
+                linkReach: .restricted,
+                linkRole: .reader,
+                isFavorite: false,
+                depth: 2,
+                numchild: 0,
+                path: "0002",
+                createdAt: Date(),
+                updatedAt: Date(),
+                userRole: nil,
+                creator: nil
+            ),
+            pendingDelete: true
         )
     }
     .padding()

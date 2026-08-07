@@ -61,6 +61,12 @@ enum Strings_zhHant {
         .docrow_public: "公開",
         .docrow_available_offline: "可離線使用",
 
+        .docrow_pending_delete: "等待刪除",
+
+        .pending_delete_alert_message: "此文件將在您重新連線後刪除。",
+
+        .pending_delete_undo: "復原刪除",
+
         .docrow_on_this_device: "在此裝置上，等待同步",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "僅限受邀者",

@@ -60,8 +60,13 @@ struct MainTabView: View {
         self.serverHost = serverHost
         self.serverOrigin = serverOrigin
         self.onSignOut = onSignOut
-        _searchViewModel = State(initialValue: SearchViewModel(client: viewModel.client))
-        _sharedViewModel = State(initialValue: SharedViewModel(client: viewModel.client))
+        // The coordinator so these tabs can strike through a document whose deletion is
+        // queued, and offer the undo. Home's own list reads it directly (it owns the
+        // coordinator); these two are given it here.
+        _searchViewModel = State(
+            initialValue: SearchViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
+        _sharedViewModel = State(
+            initialValue: SharedViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
         _profileViewModel = State(initialValue: ProfileViewModel(client: viewModel.client))
     }
 

@@ -65,6 +65,12 @@ enum Strings_de {
         .docrow_public: "Öffentlich",
         .docrow_available_offline: "Offline verfügbar",
 
+        .docrow_pending_delete: "Wartet auf Löschung",
+
+        .pending_delete_alert_message: "Dieses Dokument wird gelöscht, sobald Sie wieder online sind.",
+
+        .pending_delete_undo: "Löschen rückgängig machen",
+
         .docrow_on_this_device: "Auf diesem Gerät, wartet auf Synchronisierung",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Nur eingeladene Personen",

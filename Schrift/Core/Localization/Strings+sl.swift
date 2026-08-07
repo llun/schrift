@@ -71,6 +71,12 @@ enum Strings_sl {
         .docrow_public: "Javno",
         .docrow_available_offline: "Na voljo brez povezave",
 
+        .docrow_pending_delete: "Čaka na izbris",
+
+        .pending_delete_alert_message: "Ta dokument bo izbrisan, ko boste spet povezani.",
+
+        .pending_delete_undo: "Razveljavi izbris",
+
         .docrow_on_this_device: "V tej napravi, čaka na sinhronizacijo",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "Samo povabljeni",

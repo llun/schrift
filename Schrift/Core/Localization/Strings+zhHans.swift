@@ -61,6 +61,12 @@ enum Strings_zhHans {
         .docrow_public: "公开",
         .docrow_available_offline: "可离线使用",
 
+        .docrow_pending_delete: "等待删除",
+
+        .pending_delete_alert_message: "此文档将在您重新联网后删除。",
+
+        .pending_delete_undo: "撤销删除",
+
         .docrow_on_this_device: "在此设备上，等待同步",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "仅受邀请的人",

@@ -180,6 +180,9 @@ struct EditorView: View {
     /// toast inside one would be torn down before it could be read.
     @State private var toastMessage: ToastMessage?
     @State private var isPresentingPagesTree = false
+    /// The struck-through sub-page (or drawer page) the user tapped — see
+    /// `pendingDeleteUndoAlert`.
+    @State private var documentPendingUndo: Document?
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -242,7 +245,13 @@ struct EditorView: View {
     }
 
     var body: some View {
+        // The undo alert is applied here, before the long modifier chain below, purely to
+        // keep that chain inside the type-checker's budget — it belongs to the whole screen
+        // either way (a struck-through row can be tapped in the Subpages list or the drawer).
         mainContent
+            .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
+                viewModel.undoPendingDelete(document)
+            }
             .background(DocsColor.surfacePage)
             // While editing, clear the formatting bar the canvas floats at the
             // same edge — Copy Link is reachable from the toolbar mid-edit, so
@@ -425,6 +434,12 @@ struct EditorView: View {
                     viewModel: pagesTreeViewModel,
                     rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
                     onOpen: { document in
+                        // A page on its way out is not opened from the drawer either.
+                        guard !viewModel.isDeletePending(document) else {
+                            isPresentingPagesTree = false
+                            documentPendingUndo = document
+                            return
+                        }
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
                     },
@@ -848,7 +863,19 @@ struct EditorView: View {
                     } else {
                         VStack(spacing: 0) {
                             ForEach(subpages) { child in
-                                SubpageRow(document: child, onOpen: { onOpenDocument?(child) })
+                                SubpageRow(
+                                    document: child,
+                                    // Reading the predicate here registers the `@Observable` dependency, so a
+                                    // sub-page deleted from its own screen strikes through the moment the user
+                                    // pops back, with no children refetch — which offline never comes.
+                                    pendingDelete: viewModel.isDeletePending(child),
+                                    onOpen: {
+                                        if viewModel.isDeletePending(child) {
+                                            documentPendingUndo = child
+                                        } else {
+                                            onOpenDocument?(child)
+                                        }
+                                    })
                             }
                         }
                     }

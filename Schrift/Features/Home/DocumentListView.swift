@@ -12,6 +12,8 @@ struct DocumentListView: View {
 
     @Environment(LocalizationStore.self) private var loc
     @AppStorage("schrift.workOffline") private var workOffline = false
+    /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
+    @State private var documentPendingUndo: Document?
 
     private var isOffline: Bool { viewModel.isOffline || workOffline }
 
@@ -67,6 +69,9 @@ struct DocumentListView: View {
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
+            viewModel.undoPendingDelete(document)
+        }
         // System chrome, not a drawn bar: the large title collapses on scroll,
         // the server host rides along as the subtitle, and on iOS 26 the bar
         // picks up Liquid Glass and its scroll-edge effect for free.
@@ -189,7 +194,19 @@ struct DocumentListView: View {
                         // Created here and not yet on the server — the one row state the
                         // user can act on (it is why the document is missing from the web).
                         pendingSync: viewModel.isLocalDocument(document),
-                        onOpen: { onSelect(document) }
+                        // Deleted here, not yet sent. Reading the predicate inside this body
+                        // is what registers the `@Observable` dependency, so the row strikes
+                        // through (and un-strikes on undo) without waiting for a list fetch.
+                        pendingDelete: viewModel.isDeletePending(document),
+                        // A document on its way out is not opened — the tap offers to keep it
+                        // instead, which is the only place that choice is still available.
+                        onOpen: {
+                            if viewModel.isDeletePending(document) {
+                                documentPendingUndo = document
+                            } else {
+                                onSelect(document)
+                            }
+                        }
                     )
                 }
             }

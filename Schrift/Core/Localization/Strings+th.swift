@@ -63,6 +63,12 @@ enum Strings_th {
         .docrow_public: "สาธารณะ",
         .docrow_available_offline: "ใช้งานได้แบบออฟไลน์",
 
+        .docrow_pending_delete: "รอการลบ",
+
+        .pending_delete_alert_message: "เอกสารนี้จะถูกลบเมื่อคุณกลับมาออนไลน์",
+
+        .pending_delete_undo: "เลิกทำการลบ",
+
         .docrow_on_this_device: "บนอุปกรณ์นี้ รอการซิงค์",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
         .linkreach_hint_restricted: "เฉพาะผู้ที่ได้รับเชิญ",

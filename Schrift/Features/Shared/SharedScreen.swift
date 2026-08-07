@@ -6,6 +6,8 @@ struct SharedScreen: View {
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
+    @State private var documentPendingUndo: Document?
     @AppStorage("schrift.workOffline") private var workOffline = false
 
     private func subtitle(for document: Document) -> String {
@@ -63,7 +65,18 @@ struct SharedScreen: View {
                                     title: document.title ?? loc[.common_untitled],
                                     subtitle: subtitle(for: document),
                                     memberNames: viewModel.enrichment[document.id]?.memberNames ?? [],
-                                    onTap: { onOpenDocument(document) }
+                                    // Reading the predicate in this body registers the
+                                    // `@Observable` dependency, so the row strikes through
+                                    // (and un-strikes on undo) with no list fetch.
+                                    pendingDelete: viewModel.isDeletePending(document),
+                                    pendingDeleteLabel: loc[.docrow_pending_delete],
+                                    onTap: {
+                                        if viewModel.isDeletePending(document) {
+                                            documentPendingUndo = document
+                                        } else {
+                                            onOpenDocument(document)
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -89,6 +102,9 @@ struct SharedScreen: View {
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
+        .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
+            viewModel.undoPendingDelete(document)
+        }
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)
         .task {
