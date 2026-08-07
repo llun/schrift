@@ -2087,6 +2087,55 @@ Three properties are easy to get wrong and are each worth a regression test:
   the editor's status honest. This is the first hold that can co-occur with a save
   genuinely in flight, which is why that disjunct alone is gated on `inFlight == nil`.
 
+**The replay** (`runAttachmentPass`) runs inside `syncPendingDrafts`'s coalesced loop,
+between the create replay and the draft replay — after the creates, because a photo in a
+locally-created document cannot be uploaded until that document has a server id; before
+the drafts, because the upload is what releases the hold. It has no triggers of its own,
+so two overlapping reconnects cannot upload the same record twice.
+
+It is **two-phase**, exactly as the create replay is and for the same reason: the resolved
+media URL is checkpointed onto the record *before* any markdown is rewritten, so a death
+between the two resumes at the rewrite rather than uploading a second copy. The attachment
+endpoint has no idempotency key; nothing else closes that window.
+
+Everything after the upload happens in **one synchronous main-actor turn with no awaits** —
+draft, queued slot, open editor, record removal, re-enqueue. That is the safety argument
+rather than a style preference: an editor open on the document can flush at any suspension
+point with in-memory blocks that still name the placeholder, so a rewrite split across an
+await could remove the record and then have that flush reintroduce a placeholder nothing can
+resolve. Within one turn the interleaving is unrepresentable.
+
+The hand-back is a **re-`enqueue`, not a release**. Nothing can rewrite a parked
+`PendingSave` in place, and `enqueue` re-derives every hold from the content it is handed —
+so a second queued photo, a conflict, or a pending create still parks it correctly, and a
+draft left by a *previous process* (where the in-memory queued slot is empty, so there is
+nothing to release) is pushed rather than waiting for a keystroke. The rewritten queued slot
+is rebuilt **classic**, because a live snapshot's CRDT bytes still encode the placeholder and
+`start` prefers them over the markdown.
+
+Per-record gate order, and each position is load-bearing:
+
+1. **Re-read from the mirror** — every await is a window in which the user can delete the
+   document or discard the photo, and acting on a stale copy would resurrect it.
+2. **Session scope** (`serverOrigin` + `ownerUserID`, failing closed on an unknown owner).
+   A record failing this is kept, silent, and *never collected*: dormant means no requests
+   **and** no deletion, or signing in elsewhere would delete the only copy of someone's photo.
+3. **Collection**, before the failure skip — otherwise a terminally-failed record whose
+   document was deleted is never cleaned up. Deferred while an editor is open, since that
+   screen may be about to flush a body that still names the photo.
+4. **Terminal failure skip** — a server rejection on the merits is the user's to answer, via
+   the image leaf's Retry/Remove.
+5. **Parent-create gate** — a photo in a document the server has never seen would POST to
+   `documents/{local-uuid}/attachment-upload/` and 404.
+
+`migrateCreatedDocument` re-keys attachment records onto the server id **before**
+`removePendingCreate`, beside the children re-key and for the same reason: the create
+record's presence is what makes the pass skip them, so while it exists every record naming
+the document is held whether or not it has been re-keyed, and a kill mid-loop simply redoes
+an idempotent rewrite. The reverse order would both POST a dead local id *and* let collection
+read the removed local draft as "unreferenced" and delete the photo. The placeholder names
+the *attachment's* id, so no markdown needs rewriting there — the hold follows the content.
+
 **Owed by the work that follows**, and deliberately not done here:
 
 - The **live-collaboration write path bypasses these gates entirely.** `markDirty`
@@ -2100,9 +2149,6 @@ Three properties are easy to get wrong and are each worth a regression test:
 - `syncCaption` degrades to a passive caption only on `hasConflict`; an attachment hold
   currently still offers a "tap to retry" that `saveNow` no-ops (`pendingSave != nil`).
   It needs the same third precedence input the conflict hold has.
-- `removeAll(forDocumentID:)` has no caller: `resolveConflictKeepingServer` and
-  `discardPendingWork` throw away the draft that referenced the placeholders without
-  purging the records or bytes.
 - A placeholder with **no matching record** (hand-authored, or from a co-author) holds
   that document's saves with the image leaf's deletion as the only escape.
 
