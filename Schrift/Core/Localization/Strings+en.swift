@@ -247,6 +247,11 @@ enum Strings_en {
         .editor_attachment_offline: "Available when online",
         .editor_attachment_a11y: "Attachment: %@. %@",
         .editor_attachment_not_previewable: "Can’t be previewed here",
+        .editor_error_add_file: "Couldn't add the file. Please try again.",
+        .editor_error_file_too_large: "That file is too large to add.",
+        .editor_slash_file: "File",
+        .editor_uploading_file: "Uploading file…",
+        .editor_uploading_file_a11y: "Uploading file",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Add paragraph at end",

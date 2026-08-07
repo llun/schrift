@@ -79,6 +79,12 @@ final class EditorViewModel {
     /// placeholder block exists during this window — the `.image` block is only
     /// inserted on success.
     var isUploadingPhoto = false
+    /// Presents the system document picker. Set only through
+    /// `requestAttachmentInsertion`, which re-checks `canInsertAttachment`.
+    var isAttachmentImporterPresented = false
+    /// An attachment upload is in flight. Like the photo flag, no placeholder
+    /// block exists during this window: the block is created on success only.
+    var isUploadingAttachment = false
     /// Drives the link sheet. Set by the formatting bar's link button and by a
     /// tap on a link's label; cleared on commit or cancel.
     var linkEditor: LinkEditorRequest?
@@ -185,6 +191,8 @@ final class EditorViewModel {
 
     /// Friendly copy for every failure in the photo-insert pipeline.
     private static let photoErrorKey: L10nKey = .editor_error_add_photo
+    private static let fileErrorKey: L10nKey = .editor_error_add_file
+    private static let fileTooLargeErrorKey: L10nKey = .editor_error_file_too_large
 
     init(
         client: DocsAPIClient,
@@ -1683,10 +1691,12 @@ final class EditorViewModel {
     /// consuming the "/query" text.
     func applySlashSelection(_ item: SlashMenuItem) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
-        // Photo is the one item that can decline: while an upload is in flight the
-        // picker won't open. Bail out *before* consuming the "/photo" text, or the
-        // selection would silently eat what the user typed and do nothing.
+        // The uploading items can decline: while an upload is in flight the
+        // picker won't open. Bail out *before* consuming the typed "/photo" or
+        // "/file", or the selection would silently eat what the user typed and
+        // do nothing.
         if case .insertPhoto = item.action, !canInsertPhoto { return }
+        if case .insertAttachment = item.action, !canInsertAttachment { return }
         blocks[index].text = ""
         slashQueryText = nil
         switch item.action {
@@ -1704,6 +1714,11 @@ final class EditorViewModel {
             // doesn't, so a failed pick never strands a placeholder).
             focusBlock(focusedBlockID, cursorAt: 0)
             requestPhotoInsertion()
+        case .insertAttachment:
+            // Same contract as photo: the block stays an empty paragraph and
+            // `insertAttachmentBlock` replaces it in place on success only.
+            focusBlock(focusedBlockID, cursorAt: 0)
+            requestAttachmentInsertion()
         }
         markDirty()
     }
@@ -1712,7 +1727,12 @@ final class EditorViewModel {
 
     /// Editing may only begin once content has loaded, and one upload at a time.
     /// Both photo entry points share this gate.
-    var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto }
+    /// One upload at a time, whichever kind: both funnel through the same
+    /// `isUploading*` banner and the same insert-verification path, and a second
+    /// concurrent insert would race the first one's block placement.
+    var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment }
+
+    var canInsertAttachment: Bool { hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment }
 
     /// Entry point for both the formatting-bar button and the slash-menu item.
     func requestPhotoInsertion() {
@@ -1851,6 +1871,121 @@ final class EditorViewModel {
         blocks = updated
         focusBlock(trailing.id, cursorAt: 0)
         markDirty()
+    }
+
+    // MARK: - File attachments
+
+    func requestAttachmentInsertion() {
+        guard canInsertAttachment else { return }
+        isAttachmentImporterPresented = true
+    }
+
+    /// Uploads a picked file and inserts a `.attachment` block on success only.
+    ///
+    /// Mirrors `insertPhoto` deliberately, including the parts that look
+    /// defensive: a cancelled pick is a silent no-op (nil in, nothing out), no
+    /// placeholder block is ever created, and the insert verifies against the
+    /// *saved* markdown before it commits. The one addition is
+    /// `AttachmentImportError.tooLarge`, which gets its own copy — "please try
+    /// again" is useless advice for a file that will always be too big.
+    func insertAttachment(loadingFile: @Sendable () async throws -> PreparedAttachmentFile?) async {
+        guard canInsertAttachment else { return }
+        clearError()
+        isUploadingAttachment = true
+        defer { isUploadingAttachment = false }
+        do {
+            guard let file = try await loadingFile() else { return }
+            let mediaCheckPath = try await client.uploadAttachment(
+                documentID: documentID, fileName: file.fileName, contentType: file.contentType, data: file.data)
+            guard let urlString = await readyMediaURLString(fromMediaCheckPath: mediaCheckPath) else {
+                reportAttachmentFailure()
+                return
+            }
+            insertAttachmentBlock(name: file.fileName, url: urlString)
+        } catch AttachmentImportError.tooLarge {
+            reportAttachmentFailure(Self.fileTooLargeErrorKey)
+        } catch {
+            reportAttachmentFailure()
+        }
+    }
+
+    private func reportAttachmentFailure(_ key: L10nKey? = nil) {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        showError(key ?? Self.fileErrorKey)
+    }
+
+    /// The block-placing twin of `insertImageBlock`, and it must stay one: every
+    /// comment there about not resurrecting a deleted document, not re-parsing
+    /// the whole document (which would re-mint every block id and make a live
+    /// forward clobber a peer), and verifying against the saved representation
+    /// applies here for the same reasons.
+    private func insertAttachmentBlock(name: String, url: String) {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        defer { flushPendingChanges() }
+
+        if mode == .reading {
+            let source = currentMarkdown()
+            let appended = markdownAppendingAttachment(to: source, name: name, url: url)
+            guard addsAttachment(to: source, after: appended, url: url) else {
+                reportAttachmentFailure()
+                return
+            }
+            rawMarkdown = appended
+            blocks.append(EditorBlock(kind: .attachment(name: name, url: url)))
+            markDirty()
+            return
+        }
+
+        let attachment = EditorBlock(kind: .attachment(name: name, url: url))
+        let trailing = EditorBlock(kind: .paragraph)
+        var updated = blocks
+        if let focusedBlockID, let index = blockIndex(focusedBlockID) {
+            if updated[index].kind == .paragraph, updated[index].text.isEmpty {
+                updated[index] = attachment
+                updated.insert(trailing, at: index + 1)
+            } else {
+                updated.insert(attachment, at: index + 1)
+                updated.insert(trailing, at: index + 2)
+            }
+        } else {
+            updated.append(attachment)
+            updated.append(trailing)
+        }
+        guard addsAttachment(to: currentMarkdown(), after: serializeMarkdown(updated), url: url) else {
+            reportAttachmentFailure()
+            return
+        }
+        blocks = updated
+        focusBlock(trailing.id, cursorAt: 0)
+        markDirty()
+    }
+
+    /// Counts rather than asking `contains`, for the reason `addsImage` does.
+    ///
+    /// Note this only ever sees a *classified* parse: with no server origin the
+    /// count is zero on both sides and the guard refuses, which is the loud
+    /// failure a missing origin should produce.
+    private func addsAttachment(to before: String, after: String, url: String) -> Bool {
+        attachmentCount(in: after, url: url) > attachmentCount(in: before, url: url)
+    }
+
+    private func attachmentCount(in markdown: String, url: String) -> Int {
+        parseEditorBlocks(markdown, serverOrigin: serverOrigin)
+            .filter { block in
+                if case .attachment(_, let blockURL) = block.kind { return blockURL == url }
+                return false
+            }
+            .count
+    }
+
+    /// Appends a standalone, blank-line-separated attachment line. Same caveat as
+    /// `markdownAppendingImage`: it does not *guarantee* an attachment block, so
+    /// the caller must verify.
+    private func markdownAppendingAttachment(to source: String, name: String, url: String) -> String {
+        let line = "[\(name)](\(url))\n"
+        guard !source.isEmpty else { return line }
+        let endsWithNewline = source.utf8.last == 0x0A
+        return source + (endsWithNewline ? "" : "\n") + "\n" + line
     }
 
     /// Whether the edit actually *added* an image. **Both** insertion paths

@@ -39,12 +39,40 @@ final class SlashMenuTests: XCTestCase {
     /// offline it would open the picker and re-encode the chosen image only to fail, so
     /// it is withheld like "Add a subpage" and "New page". Everything else is a local
     /// block transformation and stays available.
-    func testOfflineWithholdsPhotoAndKeepsEveryLocalTransformation() {
+    func testOfflineWithholdsEveryUploadAndKeepsEveryLocalTransformation() {
         let offline = filteredSlashItems(query: "", isOffline: true)
 
-        XCTAssertFalse(offline.contains { $0.action == .insertPhoto })
-        XCTAssertEqual(offline.count, allSlashMenuItems.count - 1)
-        XCTAssertTrue(filteredSlashItems(query: "", isOffline: false).contains { $0.action == .insertPhoto })
+        XCTAssertFalse(offline.contains { $0.action.requiresUpload })
+        // Exactly the uploading items are missing; every local transformation
+        // stays, because the draft pipeline queues those like any other edit.
+        XCTAssertEqual(offline.count, allSlashMenuItems.filter { !$0.action.requiresUpload }.count)
+        XCTAssertEqual(allSlashMenuItems.filter { $0.action.requiresUpload }.count, 2, "photo and file")
+
+        let online = filteredSlashItems(query: "", isOffline: false)
+        XCTAssertTrue(online.contains { $0.action == .insertPhoto })
+        XCTAssertTrue(online.contains { $0.action == .insertAttachment })
+    }
+
+    func testALocalDocumentWithholdsEveryUploadToo() {
+        // A client-minted id has nothing to upload against.
+        let local = filteredSlashItems(query: "", isLocalDocument: true)
+        XCTAssertFalse(local.contains { $0.action.requiresUpload })
+    }
+
+    func testTheFileItemMatchesTheWordsSomeoneWouldType() {
+        for query in ["file", "attach", "pdf", "doc", "upload"] {
+            XCTAssertTrue(
+                filteredSlashItems(query: query).contains { $0.action == .insertAttachment },
+                "\(query) should surface the File item")
+        }
+    }
+
+    func testTheFileItemUsesABundledIcon() {
+        // `.description` is in the subset font; naming an unbundled glyph would
+        // render as a blank box.
+        let file = allSlashMenuItems.first { $0.action == .insertAttachment }
+        XCTAssertEqual(file?.icon, .description)
+        XCTAssertTrue(MaterialIcon.allCases.contains(file?.icon ?? .add))
     }
 
     /// The gate applies to a search that names it too, not just the unfiltered list —
