@@ -227,6 +227,19 @@ func markdownReferencesPendingAttachment(_ markdown: String) -> Bool {
     }
 }
 
+/// Whether this markdown names **one specific** queued photo as an image block.
+///
+/// The record-scoped counterpart of the predicate above, used by the replay to decide whether a
+/// record is still referenced (and so whether collecting it would strand a placeholder) rather
+/// than whether *any* photo is pending.
+func markdownReferencesPendingAttachment(_ markdown: String, localID: UUID) -> Bool {
+    guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return false }
+    return parseEditorBlocks(markdown).contains { block in
+        guard case .image(_, let url) = block.kind else { return false }
+        return pendingAttachmentID(fromPlaceholderURL: url) == localID
+    }
+}
+
 /// Replaces a queued photo's placeholder with the media URL its upload resolved to, leaving
 /// every other byte of the document alone.
 ///

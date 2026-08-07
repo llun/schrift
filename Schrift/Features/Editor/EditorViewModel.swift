@@ -1755,19 +1755,10 @@ final class EditorViewModel {
     /// the URL derived from the upload key if readiness can't be confirmed in
     /// time — the upload already succeeded, so the URL must never be lost.
     private func readyMediaURLString(fromMediaCheckPath path: String) async -> String? {
-        for attempt in 0..<Self.mediaCheckMaxAttempts {
-            if attempt > 0 { try? await Task.sleep(for: mediaCheckRetryInterval) }
-            if let response = try? await client.checkMedia(path: path),
-                response.status == MediaCheckResponse.readyStatus, let file = response.file,
-                let absolute = await client.absoluteServerURL(for: file)
-            {
-                return absolute.absoluteString
-            }
-        }
-        guard let key = attachmentKey(fromMediaCheckPath: path),
-            let absolute = await client.absoluteServerURL(for: "/media/" + key)
-        else { return nil }
-        return absolute.absoluteString
+        await client.readyMediaURLString(
+            fromMediaCheckPath: path,
+            maxAttempts: Self.mediaCheckMaxAttempts,
+            retryInterval: mediaCheckRetryInterval)
     }
 
     /// Mirrors the divider slash behavior: replace a focused empty paragraph in

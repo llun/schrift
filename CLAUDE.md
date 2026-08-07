@@ -1954,6 +1954,26 @@ markdown write endpoint**. Understand this before touching the save path:
     that cannot be decoded stalls the replay instead of leaking a placeholder — and
     because each gate parses the save in front of it, a document with *two* queued photos
     releases only when the last one lands, with no per-record bookkeeping.
+  - **The replay is `runAttachmentPass`**, in the coalesced funnel between the create
+    replay and the draft replay (after creates — a photo in a locally-created document
+    has no server id to upload against; before drafts — the upload is what releases the
+    hold). Two-phase like the create replay: the resolved URL is checkpointed onto the
+    record **before** any rewrite, so a death between the two resumes at the rewrite
+    instead of uploading a second copy. Everything after the upload is **one synchronous
+    main-actor turn with no awaits** (draft, queued slot, open editor, record removal,
+    re-enqueue), because an open editor can flush at any suspension point with blocks that
+    still name the placeholder — a split rewrite could drop the record and then have that
+    flush reintroduce a placeholder nothing can resolve. The hand-back is a
+    **re-`enqueue`, not a release**: nothing can rewrite a parked `PendingSave` in place,
+    `enqueue` re-derives every hold from the content, and a draft left by a previous
+    process has no parked save to release at all. A rewritten queued slot is rebuilt
+    **classic** (`liveSnapshot: nil`) — CRDT bytes still encode the placeholder and
+    `start` prefers them. Gate order per record: re-read the mirror → session scope
+    (origin+owner, failing closed; a foreign record is kept, silent, and **never
+    collected**) → collection *before* the failure skip (else a failed record for a
+    deleted document is never cleaned up; deferred while an editor is open) → terminal
+    skip → parent-create gate. `migrateCreatedDocument` re-keys these records **before**
+    `removePendingCreate`, beside the children re-key and for the same reason.
   - **That covers the REST save path only, and the live-collaboration write path is a
     separate hole that must be closed before anything mints a placeholder.**
     `insertImageBlock` calls `markDirty()`, whose first line forwards to
