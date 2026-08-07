@@ -1,0 +1,19 @@
+Schrift/Features/Editor/EditorView.swift
+  s_810ae103ae38c6::t_4c0362eaf8bdf8 1017-1018
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "761949b33f2b536333342f84134d924ed5c4b153",
+  "prompts": {},
+  "sessions": {
+    "s_810ae103ae38c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6236ca4-0d88-477c-a92c-8da77f1291e9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
