@@ -12,7 +12,23 @@ import Foundation
 /// - `*` bullets become `-`; `N)` ordered markers become `N.`; ordered runs renumber from 1
 /// - trailing whitespace on classified lines is trimmed (never inside code/unknown blocks)
 /// - dividers of any length/character normalize to `---`
-func parseEditorBlocks(_ markdown: String) -> [EditorBlock] {
+/// `serverOrigin` enables attachment classification, and defaults to "" — which
+/// classifies nothing, so every existing caller keeps exactly today's behavior.
+/// Pass it only where the distinction matters: the encoder (a `.attachment`
+/// becomes a BlockNote `file` node rather than a paragraph carrying a link) and
+/// the editor (leaf semantics and insert verification).
+///
+/// **Classification lives here, in the single-line branch below, and must stay
+/// here.** A `.attachment` serializes back to the identical line and is not
+/// column-zero-classified, so an origin-aware parse and an origin-less one
+/// produce the *same serialized markdown* for every input. That identity — held
+/// by `MarkdownRoundTripTests.testAttachmentClassificationNeverChangesSerializedMarkdown`
+/// — is what lets `canonicalMarkdown`, `draftSyncDecision` and the whole save
+/// coordinator go on calling this without an origin and stay correct. Classify
+/// in `parseClassifiedLine` instead and the identity breaks: an attachment line
+/// adjacent to prose would split into two blocks under one parse and stay a
+/// single `.unknown` under the other.
+func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [EditorBlock] {
     var blocks: [EditorBlock] = []
     var pendingLines: [String] = []
     let lines = markdownLines(markdown)
@@ -22,7 +38,12 @@ func parseEditorBlocks(_ markdown: String) -> [EditorBlock] {
         guard !pendingLines.isEmpty else { return }
         defer { pendingLines = [] }
         if pendingLines.count == 1, isPlainParagraphLine(pendingLines[0]) {
-            blocks.append(EditorBlock(kind: .paragraph, text: pendingLines[0].trimmingCharacters(in: .whitespaces)))
+            let text = pendingLines[0].trimmingCharacters(in: .whitespaces)
+            if let attachment = parseAttachmentLink(text, serverOrigin: serverOrigin) {
+                blocks.append(EditorBlock(kind: .attachment(name: attachment.name, url: attachment.urlString)))
+            } else {
+                blocks.append(EditorBlock(kind: .paragraph, text: text))
+            }
         } else {
             blocks.append(EditorBlock(kind: .unknown, text: pendingLines.joined(separator: "\n")))
         }
@@ -79,9 +100,9 @@ func parseEditorBlocks(_ markdown: String) -> [EditorBlock] {
 /// True when re-parsing the canonical serialization preserves every content
 /// line of the source, so block editing can't silently lose anything. When
 /// false the editor should default to markdown-source mode for safety.
-func markdownSurvivesRoundTrip(_ markdown: String) -> Bool {
-    let once = serializeMarkdown(parseEditorBlocks(markdown))
-    let twice = serializeMarkdown(parseEditorBlocks(once))
+func markdownSurvivesRoundTrip(_ markdown: String, serverOrigin: String = "") -> Bool {
+    let once = serializeMarkdown(parseEditorBlocks(markdown, serverOrigin: serverOrigin))
+    let twice = serializeMarkdown(parseEditorBlocks(once, serverOrigin: serverOrigin))
     guard once == twice else { return false }
     return canonicalLineCounts(markdown) == canonicalLineCounts(once)
 }

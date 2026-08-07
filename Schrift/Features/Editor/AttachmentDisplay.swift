@@ -91,20 +91,6 @@ func parseAttachmentLink(_ text: String, serverOrigin: String) -> AttachmentDisp
         fileExtension: parts.fileExtension)
 }
 
-/// The attachment a block displays as a card, or nil for every other block.
-///
-/// Scoped to `.paragraph` because that is the only kind a standalone
-/// `[name](url)` line parses into today: `parseClassifiedLine` has no link arm,
-/// so `flushPending`'s single-line branch mints it. A multi-line run (an
-/// attachment line adjacent to prose, with no blank line between) is one
-/// `.unknown` block and deliberately does not classify — it is not a standalone
-/// link, and treating part of an `.unknown` block's verbatim text as a card
-/// would misrepresent what a save would write back.
-func attachmentDisplay(for block: EditorBlock, serverOrigin: String) -> AttachmentDisplay? {
-    guard case .paragraph = block.kind else { return nil }
-    return parseAttachmentLink(block.text, serverOrigin: serverOrigin)
-}
-
 // MARK: - Derived values
 
 /// The rooted `/media/…` path to download the attachment's bytes from, or nil

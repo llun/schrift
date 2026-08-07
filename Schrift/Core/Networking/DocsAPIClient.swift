@@ -46,6 +46,14 @@ actor DocsAPIClient {
     /// read-only.
     private var siteOrigin: String? { Schrift.siteOrigin(for: baseURL) }
 
+    /// The signed-in server's origin, for the encoder's attachment
+    /// classification (`MarkdownYjs.encode(markdown:serverOrigin:)`).
+    ///
+    /// Lives here for the same reason `absoluteServerURL` does — `baseURL` is
+    /// private — and it means the origin never has to be threaded through the
+    /// save coordinator to reach the one place that encodes.
+    var serverOrigin: String { Schrift.siteOrigin(for: baseURL) ?? "" }
+
     /// Resolves a server-relative path (e.g. the `/media/…` value returned by
     /// media-check) against the **server origin**, not the `/api/v1.0/` base.
     /// Lives here because `baseURL` is private.

@@ -194,7 +194,7 @@ final class BlockNoteWriteTests: XCTestCase {
             let x = 1
             ```
             """
-        let blocks = MarkdownYjs.blockNoteBlocks(from: markdown)
+        let blocks = MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: "https://docs.example.org")
         try assertFromEmptyMatchesGolden(blocks)
     }
 }

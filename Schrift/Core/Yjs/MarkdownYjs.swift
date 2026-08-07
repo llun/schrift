@@ -15,17 +15,26 @@ enum MarkdownYjs {
     /// Full pipeline: markdown → BlockNote blocks → Yjs update `Data`. The
     /// clientID identifies the authoring client; a fresh random one per save is
     /// fine because the content endpoint is a full overwrite.
-    static func encode(markdown: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)) -> Data {
-        BlockNoteYjs.encode(blockNoteBlocks(from: markdown), clientID: clientID)
+    /// `serverOrigin` is **not** defaulted: it decides whether a standalone
+    /// attachment link is written as a BlockNote `file` node or as a paragraph
+    /// carrying a link, and that changes the bytes this produces. A boundary
+    /// that moves saved bytes should be impossible to cross by forgetting an
+    /// argument.
+    static func encode(
+        markdown: String, serverOrigin: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)
+    ) -> Data {
+        BlockNoteYjs.encode(blockNoteBlocks(from: markdown, serverOrigin: serverOrigin), clientID: clientID)
     }
 
     /// Base64 for the `content` field of `PATCH documents/{id}/content/`.
-    static func base64(markdown: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)) -> String {
-        encode(markdown: markdown, clientID: clientID).base64EncodedString()
+    static func base64(
+        markdown: String, serverOrigin: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)
+    ) -> String {
+        encode(markdown: markdown, serverOrigin: serverOrigin, clientID: clientID).base64EncodedString()
     }
 
-    static func blockNoteBlocks(from markdown: String) -> [BlockNoteBlock] {
-        blockNoteBlocks(from: parseEditorBlocks(markdown))
+    static func blockNoteBlocks(from markdown: String, serverOrigin: String) -> [BlockNoteBlock] {
+        blockNoteBlocks(from: parseEditorBlocks(markdown, serverOrigin: serverOrigin))
     }
 
     /// The id-stable core: maps already-parsed editor blocks straight to BlockNote
@@ -111,6 +120,29 @@ enum MarkdownYjs {
                         ("caption", .string("")),
                         ("showPreview", .bool(true)),
                         ("previewWidth", .undefined),
+                    ],
+                    runs: [], id: id)
+            ]
+        case .attachment(let name, let url):
+            // A leaf `file` node — BlockNote's stock download chip — for **every**
+            // attachment type, PDFs included. docs' own `pdf` node is deliberately
+            // never written: its `showPreview` defaults to true, and a `pdf` block
+            // with preview on exports to *nothing* through the server's markdown
+            // exporter (BlockNote's serializer has no `<iframe>` handler), so the
+            // app would stop seeing the block and the next full-overwrite save
+            // would destroy it. A chip the web renders is the safe parity point.
+            //
+            // Prop order is the 0.51.4 `file` propSchema and is fixed by the
+            // golden fixture, not by this list: there is no `textAlignment`, no
+            // `textColor`, no `showPreview` and no `previewWidth`.
+            return [
+                BlockNoteBlock(
+                    node: "file",
+                    props: [
+                        ("backgroundColor", .string("default")),
+                        ("name", .string(name)),
+                        ("url", .string(url)),
+                        ("caption", .string("")),
                     ],
                     runs: [], id: id)
             ]

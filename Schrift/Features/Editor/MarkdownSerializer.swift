@@ -55,7 +55,11 @@ private func isIndentedUnknown(_ block: EditorBlock) -> Bool {
 
 private func isColumnZeroClassified(_ kind: BlockKind) -> Bool {
     switch kind {
-    case .paragraph, .unknown:
+    // `.attachment` sits with the paragraph it was classified from, not with
+    // the column-zero constructs: it serializes to an ordinary link line, so
+    // joining it any differently would make an origin-aware parse and an
+    // origin-less one disagree about the document's blank lines.
+    case .paragraph, .unknown, .attachment:
         return false
     default:
         return true
@@ -86,6 +90,11 @@ func serializeBlock(_ block: EditorBlock, numberedIndex: Int) -> String {
         return "---"
     case .image(let alt, let url):
         return "![\(alt)](\(url))"
+    case .attachment(let name, let url):
+        // Byte-identical to the paragraph this block was classified from, which
+        // is what makes an origin-aware parse and an origin-less one agree on
+        // the serialized document. See `parseEditorBlocks`.
+        return "[\(name)](\(url))"
     case .unknown:
         return block.text
     }

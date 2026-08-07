@@ -27,7 +27,11 @@ final class YBlockProjectionRenderTests: XCTestCase {
     /// file's own precedent of keeping test doubles local.
     private func projectedDoc(fromMarkdown md: String) throws -> ProjectedDocument {
         let doc = YDoc(clientID: 99)
-        try doc.applyUpdate(try YUpdateDecoder.decode(MarkdownYjs.encode(markdown: md, clientID: 1)))
+        // No server origin: these fixtures are about node shapes, and the
+        // projection does not model `file` nodes, so an attachment link here
+        // must stay the paragraph-plus-link it has always been.
+        try doc.applyUpdate(
+            try YUpdateDecoder.decode(MarkdownYjs.encode(markdown: md, serverOrigin: "", clientID: 1)))
         let projected = YBlockProjection.project(doc)
         doc.destroy()
         return projected

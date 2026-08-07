@@ -256,6 +256,11 @@ enum Strings_sl {
         .editor_attachment_offline: "Na voljo, ko boste povezani",
         .editor_attachment_a11y: "Priloga: %@. %@",
         .editor_attachment_not_previewable: "Predogled tukaj ni mogoč",
+        .editor_error_add_file: "Datoteke ni bilo mogoče dodati. Poskusite znova.",
+        .editor_error_file_too_large: "Ta datoteka je prevelika.",
+        .editor_slash_file: "Datoteka",
+        .editor_uploading_file: "Nalaganje datoteke…",
+        .editor_uploading_file_a11y: "Nalaganje datoteke",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Dodaj odstavek na koncu",

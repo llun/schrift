@@ -213,36 +213,21 @@ final class AttachmentDisplayTests: XCTestCase {
     }
 
     // MARK: - Block-level classification
+    //
+    // These moved to the parser in PR2: `parseEditorBlocks(_:serverOrigin:)` is
+    // now the single classification point, and `AttachmentBlockParsingTests`
+    // owns the block-kind matrix. What stays here is the property those tests
+    // depend on — that only a whole standalone link classifies, whatever block
+    // it would otherwise have landed in.
 
-    func testOnlyParagraphBlocksClassify() {
+    func testOnlyAWholeStandaloneLineClassifies() {
         let text = link("\(fileUUID).pdf")
-        XCTAssertNotNil(attachmentDisplay(for: EditorBlock(kind: .paragraph, text: text), serverOrigin: serverOrigin))
-        for kind: BlockKind in [
-            .unknown, .quote, .bulletItem, .numberedItem, .checklistItem(checked: false),
-            .heading(level: 1), .codeBlock(language: ""), .divider,
-        ] {
-            XCTAssertNil(
-                attachmentDisplay(for: EditorBlock(kind: kind, text: text), serverOrigin: serverOrigin),
-                "\(kind) must not classify")
+        XCTAssertNotNil(display(text))
+        // The prefixes that make a line a different construct all defeat it,
+        // because each leaves the trimmed text no longer a single link.
+        for prefix in ["> ", "- ", "1. ", "# ", "- [ ] ", "!"] {
+            XCTAssertNil(display(prefix + text), "\(prefix.debugDescription) must not classify")
         }
-    }
-
-    func testAnAttachmentLineInsideAMultiLineUnknownBlockDoesNotClassify() throws {
-        // The adjacency contract: with no blank line between, the parser makes
-        // one .unknown block, and a card must not misrepresent it.
-        let blocks = parseEditorBlocks("Attached:\n\(link("\(fileUUID).pdf"))")
-        XCTAssertEqual(blocks.count, 1)
-        XCTAssertEqual(blocks.first?.kind, .unknown)
-        XCTAssertNil(attachmentDisplay(for: try XCTUnwrap(blocks.first), serverOrigin: serverOrigin))
-    }
-
-    func testAStandaloneAttachmentLineParsesAsAParagraphAndClassifies() {
-        // PR1's whole premise: the parser is untouched, so the card has to be
-        // reachable from the .paragraph the existing parser already mints.
-        let blocks = parseEditorBlocks("Intro\n\n\(link("\(fileUUID).pdf"))\n\nOutro")
-        XCTAssertEqual(blocks.map(\.kind), [.paragraph, .paragraph, .paragraph])
-        XCTAssertNotNil(attachmentDisplay(for: blocks[1], serverOrigin: serverOrigin))
-        XCTAssertNil(attachmentDisplay(for: blocks[0], serverOrigin: serverOrigin))
     }
 
     // MARK: - Derived values

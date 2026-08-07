@@ -1076,8 +1076,20 @@ session-scoped loader starts empty, a cold launch in airplane mode then rendered
 scenario the cache exists for. A disk read costs no request, which is the only
 thing offline is meant to suppress.
 
-Nothing about attachments touches drafts, saves or the replay: this is read-side
-caching only.
+**Inserting** an attachment (2026-08-07) is withheld offline and on a document
+with no server id yet, for the reason photo insertion always was: it POSTs a
+multipart attachment and there is no queue for one, so offered offline it would
+open the picker, read the file, and only then fail. Everything *after* the upload
+is ordinary editing — the `.attachment` block dirties the document and the
+write-ahead draft pipeline carries it like any other edit, including offline.
+
+Nothing else about attachments touches drafts, saves or the replay: the byte
+cache is read-side only, and the block's own persistence is the existing save
+path. One consequence worth knowing: a queued draft holding an attachment line
+replays through the unchanged coordinator, and classification happens at PATCH
+time on the client (the encoder reads the origin off its own `baseURL`), so a
+draft written before this feature existed still encodes as a `file` node when it
+finally syncs.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 

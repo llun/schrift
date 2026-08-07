@@ -242,6 +242,11 @@ enum Strings_zhHans {
         .editor_attachment_offline: "联网后可用",
         .editor_attachment_a11y: "附件：%@。%@",
         .editor_attachment_not_previewable: "无法在此预览",
+        .editor_error_add_file: "无法添加文件。请重试。",
+        .editor_error_file_too_large: "该文件过大。",
+        .editor_slash_file: "文件",
+        .editor_uploading_file: "正在上传文件…",
+        .editor_uploading_file_a11y: "正在上传文件",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "在末尾添加段落",

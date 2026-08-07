@@ -414,7 +414,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
         -> ProjectedDocument
     {
         let doc = YDoc(clientID: 99)
-        try doc.applyUpdate(try YUpdateDecoder.decode(MarkdownYjs.encode(markdown: md, clientID: 1)))
+        try doc.applyUpdate(try YUpdateDecoder.decode(MarkdownYjs.encode(markdown: md, serverOrigin: "", clientID: 1)))
         var projected = YBlockProjection.project(doc)
         doc.destroy()
         if let reference, reference.blocks.count == projected.blocks.count {

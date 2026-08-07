@@ -166,6 +166,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_update_available_a11y = "editor.update_available_a11y"  // "Document updated. Tap to refresh."
     case editor_uploading_photo = "editor.uploading_photo"  // "Uploading photo…"
     case editor_uploading_photo_a11y = "editor.uploading_photo_a11y"  // "Uploading photo"
+    case editor_uploading_file = "editor.uploading_file"  // "Uploading file…"
+    case editor_uploading_file_a11y = "editor.uploading_file_a11y"  // "Uploading file"
     case editor_empty_title = "editor.empty_title"  // "Empty document"
     case editor_empty_body = "editor.empty_body"  // "This document doesn't have any content yet."
     case editor_start_writing = "editor.start_writing"  // "Start writing"
@@ -210,6 +212,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_error_add_subpage = "editor.error.add_subpage"  // "Couldn't add the subpage. Please try again."
     case editor_error_open_link = "editor.error.open_link"  // "Couldn't open that link. Please try again."
     case editor_error_add_photo = "editor.error.add_photo"  // "Couldn't add the photo. Please try again."
+    case editor_error_add_file = "editor.error.add_file"  // "Couldn't add the file. Please try again."
+    // Refused before upload: the picked file is past the app's own read limit,
+    // so "please try again" would be useless advice.
+    case editor_error_file_too_large = "editor.error.file_too_large"
     case editor_unavailable = "editor.unavailable"  // "This document is no longer available."
     case editor_unavailable_with_draft = "editor.unavailable_with_draft"
     // "This document is no longer available. Your unsaved changes are kept on this device."
@@ -228,6 +234,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_slash_code_block = "editor.slash.code_block"  // "Code block"
     case editor_slash_divider = "editor.slash.divider"  // "Divider"
     case editor_slash_photo = "editor.slash.photo"  // "Photo"
+    case editor_slash_file = "editor.slash.file"  // "File"
 
     // Editor - formatting bar (icon-only buttons; accessibility labels)
     case editor_format_add_block = "editor.format.add_block"  // "Add block"

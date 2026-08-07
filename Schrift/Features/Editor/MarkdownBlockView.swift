@@ -82,18 +82,9 @@ struct MarkdownBlockView: View {
                 .foregroundStyle(DocsColor.textPrimary)
 
         case .paragraph:
-            // An uploaded attachment reaches the app as an ordinary standalone
-            // link — the server's markdown export flattens the web editor's
-            // `file`/`pdf` blocks to one. Nothing else marks it, so the url
-            // shape and the server origin decide (`attachmentDisplay`), and
-            // anything that isn't provably an attachment stays plain prose.
-            if let attachment = attachmentDisplay(for: block, serverOrigin: serverOrigin) {
-                AttachmentCardView(display: attachment, isOffline: isOffline)
-            } else {
-                Text(markdownInlineText(block.text))
-                    .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
-            }
+            Text(markdownInlineText(block.text))
+                .font(DocsFont.body)
+                .foregroundStyle(DocsColor.textPrimary)
 
         case .bulletItem:
             HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
@@ -159,6 +150,22 @@ struct MarkdownBlockView: View {
             } else {
                 Text("![\(alt)](\(url))")
                     .font(DocsFont.code)
+                    .foregroundStyle(DocsColor.textPrimary)
+            }
+
+        case .attachment(let name, let url):
+            // Classification happens in the parser now, so this arm just draws
+            // what it is given. An `AttachmentDisplay` is still rebuilt through
+            // `parseAttachmentLink` rather than from the block's associated
+            // values, because the card needs the validated document/file ids and
+            // extension — and because a block whose url no longer matches this
+            // server (a document opened after switching servers) must fall back
+            // to plain link text rather than render a card it cannot load.
+            if let display = parseAttachmentLink("[\(name)](\(url))", serverOrigin: serverOrigin) {
+                AttachmentCardView(display: display, isOffline: isOffline)
+            } else {
+                Text(markdownInlineText("[\(name)](\(url))"))
+                    .font(DocsFont.body)
                     .foregroundStyle(DocsColor.textPrimary)
             }
 
