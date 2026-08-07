@@ -1,0 +1,64 @@
+Schrift/Core/Localization/Strings+pt.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 184
+Schrift/Core/Localization/Strings+fr.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 185
+Schrift/Core/Localization/L10nKey.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 209-213
+Schrift/Features/Editor/EditorView.swift
+  s_a90ba1763f1ea9::t_19453dd7127ed9 401-410
+SchriftTests/Features/Options/OptionsViewModelTests.swift
+  s_a90ba1763f1ea9::t_84f02048769256 80-83,86-87,95,97-99,104-106
+  s_a90ba1763f1ea9::t_b49f0062d7d42f 230-234,236,239-261,263,265,267-286,288-289,291-384,388-393,395-415
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 179
+Schrift/Features/Options/OptionsViewModel.swift
+  s_a90ba1763f1ea9::t_1357070b05b3e4 98-109,123-129,139-159
+  s_a90ba1763f1ea9::t_30486c1be20a8d 15-22,29-32,36-37,40
+  s_a90ba1763f1ea9::t_c1996058ca1183 131-135
+  s_a90ba1763f1ea9::t_aaded079a0a491 160
+Schrift/Core/Localization/Strings+de.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 187
+Schrift/Core/Localization/Strings+nl.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 185
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 179
+Schrift/Core/Localization/Strings+it.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 183
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a90ba1763f1ea9::t_57e8f1377944aa 297-309
+  s_a90ba1763f1ea9::t_b63103f013a75c 433-436
+  s_a90ba1763f1ea9::t_7f6af970a80acd 523-526
+  s_a90ba1763f1ea9::t_23db3a684c80a3 346-353
+  s_a90ba1763f1ea9::t_b6bee197830881 1119-1151
+  s_a90ba1763f1ea9::t_c1996058ca1183 354-358
+Schrift/Core/Localization/Strings+es.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 187
+Schrift/Features/Options/OptionsSheetView.swift
+  s_a90ba1763f1ea9::t_19453dd7127ed9 7-11,31,111
+Schrift/Core/Localization/Strings+sl.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 193
+Schrift/Core/Localization/Strings+th.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 181
+Schrift/Core/Localization/Strings+en.swift
+  s_a90ba1763f1ea9::t_9776859dda47b2 183
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_a90ba1763f1ea9::t_291eed91702d9a 62
+  s_a90ba1763f1ea9::t_097af0c9535322 2174-2247
+  s_a90ba1763f1ea9::t_c4c20bbd54a4da 109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "b352fcb60e09c5d179cea629c3c156aaa0b019c4",
+  "prompts": {},
+  "sessions": {
+    "s_a90ba1763f1ea9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e46053b-a8b8-469e-bbcf-4e106ab549b5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
