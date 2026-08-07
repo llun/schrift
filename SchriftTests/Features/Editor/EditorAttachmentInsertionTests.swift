@@ -323,6 +323,45 @@ final class EditorAttachmentInsertionTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .editor_error_add_file)
     }
 
+    // MARK: - Live collaboration must not converge the attachment away
+
+    /// The replica cannot represent a `file` node (`YBlockProjection` does not
+    /// model it), so an attachment insert deliberately takes the classic path
+    /// and leaves the replica behind. That alone would be a worse bug than the
+    /// one it fixes: `isDirty` clears when the save settles, live editing would
+    /// re-engage against the stale replica, and the next peer update would diff
+    /// the document against a projection missing the attachment, emit a
+    /// `.remove`, and snapshot the loss over the server. The latch is what stops
+    /// the re-engagement.
+    func testInsertingAnAttachmentPermanentlyDisengagesLiveEditingForTheScreen() async throws {
+        stubUploadPipeline()
+        let viewModel = await makeEditingViewModel()
+        XCTAssertFalse(viewModel.hasUnmodelableLocalEdit)
+
+        await viewModel.insertAttachment(loadingFile: { pickedPDF() })
+
+        XCTAssertTrue(viewModel.hasUnmodelableLocalEdit)
+        XCTAssertFalse(viewModel.canEngageLiveEditing)
+
+        // And it must not come back once the save settles and the document is
+        // clean again — that is the window the latch exists for.
+        viewModel.finishEditing()
+        await waitUntil { viewModel.saveCoordinator.pendingSave(documentID: self.documentID) == nil }
+        XCTAssertFalse(
+            viewModel.canEngageLiveEditing,
+            "live editing re-engaged against a replica that never received the attachment")
+    }
+
+    /// The latch is specific to the divergence, not to editing in general.
+    func testAnOrdinaryEditDoesNotDisengageLiveEditing() async throws {
+        stubUploadPipeline(content: "Body text.")
+        let viewModel = await makeEditingViewModel()
+
+        viewModel.updateText(blockID: try XCTUnwrap(viewModel.blocks.first).id, text: "edited")
+
+        XCTAssertFalse(viewModel.hasUnmodelableLocalEdit)
+    }
+
     // MARK: - One upload at a time
 
     func testAnAttachmentUploadInFlightWithholdsBothPickers() async throws {

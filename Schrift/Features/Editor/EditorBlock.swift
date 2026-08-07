@@ -14,9 +14,6 @@ enum BlockKind: Equatable, Sendable {
     /// `extract_attachments()` matches the embedded url byte-for-byte, so it must
     /// survive the round trip untouched. `text` stays empty.
     case image(alt: String, url: String)
-    /// Markdown the editor doesn't model (tables, nested lists, HTML, relative or
-    /// ambiguous images…). The text is preserved verbatim — including newlines —
-    /// so a full-overwrite save never destroys content authored elsewhere.
     /// An uploaded file attachment (PDF, docx, …) the document links to.
     ///
     /// Like `.image`, `name` and `url` are raw `String`s and are never
@@ -28,6 +25,9 @@ enum BlockKind: Equatable, Sendable {
     /// origin — see `parseAttachmentLink`. Parsed without one, the identical
     /// markdown stays a `.paragraph`, and both forms serialize to the same line.
     case attachment(name: String, url: String)
+    /// Markdown the editor doesn't model (tables, nested lists, HTML, relative or
+    /// ambiguous images…). The text is preserved verbatim — including newlines —
+    /// so a full-overwrite save never destroys content authored elsewhere.
     case unknown
 }
 

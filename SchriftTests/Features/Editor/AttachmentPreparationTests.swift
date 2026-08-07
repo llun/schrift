@@ -73,9 +73,18 @@ final class AttachmentPreparationTests: XCTestCase {
         XCTAssertEqual(sanitizedAttachmentFileName("..."), "file")
     }
 
-    func testALongNameIsCapped() {
+    /// The cap must not eat the extension: the server derives the stored key's
+    /// extension from this name, and a key without one makes `parseAttachmentLink`
+    /// decline — so the insert would fail *after* a successful upload and leave
+    /// an orphan on the server.
+    func testALongNameIsCappedButKeepsItsExtension() {
         let name = sanitizedAttachmentFileName(String(repeating: "a", count: 500) + ".pdf")
         XCTAssertEqual(name.count, 120)
+        XCTAssertTrue(name.hasSuffix(".pdf"), "the extension must survive the cap, got: \(name)")
+    }
+
+    func testALongNameWithNoExtensionIsStillCapped() {
+        XCTAssertEqual(sanitizedAttachmentFileName(String(repeating: "a", count: 500)).count, 120)
     }
 
     // MARK: - Content type
@@ -116,8 +125,9 @@ final class AttachmentPreparationTests: XCTestCase {
         XCTAssertEqual(file.fileName, "abc.pdf")
     }
 
-    /// Refused from the file system's own size, before `Data(contentsOf:)` runs
-    /// — the point is not to read the bytes at all.
+    /// The limit holds. Which of the two guards caught it is not observable
+    /// from here — they throw the same error — so this pins the rule, not the
+    /// ordering; see `loadPickedAttachmentFile`.
     func testAnOversizedFileIsRefused() throws {
         let url = try write(Data(repeating: 0, count: 4096), named: "big.bin")
         do {

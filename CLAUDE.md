@@ -1428,8 +1428,11 @@ markdown write endpoint**. Understand this before touching the save path:
   quote, CR, LF) *and* markdown-label safety (no brackets or parens, or the
   block's own `[name](url)` line stops parsing back as one link). Size is refused
   from the file system's answer **before** the bytes are read. Both uploading
-  affordances are withheld offline and on a local document via
-  `SlashMenuAction.requiresUpload`, and only one upload runs at a time.
+  affordances are withheld offline and on a local document; the **slash menu**
+  routes that through `SlashMenuAction.requiresUpload`, while the formatting
+  bar's photo button still has its own `canOfferPhotoInsertion` (there is no
+  formatting-bar file button — the bar's width budget is full). Only one upload
+  runs at a time.
   **A file attachment has no offline queue.** Photos have the machinery for one
   (`PendingAttachmentStore`, the `schrift-attachment://` placeholder and the
   save hold — see the offline rules further down), but the Photo slash item is

@@ -102,6 +102,63 @@ final class DocumentSaveClientTests: XCTestCase {
             "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/")
     }
 
+    /// The single production route by which the server origin reaches the
+    /// encoder: `saveDocumentContent` reads `DocsAPIClient.serverOrigin` off its
+    /// own `baseURL`. Revert that accessor to `""` and every save writes a
+    /// paragraph where the web expects a file chip — the exact regression this
+    /// feature exists to fix — with nothing else in the suite noticing, because
+    /// every other attachment test supplies an origin directly.
+    ///
+    /// Asserts on the emitted **bytes**, since that is what the claim is about:
+    /// the BlockNote node name appears verbatim in a Yjs v1 update.
+    func testSaveDocumentContentEncodesASameOriginAttachmentLinkAsAFileNode() async throws {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let markdown =
+            "[Q3 report.pdf](https://docs.example.org/media/11111111-1111-4111-8111-111111111111/"
+            + "attachments/22222222-2222-4222-8222-222222222222.pdf)"
+
+        _ = try await makeClient().saveDocumentContent(
+            documentID: realDocumentID, title: "Notes", markdown: markdown)
+
+        let contentBody = try XCTUnwrap(bodyData(from: log.requests[0]))
+        let content = try XCTUnwrap((try? JSONSerialization.jsonObject(with: contentBody)) as? [String: String])
+        let update = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(content["content"])))
+        let bytes = String(decoding: update, as: UTF8.self)
+
+        XCTAssertTrue(bytes.contains("file"), "expected a BlockNote `file` node in the emitted update")
+        XCTAssertFalse(
+            bytes.contains("paragraph"),
+            "a paragraph means the origin never reached the encoder and the attachment was written as link text")
+    }
+
+    /// The negative half: an off-origin link of the identical shape is not this
+    /// server's attachment and must stay a paragraph, so the test above is
+    /// pinning the origin comparison rather than merely the word "file".
+    func testSaveDocumentContentLeavesAnOffOriginLinkAsAParagraph() async throws {
+        let log = RequestLog()
+        MockURLProtocol.stubHandler = { request in
+            log.requests.append(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let markdown =
+            "[Q3 report.pdf](https://files.example/media/11111111-1111-4111-8111-111111111111/"
+            + "attachments/22222222-2222-4222-8222-222222222222.pdf)"
+
+        _ = try await makeClient().saveDocumentContent(
+            documentID: realDocumentID, title: "Notes", markdown: markdown)
+
+        let contentBody = try XCTUnwrap(bodyData(from: log.requests[0]))
+        let content = try XCTUnwrap((try? JSONSerialization.jsonObject(with: contentBody)) as? [String: String])
+        let update = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(content["content"])))
+        let bytes = String(decoding: update, as: UTF8.self)
+
+        XCTAssertTrue(bytes.contains("paragraph"))
+    }
+
     func testSaveDocumentContentPatchesValidYjsContentThenTitle() async throws {
         let log = RequestLog()
         MockURLProtocol.stubHandler = { request in

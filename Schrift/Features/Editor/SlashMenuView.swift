@@ -4,7 +4,7 @@ import SwiftUI
 /// popovers are unreliable on iOS; this mirrors mobile Notion).
 struct SlashMenuView: View {
     let query: String
-    /// Drops the Photo item — it POSTs an attachment, which has no offline queue.
+    /// Drops the uploading items (Photo, File) — it POSTs an attachment, which has no offline queue.
     var isOffline: Bool = false
     /// No server id to upload against — see `canOfferPhotoInsertion`.
     var isLocalDocument: Bool = false

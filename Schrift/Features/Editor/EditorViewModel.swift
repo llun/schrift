@@ -1932,7 +1932,8 @@ final class EditorViewModel {
             }
             rawMarkdown = appended
             blocks.append(EditorBlock(kind: .attachment(name: name, url: url)))
-            markDirty()
+            hasUnmodelableLocalEdit = true
+            markDirty(forcesClassicPath: true)
             return
         }
 
@@ -1957,7 +1958,8 @@ final class EditorViewModel {
         }
         blocks = updated
         focusBlock(trailing.id, cursorAt: 0)
-        markDirty()
+        hasUnmodelableLocalEdit = true
+        markDirty(forcesClassicPath: true)
     }
 
     /// Counts rather than asking `contains`, for the reason `addsImage` does.
@@ -2362,7 +2364,21 @@ final class EditorViewModel {
         }
     }
 
-    private func markDirty() {
+    /// `forcesClassicPath` skips the live-write forward for an edit whose result
+    /// the live path provably cannot persist.
+    ///
+    /// `canEngageLiveWrite` inspects the projection *before* the edit, so an
+    /// insert that introduces a node `YBlockProjection` does not model — today
+    /// exactly `.attachment`, which encodes as a BlockNote `file` node — sails
+    /// through it, integrates into the replica, broadcasts to peers, and then
+    /// finds `fireSnapshot`'s re-check of `isFullyModeled` false and never
+    /// PATCHes. Since the live branch also leaves `isDirty` false, the classic
+    /// save never runs either, and the attachment reaches peers but is persisted
+    /// by nothing this app controls. Taking the classic path instead makes the
+    /// document downgrade out of live editing — which is where a document
+    /// holding a `file` node belongs anyway, since the read side already refuses
+    /// to engage on one.
+    private func markDirty(forcesClassicPath: Bool = false) {
         // Live-collaboration write path (C2c). When live-write mode is engaged the bridge
         // forwards this edit to the shared replica, broadcasts it to peers, and schedules the
         // debounced full-state snapshot — so the classic REST autosave must NOT also run (it
@@ -2373,7 +2389,7 @@ final class EditorViewModel {
         // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
         // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
         // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
-        if liveWrite?.forwardLocalEdit() == true {
+        if !forcesClassicPath, liveWrite?.forwardLocalEdit() == true {
             // A stash can exist here too: `canEngageLiveEditing` only guarantees no save/
             // draft/conflict was pending at *engage* time, and an A5 signal is suppressed
             // only while the bridge is actively applying live content — a pull-to-refresh
@@ -2425,6 +2441,29 @@ final class EditorViewModel {
     /// The manager is never referenced here — only this protocol.
     weak var liveWrite: EditorLiveWriteCoordinating?
 
+    /// Latched once this screen has made an edit the shared replica cannot
+    /// represent — today exactly an attachment insert, because
+    /// `YBlockProjection` does not model the BlockNote `file` node.
+    ///
+    /// It is a **latch, not a momentary flag**, and that is the whole point.
+    /// `markDirty(forcesClassicPath:)` keeps the insert off the live path so it
+    /// is really persisted, which leaves the replica behind the document. That
+    /// alone is not enough: `isDirty` clears when the save settles, so live
+    /// editing would re-engage against the stale replica, and the very next peer
+    /// update would diff the document against a projection missing the
+    /// attachment and delete it — persisting the loss on the next snapshot. A
+    /// document that has diverged this way stays classic for the life of the
+    /// screen; reopening it is safe on its own, because a replica that then
+    /// *does* carry the `file` node projects `.opaque` and never engages.
+    ///
+    /// Modelling `file` in the projection would remove the need for both this
+    /// and `forcesClassicPath` — a named follow-up, deliberately not done here:
+    /// `firstMismatch` re-parses without a server origin, so a modelled
+    /// attachment would read back as a paragraph and every attachment would
+    /// report a false fidelity mismatch until the origin is threaded into the
+    /// projection too.
+    private(set) var hasUnmodelableLocalEdit = false
+
     /// Whether a live-collaboration remote change may be applied to this screen
     /// right now (C2+; this is the gate the bridge consults before calling
     /// `applyLiveRemoteChange`). Every clause guards a fact the #76 offline-sync
@@ -2447,6 +2486,13 @@ final class EditorViewModel {
     ///    coordinator's own state machine, as belt-and-braces.
     var canEngageLiveEditing: Bool {
         guard hasLoadedContent, !isDirty, !isDocumentDiscarded, !isUnavailable else { return false }
+        // The editor holds something the replica cannot represent. Re-engaging
+        // would let the replica win: `liveChangeSet` compares the document
+        // against the projection, sees a block the projection does not have, and
+        // emits a `.remove` — converging the attachment back *out* of the
+        // document and then snapshotting that over the server. See
+        // `hasUnmodelableLocalEdit`.
+        guard !hasUnmodelableLocalEdit else { return false }
         guard saveCoordinator.conflict(for: documentID) == nil else { return false }
         guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return false }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return false }

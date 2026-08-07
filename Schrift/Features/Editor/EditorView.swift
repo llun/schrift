@@ -533,7 +533,7 @@ struct EditorView: View {
             // honour. `.none` renders nothing, so a clean session shows no strip.
             saveStatusRow
 
-            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin)
+            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline)
                 .safeAreaInset(edge: .bottom) {
                     // A container so the glass surfaces stacked here (the bar,
                     // and the slash menu when it is up) are rendered as one

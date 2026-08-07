@@ -70,9 +70,10 @@ final class SlashMenuTests: XCTestCase {
     func testTheFileItemUsesABundledIcon() {
         // `.description` is in the subset font; naming an unbundled glyph would
         // render as a blank box.
-        let file = allSlashMenuItems.first { $0.action == .insertAttachment }
-        XCTAssertEqual(file?.icon, .description)
-        XCTAssertTrue(MaterialIcon.allCases.contains(file?.icon ?? .add))
+        // `.description` is in the bundled subset; naming an unbundled Material
+        // glyph would render as a blank box. (Asserting membership in
+        // `MaterialIcon.allCases` would prove nothing — every case is in it.)
+        XCTAssertEqual(allSlashMenuItems.first { $0.action == .insertAttachment }?.icon, .description)
     }
 
     /// The gate applies to a search that names it too, not just the unfiltered list —

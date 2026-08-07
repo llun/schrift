@@ -1176,8 +1176,21 @@ server's 10 MB default remains the cap users normally meet, and it gets its own
 copy rather than a useless "please try again".
 
 Both uploading affordances — photo and file — are withheld offline and on a
-document with no server id, now expressed as `SlashMenuAction.requiresUpload` so
-a third one cannot forget the rule. Only one upload runs at a time.
+document with no server id. In the **slash menu** that is expressed as
+`SlashMenuAction.requiresUpload`, so a third menu item cannot forget it; the
+formatting bar keeps its own `canOfferPhotoInsertion` (and has no file button,
+the bar's width budget being full), so a future bar affordance still has to
+remember. Only one upload runs at a time.
+
+**An attachment insert always takes the classic save path**
+(`markDirty(forcesClassicPath:)`). `canEngageLiveWrite` inspects the projection
+*before* an edit, so an insert that introduces a `file` node — which the
+projection does not model — would otherwise pass the gate, integrate into the
+replica, broadcast to peers, and then find the snapshot's own `isFullyModeled`
+re-check false and never PATCH; the live branch also leaves `isDirty` false, so
+no classic save would run either. Forcing the classic path downgrades the
+document out of live editing, which is where a document holding a `file` node
+belongs anyway — the read side already refuses to engage on one.
 
 ## Screens
 
