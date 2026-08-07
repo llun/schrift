@@ -89,6 +89,7 @@ final class DocumentSaveCoordinator {
     private let draftStore: PendingDraftStore
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
+    private let deleteStore: PendingDocumentDeleteStore
     /// The list caches the replay has to move a document into once the server owns it.
     /// Without them a just-created document vanishes from Home between the POST landing
     /// (which stops it being listed as local) and the next successful list fetch.
@@ -217,12 +218,26 @@ final class DocumentSaveCoordinator {
     /// delete on the next launch either. Suppression outlives the session by design; see
     /// `holdsUnreadableData`.
     private let createStoreUnreadable: Bool
+    /// Deletions the user has asked for that the server has not been told about, keyed by the
+    /// **server** id the DELETE will address and mirrored from `deleteStore` so the hot
+    /// predicate (`isPendingDelete`, read on every sync pass and every row) is a dictionary
+    /// lookup rather than a UserDefaults decode. **Every** tombstone is mirrored, whatever
+    /// origin or user queued it — protection is unconditional, exactly as for
+    /// `pendingCreates`; see `isPendingDelete`.
+    private var pendingDeletes: [UUID: PendingDocumentDelete] = [:]
+    /// Bumped on every mutation of `pendingDeletes`, so an `@Observable` consumer can track
+    /// "the set of queued deletions changed" without the dictionary itself being visible.
+    /// The rows that strike a document through read it via `isListablePendingDelete`, which
+    /// is what makes a row strike (and un-strike, on undo) the moment the tombstone moves
+    /// rather than at the next successful list fetch.
+    private(set) var pendingDeletesVersion = 0
 
     init(
         client: DocsAPIClient,
         draftStore: PendingDraftStore = PendingDraftStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         createStore: PendingDocumentCreateStore = PendingDocumentCreateStore(),
+        deleteStore: PendingDocumentDeleteStore = PendingDocumentDeleteStore(),
         listCache: DocumentCacheStore = DocumentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         serverOrigin: String = "",
@@ -233,6 +248,7 @@ final class DocumentSaveCoordinator {
         self.draftStore = draftStore
         self.contentCache = contentCache
         self.createStore = createStore
+        self.deleteStore = deleteStore
         self.listCache = listCache
         self.childrenCache = childrenCache
         self.serverOrigin = serverOrigin
@@ -263,6 +279,25 @@ final class DocumentSaveCoordinator {
             // show "Edited just now" for a document that exists nowhere but here. The
             // truthful state is the one `createLocalDocument` set.
             states[create.localID] = .pendingSync
+        }
+        // Tombstones, on the same terms and for the same reason: the suppressions they drive
+        // must be in force from this process's first sync pass, which `recoverDrafts()` starts
+        // as soon as Home loads. A forgotten tombstone would let `runSyncPass` push the draft
+        // of a document the user has already deleted, and let a checkpointed record resume
+        // and re-POST it.
+        //
+        // **Every tombstone is mirrored, whatever origin or account queued it** — the same
+        // rule as the records above, and for the same reason: `runSyncPass` walks
+        // `draftStore.allDrafts()`, which is not origin-scoped, so a foreign tombstone that
+        // was not mirrored would leave its document's draft unsuppressed. Origin and owner
+        // decide what may be **sent** and **shown** (`isListablePendingDelete`), never what is
+        // protected.
+        //
+        // No `states` seeding, unlike the records: nothing renders a save state for a
+        // tombstoned document. Its editor is gated before it loads, and its rows are drawn by
+        // the pending-delete predicate rather than by a save state.
+        for pendingDelete in deleteStore.allDeletes() {
+            pendingDeletes[pendingDelete.documentID] = pendingDelete
         }
         // **Rehydrate the holds before anything can enqueue.** The coordinator is built once,
         // at app start, before any editor exists — so a conflict persisted by a previous
@@ -346,6 +381,84 @@ final class DocumentSaveCoordinator {
     /// that returns.
     func isReplayable(_ create: PendingDocumentCreate, currentUserID: UUID?) -> Bool {
         belongsToSession(create, currentUserID: currentUserID)
+    }
+
+    // MARK: - Deletions queued on this device
+
+    /// Whether a deletion of this **server** id is queued and unsent — the predicate the
+    /// suppressions key off. Deliberately **not** scoped, exactly like `isPendingCreate`:
+    /// protection is unconditional. A tombstone queued by another account still names a
+    /// document this session must not push a draft to, must not reap that draft for, and
+    /// must not resume a checkpointed record onto.
+    ///
+    /// Its scoped sibling `isListablePendingDelete` is what the rows and the undo affordance
+    /// ask; never use this one for UI.
+    func isPendingDelete(documentID: UUID) -> Bool {
+        pendingDeletes[documentID] != nil
+    }
+
+    /// Whether this session may be *shown* a struck-through row for this document, and
+    /// offered the undo that cancels it.
+    ///
+    /// Scoped for the same reason `pendingLocalDocuments` is, and the disclosure runs the
+    /// same way round: tombstones survive sign-out, so an unscoped predicate would strike
+    /// user A's document through user B's lists on the same device — B's lists still hold
+    /// the document, because metadata caches are neither account-scoped nor cleared — and
+    /// then offer B a button that cancels A's deletion. An **unattributable** tombstone (nil
+    /// owner) is kept and protected but neither shown nor sent; `recordPendingDelete`
+    /// requires an owner, so nil can only arrive from a future or damaged schema.
+    ///
+    /// Reads `pendingDeletesVersion` first, so a SwiftUI body calling this registers the
+    /// dependency and re-renders when a tombstone is queued or undone — the same mechanism
+    /// `mergedSubpages` uses for `pendingCreatesVersion`.
+    func isListablePendingDelete(documentID: UUID, currentUserID: UUID?) -> Bool {
+        _ = pendingDeletesVersion
+        guard let queued = pendingDeletes[documentID] else { return false }
+        guard queued.serverOrigin == serverOrigin, let owner = queued.ownerUserID else { return false }
+        return owner == currentUserID
+    }
+
+    /// Queue a deletion the server could not be told about, so it replays on the next
+    /// trigger and every list strikes the document through meanwhile.
+    ///
+    /// `documentID` must be a **server** id. A document that exists only here has nothing to
+    /// DELETE — `OptionsViewModel` completes that case locally and never reaches this.
+    ///
+    /// `ownerUserID` is **required, not defaulted**, for the same reason
+    /// `createLocalDocument`'s is: an unattributable tombstone can be neither shown nor sent,
+    /// so a caller that could not name the user would silently queue a deletion that never
+    /// happens and never appears — while the row it left behind looks alive. Making the
+    /// parameter mandatory forces that at the call site, which is where the session is.
+    ///
+    /// Idempotent: re-queueing overwrites, keeping the newer request.
+    func recordPendingDelete(documentID: UUID, ownerUserID: UUID) {
+        let tombstone = PendingDocumentDelete(
+            documentID: documentID, requestedAt: Date(), serverOrigin: serverOrigin, ownerUserID: ownerUserID)
+        deleteStore.save(tombstone)
+        pendingDeletes[documentID] = tombstone
+        pendingDeletesVersion += 1
+    }
+
+    /// Undo: the deletion is no longer wanted, so the document returns to ordinary life.
+    ///
+    /// Nothing else is restored because nothing else was taken — that is the whole point of
+    /// the queue-time split. `OptionsViewModel` records the tombstone *instead of* clearing
+    /// the local work, and `EditorViewModel.handleDidQueueDelete` ends the editing session
+    /// without purging, so the draft, the create record and the caches are all still where
+    /// they were. Dropping the tombstone un-suppresses them.
+    ///
+    /// Deliberately does not kick the sync funnel: the caller does, because it also knows
+    /// whether a screen is waiting on the result.
+    func cancelPendingDelete(documentID: UUID) {
+        guard pendingDeletes[documentID] != nil else { return }
+        deleteStore.remove(documentID: documentID)
+        pendingDeletes[documentID] = nil
+        pendingDeletesVersion += 1
+    }
+
+    /// Test seam: assert on the stored tombstone without exposing the mirror.
+    func pendingDeleteForTesting(documentID: UUID) -> PendingDocumentDelete? {
+        pendingDeletes[documentID]
     }
 
     /// Mint a document locally: a create record (so it is POSTed even if never typed
@@ -872,7 +985,31 @@ final class DocumentSaveCoordinator {
             // sub-page its sync, never its content. The one cost is that a permanently stranded
             // parent strands its children with it — the same recovery the docs already record as
             // owed for the parent alone.
-            if let parentID = record.parentID, isPendingCreate(documentID: parentID) { continue }
+            //
+            // **A parent whose deletion is queued holds its children the same way**, for a
+            // reason the local case cannot reach: that parent *is* a real server document, so
+            // `POST documents/{serverID}/children/` would succeed — filing a brand-new
+            // sub-page into a document that is about to be deleted, which then either takes
+            // the child down with it server-side or leaves it orphaned. Waiting costs the
+            // sub-page a pass; on the deletion landing, the existing 404-probe re-root path
+            // owns whatever is left, exactly as it does for a parent deleted by a co-author.
+            if let parentID = record.parentID,
+                isPendingCreate(documentID: parentID) || isPendingDelete(documentID: parentID)
+            {
+                continue
+            }
+            // **A checkpointed record whose server document is queued for deletion goes no
+            // further** — and this is the guard that closes the resurrection path, so it is
+            // worth stating exactly. Past this line `replayCreate` takes its *resume* branch:
+            // it GETs `formattedContent(syncedServerID)`, and a `.notFound` there is read as
+            // "the document is gone", which clears the checkpoint and lets the next pass
+            // **re-POST the document from its draft**. A queued deletion makes that 404 not
+            // merely possible but expected — our own DELETE may already have landed in a pass
+            // that died before its cleanup ran — so without this the user's deletion would
+            // reliably undo itself, and the document would come back under a new id with its
+            // old body. It is the same resurrection `discardPendingWork`'s server-id branch
+            // documents, reached one error over.
+            if let serverID = record.syncedServerID, isPendingDelete(documentID: serverID) { continue }
             guard isReplayable(record, currentUserID: currentUserID) else { continue }
             // A create *this build* could not read the response of. Retrying it POSTs a
             // duplicate and abandons whatever the server already built — see
@@ -2016,6 +2153,13 @@ final class DocumentSaveCoordinator {
             // guard is why creating offline is safe at all; the create replay (a separate
             // pass) is what actually POSTs these.
             guard !isPendingCreate(documentID: draft.documentID) else { continue }
+            // A document the user has asked to delete is reconciled with nothing. Pushing its
+            // draft would race our own queued DELETE for no gain, and the 404/403 branch below
+            // would *reap* that draft — which is the undo's whole payload, and the only copy of
+            // whatever the user typed before deciding to delete. Both halves matter: skipping
+            // the fetch is what keeps the pass quiet, and the restatement at each deleting line
+            // is what keeps the draft safe if this guard is ever moved.
+            guard !isPendingDelete(documentID: draft.documentID) else { continue }
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             // A save that FAILED this session is a retry candidate the user may still
             // be looking at (its draft is their only copy), owned by the reading
@@ -2096,6 +2240,11 @@ final class DocumentSaveCoordinator {
                         // like, which is how it would become reachable.
                         guard !createStoreUnreadable else { continue }
                         guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
+                        // And never a draft whose deletion is queued: it is the undo's only
+                        // payload. Unreachable through the guard at the top of the loop, and
+                        // stated here for the same reason its three neighbours are — this is
+                        // the line that would do the deleting.
+                        guard !isPendingDelete(documentID: draft.documentID) else { continue }
                         draftStore.remove(documentID: draft.documentID)
                     }
                 }
@@ -2128,6 +2277,13 @@ final class DocumentSaveCoordinator {
                 // must keep running, since it is what clears `finishMigration`'s both-drafts
                 // guard.
                 guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
+                // **And never a draft whose deletion is queued.** A 404 here is exactly what a
+                // tombstone predicts — the DELETE may already have landed in a pass that died
+                // before its cleanup ran — but it is also what a *co-author's* delete looks
+                // like, and the two are indistinguishable. Reaping on either would take the
+                // undo's only payload while the deletion is still cancellable. The tombstone's
+                // own completion removes this draft, in an order a crash cannot tear.
+                guard !isPendingDelete(documentID: draft.documentID) else { continue }
                 draftStore.remove(documentID: draft.documentID)
             } catch {
                 // Leave the draft for a later sync (e.g. offline right now).
