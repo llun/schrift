@@ -89,6 +89,12 @@ private struct BlockEditorRow: View {
             // view. Backspace at the start of the following block deletes it as
             // a unit (see EditorViewModel.mergeBlockWithPrevious).
             imageLeaf(alt: alt, url: url)
+        } else if case .attachment(let name, let url) = block.kind {
+            // Same leaf contract as an image: no text view, deletes as a unit,
+            // never converted, never receives inline markers. The card is the
+            // same one the reading surface draws, so an attachment looks and
+            // behaves identically in both modes.
+            attachmentLeaf(name: name, url: url)
         } else {
             // Every editable kind shares one structural shape (adornment slot
             // + text view with value-varying modifiers): converting the
@@ -173,8 +179,22 @@ private struct BlockEditorRow: View {
         }
     }
 
-    @ViewBuilder
-    private func imageLeaf(alt: String, url: String) -> some View {
+    @ViewBuilder private func attachmentLeaf(name: String, url: String) -> some View {
+        if let display = parseAttachmentLink("[\(name)](\(url))", serverOrigin: serverOrigin) {
+            AttachmentCardView(display: display)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        } else {
+            // A url that no longer belongs to this server (a document opened
+            // after switching servers) is shown verbatim rather than as a card
+            // that could never load.
+            Text("[\(name)](\(url))")
+                .font(DocsFont.code)
+                .foregroundStyle(DocsColor.textPrimary)
+        }
+    }
+
+    @ViewBuilder private func imageLeaf(alt: String, url: String) -> some View {
         if let imageURL = URL(string: url) {
             MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
                 .frame(maxWidth: .infinity, alignment: .leading)

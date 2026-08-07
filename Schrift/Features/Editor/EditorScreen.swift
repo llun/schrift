@@ -43,6 +43,7 @@ struct EditorScreen: View {
                 documentID: documentID,
                 title: title,
                 saveCoordinator: saveCoordinator,
+                serverOrigin: serverOrigin,
                 contentCache: contentCache,
                 childrenCache: childrenCache,
                 diagnostics: diagnostics

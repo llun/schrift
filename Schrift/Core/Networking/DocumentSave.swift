@@ -73,7 +73,10 @@ extension DocsAPIClient {
     /// result is **not** discardable: a caller that ignores it silently loses the fact that
     /// the server holds its content, which is the whole point.
     func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> DocsAPIError? {
-        let update = MarkdownYjs.encode(markdown: markdown)
+        // The one production encode site, and it runs on the client actor, so the
+        // origin is read straight off `baseURL` rather than threaded down through
+        // the save coordinator.
+        let update = MarkdownYjs.encode(markdown: markdown, serverOrigin: serverOrigin)
         try await setContent(documentID: documentID, yjsUpdate: update)
         do {
             try await updateTitle(documentID: documentID, title: title)

@@ -86,6 +86,15 @@ final class EditorViewModel {
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    /// `siteOrigin(for: serverURL)`, which is what turns a standalone
+    /// `[name](url)` line into a `.attachment` block rather than a paragraph.
+    ///
+    /// Defaulted to "" only so the many existing tests that build a view model
+    /// keep compiling; production always passes it (`EditorScreen`). An empty
+    /// origin classifies nothing, so a missed one fails **loud** — the insert
+    /// verification counts zero attachments and refuses — rather than silently
+    /// writing a paragraph where the web expects a file block.
+    let serverOrigin: String
     /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
     /// hold — see `noteEditorAppeared`.
     private var openEditorRegistration: OpenEditorRegistration?
@@ -182,6 +191,7 @@ final class EditorViewModel {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        serverOrigin: String = "",
         signedInUser: SignedInUserStore = SignedInUserStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
@@ -194,6 +204,7 @@ final class EditorViewModel {
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.serverOrigin = serverOrigin
         self.signedInUser = signedInUser
         self.contentCache = contentCache
         self.childrenCache = childrenCache
@@ -1122,7 +1133,7 @@ final class EditorViewModel {
         }
         savedTitle = title
         rawMarkdown = markdown
-        blocks = parseEditorBlocks(markdown)
+        blocks = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
         // Every block gets a fresh identity here, so any caret state still
         // pointing into the outgoing blocks is now dangling. Clearing it in the
         // one funnel every content swap routes through makes that unrepresentable
@@ -1359,7 +1370,7 @@ final class EditorViewModel {
         // document nobody edited. Comparing serializations (not raw strings) ignores the
         // canonicalization the parser always applies, so a genuine no-op stays a no-op.
         let serialized = serializeMarkdown(blocks)
-        if serialized != serializeMarkdown(parseEditorBlocks(rawMarkdown)) {
+        if serialized != serializeMarkdown(parseEditorBlocks(rawMarkdown, serverOrigin: serverOrigin)) {
             rawMarkdown = serialized
         }
         mode = .reading
@@ -1461,9 +1472,10 @@ final class EditorViewModel {
         guard index > 0 else { return }
         let previous = blocks[index - 1]
         switch previous.kind {
-        case .divider, .image:
-            // Leaf blocks (divider, image) have no text to merge into; backspace
-            // at the start of the following block removes the leaf as a unit.
+        case .divider, .image, .attachment:
+            // Leaf blocks (divider, image, attachment) have no text to merge
+            // into; backspace at the start of the following block removes the
+            // leaf as a unit.
             blocks.remove(at: index - 1)
             focusBlock(block.id, cursorAt: 0)
             markDirty()
@@ -1494,9 +1506,10 @@ final class EditorViewModel {
 
     func convertBlock(blockID: UUID, to kind: BlockKind) {
         guard let index = blockIndex(blockID) else { return }
-        // An image's data lives in its kind's associated values; converting would
-        // silently destroy the image, so images are never converted.
+        // An image's or attachment's data lives in its kind's associated values;
+        // converting would silently destroy it, so leaves are never converted.
         if case .image = blocks[index].kind { return }
+        if case .attachment = blocks[index].kind { return }
         if blocks[index].kind == kind {
             blocks[index].kind = .paragraph
         } else {
@@ -1530,7 +1543,7 @@ final class EditorViewModel {
     func applyInlineMarker(_ marker: String) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         switch blocks[index].kind {
-        case .codeBlock, .unknown, .divider, .image:
+        case .codeBlock, .unknown, .divider, .image, .attachment:
             return
         default:
             break
@@ -1858,7 +1871,7 @@ final class EditorViewModel {
     }
 
     private func imageCount(in markdown: String, url: String) -> Int {
-        parseEditorBlocks(markdown).filter { $0.kind == .image(alt: "", url: url) }.count
+        parseEditorBlocks(markdown, serverOrigin: serverOrigin).filter { $0.kind == .image(alt: "", url: url) }.count
     }
 
     /// Appends a standalone, blank-line-separated image line. That keeps it out of

@@ -194,4 +194,39 @@ final class YjsEncoderTests: XCTestCase {
             "010beffdb6f50d0007010e646f63756d656e742d73746f7265030a626c6f636b47726f75700700effdb6f50d00030e626c6f636b436f6e7461696e65720700effdb6f50d010305696d6167652800effdb6f50d020d74657874416c69676e6d656e740177046c6566742800effdb6f50d020f6261636b67726f756e64436f6c6f7201770764656661756c742800effdb6f50d02046e616d6501770970686f746f2e6a70672800effdb6f50d020375726c01777968747470733a2f2f646f63732e6578616d706c652e746573742f6d656469612f31313131313131312d313131312d343131312d383131312d3131313131313131313131312f6174746163686d656e74732f32323232323232322d323232322d343232322d383232322d3232323232323232323232322e6a70672800effdb6f50d020763617074696f6e0177002800effdb6f50d020b73686f775072657669657701782800effdb6f50d020c707265766965775769647468017f2800effdb6f50d0102696401772430303031303030302d303030302d343030302d383030302d30303030303030303030303000"
         )
     }
+
+    /// A generic file attachment is BlockNote's stock `file` block: a leaf, like
+    /// the image, but with a **different and shorter** prop set — four props,
+    /// with no `textAlignment`, no `textColor`, no `showPreview` and no
+    /// `previewWidth`. Anyone tempted to copy the image's prop list should read
+    /// these bytes instead.
+    ///
+    /// Captured the same way as every fixture here: real yjs 13.6.31 over
+    /// `@blocknote/server-util@0.51.4`'s `blocksToYXmlFragment(blocks, fragment)`
+    /// into a `Y.Doc` whose clientID was pinned to 0xDEADBEEF before any content
+    /// existed, then `Y.encodeStateAsUpdate`. The harness was validated by
+    /// reproducing `testImageBlockIsLeafWithProps` byte for byte first.
+    ///
+    /// Note the struct count: `0108` — eight structs against the image's eleven,
+    /// which is the three missing props.
+    func testFileBlockIsLeafWithProps() {
+        let block = BlockNoteBlock(
+            node: "file",
+            props: [
+                ("backgroundColor", .string("default")),
+                ("name", .string("Q3 report.pdf")),
+                (
+                    "url",
+                    .string(
+                        "https://docs.example.test/media/11111111-1111-4111-8111-111111111111/attachments/22222222-2222-4222-8222-222222222222.pdf"
+                    )
+                ),
+                ("caption", .string("")),
+            ],
+            runs: [], id: U(1))
+        assertGolden(
+            [block],
+            "0108effdb6f50d0007010e646f63756d656e742d73746f7265030a626c6f636b47726f75700700effdb6f50d00030e626c6f636b436f6e7461696e65720700effdb6f50d01030466696c652800effdb6f50d020f6261636b67726f756e64436f6c6f7201770764656661756c742800effdb6f50d02046e616d6501770d5133207265706f72742e7064662800effdb6f50d020375726c01777968747470733a2f2f646f63732e6578616d706c652e746573742f6d656469612f31313131313131312d313131312d343131312d383131312d3131313131313131313131312f6174746163686d656e74732f32323232323232322d323232322d343232322d383232322d3232323232323232323232322e7064662800effdb6f50d020763617074696f6e0177002800effdb6f50d0102696401772430303031303030302d303030302d343030302d383030302d30303030303030303030303000"
+        )
+    }
 }

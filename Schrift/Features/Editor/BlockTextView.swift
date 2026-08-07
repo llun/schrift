@@ -72,9 +72,10 @@ func blockTextStyling(for kind: BlockKind, dynamicTypeSize: DynamicTypeSize = .l
             allowsNewlines: true,
             rendersInlineMarkdown: rendersInlineMarkdown(kind)
         )
-    case .paragraph, .bulletItem, .numberedItem, .checklistItem, .divider, .image:
-        // `.divider`/`.image` never host a text view (they render as leaves);
-        // grouped here only to keep the switch exhaustive with a sane default.
+    case .paragraph, .bulletItem, .numberedItem, .checklistItem, .divider, .image, .attachment:
+        // `.divider`/`.image`/`.attachment` never host a text view (they render
+        // as leaves); grouped here only to keep the switch exhaustive with a
+        // sane default.
         return BlockTextStyling(
             font: scaledUIFont(
                 .systemFont(ofSize: DocsTypographySpec.body.size), for: DocsTypographySpec.body,
