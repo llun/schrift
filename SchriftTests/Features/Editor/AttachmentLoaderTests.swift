@@ -99,6 +99,49 @@ final class AttachmentLoaderTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data([1, 2, 3]))
     }
 
+    /// Eviction can delete a cached file while a card still holds `.cached` for
+    /// it. Without re-checking the disk the card would open QuickLook on nothing
+    /// and never recover, because `loadIfNeeded` short-circuits on `.cached`.
+    func testAnEvictedCachedAttachmentIsDownloadedAgain() async throws {
+        let cache = makeCache()
+        let display = try makeDisplay()
+        let loader = makeLoader(cache: cache)
+        stub(Data([1, 2, 3]))
+        await loader.loadIfNeeded(display)
+        guard case .cached(let first) = loader.state(for: display) else {
+            return XCTFail("Expected .cached after the first load")
+        }
+
+        // Something else fills the cache and this file is evicted.
+        try FileManager.default.removeItem(at: first)
+        stub(Data([4, 5, 6]))
+        await loader.loadIfNeeded(display)
+
+        guard case .cached(let second) = loader.state(for: display) else {
+            return XCTFail("Expected .cached again, got \(String(describing: loader.state(for: display)))")
+        }
+        XCTAssertEqual(try Data(contentsOf: second), Data([4, 5, 6]))
+    }
+
+    /// The store's recency is last *use*, so a card the reader keeps returning
+    /// to has to bump it — not just the first load of the session.
+    func testLoadingAnAlreadyCachedAttachmentBumpsItsRecency() async throws {
+        let cache = makeCache()
+        let display = try makeDisplay()
+        let loader = makeLoader(cache: cache)
+        stub(Data([1]))
+        await loader.loadIfNeeded(display)
+        let file = directory.appendingPathComponent(attachmentFileName(for: display), isDirectory: false)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-600)], ofItemAtPath: file.path)
+
+        await loader.loadIfNeeded(display)
+
+        let mtime = try XCTUnwrap(
+            try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+        XCTAssertGreaterThan(mtime.timeIntervalSinceNow, -60, "a re-load must refresh the entry's recency")
+    }
+
     func testASecondLoadOfTheSameAttachmentIssuesNoSecondRequest() async throws {
         let log = RequestRecorder()
         stub(Data([1]), log: log)

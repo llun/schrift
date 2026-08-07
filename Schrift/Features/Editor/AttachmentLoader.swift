@@ -81,12 +81,18 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// resolves.
     func loadIfNeeded(_ display: AttachmentDisplay) async {
         let key = display.urlString
-        switch states[key] {
-        case .cached, .failed: return
-        case .downloading, nil: break
-        }
+        if case .failed = states[key] { return }
         guard !inFlight.contains(key) else { return }
 
+        // The disk is consulted even when the state is already `.cached`, for
+        // two reasons. Eviction can delete the file out from under a card that
+        // is still on screen — a long document can push a hundred attachments
+        // through the cache in one session — and a stale `.cached` would open
+        // QuickLook on a file that no longer exists, with no way back because
+        // this method would keep short-circuiting on it. And the same call
+        // bumps the file's modification date, which is what makes eviction
+        // least-recently-*used* for an attachment the reader keeps returning
+        // to rather than merely least-recently-first-loaded.
         if let url = cache.cachedFileURL(for: display) {
             states[key] = .cached(url)
             return
