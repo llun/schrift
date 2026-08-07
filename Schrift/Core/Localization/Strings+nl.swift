@@ -66,9 +66,9 @@ enum Strings_nl {
 
         .docrow_pending_delete: "Wacht op verwijdering",
 
-        .pending_delete_alert_message: "Dit document wordt verwijderd zodra je weer online bent.",
+        .pending_delete_alert_message: "Dit document wordt verwijderd zodra de server weer bereikbaar is.",
 
-        .pending_delete_undo: "Verwijderen ongedaan maken",
+        .pending_delete_undo: "Dit document behouden",
 
         .docrow_on_this_device: "Op dit apparaat, wacht op synchronisatie",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
@@ -188,7 +188,7 @@ enum Strings_nl {
             "Overschreven versies kunnen worden hersteld via de versiegeschiedenis op het web.",
 
         // Editor - errors
-        .editor_pending_delete: "Dit document wordt verwijderd zodra je weer online bent.",
+        .editor_pending_delete: "Dit document wacht op verwijdering.",
         .editor_error_load: "Kan dit document niet laden. Trek omlaag om het opnieuw te proberen.",
         .editor_error_refresh: "Vernieuwen mislukt. Probeer het opnieuw.",
         .editor_error_add_subpage: "Kan de subpagina niet toevoegen. Probeer het opnieuw.",

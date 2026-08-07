@@ -64,8 +64,8 @@ enum Strings_en {
         .docrow_public: "Public",
         .docrow_available_offline: "Available offline",
         .docrow_pending_delete: "Waiting to be deleted",
-        .pending_delete_alert_message: "This document will be deleted when you're back online.",
-        .pending_delete_undo: "Undo delete",
+        .pending_delete_alert_message: "This document will be deleted the next time it can reach the server.",
+        .pending_delete_undo: "Keep this document",
         .docrow_on_this_device: "On this device, waiting to sync",
 
         // LinkReachPill hints (design-system component; labels reuse reach.*)
@@ -183,7 +183,7 @@ enum Strings_en {
         .editor_conflict_restore_hint: "Overwritten versions can be restored from version history on the web.",
 
         // Editor - errors
-        .editor_pending_delete: "This document is waiting to be deleted when you're back online.",
+        .editor_pending_delete: "This document is waiting to be deleted.",
         .editor_error_load: "Couldn't load this document. Pull to refresh to try again.",
         .editor_error_refresh: "Couldn't refresh. Please try again.",
         .editor_error_add_subpage: "Couldn't add the subpage. Please try again.",

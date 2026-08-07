@@ -449,6 +449,10 @@ struct EditorView: View {
                     // Nothing announces an overlay the way it would a sheet, so
                     // say the screen changed and let VoiceOver land in the drawer.
                     AccessibilityNotification.ScreenChanged().post()
+                    // A document queued for deletion is asked nothing — the same rule
+                    // `load`/`revalidate`/`refresh` follow, and this is the one other path
+                    // that would GET its children.
+                    guard !viewModel.isDocumentPendingDelete else { return }
                     await pagesTreeViewModel.loadRoot()
                 }
             }
@@ -517,7 +521,15 @@ struct EditorView: View {
                 .accessibilityLabel(loc[.editor_update_available_a11y])
             }
 
-            if let errorKey = viewModel.errorKey {
+            // A queued deletion is not a failure, so it is neither drawn in `danger` nor left
+            // without a way out. **This is the only undo affordance that does not depend on
+            // finding a list row**, which matters because the rows are account-scoped while
+            // the gate is not: a tombstone this session cannot see — another account's, or
+            // one whose owner is unknown — would otherwise leave the document permanently
+            // unopenable with nothing anywhere in the app to clear it.
+            if viewModel.isDocumentPendingDelete {
+                pendingDeleteNotice
+            } else if let errorKey = viewModel.errorKey {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(loc[errorKey])
                         .font(DocsFont.footnote)
@@ -543,6 +555,24 @@ struct EditorView: View {
                 readingSurface
             }
         }
+    }
+
+    /// Shown instead of the body for a document whose deletion is queued, with the undo beside
+    /// it. Deliberately not `errorKey`/`danger` styling: nothing has failed, the deletion is
+    /// simply waiting — and the button is what keeps this screen from being a dead end.
+    private var pendingDeleteNotice: some View {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            Text(loc[.editor_pending_delete])
+                .font(DocsFont.footnote)
+                .foregroundStyle(DocsColor.textSecondary)
+            DocsButton(title: loc[.pending_delete_undo], variant: .secondary, size: .medium) {
+                viewModel.undoPendingDeleteForThisDocument()
+                Task { await viewModel.load() }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.top, DocsSpacing.spaceXS)
     }
 
     // MARK: - Editing
@@ -757,8 +787,10 @@ struct EditorView: View {
     /// lose the first's identity map / seed state).
     private func requestCollaborationSessionIfNeeded() {
         // First, before the bridge is even built: a document the server has never seen has no
-        // collaboration room to join — the socket dials a URL containing its id.
-        guard !viewModel.isLocalDocument else { return }
+        // collaboration room to join — the socket dials a URL containing its id. A document
+        // queued for deletion is the same shape for a different reason: it is on its way out,
+        // and "no requests for a tombstoned document" has to include the socket.
+        guard !viewModel.isLocalDocument, !viewModel.isDocumentPendingDelete else { return }
         if liveEditingBridge == nil {
             let bridge = LiveEditingBridge(
                 documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,

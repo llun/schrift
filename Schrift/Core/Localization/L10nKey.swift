@@ -77,8 +77,13 @@ enum L10nKey: String, CaseIterable, Sendable {
     /// undo alert's title — the same fact stated once. Deliberately not phrased as an error:
     /// the deletion is waiting, and is still cancellable from any list that shows it.
     case docrow_pending_delete = "docrow.pending_delete"  // "Waiting to be deleted"
-    case pending_delete_alert_message = "pending_delete.alert_message"  // "This document will be deleted when you're back online."
-    case pending_delete_undo = "pending_delete.undo"  // "Undo delete"
+    case pending_delete_alert_message = "pending_delete.alert_message"  // "This document will be deleted the next time it can reach the server."
+    /// The alert's keep action. Deliberately **not** "Undo delete": it sits beside a
+    /// `.cancel` button, and "Cancel" is the natural word for cancelling a deletion — in
+    /// French the two were literally "Annuler la suppression" and "Annuler", so a user
+    /// reaching for the one that keeps their document could get the opposite. Naming the
+    /// outcome instead makes the pair a choice rather than two spellings of the same word.
+    case pending_delete_undo = "pending_delete.undo"  // "Keep this document"
 
     // LinkReachPill hints (design-system component; labels reuse reach.*)
     case linkreach_hint_restricted = "linkreach.hint.restricted"  // "Only invited people"
@@ -212,11 +217,13 @@ enum L10nKey: String, CaseIterable, Sendable {
 
     // Editor - errors
     case editor_error_load = "editor.error.load"  // "Couldn't load this document. Pull to refresh to try again."
-    /// Shown instead of the body when a document the user deleted offline is opened anyway
-    /// — an in-document link, a pushed navigation value, or the iPad detail column still
-    /// holding it. Not a failure: the deletion is still undoable from any list that shows
-    /// the document, which is why the copy says what is waiting rather than what went wrong.
-    case editor_pending_delete = "editor.pending_delete"  // "This document is waiting to be deleted when you're back online."
+    /// Shown instead of the body when a document whose deletion is queued is opened anyway —
+    /// an in-document link, a pushed navigation value, or the iPad detail column still holding
+    /// it. Not a failure: the deletion is waiting, and the screen carries its own undo, so the
+    /// copy says what is pending rather than what went wrong. It deliberately does not promise
+    /// "when you're back online" — `retryableSaveFailure` also queues on a 5xx or a rate limit,
+    /// which a perfectly online user can hit.
+    case editor_pending_delete = "editor.pending_delete"  // "This document is waiting to be deleted."
     case editor_error_refresh = "editor.error.refresh"  // "Couldn't refresh. Please try again."
     case editor_error_add_subpage = "editor.error.add_subpage"  // "Couldn't add the subpage. Please try again."
     case editor_error_open_link = "editor.error.open_link"  // "Couldn't open that link. Please try again."

@@ -65,9 +65,10 @@ enum Strings_it {
 
         .docrow_pending_delete: "In attesa di eliminazione",
 
-        .pending_delete_alert_message: "Questo documento verrà eliminato quando tornerai online.",
+        .pending_delete_alert_message:
+            "Questo documento verrà eliminato non appena sarà possibile raggiungere il server.",
 
-        .pending_delete_undo: "Annulla eliminazione",
+        .pending_delete_undo: "Conserva questo documento",
 
         .docrow_on_this_device: "Su questo dispositivo, in attesa di sincronizzazione",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
@@ -186,7 +187,7 @@ enum Strings_it {
             "Le versioni sovrascritte possono essere ripristinate dalla cronologia delle versioni sul web.",
 
         // Editor - errors
-        .editor_pending_delete: "Questo documento verrà eliminato quando tornerai online.",
+        .editor_pending_delete: "Questo documento è in attesa di eliminazione.",
         .editor_error_load: "Impossibile caricare questo documento. Trascina per aggiornare e riprova.",
         .editor_error_refresh: "Impossibile aggiornare. Riprova.",
         .editor_error_add_subpage: "Impossibile aggiungere la sottopagina. Riprova.",

@@ -132,6 +132,15 @@ final class HomeViewModel {
             }
             Task { await self.load() }
         }
+        // A queued deletion that has now landed: drop the row from the lists this view model
+        // is holding. `completePendingDelete` purged the caches, but these arrays are its own
+        // — and leaving the row would do worse than linger, since the tombstone is gone and
+        // the row would *un-strike* back into looking like a live document.
+        self.saveCoordinator.onDocumentDeleted = { [weak self] documentID in
+            guard let self else { return }
+            self.pinnedDocuments.removeAll { $0.id == documentID }
+            self.fetchedRecentDocuments.removeAll { $0.id == documentID }
+        }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
             fetchedRecentDocuments = recents
@@ -291,8 +300,6 @@ final class HomeViewModel {
         signedInUser.remember(user.id)
     }
 
-    /// Whether this row is a document created here that the server has not seen yet.
-
     /// Whether this document's deletion is queued and unsent, so its row draws struck through
     /// and its tap offers the undo instead of opening it.
     ///
@@ -316,6 +323,7 @@ final class HomeViewModel {
         Task { await saveCoordinator.syncPendingDrafts() }
     }
 
+    /// Whether this row is a document created here that the server has not seen yet.
     func isLocalDocument(_ document: Document) -> Bool {
         saveCoordinator.isPendingCreate(documentID: document.id)
     }

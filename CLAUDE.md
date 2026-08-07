@@ -1792,8 +1792,24 @@ markdown write endpoint**. Understand this before touching the save path:
   2xx/`.notFound` complete, `.forbidden` is **terminal and gives the document back** (this
   session may not make the deletion, so retrying forever would strike the row through for
   good), everything else keeps the tombstone.
+  **The undo can lose its race, and leaving the local side untouched is not enough.** With
+  the tombstone gone every suppression is off, so `runSyncPass` — later in the *same* pass —
+  finds a draft whose document now 404s (because the pass just deleted it), passes all four
+  guards, and reaps it: the user pressed "keep this document" and lost their text.
+  `reviveAsLocalDocument` honours the undo instead, re-minting the document locally with the
+  body carried over so the create replay POSTs it — the same recovery the checkpointed path
+  already got from its `.notFound` start-over. Accepted: it comes back as a root, under a new
+  id.
+  **`enqueue` holds for a tombstoned id.** The deleting screen pops and every fresh editor is
+  gated at `load()`, but a *second, already-loaded* editor (same document pushed in two tabs)
+  goes through neither.
+  **An unreadable delete store withholds the create pass's resume entirely**
+  (`deleteStoreUnreadable`) — unknown tombstones disarm the resurrection guard, and a
+  re-POSTed deleted document is the one consequence here no later launch can undo.
   **`completePendingDelete` removes the tombstone last** — cleanup first, so a crash
-  mid-way re-sends, takes the 404 and finishes idempotently. The reverse order has a
+  mid-way re-sends, takes the 404 and finishes idempotently — then fires `onDocumentDeleted`
+  so a list holding the row drops it instead of letting it **un-strike** back into looking
+  alive. The reverse order has a
   window where the deletion is forgotten while the draft and record survive: the row comes
   back and a checkpointed resume re-POSTs it. Same argument and direction as
   `migrateCreatedDocument`'s "the record is removed last". `DocumentCacheStore

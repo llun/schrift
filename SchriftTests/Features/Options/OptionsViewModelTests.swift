@@ -189,6 +189,7 @@ final class OptionsViewModelTests: XCTestCase {
         // Relaunch so the coordinator's mirror carries the checkpoint.
         let coordinator = DocumentSaveCoordinator(
             client: env.client, draftStore: env.drafts, createStore: env.creates,
+            deleteStore: env.deletes,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = OptionsViewModel(
             client: env.client, documentID: env.document.id, isFavorite: false, saveCoordinator: coordinator)
@@ -216,6 +217,7 @@ final class OptionsViewModelTests: XCTestCase {
         env.creates.save(record)
         let coordinator = DocumentSaveCoordinator(
             client: env.client, draftStore: env.drafts, createStore: env.creates,
+            deleteStore: env.deletes,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = OptionsViewModel(
             client: env.client, documentID: env.document.id, isFavorite: false, saveCoordinator: coordinator)

@@ -216,3 +216,18 @@ struct DocRow: View {
     .environment(LocalizationStore())
     .dynamicTypeSize(.accessibility3)
 }
+
+/// The new pending-deletion state in dark. A `textTertiary` title with a strikethrough and a
+/// `gray350` glyph has a different contrast story from the light half, and a token's dark
+/// counterpart existing is not proof it reads correctly beside one.
+#Preview("Pending deletion (dark)") {
+    VStack(spacing: 0) {
+        DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
+        DocRow(
+            emoji: "🗑️", title: "Deleted while offline", reach: .restricted, date: "Just now",
+            pendingDelete: true)
+    }
+    .background(DocsColor.surfacePage)
+    .environment(LocalizationStore())
+    .preferredColorScheme(.dark)
+}

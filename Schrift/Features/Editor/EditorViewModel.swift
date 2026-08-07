@@ -1246,6 +1246,20 @@ final class EditorViewModel {
             documentID: document.id, currentUserID: signedInUser.userID)
     }
 
+    /// Cancel the queued deletion of **this** document — the escape hatch on the gated screen.
+    ///
+    /// Deliberately keyed on the unscoped predicate, unlike the row annotations: this is the
+    /// only affordance that does not require finding a list row, and the rows are
+    /// account-scoped. A tombstone this session cannot see would otherwise leave the document
+    /// permanently unopenable with nothing anywhere able to clear it. Letting whoever is in
+    /// front of the screen cancel it is recoverable in a way that dead end is not — the
+    /// deletion can simply be made again.
+    func undoPendingDeleteForThisDocument() {
+        saveCoordinator.cancelPendingDelete(documentID: documentID)
+        let coordinator = saveCoordinator
+        Task { await coordinator.syncPendingDrafts() }
+    }
+
     /// Cancel a queued deletion for a sub-page, and kick the sync funnel: its draft was
     /// suppressed while the tombstone stood, and undoing is exactly when it becomes
     /// replayable again — waiting for an unrelated foreground or reconnect would strand it.
@@ -1319,6 +1333,12 @@ final class EditorViewModel {
         // has removed, and with nothing left to gate it the replay POSTs it, the probe 404s, and
         // it is re-rooted. A document the user threw away comes back as a stray root.
         guard !isDocumentDiscarded else { return nil }
+        // Nor inside one whose deletion is queued. The screen that deleted it popped and every
+        // fresh editor is gated at `load()`, but this one may have been reached by a link or
+        // been open already. A child filed here is held by `runCreatePass`'s parent gate until
+        // the deletion lands, after which the probe re-roots it — a document the user never
+        // asked for, from a parent they threw away.
+        guard !isDocumentPendingDelete else { return nil }
         // **A parent the server has never seen is minted straight away, with no request.** It
         // has no children route to POST to: the call would address
         // `documents/{local-uuid}/children/` and take a 404, which `retryableSaveFailure`

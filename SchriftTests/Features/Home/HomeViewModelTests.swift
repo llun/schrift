@@ -962,6 +962,9 @@ final class HomeViewModelTests: XCTestCase {
         viewModel.saveCoordinator.recordPendingDelete(
             documentID: document.id, ownerUserID: UUID(uuidString: "99999999-9999-4999-8999-999999999999")!)
 
+        XCTAssertTrue(
+            viewModel.saveCoordinator.isPendingDelete(documentID: document.id),
+            "precondition: it really was queued — protected, just not this session's to see")
         XCTAssertFalse(viewModel.isDeletePending(document))
     }
 
@@ -972,6 +975,7 @@ final class HomeViewModelTests: XCTestCase {
         let viewModel = makeViewModel(signedInUser: makeSignedInUser(userID: user))
         let document = documentFixture(UUID())
         viewModel.saveCoordinator.recordPendingDelete(documentID: document.id, ownerUserID: user)
+        XCTAssertTrue(viewModel.isDeletePending(document), "precondition: annotated to begin with")
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
 
         viewModel.undoPendingDelete(document)

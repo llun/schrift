@@ -185,6 +185,19 @@ final class DocumentSaveCoordinator {
     /// there would go straight to `start` and full-overwrite the co-author.
     @ObservationIgnored
     var onDocumentMigrated: (@MainActor (Document?) -> Void)?
+
+    /// Fired when a queued deletion has actually landed on the server, so a list holding the
+    /// row in memory can drop it.
+    ///
+    /// The caches are purged by `completePendingDelete`, but a list already on screen holds
+    /// its own array — and the row does not merely linger there, it **un-strikes**: the
+    /// tombstone is gone, so the pending-delete predicate answers false and the row silently
+    /// reverts to looking like a live document. That reads as "my deletion was cancelled",
+    /// which is the opposite of what happened, and tapping it pushes an editor that 404s.
+    ///
+    /// `@ObservationIgnored` and fired last, on the same terms as `onDocumentMigrated`.
+    @ObservationIgnored
+    var onDocumentDeleted: (@MainActor (UUID) -> Void)?
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
@@ -218,6 +231,21 @@ final class DocumentSaveCoordinator {
     /// delete on the next launch either. Suppression outlives the session by design; see
     /// `holdsUnreadableData`.
     private let createStoreUnreadable: Bool
+    /// True when the **delete** store held data that would not decode, so the tombstones are
+    /// unknown rather than absent.
+    ///
+    /// Far milder than `createStoreUnreadable` — unknown tombstones mean queued deletions stop
+    /// replaying and rows stop being struck through, which costs nothing and is recoverable by
+    /// deleting again. But one consequence is *not* mild, and it is why this flag exists at
+    /// all: with every tombstone unknown, `runCreatePass`'s resume guard is disarmed, so a
+    /// checkpointed record whose DELETE landed in a pass that died before its cleanup ran
+    /// resumes, reads the 404 as "gone", clears its checkpoint, and the next pass **re-POSTs
+    /// the document the user deleted**. That one is not recoverable — it comes back under a
+    /// new id. So a resume is withheld entirely while the tombstones are unknown.
+    ///
+    /// Read once, which is sound for the same reasons `createStoreUnreadable` is: nothing can
+    /// make the blob undecodable mid-process, and the store's own flag is sticky.
+    private let deleteStoreUnreadable: Bool
     /// Deletions the user has asked for that the server has not been told about, keyed by the
     /// **server** id the DELETE will address and mirrored from `deleteStore` so the hot
     /// predicate (`isPendingDelete`, read on every sync pass and every row) is a dictionary
@@ -255,6 +283,7 @@ final class DocumentSaveCoordinator {
         self.appBuild = appBuild
         self.backgroundTasks = backgroundTasks
         createStoreUnreadable = createStore.holdsUnreadableData
+        deleteStoreUnreadable = deleteStore.holdsUnreadableData
         // Same reasoning as the conflict rehydration below: the holds these records drive
         // must be in force from this process's very first `enqueue`, because the editor
         // renders a stored draft synchronously and unblocks editing before anything else
@@ -454,11 +483,6 @@ final class DocumentSaveCoordinator {
         deleteStore.remove(documentID: documentID)
         pendingDeletes[documentID] = nil
         pendingDeletesVersion += 1
-    }
-
-    /// Test seam: assert on the stored tombstone without exposing the mirror.
-    func pendingDeleteForTesting(documentID: UUID) -> PendingDocumentDelete? {
-        pendingDeletes[documentID]
     }
 
     /// Mint a document locally: a create record (so it is POSTed even if never typed
@@ -1017,6 +1041,13 @@ final class DocumentSaveCoordinator {
             // old body. It is the same resurrection `discardPendingWork`'s server-id branch
             // documents, reached one error over.
             if let serverID = record.syncedServerID, isPendingDelete(documentID: serverID) { continue }
+            // And if the tombstones would not decode we do not *know* whether this record's
+            // document is one the user deleted — so resume none of them. The resume is the
+            // only branch that can turn a 404 into a re-POST, and re-creating a deleted
+            // document under a new id is not something a later launch can undo. Withholding
+            // costs a checkpointed record its migration until the store is repaired; the
+            // draft stays on disk and protected throughout.
+            if record.syncedServerID != nil, deleteStoreUnreadable { continue }
             guard isReplayable(record, currentUserID: currentUserID) else { continue }
             // A create *this build* could not read the response of. Retrying it POSTs a
             // duplicate and abandons whatever the server already built — see
@@ -2070,7 +2101,19 @@ final class DocumentSaveCoordinator {
         // and — since a 404 is not retryable — land on `.failed`, which `runSyncPass`
         // skips. The document would be wedged out of the very replay meant to create it.
         // Write-ahead and latest-wins still apply; only `start` is withheld.
-        if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil || inFlight[documentID] != nil {
+        //
+        // And a fourth: a **queued deletion**. The screen that deleted the document pops and
+        // every fresh editor for it is gated at `load()`, but neither closes this off — a
+        // *second, already-loaded* editor never goes through `load()` again. Push a document
+        // from Home and again from Search (each tab owns its `NavigationStack`), delete it in
+        // one, switch to the other: that view model still has `hasLoadedContent`, has never
+        // seen `isDocumentDiscarded`, and its next keystroke would PATCH a document the user
+        // deleted. Holding here is what makes `handleDidQueueDelete`'s "nothing can enqueue
+        // for a tombstoned id" true rather than merely usually-true. The draft is still
+        // written, so the work is on disk either way, and the undo releases the hold.
+        if isPendingCreate(documentID: documentID) || isPendingDelete(documentID: documentID)
+            || conflicts[documentID] != nil || inFlight[documentID] != nil
+        {
             queued[documentID] = save
             // **A held save is not a saved save.** Nothing else moves the state on this
             // path (`start` is never called), so it kept whatever it was — usually `.idle`
@@ -2092,7 +2135,9 @@ final class DocumentSaveCoordinator {
             // set it here too rather than relying on that — `finish` can reset a state to
             // `.idle`, and this must not be the one path that leaves a held save reading
             // as saved.
-            if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil {
+            if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil
+                || isPendingDelete(documentID: documentID)
+            {
                 states[documentID] = .pendingSync
             }
             return
@@ -2234,12 +2279,37 @@ final class DocumentSaveCoordinator {
             }
             // The DELETE landed (or the document was already gone) — but an undo may have
             // arrived while it was in flight. That race is one request wide and cannot be
-            // closed from here; what it *must not* do is take the user's work with it. So the
-            // local side is left exactly as it was, and the document simply reads as deleted
-            // by someone else at the next fetch. For a checkpointed record it does better than
-            // that: the resume is un-suppressed again, takes the 404, and re-creates the
-            // document from its draft — the undo winning by re-POST.
-            guard pendingDeletes[tombstone.documentID] != nil else { continue }
+            // closed from here: the send is the only suspension point, and both the undo and
+            // this re-read are synchronous on the main actor.
+            //
+            // **Leaving the local side untouched is not enough.** With the tombstone gone,
+            // every one of its suppressions is off — and `runSyncPass`, later in this very
+            // pass, then finds a draft whose document now 404s (because we just deleted it),
+            // passes all four of its guards, and reaps it. The user pressed "keep this
+            // document" and lost both the document and the only copy of their unsaved text.
+            //
+            // So the undo is *honoured* instead: the server copy is gone, and the way to keep
+            // the content is to create it again. `reviveAsLocalDocument` re-mints it as a
+            // document this device owns, carrying the body over, and the create replay POSTs
+            // it. That is exactly what the checkpointed path already did for free through its
+            // `.notFound` start-over — this gives the plain server document the same recovery.
+            guard pendingDeletes[tombstone.documentID] != nil else {
+                reviveAsLocalDocument(documentID: tombstone.documentID, ownerUserID: currentUserID)
+                continue
+            }
+            // Re-check the editor holds too, for the same reason the tombstone is re-read: the
+            // send is a suspension point, and a screen acquired during it would otherwise send
+            // `completePendingDelete` into `discardPendingWork`'s restart-as-fresh-create arm,
+            // which keeps the record and clears the checkpoint — and the next create pass then
+            // re-POSTs the document the user just deleted. The pre-send guard argues this is
+            // unreachable (a checkpointed record is withheld from every listing, so nothing can
+            // open its local id); this makes it structural instead of argued, for free.
+            guard !hasOpenEditor(documentID: tombstone.documentID) else { continue }
+            if let localAlias = checkpointedRecord(forServerID: tombstone.documentID)?.localID,
+                hasOpenEditor(documentID: localAlias)
+            {
+                continue
+            }
             completePendingDelete(documentID: tombstone.documentID)
         }
     }
@@ -2255,18 +2325,64 @@ final class DocumentSaveCoordinator {
     /// resume re-POSTs the document the user deleted. Same argument, and the same direction,
     /// as `migrateCreatedDocument`'s "the record is removed last".
     private func completePendingDelete(documentID: UUID) {
-        // First, because it is the one that reasons about the record: it nils `queued` before
-        // clearing the conflict (so no parked save is released against a document that is
-        // now gone), drops the draft, and — for a checkpointed record met under its server id
-        // — cascades the local subtree that went with it.
+        // `discardPendingWork` first, because it is the one that reasons about the record: it
+        // nils `queued` before clearing the conflict (so no parked save is released against a
+        // document that is now gone), drops the draft, and — for a checkpointed record met
+        // under its server id — cascades the local subtree that went with it. Then the caches,
+        // including the document's ghost in every other parent's cached level, or the row
+        // survives in the list that was showing it until a revalidation that offline never
+        // brings.
+        purgeLocalTraces(documentID: documentID)
+        dropPendingDelete(documentID: documentID)
+        // Last, so a subscriber sees a fully settled state — same rule as `onDocumentMigrated`.
+        onDocumentDeleted?(documentID)
+    }
+
+    /// Re-mint a document whose deletion the user undid **after** the DELETE had already
+    /// landed, so their content survives an outcome nothing on the device could prevent.
+    ///
+    /// The server copy is gone and its id is dead: no draft under it can ever sync, and the
+    /// 404 reap in `runSyncPass` would take that draft on this very pass now that the
+    /// tombstone no longer suppresses it. Creating the document again is the only reading of
+    /// "keep this document" that keeps anything, and the machinery already exists — the
+    /// checkpointed path reaches the same place through its `.notFound` start-over.
+    ///
+    /// Ordering matters for the same reason it does in `migrateCreatedDocument`: the new
+    /// draft is written **before** the old one is removed, so the body is never nowhere.
+    ///
+    /// Two accepted losses, both unavoidable from here: the document comes back as a **root**
+    /// (a draft records no parent), and it comes back under a new id, so links to the old one
+    /// still point at a document that no longer exists.
+    private func reviveAsLocalDocument(documentID: UUID, ownerUserID: UUID) {
+        // Prefer the draft — it is the user's newest text. The cached body is the fallback for
+        // a document deleted without unsaved edits, which still deserves to come back.
+        let draft = draftStore.draft(for: documentID)
+        let cached = contentCache.content(for: documentID)
+        let markdown = draft?.markdown ?? cached?.markdown
+        guard let markdown else {
+            // Nothing to keep — no draft, no cached body. The document is gone and there is
+            // no content to carry, so clean up rather than minting an empty document the user
+            // never wrote.
+            purgeLocalTraces(documentID: documentID)
+            return
+        }
+        let title = draft?.title ?? cached?.title ?? knownServerTitles[documentID] ?? ""
+        // Mints the record and a seed draft; the body goes in immediately below, and the old
+        // draft is only removed after that, so it is briefly on disk twice — which is the point.
+        let revived = createLocalDocument(title: title, parentID: nil, ownerUserID: ownerUserID)
+        draftStore.save(
+            PendingDraft(documentID: revived.id, title: title, markdown: markdown, updatedAt: Date()))
+        purgeLocalTraces(documentID: documentID)
+    }
+
+    /// Everything keyed by a server id that no longer names a document. Shared by the
+    /// completion and the revive, which differ only in whether the content is carried over.
+    private func purgeLocalTraces(documentID: UUID) {
         discardPendingWork(documentID: documentID)
         contentCache.remove(documentID: documentID)
         childrenCache.remove(parentID: documentID)
-        // And its ghost in every other parent's cached level, or the row survives in the list
-        // that was showing it until a revalidation that offline never comes.
         childrenCache.removeDocument(documentID)
         listCache.removeDocument(documentID)
-        dropPendingDelete(documentID: documentID)
     }
 
     /// Drop a tombstone without touching anything else — the shared tail of a completed

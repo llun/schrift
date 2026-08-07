@@ -65,9 +65,9 @@ enum Strings_th {
 
         .docrow_pending_delete: "รอการลบ",
 
-        .pending_delete_alert_message: "เอกสารนี้จะถูกลบเมื่อคุณกลับมาออนไลน์",
+        .pending_delete_alert_message: "เอกสารนี้จะถูกลบเมื่อเชื่อมต่อเซิร์ฟเวอร์ได้อีกครั้ง",
 
-        .pending_delete_undo: "เลิกทำการลบ",
+        .pending_delete_undo: "เก็บเอกสารนี้ไว้",
 
         .docrow_on_this_device: "บนอุปกรณ์นี้ รอการซิงค์",
         // LinkReachPill hints (design-system component; labels reuse reach.*)
@@ -184,7 +184,7 @@ enum Strings_th {
         .editor_conflict_restore_hint: "เวอร์ชันที่ถูกเขียนทับสามารถกู้คืนได้จากประวัติเวอร์ชันบนเว็บ",
 
         // Editor - errors
-        .editor_pending_delete: "เอกสารนี้จะถูกลบเมื่อคุณกลับมาออนไลน์",
+        .editor_pending_delete: "เอกสารนี้กำลังรอการลบ",
         .editor_error_load: "โหลดเอกสารนี้ไม่ได้ ดึงลงเพื่อรีเฟรชแล้วลองอีกครั้ง",
         .editor_error_refresh: "รีเฟรชไม่ได้ โปรดลองอีกครั้ง",
         .editor_error_add_subpage: "เพิ่มหน้าย่อยไม่ได้ โปรดลองอีกครั้ง",
