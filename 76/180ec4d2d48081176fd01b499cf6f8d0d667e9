@@ -1,0 +1,72 @@
+Schrift/Features/Editor/EditorScreen.swift
+  s_810ae103ae38c6::t_a4fd6b188752db 46
+SchriftTests/Core/Yjs/BlockNoteWriteTests.swift
+  s_810ae103ae38c6::t_3d08951d4f7dd0 197
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_810ae103ae38c6::t_2b320abf3357cf 49-56
+Schrift/Core/Yjs/MarkdownYjs.swift
+  s_810ae103ae38c6::t_b971a25884b941 18-26,30-33,36-37
+  s_810ae103ae38c6::t_50e1150548086e 126-148
+Schrift/Core/Yjs/BlockNoteDocument.swift
+  s_810ae103ae38c6::t_58d99d335a6782 36
+Schrift/Core/Networking/DocumentSave.swift
+  s_810ae103ae38c6::t_a6ffff31048b20 76-79
+Schrift/Features/Editor/EditorViewModel.swift
+  s_810ae103ae38c6::t_dcbed89a3ce08f 89-97
+  s_810ae103ae38c6::t_49392e2f45ace2 1509-1510,1512,1546
+  s_810ae103ae38c6::t_5d4289a1b0536b 194,207,1136,1373,1475-1478,1874
+SchriftTests/Core/Yjs/YBlockProjectionRenderTests.swift
+  s_810ae103ae38c6::t_885c41217bc2ce 30-34
+SchriftTests/Core/Yjs/YBlockProjectionTests.swift
+  s_810ae103ae38c6::t_885c41217bc2ce 22-26
+Schrift/Features/Editor/BlockTextView.swift
+  s_810ae103ae38c6::t_4a0243f30f4120 75-78
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_810ae103ae38c6::t_99b6036ccba028 417
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerTests.swift
+  s_810ae103ae38c6::t_5b2aa7d7cc66aa 281,314,386,431,486,534,582,598
+SchriftTests/Core/Yjs/MarkdownYjsTests.swift
+  s_810ae103ae38c6::t_4bdaf3814c6be2 164-223
+  s_810ae103ae38c6::t_37ee416e23b3a4 10-13,15,18,25,99,158
+  s_810ae103ae38c6::t_1755f419b4e796 224
+SchriftTests/Core/Yjs/YjsEncoderTests.swift
+  s_810ae103ae38c6::t_beab9c94499b4b 197-231
+SchriftTests/Features/Editor/AttachmentBlockParsingTests.swift
+  s_810ae103ae38c6::t_954325c6f18cd1 1-163
+Schrift/Features/Editor/MarkdownSerializer.swift
+  s_810ae103ae38c6::t_ee6064591b1cee 93-97
+  s_810ae103ae38c6::t_b2763d45a9791e 58-62
+Schrift/Features/Editor/MarkdownParser.swift
+  s_810ae103ae38c6::t_1180a3a8413ddc 15-31,41-46
+  s_810ae103ae38c6::t_5c2ae37ec71a50 103-105
+Schrift/Features/Editor/BlockEditorView.swift
+  s_810ae103ae38c6::t_61bbbc2b5704c9 197
+  s_810ae103ae38c6::t_eb244478988699 182-196
+  s_810ae103ae38c6::t_1d6cf11133b7c1 92-97
+SchriftTests/Features/Editor/MarkdownBlockAttachmentTests.swift
+  s_810ae103ae38c6::t_8ea1c4ed0d610f 7,9-15,17-20,52-55,58,65-77,80,82,85-87,89-90,94-103,111,115-117,120,123-125
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_810ae103ae38c6::t_49392e2f45ace2 85-87,156-168
+  s_810ae103ae38c6::t_0d54920503d687 169-171
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_810ae103ae38c6::t_99b6036ccba028 107
+Schrift/Features/Editor/EditorBlock.swift
+  s_810ae103ae38c6::t_88e7d909eecd58 56-57,60
+  s_810ae103ae38c6::t_a3dad4615df895 20-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "76180ec4d2d48081176fd01b499cf6f8d0d667e9",
+  "prompts": {},
+  "sessions": {
+    "s_810ae103ae38c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6236ca4-0d88-477c-a92c-8da77f1291e9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
