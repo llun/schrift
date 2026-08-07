@@ -171,7 +171,46 @@ final class AttachmentCacheStoreTests: XCTestCase {
         let display = try makeDisplay(label: "../../etc/passwd")
         _ = store.store(Data([1]), for: display)
 
-        XCTAssertEqual(try contents(), ["22222222-2222-4222-8222-222222222222.pdf"])
+        XCTAssertEqual(try contents(), ["\(documentUUID)_22222222-2222-4222-8222-222222222222.pdf"])
+    }
+
+    /// The store's own separator/`..` guard, reached the only way it can be: a
+    /// hand-built value. Every other test goes through `parseAttachmentLink`,
+    /// which can only produce validated UUIDs — so without this the guard is
+    /// unreachable and deleting it would break nothing.
+    func testAHandBuiltDisplayCannotEscapeTheCacheDirectory() throws {
+        let store = makeStore()
+        let hostile = AttachmentDisplay(
+            name: "x",
+            urlString: "https://docs.example.org/x",
+            url: URL(string: "https://docs.example.org/x")!,
+            documentUUID: "../../..",
+            fileUUID: "../../../../tmp/pwned",
+            isUnsafeKey: false,
+            fileExtension: "pdf")
+
+        XCTAssertNil(store.store(Data([1]), for: hostile))
+        XCTAssertNil(store.cachedFileURL(for: hostile))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "/tmp/pwned.pdf"))
+    }
+
+    /// Same guard, and also the reason the cache name carries the document id:
+    /// two documents naming one file id must not share an entry.
+    func testTwoDocumentsNamingTheSameFileIDGetSeparateFiles() throws {
+        let store = makeStore()
+        let first = try makeDisplay()
+        let second = try XCTUnwrap(
+            parseAttachmentLink(
+                "[f](\(serverOrigin)/media/99999999-9999-4999-8999-999999999999/attachments/"
+                    + "22222222-2222-4222-8222-222222222222.pdf)",
+                serverOrigin: serverOrigin))
+
+        _ = store.store(Data([1]), for: first)
+        _ = store.store(Data([2]), for: second)
+
+        XCTAssertEqual(try contents().count, 2)
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(store.cachedFileURL(for: first))), Data([1]))
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(store.cachedFileURL(for: second))), Data([2]))
     }
 
     func testUnsafeKeysGetTheirOwnFile() throws {
@@ -182,8 +221,8 @@ final class AttachmentCacheStoreTests: XCTestCase {
         XCTAssertEqual(
             try contents(),
             [
-                "22222222-2222-4222-8222-222222222222-unsafe.docx",
-                "22222222-2222-4222-8222-222222222222.docx",
+                "\(documentUUID)_22222222-2222-4222-8222-222222222222-unsafe.docx",
+                "\(documentUUID)_22222222-2222-4222-8222-222222222222.docx",
             ])
     }
 
@@ -263,7 +302,7 @@ final class AttachmentCacheStoreTests: XCTestCase {
     /// Backdates a cached file so recency ordering is deterministic instead of
     /// depending on how fast the test ran.
     private func touch(_ display: AttachmentDisplay, secondsAgo: TimeInterval) throws {
-        let url = directory.appendingPathComponent(attachmentFileName(for: display), isDirectory: false)
+        let url = directory.appendingPathComponent(attachmentCacheFileName(for: display), isDirectory: false)
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-secondsAgo)], ofItemAtPath: url.path)
     }

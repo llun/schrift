@@ -1395,12 +1395,31 @@ markdown write endpoint**. Understand this before touching the save path:
   media fetch path** (after `MarkdownImageView`'s `AsyncImage`) and must stay
   origin-pinned: `DocsAPIClient.mediaData(path:)` re-checks `isSameOriginPath`
   before issuing, exactly as `checkMedia` does. `AttachmentCacheStore` names each
-  file `{file-uuid}[-unsafe].{ext}` from the classifier's validated parts — the
-  display label is the one author-controlled string here and must never reach the
-  filesystem — and evicts by **last use** with a count *and* byte cap, never
-  evicting the just-written entry. `isOffline` is chrome only: it changes what an
-  *uncached* card says, never whether a cached one opens. Clear the store in
-  `RootView`'s `onSignOut` closure alongside `DocumentContentCacheStore`.
+  file `{document-uuid}_{file-uuid}[-unsafe].{ext}` from the classifier's
+  validated parts — the display label is the one author-controlled string here and
+  must never reach the filesystem, and the **document** id is in the name because
+  the server's access check is per document: keying on the file id alone let a
+  co-author of document B name a file id cached from document C and be served C's
+  bytes with *no request at all*. It evicts by **last use** with a count *and*
+  byte cap, never evicting the just-written entry. Clear the store in `RootView`'s
+  `onSignOut` closure alongside `DocumentContentCacheStore`.
+- **Four loader rules that each closed a real defect, none of them obvious.**
+  (1) **Offline withholds the network, not the disk** — `loadIfNeeded(_:
+  allowsNetwork:)`. Skipping the call while offline also skips the disk read, and
+  since the loader is session-scoped a cold launch in airplane mode then showed
+  "Available when online" over cached bytes, defeating the feature. `isOffline`
+  is chrome only *because* of this parameter, not by default. (2) **A cancelled
+  download is not a failure** — tapping a block swaps the reading surface for the
+  editing one and tears the card's `.task` down mid-flight; recording `.failed`
+  stranded the card, since `loadIfNeeded` deliberately never auto-retries one.
+  (3) **A `.cached` state is re-validated against the disk** on both appear and
+  tap — eviction can delete the file under a live card (the reading surface is not
+  lazy, so an off-screen card never re-runs its `.task`), and the same call is what
+  makes recency last-*use*. (4) **Markup types are cached but never previewed**
+  (`attachmentIsPreviewable`): QuickLook renders HTML through WebKit, which fetches
+  remote subresources, reopening the very IP/User-Agent/timing disclosure the origin
+  gate closes. Key that on the **extension**, never the `-unsafe` flag, which is
+  routine for `.docx`.
 - **A web `pdf` block with `showPreview: true` (the web default) exports as
   nothing** — BlockNote 0.51.4's markdown serializer has no `<iframe>` handler —
   so the app never receives it and a full-overwrite save has always silently

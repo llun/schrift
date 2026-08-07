@@ -1053,16 +1053,31 @@ deliberate differences:
   would make the loader re-download it forever), and the walk is **greedy** — an
   oversized entry is skipped without taking older, smaller ones with it, trading
   strict LRU order for cache utility.
-- **File names are the server's storage key** (`{file-uuid}[-unsafe].{ext}`),
+- **File names carry both server ids** (`{document-uuid}_{file-uuid}[-unsafe].{ext}`),
   built from the classifier's validated parts. The author-controlled display
   label never reaches the filesystem, and the store re-checks for a separator or
   `..` anyway, because `AttachmentDisplay` is a freely constructible value type.
+  The **document** id is in the name because the server's identity for an
+  attachment includes it and its access check is per document: keying on the file
+  id alone let a co-author of document B name a file id the reader had cached
+  from document C and be served C's bytes with no request at all, so the server
+  never got to say whether B has that attachment.
 
 What this buys offline: an attachment downloaded while online previews in
 airplane mode, and one that was never downloaded says so ("Available when
-online") without issuing a doomed request. `isOffline` here is chrome only — it
-never decides whether a *cached* attachment opens. Nothing about attachments
-touches drafts, saves or the replay: this is read-side caching only.
+online") without issuing a doomed request. `isOffline` is chrome only — it never
+decides whether a *cached* attachment opens — but that is a property of one
+specific choice, not something that falls out for free. The card passes
+`allowsNetwork: !isOffline` into `AttachmentLoader.loadIfNeeded`, so **offline
+withholds the network and not the disk**. Skipping the call outright while
+offline, which is the obvious reading, also skips the disk read; since the
+session-scoped loader starts empty, a cold launch in airplane mode then rendered
+"Available when online" over bytes that were sitting in the cache — the exact
+scenario the cache exists for. A disk read costs no request, which is the only
+thing offline is meant to suppress.
+
+Nothing about attachments touches drafts, saves or the replay: this is read-side
+caching only.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 

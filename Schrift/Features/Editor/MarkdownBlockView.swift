@@ -351,17 +351,28 @@ private struct MarkdownBlockCatalog: View {
 /// can render one must inject it — transitively, for any parent that embeds this
 /// view (see the environment-store rule in CLAUDE.md).
 ///
-/// Seeded rather than live so the canvas shows the state worth reviewing (a
-/// ready attachment) and issues no request. The download/failure/offline states
-/// are pinned by `attachmentCardState`'s tests.
+/// The **cache** is pre-seeded rather than the loader's state table, because
+/// `loadIfNeeded` re-checks the disk even for an already-`.cached` entry (it has
+/// to: eviction can delete a file out from under a live card). Seeding a state
+/// alone would fall straight through to a real network request from the canvas.
+/// A seeded file shows the state worth reviewing — a ready attachment — and asks
+/// for nothing. The downloading/failed/offline states are pinned by
+/// `attachmentCardState`'s tests.
 @MainActor private func previewAttachmentLoader() -> AttachmentLoader {
+    let origin = "https://docs.llun.dev"
     let ready =
-        "https://docs.llun.dev/media/11111111-1111-4111-8111-111111111111/attachments/"
+        "\(origin)/media/11111111-1111-4111-8111-111111111111/attachments/"
         + "22222222-2222-4222-8222-222222222222.pdf"
+    let cache = AttachmentCacheStore(
+        directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("SchriftPreviewAttachments", isDirectory: true))
+    if let display = parseAttachmentLink("[preview](\(ready))", serverOrigin: origin) {
+        _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: display)
+    }
     return AttachmentLoader(
-        client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!),
-        serverOrigin: "https://docs.llun.dev",
-        states: [ready: .cached(URL(fileURLWithPath: "/dev/null"))])
+        client: DocsAPIClient(baseURL: URL(string: "\(origin)/api/v1.0/")!),
+        serverOrigin: origin,
+        cache: cache)
 }
 
 #Preview("Light") {

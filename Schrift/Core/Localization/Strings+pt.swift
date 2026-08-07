@@ -246,6 +246,7 @@ enum Strings_pt {
         .editor_attachment_failed_retry: "Falha na transferência · Toque para tentar de novo",
         .editor_attachment_offline: "Disponível quando estiver online",
         .editor_attachment_a11y: "Anexo: %@. %@",
+        .editor_attachment_not_previewable: "Não pode ser pré-visualizado aqui",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Adicionar parágrafo no final",

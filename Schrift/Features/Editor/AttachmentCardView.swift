@@ -70,9 +70,19 @@ struct AttachmentCardView: View {
             // Keyed on the offline flag as well as the url: coming back online
             // must re-fire the load for a card that never got to ask.
             .task(id: "\(display.urlString)|\(isOffline)") {
-                guard !isOffline else { return }
-                await loader.loadIfNeeded(display)
+                // Note this runs offline too — it is the disk read that makes a
+                // previously downloaded attachment openable in airplane mode.
+                // Only the *network* is withheld (`allowsNetwork`).
+                await loader.loadIfNeeded(display, allowsNetwork: !isOffline)
                 await refreshThumbnail()
+            }
+            // The task's id doesn't change when the loader resolves, so a card
+            // that arrived at `.cached` some other way — a second card for the
+            // same attachment whose download was de-duplicated, or a successful
+            // retry — would otherwise keep the placeholder glyph forever.
+            .onChange(of: state) { _, newState in
+                guard case .cached = newState else { return }
+                Task { await refreshThumbnail() }
             }
             .onChange(of: display.urlString) {
                 thumbnail = nil
@@ -84,18 +94,40 @@ struct AttachmentCardView: View {
     @ViewBuilder private var content: some View {
         switch state {
         case .cached(let fileURL):
-            Button {
-                previewURL = fileURL
-            } label: {
-                card(subtitle: display.fileExtension.uppercased(), accessory: .chevron)
+            if attachmentIsPreviewable(display) {
+                Button {
+                    // Revalidated through the loader rather than opening
+                    // `fileURL` directly: eviction can delete the file while
+                    // this card sits on screen (the reading surface is not
+                    // lazy, so an off-screen card never re-runs its `.task`),
+                    // and QuickLook on a deleted path is a blank sheet with no
+                    // way back. This re-downloads if needed and bumps recency.
+                    Task {
+                        await loader.loadIfNeeded(display, allowsNetwork: !isOffline)
+                        if case .cached(let current) = loader.state(for: display) { previewURL = current }
+                    }
+                } label: {
+                    card(subtitle: display.fileExtension.uppercased(), accessory: .chevron)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(loc.format(.editor_attachment_a11y, title, display.fileExtension.uppercased()))
+            } else {
+                // Downloaded and cached, but never handed to QuickLook — see
+                // `attachmentIsPreviewable`. Rendered inert rather than hidden:
+                // the document does link this file, and saying so is honest.
+                card(subtitle: loc[.editor_attachment_not_previewable], accessory: .none)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        loc.format(.editor_attachment_a11y, title, loc[.editor_attachment_not_previewable]))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(loc.format(.editor_attachment_a11y, title, display.fileExtension.uppercased()))
         case .failed:
             Button {
-                Task { await loader.retry(display) }
+                Task {
+                    await loader.retry(display)
+                    await refreshThumbnail()
+                }
             } label: {
-                card(subtitle: loc[.editor_attachment_failed_retry], accessory: .none, isWarning: true)
+                card(subtitle: loc[.editor_attachment_failed_retry], accessory: .none, isFailure: true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(loc.format(.editor_attachment_a11y, title, loc[.editor_attachment_failed_retry]))
@@ -112,7 +144,7 @@ struct AttachmentCardView: View {
 
     private enum Accessory { case chevron, progress, none }
 
-    private func card(subtitle: String, accessory: Accessory, isWarning: Bool = false) -> some View {
+    private func card(subtitle: String, accessory: Accessory, isFailure: Bool = false) -> some View {
         HStack(spacing: DocsSpacing.spaceSM) {
             leading
             VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
@@ -126,7 +158,10 @@ struct AttachmentCardView: View {
                     .truncationMode(.middle)
                 Text(subtitle)
                     .font(DocsFont.footnote)
-                    .foregroundStyle(isWarning ? DocsColor.textBrand : DocsColor.textTertiary)
+                    // `danger`, matching SaveStatusIndicator's `.retry` — the
+                    // app's established register for "this didn't work, tap to
+                    // try again". The brand colour reads as an ordinary link.
+                    .foregroundStyle(isFailure ? DocsColor.danger : DocsColor.textTertiary)
             }
             Spacer(minLength: 0)
             switch accessory {
@@ -186,8 +221,9 @@ struct AttachmentCardView: View {
         // at the default text size would be resampled soft at an accessibility
         // one, and the two must not share a cache entry.
         let side = scaledThumbnailSide
-        let fileName = fileURL.lastPathComponent
-        let key = "\(fileName)@\(Int(side.rounded()))"
+        // The cache file name carries both server ids, so this key cannot
+        // conflate two documents' attachments the way the bare file id would.
+        let key = "\(fileURL.lastPathComponent)@\(Int(side.rounded()))"
         if let cached = AttachmentThumbnailCache.image(for: key) {
             thumbnail = cached
             return
@@ -200,9 +236,16 @@ struct AttachmentCardView: View {
         guard let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
         else { return }
         AttachmentThumbnailCache.store(representation.uiImage, for: key)
-        // The url can have changed while the generator worked — compare the file
-        // name, not the cache key, which carries a size suffix as well.
-        guard case .cached(let current) = state, current.lastPathComponent == fileName else { return }
+        // The url can have changed while the generator worked. Checking
+        // cancellation is the only test that actually holds: `state` reads
+        // through `display`, which is the view value *this task captured*, so a
+        // stale task compares the old attachment against itself and always
+        // agrees with itself. `.task(id:)` cancels the superseded task, and
+        // QuickLook's completion-handler bridge resumes it regardless — so
+        // without this it would write the previous file's image into a `@State`
+        // box that survives the swap, and the card would show B's title beside
+        // A's thumbnail.
+        guard !Task.isCancelled else { return }
         thumbnail = representation.uiImage
     }
 }

@@ -243,6 +243,7 @@ enum Strings_th {
         .editor_attachment_failed_retry: "ดาวน์โหลดไม่สำเร็จ · แตะเพื่อลองใหม่",
         .editor_attachment_offline: "ใช้ได้เมื่อออนไลน์",
         .editor_attachment_a11y: "ไฟล์แนบ: %@ %@",
+        .editor_attachment_not_previewable: "ไม่สามารถแสดงตัวอย่างที่นี่ได้",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "เพิ่มย่อหน้าที่ท้ายสุด",

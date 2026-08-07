@@ -45,19 +45,10 @@ enum AttachmentLoadState: Equatable, Sendable {
     private let cache: AttachmentCacheStore
     private var inFlight: Set<String> = []
 
-    /// `states` seeds the table without touching the network or the disk, so a
-    /// `#Preview` (or a view test) can show a particular card. Production
-    /// callers leave it empty.
-    init(
-        client: DocsAPIClient,
-        serverOrigin: String,
-        cache: AttachmentCacheStore = AttachmentCacheStore(),
-        states: [String: AttachmentLoadState] = [:]
-    ) {
+    init(client: DocsAPIClient, serverOrigin: String, cache: AttachmentCacheStore = AttachmentCacheStore()) {
         self.client = client
         self.serverOrigin = serverOrigin
         self.cache = cache
-        self.states = states
     }
 
     func state(for display: AttachmentDisplay) -> AttachmentLoadState? {
@@ -79,7 +70,17 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// Concurrent callers do not join the download; they simply return. The
     /// state is observable, so every card watching this url re-renders when it
     /// resolves.
-    func loadIfNeeded(_ display: AttachmentDisplay) async {
+    /// `allowsNetwork` false means "answer from disk or not at all" — what the
+    /// card passes while the app believes it is offline.
+    ///
+    /// The distinction is the whole offline story and it is easy to get wrong:
+    /// skipping this call entirely while offline (the obvious reading of "don't
+    /// ask the network") also skips the **disk** read, and since this table is
+    /// the only source of `.cached`, a cold launch in airplane mode would render
+    /// "Available when online" over an attachment whose bytes are sitting in the
+    /// cache. A disk read costs no request, which is the only thing offline is
+    /// meant to suppress.
+    func loadIfNeeded(_ display: AttachmentDisplay, allowsNetwork: Bool = true) async {
         let key = display.urlString
         if case .failed = states[key] { return }
         guard !inFlight.contains(key) else { return }
@@ -97,6 +98,7 @@ enum AttachmentLoadState: Equatable, Sendable {
             states[key] = .cached(url)
             return
         }
+        guard allowsNetwork else { return }
         await download(display)
     }
 
@@ -129,8 +131,18 @@ enum AttachmentLoadState: Equatable, Sendable {
         inFlight.insert(key)
         defer { inFlight.remove(key) }
 
-        guard let data = try? await client.mediaData(path: path) else {
-            states[key] = .failed
+        let data: Data
+        do {
+            data = try await client.mediaData(path: path)
+        } catch {
+            // A cancelled download is not a failure, and recording one would
+            // strand the card: `loadIfNeeded` never retries `.failed`, so the
+            // "Couldn't download · Tap to retry" would sit there for the rest of
+            // the session. Cancellation is routine here — tapping a block swaps
+            // the reading surface for the editing one, which tears the card's
+            // `.task` down mid-flight. Clearing the entry lets the next appear
+            // start over.
+            states[key] = Task.isCancelled ? nil : .failed
             return
         }
         // A cache write that fails (a full disk) costs the offline copy, not the

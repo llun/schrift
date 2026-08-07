@@ -1020,6 +1020,33 @@ its state is keyed by **url string** — `applyLiveRemoteChange` reuses a
 surviving `EditorBlock.id`, so a live edit can swap the url under a card that
 never re-rendered from scratch.
 
+Four rules in that loader are less obvious than they look, and each was a real
+defect first:
+
+- **Offline withholds the network, never the disk** (`loadIfNeeded(_:
+  allowsNetwork:)`). The loader is session-scoped, so on a cold launch in
+  airplane mode its table is empty and the disk is the only thing that can
+  answer. Skipping the whole call while offline — the obvious reading of "don't
+  ask the network" — rendered "Available when online" over bytes sitting in the
+  cache, defeating the entire feature. A disk read costs no request, which is the
+  only thing offline is meant to suppress.
+- **A cancelled download is not a failure.** Tapping a block swaps the reading
+  surface for the editing one, which tears the card's `.task` down mid-flight.
+  Recording `.failed` there stranded the card behind a retry nothing had asked
+  for, because `loadIfNeeded` deliberately never auto-retries a failure.
+- **A `.cached` state is re-validated against the disk, not trusted.** Eviction
+  can delete the file while its card is still on screen (the reading surface is
+  not lazy, so an off-screen card never re-runs its `.task`), and the tap path
+  re-validates too — QuickLook on a deleted path is a blank sheet with no way
+  back. The same call bumps the file's mtime, which is what makes eviction
+  least-recently-*used* rather than least-recently-first-loaded.
+- **The cache is keyed by document *and* file id.** The server's identity for an
+  attachment is `{document}/attachments/{file}` and its access check is per
+  document. Keying on the file id alone let a co-author of document B name a file
+  id the reader had cached from document C and be served C's bytes with **no
+  request at all** — so the server never got to say whether B has that
+  attachment.
+
 Views do no networking of their own; this is the object they ask. Bytes land in
 `AttachmentCacheStore` (see [`offline-and-sync.md`](offline-and-sync.md)), and
 `AttachmentCardView` renders one of four states from the pure resolver
@@ -1028,15 +1055,35 @@ plus a full-screen `.quickLookPreview` on tap), failed (tap to retry), or
 offline-and-uncached (an inert note that issues no request). Cached bytes outrank
 offline, which is the entire point of caching them.
 
+**Markup types are downloaded but never previewed** (`attachmentIsPreviewable`).
+QuickLook renders HTML through WebKit, which fetches remote subresources — so
+previewing a co-author's `.html` would disclose the reader's IP, User-Agent and
+reading time to a host the *author* chose, which is exactly the leak the origin
+gate and `imageLoadPolicy` close, reached by another route. The server agrees: it
+serves these with `Content-Disposition: attachment` precisely so they are never
+rendered in its own origin. The rule keys on the **extension**, not the
+`-unsafe` flag, which is far too broad — a `.docx` sniffs as `zip` and is flagged
+routinely. Such a card renders inert with "Can't be previewed here" rather than
+disappearing: the document does link that file, and saying so is honest.
+
 **Accepted residuals.** (1) `URLSession` follows redirects, so a same-origin path
 the trusted server 302s off-origin still leaks — shared with `MarkdownImageView`,
 and the fix is one redirect-blocking session for both. (2) QuickLook previews
-co-author-controlled bytes; that is the same exposure Mail and Files accept
-(QuickLook renders out-of-process), and an `-unsafe`-keyed file previews like any
-other since the server's `Content-Disposition` protection does not apply to bytes
-already on the device. (3) There is no per-file read-side size cap; the server's
-own upload cap (10 MB by default) bounds it in practice, and the cache's byte cap
-bounds the disk.
+co-author-controlled bytes for the types it *does* handle; that is the same
+exposure Mail and Files accept (QuickLook renders out-of-process). (3) There is
+no per-file read-side size cap and the whole file is buffered in memory
+(`getRawData`), so a deployment configured well above the 10 MB default upload
+cap could make merely opening a document expensive — streaming to disk with a
+ceiling (`URLSession.download`) is the fix and is a named follow-up. The cache's
+byte cap bounds the disk *except* for one most-recently-used entry, which is
+never evicted by design (evicting the file just written would make the loader
+re-download it forever).
+
+**A tapped attachment card previews rather than entering edit mode.** The reading
+surface's tap-to-edit gesture loses to the card's own `Button`, exactly as it
+does for an off-origin image's tap-to-load. The states that draw no button
+(downloading, offline-and-uncached, and a markup type) still enter editing, and
+the toolbar's Edit action always does.
 
 **Not yet.** Inserting an attachment from the app, and modelling `file`/`pdf`
 nodes in `YBlockProjection` (they project `.opaque` today, which correctly keeps

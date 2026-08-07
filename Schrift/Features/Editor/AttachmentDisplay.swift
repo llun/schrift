@@ -121,15 +121,36 @@ func attachmentDisplay(for block: EditorBlock, serverOrigin: String) -> Attachme
 /// built by hand or carried across a session change.
 func attachmentMediaPath(for display: AttachmentDisplay, serverOrigin: String) -> String? {
     guard !serverOrigin.isEmpty, siteOrigin(for: display.url) == serverOrigin else { return nil }
+    // The parts are re-validated, not trusted. This function's contract is that
+    // it holds for a *freely constructed* value, and origin alone does not give
+    // that: a hand-built `documentUUID` of `../../api/v1.0/documents` composes a
+    // path that still satisfies `isSameOriginPath` (leading `/`, no `//`, no
+    // scheme) yet resolves outside `/media/` once dot segments are removed.
+    guard isAttachmentUUID(display.documentUUID), isAttachmentUUID(display.fileUUID),
+        isAttachmentExtension(display.fileExtension)
+    else { return nil }
     return canonicalAttachmentPath(
         documentUUID: display.documentUUID, fileName: attachmentFileName(for: display))
 }
 
-/// The attachment's on-server file name (`{uuid}[-unsafe].{ext}`) — also its
-/// cache file name. Built from validated parts, never from `display.name`, so an
-/// author-chosen label can never influence a path.
+/// The attachment's on-server file name (`{uuid}[-unsafe].{ext}`). Built from
+/// validated parts, never from `display.name`, so an author-chosen label can
+/// never influence a path.
 func attachmentFileName(for display: AttachmentDisplay) -> String {
     "\(display.fileUUID)\(display.isUnsafeKey ? "-unsafe" : "").\(display.fileExtension)"
+}
+
+/// The name this attachment is cached under, which must identify the **server
+/// resource** and not just the file.
+///
+/// The server's identity for an attachment is `{document}/attachments/{file}` —
+/// the document id is part of it, and the access check is per document. Keying
+/// the cache on the file id alone let a co-author of document B write a link
+/// naming a `fileUUID` the reader had already cached from document C: the cache
+/// hit answered with C's bytes and **no request was issued at all**, so the
+/// server never got to say whether B has that attachment. Two ids, one name.
+func attachmentCacheFileName(for display: AttachmentDisplay) -> String {
+    "\(display.documentUUID)_\(attachmentFileName(for: display))"
 }
 
 /// What to show as the attachment's title. An empty label is legitimate (a
@@ -140,10 +161,32 @@ func attachmentDisplayTitle(_ display: AttachmentDisplay) -> String {
     display.name.isEmpty ? attachmentFileName(for: display) : display.name
 }
 
+/// True for a file type this app must not hand to QuickLook.
+///
+/// QuickLook renders HTML through WebKit, which loads remote subresources — so
+/// previewing a co-author's `.html` would disclose the reader's IP, User-Agent
+/// and reading time to a host the *author* chose. That is exactly the leak the
+/// origin gate above and `imageLoadPolicy` exist to prevent, reached by another
+/// route, and the server agrees: it serves these with `Content-Disposition:
+/// attachment` precisely so they are never rendered in its own origin.
+///
+/// Keyed on the extension rather than the `-unsafe` flag, which is far too
+/// broad — a `.docx` sniffs as `zip` and is flagged routinely.
+func attachmentIsPreviewable(_ display: AttachmentDisplay) -> Bool {
+    !["html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "mht", "mhtml", "webarchive"]
+        .contains(display.fileExtension.lowercased())
+}
+
 // MARK: - Private
 
 private func canonicalAttachmentPath(documentUUID: String, fileName: String) -> String {
     "/media/\(documentUUID)/attachments/\(fileName)"
+}
+
+private func isAttachmentUUID(_ value: String) -> Bool { UUID(uuidString: value) != nil }
+
+private func isAttachmentExtension(_ value: String) -> Bool {
+    (1...10).contains(value.count) && value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
 }
 
 private func attachmentPathParts(
@@ -159,18 +202,16 @@ private func attachmentPathParts(
     }
     let documentUUID = components[2]
     let fileName = components[4]
-    guard UUID(uuidString: documentUUID) != nil else { return nil }
+    guard isAttachmentUUID(documentUUID) else { return nil }
 
     guard let dot = fileName.lastIndex(of: ".") else { return nil }
     let fileExtension = String(fileName[fileName.index(after: dot)...])
-    guard (1...10).contains(fileExtension.count),
-        fileExtension.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) })
-    else { return nil }
+    guard isAttachmentExtension(fileExtension) else { return nil }
 
     var base = String(fileName[fileName.startIndex..<dot])
     let isUnsafeKey = base.hasSuffix("-unsafe")
     if isUnsafeKey { base.removeLast("-unsafe".count) }
-    guard UUID(uuidString: base) != nil else { return nil }
+    guard isAttachmentUUID(base) else { return nil }
 
     // `pathComponents` drops a trailing slash and collapses doubled separators,
     // so the component checks alone would accept paths the server's own

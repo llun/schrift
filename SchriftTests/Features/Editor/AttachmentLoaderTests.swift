@@ -37,10 +37,11 @@ final class AttachmentLoaderTests: XCTestCase {
 
     private func makeDisplay(
         fileUUID: String = "22222222-2222-4222-8222-222222222222",
+        document: String? = nil,
         origin: String? = nil
     ) throws -> AttachmentDisplay {
         let base = origin ?? serverOrigin
-        let url = "\(base)/media/\(documentUUID)/attachments/\(fileUUID).pdf"
+        let url = "\(base)/media/\(document ?? documentUUID)/attachments/\(fileUUID).pdf"
         return try XCTUnwrap(parseAttachmentLink("[Report.pdf](\(url))", serverOrigin: base))
     }
 
@@ -66,7 +67,7 @@ final class AttachmentLoaderTests: XCTestCase {
             return XCTFail("Expected .cached, got \(String(describing: loader.state(for: display)))")
         }
         XCTAssertEqual(try Data(contentsOf: url), payload)
-        XCTAssertEqual(url.lastPathComponent, "22222222-2222-4222-8222-222222222222.pdf")
+        XCTAssertEqual(url.lastPathComponent, "\(documentUUID)_22222222-2222-4222-8222-222222222222.pdf")
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 1)
     }
 
@@ -131,7 +132,7 @@ final class AttachmentLoaderTests: XCTestCase {
         let loader = makeLoader(cache: cache)
         stub(Data([1]))
         await loader.loadIfNeeded(display)
-        let file = directory.appendingPathComponent(attachmentFileName(for: display), isDirectory: false)
+        let file = directory.appendingPathComponent(attachmentCacheFileName(for: display), isDirectory: false)
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-600)], ofItemAtPath: file.path)
 
@@ -186,6 +187,45 @@ final class AttachmentLoaderTests: XCTestCase {
             case .cached(let secondURL) = loader.state(for: second)
         else { return XCTFail("Expected both cached") }
         XCTAssertNotEqual(firstURL, secondURL)
+    }
+
+    // MARK: - Offline
+
+    /// The feature's headline promise. The loader is session-scoped, so on a
+    /// cold launch in airplane mode its table is empty and the **disk** is the
+    /// only thing that can answer — withholding the whole call while offline
+    /// (rather than just the network) rendered "Available when online" over
+    /// bytes that were sitting in the cache.
+    func testAnAlreadyCachedAttachmentIsFoundWhileOfflineWithoutARequest() async throws {
+        let cache = makeCache()
+        let display = try makeDisplay()
+        _ = cache.store(Data([1, 2, 3]), for: display)
+        let log = RequestRecorder()
+        stub(Data([9]), log: log)
+
+        // A fresh loader, exactly as a cold launch would build it.
+        let loader = makeLoader(cache: cache)
+        await loader.loadIfNeeded(display, allowsNetwork: false)
+
+        guard case .cached(let url) = loader.state(for: display) else {
+            return XCTFail("Expected .cached offline, got \(String(describing: loader.state(for: display)))")
+        }
+        XCTAssertEqual(try Data(contentsOf: url), Data([1, 2, 3]))
+        XCTAssertTrue(log.methods.isEmpty)
+    }
+
+    func testAnUncachedAttachmentIssuesNoRequestWhileOffline() async throws {
+        let log = RequestRecorder()
+        stub(Data([1]), log: log)
+        let loader = makeLoader()
+        let display = try makeDisplay()
+
+        await loader.loadIfNeeded(display, allowsNetwork: false)
+
+        // No state at all: the card resolves that to `.offlineAndUncached`,
+        // which is honest — nothing was attempted.
+        XCTAssertNil(loader.state(for: display))
+        XCTAssertTrue(log.methods.isEmpty)
     }
 
     // MARK: - Failure and retry
@@ -251,6 +291,33 @@ final class AttachmentLoaderTests: XCTestCase {
             return XCTFail("Expected .cached after retry, got \(String(describing: loader.state(for: display)))")
         }
         XCTAssertEqual(try Data(contentsOf: url), Data([7, 7]))
+    }
+
+    /// The server's identity for an attachment includes the document, and so
+    /// does its access check. Keying the cache on the file id alone let a
+    /// co-author of document B name a file id the reader had cached from
+    /// document C and be served C's bytes with **no request at all** — so the
+    /// server never got to say whether B has that attachment.
+    func testTwoDocumentsNamingTheSameFileIDDoNotShareACacheEntry() async throws {
+        let cache = makeCache()
+        let inDocumentC = try makeDisplay(document: "11111111-1111-4111-8111-111111111111")
+        let inDocumentB = try makeDisplay(document: "99999999-9999-4999-8999-999999999999")
+        let log = RequestRecorder()
+        stub(Data([0xC, 0xC]), log: log)
+        let loader = makeLoader(cache: cache)
+        await loader.loadIfNeeded(inDocumentC)
+
+        stub(Data([0xB, 0xB]), log: log)
+        await loader.loadIfNeeded(inDocumentB)
+
+        // A request was actually issued for B rather than answered from C.
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 2)
+        guard case .cached(let bURL) = loader.state(for: inDocumentB),
+            case .cached(let cURL) = loader.state(for: inDocumentC)
+        else { return XCTFail("Expected both cached") }
+        XCTAssertNotEqual(bURL, cURL)
+        XCTAssertEqual(try Data(contentsOf: bURL), Data([0xB, 0xB]))
+        XCTAssertEqual(try Data(contentsOf: cURL), Data([0xC, 0xC]))
     }
 
     // MARK: - Origin

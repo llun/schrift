@@ -247,6 +247,7 @@ enum Strings_nl {
         .editor_attachment_failed_retry: "Downloaden mislukt · Tik om opnieuw te proberen",
         .editor_attachment_offline: "Beschikbaar zodra je online bent",
         .editor_attachment_a11y: "Bijlage: %@. %@",
+        .editor_attachment_not_previewable: "Kan hier niet worden weergegeven",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Alinea toevoegen aan het einde",

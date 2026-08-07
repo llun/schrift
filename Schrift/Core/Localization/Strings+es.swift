@@ -250,6 +250,7 @@ enum Strings_es {
         .editor_attachment_failed_retry: "No se pudo descargar · Toca para reintentar",
         .editor_attachment_offline: "Disponible al conectarte",
         .editor_attachment_a11y: "Adjunto: %@. %@",
+        .editor_attachment_not_previewable: "No se puede previsualizar aquí",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Añadir párrafo al final",

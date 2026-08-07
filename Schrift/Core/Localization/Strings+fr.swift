@@ -247,6 +247,7 @@ enum Strings_fr {
         .editor_attachment_failed_retry: "Échec du téléchargement · Appuyez pour réessayer",
         .editor_attachment_offline: "Disponible une fois en ligne",
         .editor_attachment_a11y: "Pièce jointe : %@. %@",
+        .editor_attachment_not_previewable: "Aperçu impossible ici",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Ajouter un paragraphe à la fin",

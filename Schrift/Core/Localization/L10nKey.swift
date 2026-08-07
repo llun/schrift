@@ -279,6 +279,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_attachment_failed_retry = "editor.attachment.failed_retry"  // "Couldn't download · Tap to retry"
     case editor_attachment_offline = "editor.attachment.offline"  // "Available when online"
     case editor_attachment_a11y = "editor.attachment.a11y"  // "Attachment: %@. %@"
+    // Cached, but deliberately never handed to QuickLook: it renders HTML
+    // through WebKit, which would fetch remote subresources chosen by the
+    // document's author (see `attachmentIsPreviewable`).
+    case editor_attachment_not_previewable = "editor.attachment.not_previewable"  // "Can't be previewed here"
 
     // Editor - block canvas accessibility labels (BlockEditorView)
     case editor_add_paragraph_a11y = "editor.add_paragraph_a11y"  // "Add paragraph at end"

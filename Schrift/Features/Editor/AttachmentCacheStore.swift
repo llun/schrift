@@ -114,15 +114,17 @@ final class AttachmentCacheStore {
 
     // MARK: - Private
 
-    /// The name is `attachmentFileName(for:)` — the server's storage key, built
-    /// from the classifier's validated UUID and extension, never from the
-    /// author-controlled label.
+    /// The name is `attachmentCacheFileName(for:)` — **both** server ids, built
+    /// from the classifier's validated UUIDs and extension, never from the
+    /// author-controlled label. Keying on the file id alone would let one
+    /// document's cached bytes answer another document's link with no request,
+    /// and so with no server access check.
     ///
     /// `AttachmentDisplay` is a freely constructible value type, so this layer
     /// re-checks rather than trusting that the classifier vouched for this one:
     /// a name carrying a separator or a `..` would escape the cache directory.
     private func fileURL(for display: AttachmentDisplay) -> URL? {
-        let name = attachmentFileName(for: display)
+        let name = attachmentCacheFileName(for: display)
         guard !name.isEmpty, !name.contains("/"), !name.contains("\\"), name != ".", name != ".." else { return nil }
         return directory.appendingPathComponent(name, isDirectory: false)
     }

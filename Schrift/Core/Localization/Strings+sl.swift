@@ -255,6 +255,7 @@ enum Strings_sl {
         .editor_attachment_failed_retry: "Prenos ni uspel · Tapnite za ponoven poskus",
         .editor_attachment_offline: "Na voljo, ko boste povezani",
         .editor_attachment_a11y: "Priloga: %@. %@",
+        .editor_attachment_not_previewable: "Predogled tukaj ni mogoč",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Dodaj odstavek na koncu",

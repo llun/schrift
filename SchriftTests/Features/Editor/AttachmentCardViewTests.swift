@@ -4,6 +4,14 @@ import XCTest
 
 final class AttachmentCardViewTests: XCTestCase {
     private let file = URL(fileURLWithPath: "/tmp/22222222-2222-4222-8222-222222222222.pdf")
+    private let serverOrigin = "https://docs.example.org"
+
+    private func attachment(ext: String, unsafe: Bool = false) throws -> AttachmentDisplay {
+        let url =
+            "\(serverOrigin)/media/11111111-1111-4111-8111-111111111111/attachments/"
+            + "22222222-2222-4222-8222-222222222222\(unsafe ? "-unsafe" : "").\(ext)"
+        return try XCTUnwrap(parseAttachmentLink("[f](\(url))", serverOrigin: serverOrigin))
+    }
 
     // MARK: - Online
 
@@ -44,6 +52,32 @@ final class AttachmentCardViewTests: XCTestCase {
         // thing rather than keep spinning or keep offering a doomed retry.
         XCTAssertEqual(attachmentCardState(loaderState: .failed, isOffline: true), .offlineAndUncached)
         XCTAssertEqual(attachmentCardState(loaderState: .downloading, isOffline: true), .offlineAndUncached)
+    }
+
+    // MARK: - What may be handed to QuickLook
+
+    /// QuickLook renders HTML through WebKit, which fetches remote subresources
+    /// — reopening, by another route, exactly the IP/User-Agent/timing
+    /// disclosure the origin gate and `imageLoadPolicy` exist to close.
+    func testMarkupTypesAreNeverPreviewable() throws {
+        for ext in ["html", "htm", "xhtml", "xht", "shtml", "svg", "svgz", "xml", "mht", "mhtml", "webarchive"] {
+            XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: ext)), "\(ext) must not be previewable")
+        }
+    }
+
+    func testAnUppercaseMarkupExtensionIsAlsoRefused() throws {
+        XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: "HTML")))
+        XCTAssertFalse(attachmentIsPreviewable(try attachment(ext: "SVG")))
+    }
+
+    /// The rule keys on the extension, not the `-unsafe` flag: a `.docx` sniffs
+    /// as `zip` server-side and is flagged routinely, so keying on the flag
+    /// would refuse to preview most ordinary Office attachments.
+    func testOrdinaryDocumentTypesStayPreviewableIncludingUnsafeKeys() throws {
+        for ext in ["pdf", "docx", "xlsx", "pptx", "odt", "png", "jpg", "zip", "txt", "csv"] {
+            XCTAssertTrue(attachmentIsPreviewable(try attachment(ext: ext)), "\(ext) must stay previewable")
+        }
+        XCTAssertTrue(attachmentIsPreviewable(try attachment(ext: "docx", unsafe: true)))
     }
 
     // MARK: - Title

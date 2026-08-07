@@ -241,6 +241,7 @@ enum Strings_zhHant {
         .editor_attachment_failed_retry: "下載失敗 · 點一下重試",
         .editor_attachment_offline: "連網後可用",
         .editor_attachment_a11y: "附件：%@。%@",
+        .editor_attachment_not_previewable: "無法在此預覽",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "在結尾新增段落",

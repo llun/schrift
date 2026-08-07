@@ -249,6 +249,7 @@ enum Strings_de {
         .editor_attachment_failed_retry: "Download fehlgeschlagen · Zum Wiederholen tippen",
         .editor_attachment_offline: "Verfügbar, sobald online",
         .editor_attachment_a11y: "Anhang: %@. %@",
+        .editor_attachment_not_previewable: "Kann hier nicht angezeigt werden",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Absatz am Ende hinzufügen",
