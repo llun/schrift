@@ -1014,7 +1014,8 @@ struct EditorView: View {
             client: client,
             documentID: UUID(),
             title: "Q3 Planning",
-            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop)
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop),
+            serverOrigin: "https://docs.llun.dev"
         ),
         reach: .restricted,
         serverHost: "docs.llun.dev",
