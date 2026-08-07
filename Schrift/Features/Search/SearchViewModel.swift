@@ -16,6 +16,8 @@ final class SearchViewModel {
     /// existing call site and `#Preview` gets.
     private let saveCoordinator: DocumentSaveCoordinator?
     private let signedInUser: SignedInUserStore
+    /// Documents whose deletion landed while a fetch was in flight — see `dropDeletedDocument`.
+    private var deletedSinceLoad: Set<UUID> = []
 
     init(
         client: DocsAPIClient, store: RecentSearchesStore = RecentSearchesStore(),
@@ -40,10 +42,12 @@ final class SearchViewModel {
     private func dropDeletedDocument(_ documentID: UUID) {
         results.removeAll { $0.id == documentID }
         quickAccess.removeAll { $0.id == documentID }
+        deletedSinceLoad.insert(documentID)
     }
-    // No generation bump: Search caches nothing and every fetch is driven by the query the
-    // user is typing, so an in-flight result set that still names the document is replaced by
-    // the next keystroke rather than persisted. The row is annotated on render either way.
+    /// Search caches nothing, so there is no durable resurrection to prevent — but an
+    /// in-flight fetch can still write the row back on screen. "The next keystroke replaces it"
+    /// covers `search`, whose results the user is actively retyping over; it does **not** cover
+    /// `loadQuickAccess`, which is not query-driven and assigns unconditionally. Both filter.
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through
     /// and its tap offers the undo instead of opening it.
@@ -72,7 +76,7 @@ final class SearchViewModel {
     func loadQuickAccess() async {
         do {
             let page = try await client.favoriteDocuments()
-            quickAccess = page.results
+            quickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
             errorKey = .search_error_quick
         }
@@ -96,7 +100,7 @@ final class SearchViewModel {
         do {
             let page = try await client.searchDocuments(query: trimmed)
             if Task.isCancelled { return }
-            results = page.results
+            results = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
             if Task.isCancelled { return }
             errorKey = .search_error_search

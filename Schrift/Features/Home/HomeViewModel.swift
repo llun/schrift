@@ -144,6 +144,8 @@ final class HomeViewModel {
             guard let self else { return }
             self.pinnedDocuments.removeAll { $0.id == documentID }
             self.fetchedRecentDocuments.removeAll { $0.id == documentID }
+            // The inline search field on this very screen is a third list of server documents.
+            self.searchResults.removeAll { $0.id == documentID }
             // **A list fetch already in flight was issued before the DELETE landed**, so it
             // still names the document and would write it back — into the cache as well
             // (invariant 0b). Bumping `loadGeneration` here is the obvious move and the wrong

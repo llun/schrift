@@ -1297,6 +1297,12 @@ final class EditorViewModel {
             return
         }
         subpages?.removeAll { $0.id == documentID }
+        // **And invalidate any children fetch in flight** — invariant 0b, the same reason
+        // `appendChild` and `handleDidDelete` bump it. A `listChildren` issued before the
+        // DELETE landed still names this sub-page, and on resolving would write it back into
+        // `subpages` *and* re-create the children-cache entry the coordinator just purged: a
+        // tappable row for a deleted document, restored durably on disk and surviving relaunch.
+        childrenGeneration += 1
     }
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through

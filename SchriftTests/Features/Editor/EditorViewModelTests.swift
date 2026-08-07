@@ -271,6 +271,44 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.mergedSubpages?.map(\.id), [], "the row goes with the record")
     }
 
+    /// **The drop must survive its own in-flight children fetch** (invariant 0b). A
+    /// `listChildren` issued before the DELETE landed still names the sub-page, and on
+    /// resolving would write it back into `subpages` *and* re-create the children-cache entry
+    /// the coordinator just purged — a tappable row for a deleted document, restored durably
+    /// on disk and surviving relaunch.
+    func testALandedSubpageDeletionSurvivesAnInFlightChildrenFetch() async {
+        let doomed = UUID(uuidString: "66666666-6666-4666-8666-666666666666")!
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: UserDefaults(suiteName: childrenSuiteName)!)
+        let env = makeEnvironment()
+        let viewModel = EditorViewModel(
+            client: env.viewModel.client, documentID: documentID, title: "Doc",
+            saveCoordinator: env.coordinator, signedInUser: makeSignedInUser(),
+            childrenCache: childrenCache)
+        let body = Data(
+            """
+            {"count":1,"next":null,"previous":null,"results":[{
+              "id": "\(doomed.uuidString.lowercased())", "title": "Doomed", "excerpt": null,
+              "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null,
+              "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 2,
+              "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "00010001",
+              "updated_at": "2026-01-15T10:30:00Z", "user_role": "owner", "is_favorite": false}]}
+            """.utf8)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.2)
+        }
+
+        let fetching = Task { await viewModel.loadChildren() }
+        // The deletion lands while that fetch is still on the wire.
+        try? await Task.sleep(for: .milliseconds(60))
+        env.coordinator.announceDocumentDeletedForTesting(doomed)
+        await fetching.value
+
+        XCTAssertEqual(viewModel.subpages?.map(\.id) ?? [], [], "the stale fetch is not applied")
+        XCTAssertNil(
+            childrenCache.children(for: documentID),
+            "and never re-creates the cache entry the deletion purged")
+    }
+
     /// A sub-page deleted from its own screen strikes through in the parent's list the
     /// moment the user pops back — no children refetch, which offline never comes.
     func testASubpageIsAnnotatedOnceItsDeletionIsQueued() async {

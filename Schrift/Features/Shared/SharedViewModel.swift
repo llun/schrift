@@ -154,13 +154,13 @@ final class SharedViewModel {
         // shared can't keep showing stale avatars, and the dictionary can't grow
         // without bound across a long session. Surviving entries are overwritten
         // as fresh accesses land.
-        let currentIDs = Set(withMe.map(\.id))
+        let currentIDs = Set(surviving.map(\.id))
         enrichment = enrichment.filter { currentIDs.contains($0.key) }
 
         // Enrichment runs *outside* the list-load do/catch above and never
         // throws — so a decorative accesses failure can never be caught there
         // and misreported as a failed document list (offline / errorKey).
-        await enrich(documents: withMe, generation: generation)
+        await enrich(documents: surviving, generation: generation)
     }
 
     /// Fetch each document's accesses concurrently and resolve avatars +

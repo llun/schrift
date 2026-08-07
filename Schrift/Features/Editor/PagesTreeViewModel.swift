@@ -140,16 +140,22 @@ final class PagesTreeViewModel {
     private func dropDeletedPage(_ documentID: UUID) {
         for (parentID, documents) in children where documents.contains(where: { $0.id == documentID }) {
             children[parentID] = documents.filter { $0.id != documentID }
-            // **The drop must survive its own in-flight fetch.** A `listChildren` issued before
-            // the DELETE landed completes after it and writes both `children[parentID]` and the
-            // shared cache entry the coordinator just purged — restoring the row, un-struck.
-            // Same rule as `EditorViewModel.handleDidDelete`'s generation bumps; CLAUDE.md
-            // invariant 0b.
-            mutations[parentID, default: 0] += 1
         }
         children[documentID] = nil
         expanded.remove(documentID)
         failedLoads.remove(documentID)
+        // **The drop must survive every fetch in flight** — invariant 0b. A `listChildren`
+        // issued before the DELETE landed completes after it and writes both `children[parent]`
+        // and the shared cache entry the coordinator just purged, restoring the row un-struck
+        // and durably.
+        //
+        // Bumped for **every** loading level, not only the ones that already hold the row: the
+        // unprotected case is the common one, a level being fetched for the first time
+        // (`children[parent] == nil`), where the row is in the response and in nothing else
+        // yet. The deleted document's own level is included, or an in-flight fetch of *its*
+        // children re-creates the cache entry `childrenCache.remove(parentID:)` just dropped.
+        for parentID in loading { mutations[parentID, default: 0] += 1 }
+        mutations[documentID, default: 0] += 1
     }
 
     var rows: [PagesTreeRow] {

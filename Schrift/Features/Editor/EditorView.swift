@@ -691,7 +691,12 @@ struct EditorView: View {
                 headerBlock
 
                 if viewModel.blocks.isEmpty {
-                    if viewModel.errorKey == nil {
+                    // `isDocumentPendingDelete` joins the error check for the same reason the
+                    // error is here at all: the gated load leaves `blocks` empty *and* — since the
+                    // notice is rendered from the predicate rather than an `errorKey` — no error to
+                    // suppress this. Without it the screen claims a document with content is empty
+                    // and offers "Start writing", which `canStartEditing` makes a silent no-op.
+                    if viewModel.errorKey == nil, !viewModel.isDocumentPendingDelete {
                         emptyContent
                     }
                 } else {

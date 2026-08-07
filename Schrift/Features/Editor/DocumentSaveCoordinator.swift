@@ -2368,10 +2368,14 @@ final class DocumentSaveCoordinator {
                 // relaunch, where `openEditors` is empty but so is the tombstone, so the revive
                 // is never reconsidered and the reap simply wins.
                 //
-                // The cost is real but bounded: a screen still open on the dead id keeps its
-                // in-memory content and loses only its disk backing, and that content is what
-                // was just carried into the revived document. Its own saves will fail against
-                // an id the server no longer has, which is true of that screen either way.
+                // The cost is real, and larger than an earlier version of this comment claimed:
+                // a screen open on the dead id is torn down by the announcement below
+                // (`EditorViewModel.handleDeletionLanded`), so it does **not** keep its
+                // in-memory content. What the revived document carries is the draft — or,
+                // failing that, the cached body — as read a few lines down, so anything typed
+                // since the last autosave flush is in neither. That window is bounded by the
+                // autosave debounce and is the accepted price of not losing the *whole* body,
+                // which is what deferring costs.
                 reviveAsLocalDocument(documentID: tombstone.documentID, ownerUserID: currentUserID)
                 continue
             }
@@ -2507,7 +2511,10 @@ final class DocumentSaveCoordinator {
     /// user has stopped editing never comes.
     ///
     /// **Deliberately not `releaseHeldSave`**, which goes straight to `start` — a full
-    /// overwrite with no reconciliation. Every other release runs behind a proof: the
+    /// overwrite with no reconciliation. (It removes this path's *automatic* overwrite, not
+    /// every route to one: the reading surface's "tap to retry" still reaches `saveNow`, which
+    /// enqueues straight to `start`. That is the pre-existing last-writer-wins affordance, and
+    /// it is at least a deliberate tap rather than a background pass.) Every other release runs behind a proof: the
     /// detection sites fire only on a decided `.push`, and "Keep my version" is an explicit
     /// choice that also advances the baseline. These two have none, and a tombstone survives
     /// launches, so the parked content can be days old: releasing it would let a stale body
@@ -2674,6 +2681,14 @@ final class DocumentSaveCoordinator {
                 // undo's only payload while the deletion is still cancellable. The tombstone's
                 // own completion removes this draft, in an order a crash cannot tear.
                 guard !isPendingDelete(documentID: draft.documentID) else { continue }
+                // **And not while the tombstones are unknown.** With the delete store
+                // undecodable `pendingDeletes` is empty, so the guard above answers false for
+                // *every* tombstoned document — and a 404 caused by the app's own DELETE
+                // landing in a pass that died before its cleanup then reads as a co-author's
+                // delete, taking the undo's only payload. Same asymmetry `createStoreUnreadable`
+                // states two guards up: cleaning up nothing is recoverable, deleting the only
+                // copy is not.
+                guard !deleteStoreUnreadable else { continue }
                 draftStore.remove(documentID: draft.documentID)
             } catch {
                 // Leave the draft for a later sync (e.g. offline right now).
