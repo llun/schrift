@@ -1430,6 +1430,14 @@ markdown write endpoint**. Understand this before touching the save path:
   from the file system's answer **before** the bytes are read. Both uploading
   affordances are withheld offline and on a local document via
   `SlashMenuAction.requiresUpload`, and only one upload runs at a time.
+  **A file attachment has no offline queue.** Photos have the machinery for one
+  (`PendingAttachmentStore`, the `schrift-attachment://` placeholder and the
+  save hold — see the offline rules further down), but the Photo slash item is
+  still withheld offline too, so nothing is inconsistent *yet*. When photo
+  insertion is offered offline, file insertion should follow through that same
+  path rather than growing a parallel one: the placeholder scheme, the hold and
+  the replay are all type-agnostic, and only `parseImageLine`'s allowlist and
+  the resolve step assume an image.
 - **Attachment bytes go through `AttachmentLoader`, and its file names are the
   server's, never the author's.** The loader is app-scoped (built in `RootView`
   beside the collaboration manager, injected through the environment) so two
