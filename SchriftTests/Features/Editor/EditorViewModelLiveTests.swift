@@ -596,6 +596,8 @@ private final class FakeLiveWrite: EditorLiveWriteCoordinating {
     var handleLive = false
     private(set) var forwardCount = 0
     private(set) var flushCount = 0
+    /// Mirrors the real bridge, where this is `forwardLocalEdit`'s guard without its effects.
+    var isHandlingLocalEditsLive: Bool { handleLive }
     func forwardLocalEdit() -> Bool {
         forwardCount += 1
         return handleLive

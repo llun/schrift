@@ -203,7 +203,17 @@ private struct BlockEditorRow: View {
     }
 
     @ViewBuilder private func imageLeaf(alt: String, url: String) -> some View {
-        if let imageURL = URL(string: url) {
+        // Branched ahead of `MarkdownImageView`: a queued photo has no fetchable URL, and the
+        // fail-closed `imageLoadPolicy` would otherwise render it as an "external image"
+        // tap-to-load card whose host is a UUID.
+        if let display = viewModel.pendingAttachmentDisplay(forPlaceholderURL: url) {
+            PendingAttachmentImageView(
+                alt: alt, display: display,
+                onRetry: { viewModel.retryPendingAttachment(placeholderURL: url) },
+                onRemove: { viewModel.removePendingAttachment(blockID: block.id) }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let imageURL = URL(string: url) {
             MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())

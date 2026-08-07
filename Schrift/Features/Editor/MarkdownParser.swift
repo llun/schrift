@@ -308,6 +308,44 @@ func markdownRewritingPendingAttachment(
     return lines.map { $0.content + $0.terminator }.joined()
 }
 
+/// Removes the image line naming a queued photo, leaving every other byte alone.
+///
+/// The counterpart to the rewriter, and needed for the same reason it is: in reading mode
+/// `currentMarkdown()` is `rawMarkdown`, not a serialization of `blocks`, so dropping the block
+/// alone leaves the placeholder in the body that actually gets saved — and once the record is
+/// discarded nothing can ever resolve it, which parks the document's saves with no image left
+/// on screen to remove.
+///
+/// Takes the line's terminator with it so removal doesn't leave a stray blank line behind.
+func markdownRemovingPendingAttachment(_ markdown: String, localID: UUID) -> String {
+    guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return markdown }
+    var lines = markdownLinesWithTerminators(markdown)
+    var openFenceLength: Int?
+    var kept: [(content: String, terminator: String)] = []
+
+    for line in lines {
+        if let length = openFenceLength {
+            if closesCodeFence(line.content, openingLength: length) { openFenceLength = nil }
+            kept.append(line)
+            continue
+        }
+        if let fence = parseCodeFenceOpening(line.content) {
+            openFenceLength = fence.length
+            kept.append(line)
+            continue
+        }
+        if let image = parseImageLine(line.content),
+            pendingAttachmentID(fromPlaceholderURL: image.url) == localID
+        {
+            continue
+        }
+        kept.append(line)
+    }
+
+    lines = kept
+    return lines.map { $0.content + $0.terminator }.joined()
+}
+
 /// Splits into (content, terminator) pairs, so rejoining reproduces the input byte for byte.
 ///
 /// `parseEditorBlocks` normalizes CRLF **and a lone CR** to LF before classifying. A rewriter
