@@ -214,6 +214,25 @@ final class AttachmentLoaderTests: XCTestCase {
         XCTAssertTrue(log.methods.isEmpty)
     }
 
+    /// Offline, an evicted file can never be replaced by a download, so a
+    /// `.cached` entry naming it must not survive — the card's tap would
+    /// otherwise hand QuickLook a deleted path and show a blank sheet.
+    func testAnEvictedEntryStopsReadingAsCachedWhileOffline() async throws {
+        let cache = makeCache()
+        let display = try makeDisplay()
+        let loader = makeLoader(cache: cache)
+        stub(Data([1, 2, 3]))
+        await loader.loadIfNeeded(display)
+        guard case .cached(let file) = loader.state(for: display) else {
+            return XCTFail("Expected .cached after the first load")
+        }
+        try FileManager.default.removeItem(at: file)
+
+        await loader.loadIfNeeded(display, allowsNetwork: false)
+
+        XCTAssertNil(loader.state(for: display), "an evicted entry must not keep reading as cached")
+    }
+
     func testAnUncachedAttachmentIssuesNoRequestWhileOffline() async throws {
         let log = RequestRecorder()
         stub(Data([1]), log: log)

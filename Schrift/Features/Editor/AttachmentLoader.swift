@@ -98,6 +98,12 @@ enum AttachmentLoadState: Equatable, Sendable {
             states[key] = .cached(url)
             return
         }
+        // The disk has no copy, so a `.cached` entry naming an evicted file must
+        // not survive this call: offline it would never be replaced by a
+        // download, and the tap path would hand QuickLook a deleted path. Nil
+        // reads as "nothing here yet", which offline renders honestly as
+        // `.offlineAndUncached`.
+        if case .cached = states[key] { states[key] = nil }
         guard allowsNetwork else { return }
         await download(display)
     }

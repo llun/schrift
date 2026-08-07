@@ -273,3 +273,74 @@ private enum AttachmentThumbnailCache {
         }
     }
 }
+
+// MARK: - Preview catalog
+
+/// Every state the card can render, each produced without a network request:
+/// `.cached` and the not-previewable variant from a seeded temp cache, `.failed`
+/// from a loader whose empty server origin makes `attachmentMediaPath` refuse
+/// (so `download` fails immediately and asks for nothing), and
+/// `.offlineAndUncached` from an empty loader plus `isOffline`. `.downloading` is
+/// the transient between them and is pinned by `attachmentCardState`'s tests.
+private struct AttachmentCardCatalog: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
+            if let pdf = Self.display(ext: "pdf", label: "Q3 report.pdf") {
+                AttachmentCardView(display: pdf)
+                    .environment(Self.seededLoader)
+            }
+            if let unnamed = Self.display(ext: "pdf", label: "", file: "33333333-3333-4333-8333-333333333333") {
+                AttachmentCardView(display: unnamed)
+                    .environment(AttachmentLoader.inert())
+            }
+            if let offline = Self.display(ext: "docx", label: "Meeting notes.docx") {
+                AttachmentCardView(display: offline, isOffline: true)
+                    .environment(AttachmentLoader.inert())
+            }
+            if let markup = Self.display(ext: "html", label: "export.html", file: Self.markupFileUUID) {
+                AttachmentCardView(display: markup)
+                    .environment(Self.seededLoader)
+            }
+        }
+        .padding()
+    }
+
+    private static let origin = "https://docs.llun.dev"
+    private static let documentUUID = "11111111-1111-4111-8111-111111111111"
+    private static let markupFileUUID = "44444444-4444-4444-8444-444444444444"
+
+    private static func display(ext: String, label: String, file: String = "22222222-2222-4222-8222-222222222222")
+        -> AttachmentDisplay?
+    {
+        parseAttachmentLink(
+            "[\(label)](\(origin)/media/\(documentUUID)/attachments/\(file).\(ext))", serverOrigin: origin)
+    }
+
+    @MainActor private static let seededLoader: AttachmentLoader = {
+        let cache = AttachmentCacheStore(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("SchriftPreviewAttachmentCards", isDirectory: true))
+        if let pdf = display(ext: "pdf", label: "Q3 report.pdf") {
+            _ = cache.store(Data("%PDF-1.4\n%preview\n".utf8), for: pdf)
+        }
+        if let markup = display(ext: "html", label: "export.html", file: markupFileUUID) {
+            _ = cache.store(Data("<html></html>".utf8), for: markup)
+        }
+        return AttachmentLoader(
+            client: DocsAPIClient(baseURL: URL(string: "\(origin)/api/v1.0/")!),
+            serverOrigin: origin,
+            cache: cache)
+    }()
+}
+
+#Preview("Light") {
+    AttachmentCardCatalog()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.light)
+}
+
+#Preview("Dark") {
+    AttachmentCardCatalog()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.dark)
+}
