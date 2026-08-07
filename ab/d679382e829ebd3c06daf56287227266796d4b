@@ -1,0 +1,55 @@
+CLAUDE.md
+  s_a90ba1763f1ea9::t_3f6181a17ddb01 2127-2154
+Schrift/Features/Editor/BlockEditorView.swift
+  s_a90ba1763f1ea9::t_23fa442fb07d04 206-216
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_a90ba1763f1ea9::t_57ff12a18e58cd 176-185,1111-1114,1117-1118,1120-1127,2870-2873
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_a90ba1763f1ea9::t_eea92ca980af41 12,19-27,80,84
+Schrift/Features/Editor/EditorView.swift
+  s_a90ba1763f1ea9::t_421e84dec1ec45 611,640-642,708-723,741-761
+Schrift/Features/Editor/EditorViewModel.swift
+  s_a90ba1763f1ea9::t_f2443225730335 107-111,367-380,386-389,1960-1976,1983-1985,1998-2004,2012-2019,2028-2157,2187-2190,2194,2210,2224,2249,2254
+Schrift/Features/Editor/LiveEditing.swift
+  s_a90ba1763f1ea9::t_06bfd01c2f8bb0 188-199
+Schrift/Features/Editor/LiveEditingBridge.swift
+  s_a90ba1763f1ea9::t_1d1dae7ff6bd94 214-221
+Schrift/Features/Editor/MarkdownParser.swift
+  s_a90ba1763f1ea9::t_7069ec2ab86340 311-348
+Schrift/Features/Editor/PendingAttachmentImageView.swift
+  s_a90ba1763f1ea9::t_2321b19db5fdff 1-155
+Schrift/Features/Editor/PendingAttachmentStore.swift
+  s_a90ba1763f1ea9::t_6c4afe1f5f4af0 321-332
+Schrift/Features/Editor/SlashMenu.swift
+  s_a90ba1763f1ea9::t_b7d48d797c2478 10-19,21-22,99-107,113
+Schrift/Features/Editor/SlashMenuView.swift
+  s_a90ba1763f1ea9::t_bd77b476a583fd 7-8,10,20
+SchriftTests/Features/Editor/DocumentSaveCoordinatorAttachmentReplayTests.swift
+  s_a90ba1763f1ea9::t_fa6ce51eb91e0e 528-529,540-585
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_a90ba1763f1ea9::t_0fc9c0abc87e9e 83-88,94-96
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_a90ba1763f1ea9::t_3d57ed0d41ed61 31,33,41-42,50,73-106,776-959,961-964,967-1000
+SchriftTests/Features/Editor/EditorViewModelLiveTests.swift
+  s_a90ba1763f1ea9::t_7ca8302702dc54 599-600
+SchriftTests/Features/Editor/SlashMenuTests.swift
+  s_a90ba1763f1ea9::t_469c73c1c5bd26 37-40,43-48,55-57,59-66,78-80,84-86
+docs/offline-and-sync.md
+  s_a90ba1763f1ea9::t_ba255d94834e37 2423-2459
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "abd679382e829ebd3c06daf56287227266796d4b",
+  "prompts": {},
+  "sessions": {
+    "s_a90ba1763f1ea9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e46053b-a8b8-469e-bbcf-4e106ab549b5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
