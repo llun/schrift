@@ -10,6 +10,7 @@ Schrift/Features/Editor/DocumentSaveCoordinator.swift
   s_488daee090312d::t_21ccf380855835 905-906
 Schrift/Core/Networking/AttachmentEndpoints.swift
   s_488daee090312d::t_ff2bddb28aa7c7 104,125-155
+  s_488daee090312d::t_42dde717c3efcd 124
 Schrift/Features/Editor/EditorViewModel.swift
   s_488daee090312d::t_f5c23f131c2413 1758-1761
 Schrift/Features/Editor/MarkdownParser.swift
