@@ -1,0 +1,23 @@
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_a90ba1763f1ea9::t_bf646b251a3b17 482-526
+Schrift/Features/Editor/PendingDocumentDeleteStore.swift
+  s_a90ba1763f1ea9::t_ea13ad3298bd16 111-125
+SchriftTests/Features/Editor/DocumentSaveCoordinatorDeleteTests.swift
+  s_a90ba1763f1ea9::t_bf646b251a3b17 863-880
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "3af8ba5c89f1b9c38824c889546c4724f31f8dd1",
+  "prompts": {},
+  "sessions": {
+    "s_a90ba1763f1ea9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e46053b-a8b8-469e-bbcf-4e106ab549b5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
