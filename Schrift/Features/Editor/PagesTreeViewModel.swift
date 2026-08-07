@@ -140,6 +140,12 @@ final class PagesTreeViewModel {
     private func dropDeletedPage(_ documentID: UUID) {
         for (parentID, documents) in children where documents.contains(where: { $0.id == documentID }) {
             children[parentID] = documents.filter { $0.id != documentID }
+            // **The drop must survive its own in-flight fetch.** A `listChildren` issued before
+            // the DELETE landed completes after it and writes both `children[parentID]` and the
+            // shared cache entry the coordinator just purged — restoring the row, un-struck.
+            // Same rule as `EditorViewModel.handleDidDelete`'s generation bumps; CLAUDE.md
+            // invariant 0b.
+            mutations[parentID, default: 0] += 1
         }
         children[documentID] = nil
         expanded.remove(documentID)

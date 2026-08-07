@@ -37,6 +37,14 @@ final class SearchViewModel {
 
     }
 
+    private func dropDeletedDocument(_ documentID: UUID) {
+        results.removeAll { $0.id == documentID }
+        quickAccess.removeAll { $0.id == documentID }
+    }
+    // No generation bump: Search caches nothing and every fetch is driven by the query the
+    // user is typing, so an in-flight result set that still names the document is replaced by
+    // the next keystroke rather than persisted. The row is annotated on render either way.
+
     /// Whether this document's deletion is queued and unsent, so its row draws struck through
     /// and its tap offers the undo instead of opening it.
     ///
@@ -47,11 +55,6 @@ final class SearchViewModel {
     ///
     /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
     /// registers the dependency and re-renders the moment a deletion is queued or undone.
-    private func dropDeletedDocument(_ documentID: UUID) {
-        results.removeAll { $0.id == documentID }
-        quickAccess.removeAll { $0.id == documentID }
-    }
-
     func isDeletePending(_ document: Document) -> Bool {
         saveCoordinator?.isListablePendingDelete(
             documentID: document.id, currentUserID: signedInUser.userID) ?? false

@@ -215,6 +215,11 @@ final class DocumentSaveCoordinator {
     ///
     /// Keyed on identity, so re-registering replaces rather than duplicates.
     func observeDocumentDeleted(_ owner: AnyObject, _ handler: @escaping @MainActor (UUID) -> Void) {
+        // Prune here as well as on announce: in a session where no queued deletion ever lands
+        // — the common case — announcing never happens, and both `EditorViewModel` and
+        // `PagesTreeViewModel` register from `init`, which SwiftUI re-evaluates on every
+        // re-creation of the destination closures.
+        documentDeletedObservers = documentDeletedObservers.filter { $0.value.owner != nil }
         documentDeletedObservers[ObjectIdentifier(owner)] = DocumentDeletedObserver(
             owner: owner, handler: handler)
     }
@@ -233,7 +238,11 @@ final class DocumentSaveCoordinator {
         // Prune as we go: an observer whose owner is gone is not merely skipped but dropped,
         // so the dictionary tracks live screens rather than every screen there has ever been.
         documentDeletedObservers = documentDeletedObservers.filter { $0.value.owner != nil }
-        for observer in documentDeletedObservers.values { observer.handler(documentID) }
+        // Iterate a snapshot: a handler may re-enter this coordinator (the editor's own
+        // reaction is `handleDidDelete`, which calls `discardPendingWork`), and one that
+        // registered or dropped an observer would otherwise mutate the collection being walked.
+        let observers = documentDeletedObservers.values
+        for observer in observers { observer.handler(documentID) }
     }
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
@@ -527,13 +536,7 @@ final class DocumentSaveCoordinator {
         deleteStore.remove(documentID: documentID)
         pendingDeletes[documentID] = nil
         pendingDeletesVersion += 1
-        // **Drain the save this hold parked**, exactly as `clearResolvedConflict` does for the
-        // conflict hold. `runSyncPass` skips any document with a non-nil `queued` slot, so a
-        // save left parked wedges the document out of the replay for good — until an unrelated
-        // keystroke happens to drain it, which for a document the user has stopped editing
-        // never comes. Called after the mirror is cleared, or `releaseHeldSave`'s own
-        // tombstone guard (just added) would refuse.
-        releaseHeldSave(documentID: documentID)
+        unwedgeHeldSave(documentID: documentID)
     }
 
     /// Mint a document locally: a create record (so it is POSTed even if never typed
@@ -2328,11 +2331,7 @@ final class DocumentSaveCoordinator {
                 // can try again or leave it. (Silently, for now: there is no notice channel
                 // here, the same gap a `.failed` create has.)
                 dropPendingDelete(documentID: tombstone.documentID)
-                // The other path that clears a tombstone, so it owes the same drain
-                // `cancelPendingDelete` does: `runSyncPass` skips any document with a parked
-                // `queued` slot, and here the document is alive on the server, so leaving it
-                // parked promises a sync that never comes.
-                releaseHeldSave(documentID: tombstone.documentID)
+                unwedgeHeldSave(documentID: tombstone.documentID)
                 continue
             } catch {
                 // Everything else keeps the tombstone for a later trigger — transport, 5xx,
@@ -2451,6 +2450,13 @@ final class DocumentSaveCoordinator {
             childrenCache.remove(parentID: documentID)
             childrenCache.removeDocument(documentID)
             listCache.removeDocument(documentID)
+            // And announce, exactly as the other two completions do: this branch knows the
+            // server id is dead — it just purged its caches — while every list still holds the
+            // row in memory, where the tombstone's removal has just **un-struck** it. Worse
+            // here than elsewhere: clearing the checkpoint re-arms `pendingLocalDocuments`, so
+            // without this the user sees two rows for one document, a dead server one and a
+            // live local one.
+            announceDocumentDeleted(documentID)
             return
         }
         // Prefer the draft — it is the user's newest text. The cached body is the fallback for
@@ -2491,6 +2497,34 @@ final class DocumentSaveCoordinator {
         childrenCache.remove(parentID: documentID)
         childrenCache.removeDocument(documentID)
         listCache.removeDocument(documentID)
+    }
+
+    /// Clear the slot the tombstone hold parked, **without sending it**.
+    ///
+    /// Both paths that clear a tombstone owe this: `runSyncPass` skips any document whose
+    /// `queued` slot is non-nil, so a save left parked wedges the document out of the replay
+    /// for good — until an unrelated keystroke happens to drain it, which for a document the
+    /// user has stopped editing never comes.
+    ///
+    /// **Deliberately not `releaseHeldSave`**, which goes straight to `start` — a full
+    /// overwrite with no reconciliation. Every other release runs behind a proof: the
+    /// detection sites fire only on a decided `.push`, and "Keep my version" is an explicit
+    /// choice that also advances the baseline. These two have none, and a tombstone survives
+    /// launches, so the parked content can be days old: releasing it would let a stale body
+    /// overwrite a co-author with no `draftSyncDecision`, no conflict and no pill.
+    ///
+    /// `enqueue` is write-ahead, so the content is already on disk as a draft. Clearing the
+    /// slot simply hands it back to `runSyncPass`, which reconciles it like any other.
+    private func unwedgeHeldSave(documentID: UUID) {
+        // **Only a slot this hold parked.** With a conflict also recorded the slot belongs to
+        // the conflict hold, which is still in force — clearing it there would silently drop
+        // the user's pending save while the pill still asks them to choose. The conflict's own
+        // resolvers drain it.
+        guard conflicts[documentID] == nil else { return }
+        guard inFlight[documentID] == nil, queued[documentID] != nil else { return }
+        queued[documentID] = nil
+        // The state was set to `.pendingSync` by the hold, which is still true — the work is
+        // on the device and the replay is what sends it.
     }
 
     /// Drop a tombstone without touching anything else — the shared tail of a completed

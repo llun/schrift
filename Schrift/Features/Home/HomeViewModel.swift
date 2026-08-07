@@ -140,6 +140,10 @@ final class HomeViewModel {
             guard let self else { return }
             self.pinnedDocuments.removeAll { $0.id == documentID }
             self.fetchedRecentDocuments.removeAll { $0.id == documentID }
+            // And invalidate any list fetch already in flight: issued before the DELETE
+            // landed, it completes after and writes the row back — into the cache as well.
+            // CLAUDE.md invariant 0b, the same reason the editor bumps its generations.
+            self.loadGeneration += 1
         }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {

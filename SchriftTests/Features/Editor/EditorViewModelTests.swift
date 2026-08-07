@@ -2262,7 +2262,11 @@ final class EditorViewModelTests: XCTestCase {
 
         await env.viewModel.load()
 
-        XCTAssertEqual(env.viewModel.errorKey, .editor_pending_delete)
+        // The notice is rendered from the predicate, not from `errorKey` — a key set here would
+        // be invisible while the tombstone stands (the view shows the notice instead) and then
+        // latch into view, danger-styled, the moment the deletion is undone or refused.
+        XCTAssertTrue(env.viewModel.isDocumentPendingDelete, "the state the notice renders from")
+        XCTAssertNil(env.viewModel.errorKey, "and nothing left to latch once it is undone")
         XCTAssertEqual(log.methods.count, 0, "nothing is asked about a document being deleted")
         XCTAssertFalse(env.viewModel.hasLoadedContent, "so editing can never begin")
         XCTAssertTrue(env.viewModel.blocks.isEmpty, "and the body it would restore stays off screen")
@@ -2282,6 +2286,7 @@ final class EditorViewModelTests: XCTestCase {
         await env.viewModel.load()
 
         XCTAssertNil(env.viewModel.errorKey)
+        XCTAssertFalse(env.viewModel.isDocumentPendingDelete)
         XCTAssertTrue(env.viewModel.hasLoadedContent)
     }
 

@@ -714,12 +714,12 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             "written ahead, so the keystrokes are on disk either way")
     }
 
-    /// And the undo **releases** the held save rather than leaving it parked. Every other hold
-    /// here drains on release for the same reason: `runSyncPass` skips any document with a
-    /// non-nil `queued` slot, so a save left parked wedges the document out of the replay
-    /// permanently — until an unrelated keystroke happens to drain it, which for a document
-    /// the user has stopped editing never comes.
-    func testUndoingReleasesAHeldSaveRatherThanLeavingItParked() async {
+    /// The undo **unwedges** the parked save — but does not send it. `runSyncPass` skips any
+    /// document with a non-nil `queued` slot, so leaving it parked wedges the document out of
+    /// the replay for good; sending it would be worse, a full overwrite with no reconciliation
+    /// of content that can be days old (a tombstone survives launches). The draft is
+    /// write-ahead, so clearing the slot simply hands the body back to the sync pass.
+    func testUndoingUnwedgesTheHeldSaveWithoutPushingIt() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
@@ -730,11 +730,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         env.coordinator.enqueue(documentID: serverID, title: "Doc", markdown: "typed after deleting")
         await waitAndConfirmNever { log.methods.contains("PATCH") }
 
-        // The undo alone — no further keystroke to drain the slot for it.
         env.coordinator.cancelPendingDelete(documentID: serverID)
 
-        await waitUntil { log.methods.contains("PATCH") }
-        await waitUntil { env.coordinator.pendingSave(documentID: serverID) == nil }
+        XCTAssertNil(
+            env.coordinator.pendingSave(documentID: serverID), "the slot is clear, so the pass can act")
+        await waitAndConfirmNever { log.methods.contains("PATCH") }
+        XCTAssertEqual(
+            env.drafts.draft(for: serverID)?.markdown, "typed after deleting",
+            "and the body is on disk for the pass to reconcile")
     }
 
     /// **The undo must not push over an unanswered conflict.** `releaseHeldSave` never carried
@@ -761,10 +764,10 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             "still parked behind the conflict, which nobody has answered")
     }
 
-    /// `.forbidden` is the *other* path that clears a tombstone, and it must drain the save
-    /// that hold parked too — otherwise `runSyncPass` skips the document for good and the
-    /// indicator promises a sync that will never come.
-    func testAForbiddenDeletionReleasesTheSaveItsHoldParked() async {
+    /// `.forbidden` is the *other* path that clears a tombstone, and owes the same unwedge —
+    /// otherwise `runSyncPass` skips the document for good and the indicator promises a sync
+    /// that will never come.
+    func testAForbiddenDeletionUnwedgesTheSaveItsHoldParked() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
@@ -773,8 +776,38 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
 
         await env.coordinator.syncPendingDrafts()
 
-        await waitUntil { log.methods.contains("PATCH") }
-        await waitUntil { env.coordinator.pendingSave(documentID: serverID) == nil }
+        // Unwedged means the pass stopped skipping it: `runSyncPass`, later in the same run,
+        // fetched the document and reconciled the draft through `draftSyncDecision` — which is
+        // exactly the path a stale body must take, rather than being fired off unchecked.
+        XCTAssertGreaterThanOrEqual(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1,
+            "the sync pass is looking at it again")
+    }
+
+    /// The checkpointed revive branch purges the dead server id's caches, so it must announce
+    /// too — every list still holds the row in memory, where the tombstone's removal has just
+    /// **un-struck** it. Sharper here than elsewhere: clearing the checkpoint re-arms the local
+    /// listing, so without this the user sees two rows for one document.
+    func testTheCheckpointedReviveAnnouncesTheDeadServerID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let announcements = Announcements()
+        env.coordinator.observeDocumentDeleted(announcements) { announcements.ids.append($0) }
+        let local = env.coordinator.createLocalDocument(title: "Doomed", parentID: nil, ownerUserID: user)
+        var checkpointed = env.coordinator.pendingCreateForTesting(localID: local.id)!
+        checkpointed.syncedServerID = serverID
+        checkpointed.postedTitle = "Doomed"
+        env.coordinator.savePendingCreateForTesting(checkpointed)
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { log.methods.contains("DELETE") }
+        coordinator.cancelPendingDelete(documentID: serverID)
+        await pass.value
+
+        XCTAssertEqual(announcements.ids, [serverID])
     }
 
     /// The mirror of the pending-create rule: `releaseHeldSave` is one of the two paths that

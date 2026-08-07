@@ -56,6 +56,14 @@ final class SharedViewModel {
         }
     }
 
+    private func dropDeletedDocument(_ documentID: UUID) {
+        documents.removeAll { $0.id == documentID }
+        enrichment[documentID] = nil
+        // A list fetch already in flight was issued before the DELETE landed and would write
+        // the row back — into the cache as well. CLAUDE.md invariant 0b.
+        loadGeneration += 1
+    }
+
     /// Whether this document's deletion is queued and unsent, so its row draws struck through
     /// and its tap offers the undo instead of opening it.
     ///
@@ -66,11 +74,6 @@ final class SharedViewModel {
     ///
     /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
     /// registers the dependency and re-renders the moment a deletion is queued or undone.
-    private func dropDeletedDocument(_ documentID: UUID) {
-        documents.removeAll { $0.id == documentID }
-        enrichment[documentID] = nil
-    }
-
     func isDeletePending(_ document: Document) -> Bool {
         saveCoordinator?.isListablePendingDelete(
             documentID: document.id, currentUserID: signedInUser.userID) ?? false
