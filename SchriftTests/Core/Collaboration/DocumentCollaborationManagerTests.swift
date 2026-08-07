@@ -278,7 +278,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         // which fires `onInitialSync` and marks the replica synced (writable/
         // projectable). A bare `.update` would build the replica but leave it
         // un-synced (see `testInboundUpdateBeforeInitialSyncBuildsReplicaButRefusesWrites`).
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
 
         await waitUntil { manager.replicaVersion(for: docID) == 1 }
@@ -311,7 +311,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
                 versionsSeenAtFire.append(manager?.replicaVersion(for: self.docID) ?? -1)
             }, for: docID)
 
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
         await waitUntil { manager.replicaVersion(for: docID) == 1 }
 
@@ -383,7 +383,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
 
         var fireCount = 0
         manager.setReplicaObserver({ fireCount += 1 }, for: docID)
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
         await waitUntil { manager.replicaVersion(for: docID) == 1 }
         XCTAssertEqual(fireCount, 1, "the observer fires while registered and the entry is live")
@@ -428,7 +428,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertNil(manager.projectedReplica(for: docID, interlinkingOrigin: nil))
 
         // A second, real update after failSafe must NOT resurrect projection.
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
         await waitUntil { manager.remoteChangeToken(for: docID) == 2 }
         XCTAssertTrue(manager.replicaIsFailSafe(for: docID))
@@ -483,7 +483,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         XCTAssertNil(manager.encodeSnapshotForSave(for: docID))
 
         // A later real update must not resurrect projection, and nothing crashed.
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncUpdateFrame(data: update))
         await waitUntil { manager.remoteChangeToken(for: docID) == 2 }
         XCTAssertTrue(manager.replicaIsFailSafe(for: docID))
@@ -531,7 +531,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         await waitUntil { spy.sockets.count == 1 }
         XCTAssertTrue(manager.hasPendingStructs(for: docID), "no replica yet")
 
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
 
         await waitUntil { manager.replicaVersion(for: docID) == 1 }
@@ -579,7 +579,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         _ = manager.session(for: docID)
         await waitUntil { spy.sockets.count == 1 }
 
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
         await waitUntil { manager.replicaVersion(for: docID) == 1 }
         XCTAssertFalse(manager.hasPendingStructs(for: docID))
@@ -595,7 +595,7 @@ final class DocumentCollaborationManagerTests: XCTestCase {
         _ = manager.session(for: docID)
         await waitUntil { spy.sockets.count == 1 }
 
-        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", clientID: 1)
+        let update = MarkdownYjs.encode(markdown: "# Title\n\nBody", serverOrigin: "", clientID: 1)
         spy.sockets[0].deliver(message: syncStep2Frame(data: update))
         await waitUntil { manager.replicaVersion(for: docID) == 1 }
 

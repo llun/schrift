@@ -250,6 +250,16 @@ enum Strings_nl {
         .editor_image_loading_named_a11y: "Afbeelding laden: %@",
         .editor_image_external: "Externe afbeelding · Tik om te laden",
         .editor_image_external_a11y: "Externe afbeelding van %@. Tik om te laden.",
+        .editor_attachment_downloading: "Downloaden…",
+        .editor_attachment_failed_retry: "Downloaden mislukt · Tik om opnieuw te proberen",
+        .editor_attachment_offline: "Beschikbaar zodra je online bent",
+        .editor_attachment_a11y: "Bijlage: %@. %@",
+        .editor_attachment_not_previewable: "Kan hier niet worden weergegeven",
+        .editor_error_add_file: "Kan het bestand niet toevoegen. Probeer het opnieuw.",
+        .editor_error_file_too_large: "Dit bestand is te groot.",
+        .editor_slash_file: "Bestand",
+        .editor_uploading_file: "Bestand uploaden…",
+        .editor_uploading_file_a11y: "Bestand uploaden",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Alinea toevoegen aan het einde",

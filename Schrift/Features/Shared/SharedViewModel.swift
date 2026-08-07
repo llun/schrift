@@ -26,7 +26,17 @@ final class SharedViewModel {
     /// outcome only if no newer load() superseded it (.task refires on every
     /// tab revisit and races .refreshable).
     private var loadGeneration = 0
-    /// Documents whose deletion landed while a fetch was in flight — see `dropDeletedDocument`.
+    /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
+    /// before the DELETE and still names them, so its results are filtered through this before
+    /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
+    /// away every *other* row it carries, and on Home would discard a load fired from inside
+    /// the sync pass that announced the deletion).
+    ///
+    /// **Never cleared.** A screen can have more than one fetch in flight, so clearing when one
+    /// lands strips the others' protection mid-flight. A stale entry is inert rather than
+    /// merely harmless: server ids are never reused — the revive mints a *new* local id — so an
+    /// id that named a deleted document can never name a live one. It grows by one `UUID` per
+    /// landed deletion per process.
     private var deletedSinceLoad: Set<UUID> = []
     /// True once a real local list exists (cached or fetched). An unknown list
     /// must never render as "0 documents"; nil ≠ empty.
@@ -144,7 +154,6 @@ final class SharedViewModel {
         // Anything deleted while this was in flight is dropped before it can be applied or
         // cached — the fetch predates the DELETE and cannot know.
         let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
-        deletedSinceLoad.removeAll()
         documents = surviving
         cache.saveSharedWithMeDocuments(surviving)
         hasLoaded = true
@@ -189,7 +198,9 @@ final class SharedViewModel {
             }
             for await (id, result) in group {
                 guard generation == loadGeneration else { continue }
-                if let result { enrichment[id] = result }
+                // Not for a document deleted while this was in flight — the observer nil'd
+                // its entry, and writing the result back would re-populate it one await later.
+                if let result, !deletedSinceLoad.contains(id) { enrichment[id] = result }
             }
         }
     }

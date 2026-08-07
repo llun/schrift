@@ -87,9 +87,17 @@ final class HomeViewModel {
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable).
     private var loadGeneration = 0
-    /// Documents whose deletion landed while a list fetch was in flight. That fetch was issued
+    /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
     /// before the DELETE and still names them, so its results are filtered through this before
-    /// being applied or cached. Cleared once consumed — it only has to outlive the one fetch.
+    /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
+    /// away every *other* row it carries, and on Home would discard a load fired from inside
+    /// the sync pass that announced the deletion).
+    ///
+    /// **Never cleared.** A screen can have more than one fetch in flight, so clearing when one
+    /// lands strips the others' protection mid-flight. A stale entry is inert rather than
+    /// merely harmless: server ids are never reused — the revive mints a *new* local id — so an
+    /// id that named a deleted document can never name a live one. It grows by one `UUID` per
+    /// landed deletion per process.
     private var deletedSinceLoad: Set<UUID> = []
 
     init(
@@ -220,7 +228,6 @@ final class HomeViewModel {
             // cached — the fetch predates the DELETE and cannot know.
             let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
             let recent = fetchedRecent.filter { !deletedSinceLoad.contains($0.id) }
-            deletedSinceLoad.removeAll()
             pinnedDocuments = pinned
             fetchedRecentDocuments = recent
             cache.savePinnedDocuments(pinned)
@@ -296,7 +303,7 @@ final class HomeViewModel {
         let marker = diagnostics?.marker()
         do {
             let page = try await client.searchDocuments(query: trimmed)
-            searchResults = page.results
+            searchResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
             errorKey = .home_error_search
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)

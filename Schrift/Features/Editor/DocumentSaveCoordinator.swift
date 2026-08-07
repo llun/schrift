@@ -90,6 +90,9 @@ final class DocumentSaveCoordinator {
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
     private let deleteStore: PendingDocumentDeleteStore
+    /// Photos queued on this device, with their bytes. Mirrored like `pendingCreates` so the
+    /// hot predicates never decode UserDefaults.
+    private let attachmentStore: PendingAttachmentStore
     /// The list caches the replay has to move a document into once the server owns it.
     /// Without them a just-created document vanishes from Home between the POST landing
     /// (which stops it being listed as local) and the next successful list fetch.
@@ -101,6 +104,9 @@ final class DocumentSaveCoordinator {
     private let serverOrigin: String
     /// Scopes `replayBlockedAt` — see `PendingDocumentCreate.isReplayBlocked(forBuild:)`.
     private let appBuild: String
+    /// Media-check poll budget for the attachment replay, injectable so tests need no real waits.
+    private let mediaCheckMaxAttempts: Int
+    private let mediaCheckRetryInterval: Duration
     private let backgroundTasks: BackgroundTaskProvider
 
     private var states: [UUID: DocSaveState] = [:]
@@ -162,6 +168,14 @@ final class DocumentSaveCoordinator {
     /// a migrated row vanish from a live Home the moment `removePendingCreate` runs, rather
     /// than at the next successful fetch.
     private(set) var pendingCreatesVersion = 0
+    /// Queued photos, mirrored from the store so the hot predicates never decode UserDefaults.
+    private var pendingAttachments: [UUID: PendingAttachment] = [:]
+    /// Bumped on every mutation, so an `@Observable` consumer (the image leaf's pending/failed
+    /// state) re-reads. Same role `pendingCreatesVersion` plays for local documents.
+    private(set) var pendingAttachmentsVersion = 0
+    /// Per-document callbacks that rewrite an *open editor's* in-memory copy in the same turn the
+    /// draft is rewritten. See `commitResolvedAttachment` for why that turn must not be split.
+    private var attachmentRewriteObservers: [UUID: @MainActor (String, String) -> Void] = [:]
     /// Fired after a locally-created document has been re-keyed onto its server id.
     ///
     /// The list that was showing it needs to *refetch*, not merely re-derive: the local row is
@@ -319,10 +333,13 @@ final class DocumentSaveCoordinator {
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         createStore: PendingDocumentCreateStore = PendingDocumentCreateStore(),
         deleteStore: PendingDocumentDeleteStore = PendingDocumentDeleteStore(),
+        attachmentStore: PendingAttachmentStore = PendingAttachmentStore(),
         listCache: DocumentCacheStore = DocumentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         serverOrigin: String = "",
         appBuild: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
+        mediaCheckMaxAttempts: Int = 5,
+        mediaCheckRetryInterval: Duration = .seconds(1),
         backgroundTasks: BackgroundTaskProvider = .uiApplication
     ) {
         self.client = client
@@ -330,10 +347,13 @@ final class DocumentSaveCoordinator {
         self.contentCache = contentCache
         self.createStore = createStore
         self.deleteStore = deleteStore
+        self.attachmentStore = attachmentStore
         self.listCache = listCache
         self.childrenCache = childrenCache
         self.serverOrigin = serverOrigin
         self.appBuild = appBuild
+        self.mediaCheckMaxAttempts = mediaCheckMaxAttempts
+        self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.backgroundTasks = backgroundTasks
         createStoreUnreadable = createStore.holdsUnreadableData
         deleteStoreUnreadable = deleteStore.holdsUnreadableData
@@ -380,6 +400,11 @@ final class DocumentSaveCoordinator {
         // the pending-delete predicate rather than by a save state.
         for pendingDelete in deleteStore.allDeletes() {
             pendingDeletes[pendingDelete.documentID] = pendingDelete
+        }
+        // Same reasoning for queued photos: the save hold is content-keyed and works without
+        // this, but every affordance that explains *why* a document is held reads the mirror.
+        for attachment in attachmentStore.allAttachments() {
+            pendingAttachments[attachment.localID] = attachment
         }
         // **Rehydrate the holds before anything can enqueue.** The coordinator is built once,
         // at app start, before any editor exists — so a conflict persisted by a previous
@@ -880,6 +905,8 @@ final class DocumentSaveCoordinator {
             // Reversed, so a document is only ever cleaned up after everything filed inside it.
             states[documentID] = .idle
             draftStore.remove(documentID: documentID)
+            // The draft that referenced them is going, so nothing would ever collect these.
+            discardPendingAttachments(documentID: documentID)
             queued[documentID] = nil
             settledSaves[documentID] = nil
             lastConfirmedPushMarkdown[documentID] = nil
@@ -937,6 +964,105 @@ final class DocumentSaveCoordinator {
         pendingCreatesVersion += 1
     }
 
+    // MARK: - Queued photos
+
+    /// Store a picked photo and mint the placeholder its block will carry, or nil if the bytes
+    /// could not be written — in which case nothing was queued and the caller must not insert a
+    /// block, since a placeholder naming no bytes can never resolve.
+    ///
+    /// **Bytes before the record**, so a crash between the two leaves an orphaned file (inert,
+    /// collected by the pass) rather than a record whose photo does not exist. Kicks the funnel
+    /// because a photo queued while the network is *up* — an upload that failed transiently —
+    /// has no reconnect edge coming to start it.
+    func queuePendingAttachment(documentID: UUID, ownerUserID: UUID, jpegData: Data) -> String? {
+        guard !attachmentStore.holdsUnreadableData else { return nil }
+        let localID = UUID()
+        guard attachmentStore.saveData(jpegData, for: localID) else { return nil }
+        updatePendingAttachment(
+            PendingAttachment(
+                localID: localID, documentID: documentID, createdAt: Date(),
+                serverOrigin: serverOrigin, ownerUserID: ownerUserID))
+        Task { await syncPendingDrafts() }
+        return pendingAttachmentPlaceholderURL(for: localID)
+    }
+
+    func pendingAttachment(localID: UUID) -> PendingAttachment? {
+        pendingAttachments[localID]
+    }
+
+    func pendingAttachmentData(localID: UUID) -> Data? {
+        attachmentStore.data(for: localID)
+    }
+
+    /// Clear a terminal failure so the next pass tries the upload again — the user's answer to
+    /// the failed state, alongside removing the image.
+    func retryPendingAttachment(localID: UUID) {
+        guard var record = pendingAttachments[localID], record.failedAt != nil else { return }
+        record.failedAt = nil
+        updatePendingAttachment(record)
+        Task { await syncPendingDrafts() }
+    }
+
+    /// Drop a queued photo and its bytes — the user removed the image, or the insert that would
+    /// have referenced it failed.
+    func discardPendingAttachment(localID: UUID) {
+        guard pendingAttachments[localID] != nil else { return }
+        removePendingAttachment(localID: localID)
+    }
+
+    /// Drop every queued photo for a document, bytes included. Used where the body that named
+    /// them is being thrown away, so nothing would ever collect them.
+    func discardPendingAttachments(documentID: UUID) {
+        let localIDs = pendingAttachments.values.filter { $0.documentID == documentID }.map(\.localID)
+        guard !localIDs.isEmpty else { return }
+        attachmentStore.remove(localIDs: localIDs)
+        for localID in localIDs { pendingAttachments[localID] = nil }
+        pendingAttachmentsVersion += 1
+    }
+
+    /// Whether any queued photo names this document — what the funnel kick and the editor's
+    /// affordances key off.
+    func hasPendingAttachments(documentID: UUID) -> Bool {
+        pendingAttachments.values.contains { $0.documentID == documentID }
+    }
+
+    private func updatePendingAttachment(_ record: PendingAttachment) {
+        attachmentStore.save(record)
+        pendingAttachments[record.localID] = record
+        pendingAttachmentsVersion += 1
+    }
+
+    private func removePendingAttachment(localID: UUID) {
+        attachmentStore.remove(localID: localID)
+        pendingAttachments[localID] = nil
+        pendingAttachmentsVersion += 1
+    }
+
+    /// May this record be uploaded or collected in this session? Same shape as
+    /// `belongsToSession` for creates, and fails closed on an unknown owner for the same reason:
+    /// origin identifies the *server*, not the account, and records survive sign-out.
+    ///
+    /// A record failing this is **kept, silent, and untouched** — not uploaded, and crucially not
+    /// collected. Dormant means no requests *and* no deletion; collecting another account's
+    /// record would delete the only copy of their photo.
+    private func isAttachmentReplayable(_ record: PendingAttachment, currentUserID: UUID?) -> Bool {
+        guard record.serverOrigin == serverOrigin, let owner = record.ownerUserID else { return false }
+        return owner == currentUserID
+    }
+
+    /// Whether anything this device holds still names this photo — the draft, a parked save, or
+    /// a save on the wire. What decides whether collecting the record would strand a placeholder.
+    private func referencesPendingAttachment(_ record: PendingAttachment) -> Bool {
+        let bodies = [
+            draftStore.draft(for: record.documentID)?.markdown,
+            queued[record.documentID]?.markdown,
+            inFlightContent[record.documentID]?.markdown,
+        ]
+        return bodies.compactMap { $0 }.contains {
+            markdownReferencesPendingAttachment($0, localID: record.localID)
+        }
+    }
+
     // MARK: - The open-editor registry
 
     /// Called while an editor for this document is on screen. Balanced by
@@ -962,14 +1088,25 @@ final class DocumentSaveCoordinator {
             // would wait for an unrelated foreground or reconnect while its row sat struck
             // through — and on iPad, where the editor is a persistent detail column, closing
             // it is the designed completion path.
+            // A queued photo joins the same list: its collection is deferred while an editor is
+            // open, and a photo queued while the network was up has no reconnect edge coming.
             if isPendingCreate(documentID: documentID) || checkpointedRecord(forServerID: documentID) != nil
-                || isPendingDelete(documentID: documentID)
+                || isPendingDelete(documentID: documentID) || hasPendingAttachments(documentID: documentID)
             {
                 Task { await syncPendingDrafts() }
             }
         } else {
             openEditors[documentID] = held - 1
         }
+    }
+
+    /// Registered by an editor while it is on screen, so a replay can rewrite its in-memory
+    /// blocks in the same turn it rewrites the draft. Pass nil to clear.
+    func setPendingAttachmentRewriteObserver(
+        _ observer: (@MainActor (_ placeholderURL: String, _ resolvedURL: String) -> Void)?,
+        for documentID: UUID
+    ) {
+        attachmentRewriteObservers[documentID] = observer
     }
 
     private func hasOpenEditor(documentID: UUID) -> Bool {
@@ -1715,6 +1852,21 @@ final class DocumentSaveCoordinator {
             child.parentID = serverID
             updatePendingCreate(child)
         }
+        // Queued photos are re-keyed here for the same reason and with the same ordering: the
+        // create record's presence is what makes `runAttachmentPass` skip them, so while it
+        // exists every record naming this document is held whether or not it has been re-keyed
+        // yet, and a kill mid-loop simply redoes an idempotent rewrite. Dropping the record first
+        // would leave a photo naming a dead local id — a `documents/{local-uuid}/…` upload that
+        // 404s — and worse, the collection branch reads the *localID* draft, which the migration
+        // removed above, so it would read the record as unreferenced and delete the only copy of
+        // the photo.
+        //
+        // The placeholder names the *attachment's* id, not the document's, so no markdown needs
+        // rewriting here: the hold follows the content across the re-key by itself.
+        for var attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
+            attachment.documentID = serverID
+            updatePendingAttachment(attachment)
+        }
 
         removePendingCreate(documentID: localID)
         // **Fire on every exit from here, and only at exit.** `defer` rather than a call site,
@@ -2176,8 +2328,24 @@ final class DocumentSaveCoordinator {
         // deleted. Holding here is what makes `handleDidQueueDelete`'s "nothing can enqueue
         // for a tombstoned id" true rather than merely usually-true. The draft is still
         // written, so the work is on disk either way, and the undo releases the hold.
+        //
+        // And a fifth: the body still names a photo that has not been uploaded, as the
+        // `schrift-attachment://` placeholder its block carries. Pushing that would write a URL
+        // no client can resolve into the document every collaborator reads — the web editor
+        // included — and the backend's `extract_attachments()` would record it verbatim. The
+        // photo's bytes are already on disk beside the draft, so this is the same bargain as
+        // every other hold: the work is safe locally, and the attachment replay pass will upload,
+        // rewrite the placeholder to the real media URL, and re-enqueue.
+        //
+        // **Keyed on the content, never on the attachment store.** A save is asked about the
+        // markdown it is about to push, so a store that cannot be decoded stalls the replay
+        // instead of leaking a placeholder — and every other gate that can reach `start`
+        // (`releaseHeldSave`, `finish`'s queued restart) asks the same question of the save it
+        // is about to start, which is what makes a document holding *two* queued photos release
+        // only once the last one has landed.
+        let namesPendingAttachment = markdownReferencesPendingAttachment(save.markdown)
         if isPendingCreate(documentID: documentID) || isPendingDelete(documentID: documentID)
-            || conflicts[documentID] != nil || inFlight[documentID] != nil
+            || conflicts[documentID] != nil || inFlight[documentID] != nil || namesPendingAttachment
         {
             queued[documentID] = save
             // **A held save is not a saved save.** Nothing else moves the state on this
@@ -2200,8 +2368,16 @@ final class DocumentSaveCoordinator {
             // set it here too rather than relying on that — `finish` can reset a state to
             // `.idle`, and this must not be the one path that leaves a held save reading
             // as saved.
+            //
+            // A pending attachment likewise — but only when nothing is actually on the wire.
+            // This is the first hold that can co-occur with an in-flight save (a pending create
+            // never has one, and the conflict invariant forbids it), and stamping
+            // unconditionally would report "Saved on this device" while a save really was
+            // being sent. `finish` re-parks this slot and stamps it then, which is when the
+            // claim becomes true.
             if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil
                 || isPendingDelete(documentID: documentID)
+                || (inFlight[documentID] == nil && namesPendingAttachment)
             {
                 states[documentID] = .pendingSync
             }
@@ -2271,6 +2447,11 @@ final class DocumentSaveCoordinator {
             // 404 to the second, which is indistinguishable from a co-author's delete.
             await runDeletePass()
             await runCreatePass()
+            // Between the two: a queued photo's upload is what *releases* the attachment hold,
+            // so running it here lets the same pass upload, rewrite, and push. It also has to
+            // run after the create pass, because a photo in a locally-created document cannot
+            // be uploaded until that document has a server id.
+            await runAttachmentPass()
             await runSyncPass(isLaunchRecovery: launchPass)
         } while needsAnotherSyncPass
     }
@@ -2542,6 +2723,156 @@ final class DocumentSaveCoordinator {
         pendingDeletesVersion += 1
     }
 
+    /// Upload the photos queued on this device, rewrite each placeholder to the media URL its
+    /// upload resolved to, and let the ordinary save machinery push the now-clean body.
+    ///
+    /// Shares the funnel's coalescing rather than taking triggers of its own — two overlapping
+    /// reconnects must never upload the same record twice, and the endpoint has no idempotency
+    /// key to make that harmless.
+    private func runAttachmentPass() async {
+        let records = attachmentStore.allAttachments()
+        // Cheap pre-gate before any request at all, mirroring the create pass: a device with
+        // nothing sendable must not cost a `/users/me/` round trip.
+        guard records.contains(where: { $0.serverOrigin == serverOrigin && $0.ownerUserID != nil })
+        else { return }
+        // With the *drafts* unreadable every reference check answers "no document names this
+        // photo", and the collection branch would delete every queued photo's bytes.
+        guard !draftStore.holdsUnreadableData else { return }
+        // With the *records* unreadable `allAttachments` already answered empty — but a
+        // placeholder in a document still needs its record, so refuse rather than let a later
+        // write rebuild the store behind it.
+        guard !attachmentStore.holdsUnreadableData else { return }
+        guard let currentUserID = try? await client.currentUser().id else { return }
+
+        for snapshot in records {
+            // Re-read after every await: the user can delete the document or discard the photo
+            // while an upload is in flight, and acting on a stale copy would resurrect it.
+            guard let record = pendingAttachments[snapshot.localID] else { continue }
+            guard isAttachmentReplayable(record, currentUserID: currentUserID) else { continue }
+
+            // **Collection runs before the failure skip**, or a terminally-failed record whose
+            // document was deleted would never be cleaned up. Deferred while an editor is open:
+            // that screen may be about to flush a body that still names the photo.
+            if !referencesPendingAttachment(record) {
+                if !hasOpenEditor(documentID: record.documentID) {
+                    removePendingAttachment(localID: record.localID)
+                }
+                continue
+            }
+            // Terminal: the server rejected this upload on its merits. The hold stands and the
+            // image leaf carries Retry/Remove — this one is the user's to answer.
+            if record.failedAt != nil { continue }
+            // A photo in a document the server has never seen: the upload would POST to
+            // `documents/<local-uuid>/attachment-upload/` and 404. The create replay above sends
+            // the document first; this record waits for the pass after it.
+            if isPendingCreate(documentID: record.documentID) { continue }
+
+            await replayAttachment(record)
+        }
+    }
+
+    /// Two-phase: upload, **checkpoint the resolved URL onto the record**, then rewrite. A death
+    /// between the two resumes at the rewrite rather than uploading a second copy — the same
+    /// argument `syncedServerID` makes for creates, and for the same reason (no idempotency key).
+    private func replayAttachment(_ record: PendingAttachment) async {
+        var resolvedURL = record.uploadedURLString
+        if resolvedURL == nil {
+            guard let bytes = attachmentStore.data(for: record.localID) else {
+                // The photo is gone, so nothing can ever resolve this placeholder. Terminal, so
+                // the leaf offers Remove rather than the pass retrying forever.
+                markAttachmentFailed(localID: record.localID)
+                return
+            }
+            do {
+                let mediaCheckPath = try await client.uploadAttachment(
+                    documentID: record.documentID, fileName: "photo.jpg",
+                    contentType: "image/jpeg", data: bytes)
+                resolvedURL = await client.readyMediaURLString(
+                    fromMediaCheckPath: mediaCheckPath,
+                    maxAttempts: mediaCheckMaxAttempts,
+                    retryInterval: mediaCheckRetryInterval)
+            } catch let error as DocsAPIError {
+                // Transient — including `.sessionExpired`, where the re-login sheet is already up
+                // and the next pass carries it. Leave the record for that pass.
+                if retryableSaveFailure(error) || error == .sessionExpired { return }
+                markAttachmentFailed(localID: record.localID)
+                return
+            } catch {
+                return
+            }
+            guard let resolved = resolvedURL else {
+                markAttachmentFailed(localID: record.localID)
+                return
+            }
+            // The checkpoint, before anything is rewritten. Guarded on the record still being
+            // present, so a discard during the upload is not undone.
+            guard var checkpointed = pendingAttachments[record.localID] else { return }
+            checkpointed.uploadedURLString = resolved
+            updatePendingAttachment(checkpointed)
+        }
+        guard let resolved = resolvedURL, pendingAttachments[record.localID] != nil else { return }
+        commitResolvedAttachment(record.localID, documentID: record.documentID, resolvedURL: resolved)
+    }
+
+    /// Everything after the upload, in **one synchronous main-actor turn with no awaits**.
+    ///
+    /// That is the whole safety argument. An editor open on this document can flush at any
+    /// suspension point, and its in-memory blocks still name the placeholder — so a rewrite split
+    /// across an await could have the draft rewritten and the record removed, and then a flush
+    /// re-enqueue the placeholder with no record left to resolve it: a permanent hold whose only
+    /// escape is deleting the image. Within one turn that interleaving cannot happen.
+    private func commitResolvedAttachment(_ localID: UUID, documentID: UUID, resolvedURL: String) {
+        if let draft = draftStore.draft(for: documentID) {
+            let rewritten = markdownRewritingPendingAttachment(
+                draft.markdown, localID: localID, resolvedURL: resolvedURL)
+            if rewritten != draft.markdown {
+                // Rewritten **in place**: `enqueue` must stay the only creator of a draft, and
+                // every other field — the baseline, the last-pushed stamp, the conflict record,
+                // the client timestamp — is reconciliation evidence this pass has no business
+                // restating.
+                draftStore.save(
+                    PendingDraft(
+                        documentID: documentID, title: draft.title, markdown: rewritten,
+                        updatedAt: draft.updatedAt, baseline: draft.baseline,
+                        lastPushedMarkdown: draft.lastPushedMarkdown,
+                        conflictServerUpdatedAt: draft.conflictServerUpdatedAt))
+            }
+        }
+        // The parked save, if any. Rebuilt **classic**: a live snapshot's CRDT bytes still encode
+        // the placeholder and `start` prefers them over the markdown, so carrying them forward
+        // would push exactly what the hold exists to prevent.
+        if let held = queued[documentID] {
+            let rewritten = markdownRewritingPendingAttachment(
+                held.markdown, localID: localID, resolvedURL: resolvedURL)
+            if rewritten != held.markdown {
+                queued[documentID] = PendingSave(title: held.title, markdown: rewritten)
+            }
+        }
+        // The open editor's own copy, so its next flush cannot reintroduce what was just cleared.
+        attachmentRewriteObservers[documentID]?(pendingAttachmentPlaceholderURL(for: localID), resolvedURL)
+
+        removePendingAttachment(localID: localID)
+
+        // Hand the clean body back to the ordinary machinery. Re-`enqueue` rather than
+        // `releaseHeldSave`, for two reasons: `enqueue` re-derives every hold from the content it
+        // is given, so a second queued photo, a conflict, or a pending create still parks it
+        // correctly; and a document with no parked save at all — a draft left by a previous
+        // process — gets pushed rather than waiting for a keystroke that may never come.
+        guard let draft = draftStore.draft(for: documentID),
+            !markdownReferencesPendingAttachment(draft.markdown)
+        else { return }
+        enqueue(
+            documentID: documentID,
+            save: PendingSave(title: queued[documentID]?.title ?? draft.title, markdown: draft.markdown),
+            baseline: draft.baseline)
+    }
+
+    private func markAttachmentFailed(localID: UUID) {
+        guard var record = pendingAttachments[localID], record.failedAt == nil else { return }
+        record.failedAt = Date()
+        updatePendingAttachment(record)
+    }
+
     private func runSyncPass(isLaunchRecovery: Bool) async {
         for draft in draftStore.allDrafts() {
             // A document the server has never seen cannot be reconciled against it: the GET
@@ -2557,6 +2888,16 @@ final class DocumentSaveCoordinator {
             // the fetch is what keeps the pass quiet, and the restatement at each deleting line
             // is what keeps the draft safe if this guard is ever moved.
             guard !isPendingDelete(documentID: draft.documentID) else { continue }
+            // A draft still naming an un-uploaded photo cannot be reconciled either, and this
+            // skip is **load-bearing rather than an economy**. The `.push` branch below would
+            // re-enter `enqueue` and be held there, true — but the decision has two other
+            // outcomes, and one of them deletes. A placeholder draft that carries no baseline
+            // (a legacy chain, or a relaunch that reset the in-memory state to `.idle`) reaches
+            // rule 3, and once the server's `updated_at` is past the 120s tolerance that answers
+            // `.discardServerWins`, whose launch-pass branch removes the draft — taking the
+            // queued photo and every text edit beside it. the attachment replay is what unblocks
+            // this document; until then its body is not this pass's to judge.
+            guard !markdownReferencesPendingAttachment(draft.markdown) else { continue }
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             // A save that FAILED this session is a retry candidate the user may still
             // be looking at (its draft is their only copy), owned by the reading
@@ -2786,24 +3127,31 @@ final class DocumentSaveCoordinator {
         // land on `.failed`, which `runSyncPass` skips: the document wedged out of the replay
         // meant to create it. The save stays parked; the create replay is what sends it.
         //
-        // Ordering matters: this returns **before** `removeValue`, so the held save is kept,
-        // not silently dropped.
+        // Ordering matters: every guard here returns **before** the slot is cleared, so a held
+        // save that may not start yet is kept, not silently dropped.
         guard !isPendingCreate(documentID: documentID) else { return }
         // **And the same for a queued deletion.** The editor clears conflicts from five
         // places, so a conflict resolved while a deletion is queued would otherwise reach
         // `start` here and PATCH a document on its way out — breaking the hold `enqueue` just
-        // established. Same ordering rule as above: return *before* `removeValue`, so the held
-        // save is kept for the undo rather than silently dropped.
+        // established. Same ordering rule as above: return *before* the slot is cleared, so the
+        // held save is kept for the undo rather than silently dropped.
         guard !isPendingDelete(documentID: documentID) else { return }
-        // **And never over an unanswered conflict.** This was safe to omit while
-        // `clearResolvedConflict` — which nils the conflict on the line before — was the only
-        // caller; `cancelPendingDelete` is a caller that does not. Without it, undoing a
-        // deletion of a document that also has a conflict recorded full-overwrites the
-        // co-author's body with the pill still standing. Both sibling paths to `start`
-        // (`enqueue`'s hold and `finish`'s queued restart) already check this; this one was
-        // the odd one out, and only because its single caller hid it.
+        // **And never over an unanswered conflict.** For as long as `clearResolvedConflict` was
+        // the only caller this was redundant — it nils the record immediately above the call —
+        // and both other paths to `start` (`enqueue`'s hold and `finish`'s queued restart)
+        // already checked it. Two later callers made it load-bearing: `cancelPendingDelete`
+        // does not clear the conflict, so undoing a deletion of a document that also has one
+        // recorded would full-overwrite the co-author with the pill still standing; and a
+        // document can pick up a conflict while a photo sits queued offline, where releasing
+        // would push the diverged body from a background pass with no screen open.
         guard conflicts[documentID] == nil else { return }
-        guard inFlight[documentID] == nil, let held = queued.removeValue(forKey: documentID) else { return }
+        guard inFlight[documentID] == nil, let held = queued[documentID] else { return }
+        // The held body may still name *another* queued photo: a document with two pending
+        // uploads is released by the second one to land, not the first. Asking the content
+        // rather than tracking which record just finished is what makes that automatic.
+        guard !markdownReferencesPendingAttachment(held.markdown) else { return }
+        queued[documentID] = nil
+
         start(documentID: documentID, save: held)
     }
 
@@ -2909,6 +3257,9 @@ final class DocumentSaveCoordinator {
         // parking, and this is the one resolution where that work must be thrown away, not sent.
         queued[documentID] = nil
         draftStore.remove(documentID: documentID)
+        // Both bodies that could have named a queued photo are now gone, so nothing would ever
+        // collect its record — and the server body the user chose does not reference it either.
+        discardPendingAttachments(documentID: documentID)
         clearResolvedConflict(documentID: documentID)
         // The conflict is almost always reached from a `.failed`/`.pendingSync` draft, and
         // discarding it leaves nothing to save — so the state must not keep claiming one.
@@ -2933,6 +3284,9 @@ final class DocumentSaveCoordinator {
     /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
         queued[documentID] = nil
+        // The draft that named them is about to go, so nothing would ever collect these — and an
+        // uncollected record keeps a photo's bytes alive for a document that no longer exists.
+        discardPendingAttachments(documentID: documentID)
         clearResolvedConflict(documentID: documentID)  // the document is gone — the conflict is moot
         lastConfirmedPushMarkdown[documentID] = nil
         knownServerTitles[documentID] = nil
@@ -3227,8 +3581,17 @@ final class DocumentSaveCoordinator {
             // fourth place the invariant is enforced, counting `runSyncPass`), and the only
             // one where it would otherwise be asserted asymmetrically. The id migration is
             // exactly the change that could make it reachable.
+            //
+            // The pending-attachment half, by contrast, is reachable the day photos can be
+            // queued: a photo whose upload fails transiently *while an ordinary autosave is in
+            // flight* is parked here by `enqueue`'s third disjunct — correctly left reading
+            // `.saving`, since a save really is on the wire — and this is the line that would
+            // start it the moment the autosave settles. Re-parking below is what finally
+            // stamps it `.pendingSync`.
             guard conflicts[documentID] == nil, !isPendingCreate(documentID: documentID),
-                !isPendingDelete(documentID: documentID)
+                !isPendingDelete(documentID: documentID),
+                !markdownReferencesPendingAttachment(next.markdown)
+
             else {
                 queued[documentID] = next
                 states[documentID] = .pendingSync

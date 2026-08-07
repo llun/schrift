@@ -14,6 +14,17 @@ enum BlockKind: Equatable, Sendable {
     /// `extract_attachments()` matches the embedded url byte-for-byte, so it must
     /// survive the round trip untouched. `text` stays empty.
     case image(alt: String, url: String)
+    /// An uploaded file attachment (PDF, docx, …) the document links to.
+    ///
+    /// Like `.image`, `name` and `url` are raw `String`s and are never
+    /// re-normalized through `URL`: the backend's `extract_attachments()`
+    /// matches the embedded url byte-for-byte, and the encoder writes exactly
+    /// what is held here. `text` stays empty; this is a leaf.
+    ///
+    /// A block only becomes one when `parseEditorBlocks` is given the server
+    /// origin — see `parseAttachmentLink`. Parsed without one, the identical
+    /// markdown stays a `.paragraph`, and both forms serialize to the same line.
+    case attachment(name: String, url: String)
     /// Markdown the editor doesn't model (tables, nested lists, HTML, relative or
     /// ambiguous images…). The text is preserved verbatim — including newlines —
     /// so a full-overwrite save never destroys content authored elsewhere.
@@ -42,11 +53,11 @@ func blocksContentEqual(_ lhs: [EditorBlock], _ rhs: [EditorBlock]) -> Bool {
 ///
 /// This must agree with `InlineMarkdown`, which declines to parse a code
 /// block's or an `.unknown` block's text: styling those would show formatting
-/// the full-overwrite save would never write. `.divider` and `.image` are leaves
-/// with no text at all.
+/// the full-overwrite save would never write. `.divider`, `.image` and
+/// `.attachment` are leaves with no text at all.
 func rendersInlineMarkdown(_ kind: BlockKind) -> Bool {
     switch kind {
-    case .codeBlock, .unknown, .divider, .image:
+    case .codeBlock, .unknown, .divider, .image, .attachment:
         return false
     case .paragraph, .heading, .bulletItem, .numberedItem, .checklistItem, .quote:
         return true

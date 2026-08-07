@@ -586,7 +586,7 @@ struct EditorView: View {
             // honour. `.none` renders nothing, so a clean session shows no strip.
             saveStatusRow
 
-            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin)
+            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline)
                 .safeAreaInset(edge: .bottom) {
                     // A container so the glass surfaces stacked here (the bar,
                     // and the slash menu when it is up) are rendered as one
@@ -595,7 +595,12 @@ struct EditorView: View {
                     GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
                         VStack(spacing: DocsSpacing.spaceXS) {
                             if viewModel.isUploadingPhoto {
-                                uploadingPhotoBanner
+                                uploadingBanner(
+                                    loc[.editor_uploading_photo], a11y: loc[.editor_uploading_photo_a11y])
+                            }
+                            if viewModel.isUploadingAttachment {
+                                uploadingBanner(
+                                    loc[.editor_uploading_file], a11y: loc[.editor_uploading_file_a11y])
                             }
                             if let query = viewModel.slashQueryText {
                                 SlashMenuView(
@@ -614,6 +619,19 @@ struct EditorView: View {
         // no project.yml change are needed. Do NOT add `photoLibrary: .shared()` —
         // that makes it in-process and would require NSPhotoLibraryUsageDescription.
         .photosPicker(isPresented: $viewModel.isPhotoPickerPresented, selection: $selectedPhotoItem, matching: .images)
+        // The system document picker, also out of process: no usage description
+        // and no project.yml change. `.item` because the server decides what it
+        // will accept — the app has no business second-guessing which types a
+        // deployment allows.
+        .fileImporter(
+            isPresented: $viewModel.isAttachmentImporterPresented,
+            allowedContentTypes: [.item]
+        ) { result in
+            // A cancelled pick is `.failure(CocoaError.userCancelled)`; either
+            // way there is nothing to insert and nothing to report.
+            guard case .success(let url) = result else { return }
+            Task { await viewModel.insertAttachment(loadingFile: { try loadPickedAttachmentFile(at: url) }) }
+        }
         .onChange(of: selectedPhotoItem) { _, newItem in
             guard let newItem else { return }
             // Clear immediately so re-picking the same asset fires onChange again.
@@ -665,10 +683,10 @@ struct EditorView: View {
         }
     }
 
-    private var uploadingPhotoBanner: some View {
+    private func uploadingBanner(_ message: String, a11y: String) -> some View {
         HStack(spacing: DocsSpacing.spaceXS) {
             ProgressView()
-            Text(loc[.editor_uploading_photo])
+            Text(message)
                 .font(DocsFont.footnote)
                 .foregroundStyle(DocsColor.textSecondary)
         }
@@ -680,7 +698,7 @@ struct EditorView: View {
         // material seam on the one surface stack the app renders as glass.
         .glassEffect(.regular, in: Capsule())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(loc[.editor_uploading_photo_a11y])
+        .accessibilityLabel(a11y)
     }
 
     // MARK: - Reading
@@ -704,7 +722,8 @@ struct EditorView: View {
                         ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
                             MarkdownBlockView(
                                 block: block, serverOrigin: serverOrigin,
-                                numberedIndex: numberedIndex(of: index, in: viewModel.blocks)
+                                numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                isOffline: isOffline
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -1067,7 +1086,8 @@ struct EditorView: View {
             client: client,
             documentID: UUID(),
             title: "Q3 Planning",
-            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop)
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop),
+            serverOrigin: "https://docs.llun.dev"
         ),
         reach: .restricted,
         serverHost: "docs.llun.dev",
@@ -1075,4 +1095,5 @@ struct EditorView: View {
     )
     .environment(LocalizationStore())
     .environment(DocumentCollaborationManager.inert())
+    .environment(AttachmentLoader.inert())
 }

@@ -244,6 +244,16 @@ enum Strings_zhHant {
         .editor_image_loading_named_a11y: "正在載入圖片：%@",
         .editor_image_external: "外部圖片 · 點一下載入",
         .editor_image_external_a11y: "來自 %@ 的外部圖片。點一下載入。",
+        .editor_attachment_downloading: "正在下載…",
+        .editor_attachment_failed_retry: "下載失敗 · 點一下重試",
+        .editor_attachment_offline: "連網後可用",
+        .editor_attachment_a11y: "附件：%@。%@",
+        .editor_attachment_not_previewable: "無法在此預覽",
+        .editor_error_add_file: "無法加入檔案。請重試。",
+        .editor_error_file_too_large: "該檔案過大。",
+        .editor_slash_file: "檔案",
+        .editor_uploading_file: "正在上傳檔案…",
+        .editor_uploading_file_a11y: "正在上傳檔案",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "在結尾新增段落",

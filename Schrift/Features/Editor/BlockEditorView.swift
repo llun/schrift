@@ -4,9 +4,14 @@ import SwiftUI
 /// Notion-style keyboard behavior (Return splits, backspace at start merges).
 struct BlockEditorView: View {
     @Bindable var viewModel: EditorViewModel
-    /// Threaded solely to reach the image leaf's off-origin load gate
-    /// (`imageLoadPolicy`); every other row kind ignores it.
+    /// Threaded to reach the image leaf's off-origin load gate
+    /// (`imageLoadPolicy`) and the attachment leaf's card; every other row kind
+    /// ignores it.
     let serverOrigin: String
+    /// Chrome for the attachment leaf: editing offline must say "Available when
+    /// online" over an uncached attachment rather than spin on a request that
+    /// cannot succeed. Every other row kind ignores it.
+    var isOffline: Bool = false
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -27,7 +32,8 @@ struct BlockEditorView: View {
 
                     ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
                         BlockEditorRow(
-                            viewModel: viewModel, block: block, index: index, serverOrigin: serverOrigin
+                            viewModel: viewModel, block: block, index: index, serverOrigin: serverOrigin,
+                            isOffline: isOffline
                         )
                         .id(block.id)
                     }
@@ -62,6 +68,7 @@ private struct BlockEditorRow: View {
     let block: EditorBlock
     let index: Int
     let serverOrigin: String
+    let isOffline: Bool
 
     @Environment(LocalizationStore.self) private var loc
     /// Passed into `blockTextStyling` rather than left to the ambient trait
@@ -89,6 +96,12 @@ private struct BlockEditorRow: View {
             // view. Backspace at the start of the following block deletes it as
             // a unit (see EditorViewModel.mergeBlockWithPrevious).
             imageLeaf(alt: alt, url: url)
+        } else if case .attachment(let name, let url) = block.kind {
+            // Same leaf contract as an image: no text view, deletes as a unit,
+            // never converted, never receives inline markers. The card is the
+            // same one the reading surface draws, so an attachment looks and
+            // behaves identically in both modes.
+            attachmentLeaf(name: name, url: url)
         } else {
             // Every editable kind shares one structural shape (adornment slot
             // + text view with value-varying modifiers): converting the
@@ -173,8 +186,23 @@ private struct BlockEditorRow: View {
         }
     }
 
-    @ViewBuilder
-    private func imageLeaf(alt: String, url: String) -> some View {
+    @ViewBuilder private func attachmentLeaf(name: String, url: String) -> some View {
+        if let display = parseAttachmentLink("[\(name)](\(url))", serverOrigin: serverOrigin) {
+            AttachmentCardView(display: display, isOffline: isOffline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        } else {
+            // A url that no longer belongs to this server (a document opened
+            // after switching servers) falls back to link text rather than a
+            // card that could never load — the same rendering the reading
+            // surface uses, so the two agree.
+            Text(markdownInlineText("[\(name)](\(url))"))
+                .font(DocsFont.body)
+                .foregroundStyle(DocsColor.textPrimary)
+        }
+    }
+
+    @ViewBuilder private func imageLeaf(alt: String, url: String) -> some View {
         if let imageURL = URL(string: url) {
             MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
                 .frame(maxWidth: .infinity, alignment: .leading)

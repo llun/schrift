@@ -246,6 +246,16 @@ enum Strings_th {
         .editor_image_loading_named_a11y: "กำลังโหลดรูปภาพ: %@",
         .editor_image_external: "รูปภาพภายนอก · แตะเพื่อโหลด",
         .editor_image_external_a11y: "รูปภาพภายนอกจาก %@ แตะเพื่อโหลด",
+        .editor_attachment_downloading: "กำลังดาวน์โหลด…",
+        .editor_attachment_failed_retry: "ดาวน์โหลดไม่สำเร็จ · แตะเพื่อลองใหม่",
+        .editor_attachment_offline: "ใช้ได้เมื่อออนไลน์",
+        .editor_attachment_a11y: "ไฟล์แนบ: %@ %@",
+        .editor_attachment_not_previewable: "ไม่สามารถแสดงตัวอย่างที่นี่ได้",
+        .editor_error_add_file: "เพิ่มไฟล์ไม่สำเร็จ โปรดลองใหม่",
+        .editor_error_file_too_large: "ไฟล์นี้มีขนาดใหญ่เกินไป",
+        .editor_slash_file: "ไฟล์",
+        .editor_uploading_file: "กำลังอัปโหลดไฟล์…",
+        .editor_uploading_file_a11y: "กำลังอัปโหลดไฟล์",
 
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "เพิ่มย่อหน้าที่ท้ายสุด",

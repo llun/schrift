@@ -101,4 +101,56 @@ extension DocsAPIClient {
         guard isSameOriginPath(path) else { throw DocsAPIError.network("Invalid media-check path") }
         return try await get(path)
     }
+
+    /// Downloads an attachment's bytes from a rooted `/media/…` path, resolving
+    /// against the host root exactly as `checkMedia` does.
+    ///
+    /// The path derives from a url embedded in document content — authored by a
+    /// co-author, a web client or a live peer — so it carries the same guard for
+    /// the same reason: an unchecked `//evil.com/x` would resolve off-origin and
+    /// leak the reader's IP, User-Agent and reading time to a host they never
+    /// chose. `attachmentMediaPath(for:serverOrigin:)` already proves the origin
+    /// and rebuilds the path from validated parts; this re-checks because it is
+    /// the layer that actually issues the request.
+    ///
+    /// Cookies authenticate it via the shared storage, like every other request.
+    /// Known residual, shared with `MarkdownImageView`: `URLSession` follows
+    /// redirects, so a same-origin path the trusted server 302s off-origin still
+    /// leaks. A redirect-blocking session is the fix and is a separate change.
+    func mediaData(path: String) async throws -> Data {
+        guard isSameOriginPath(path) else { throw DocsAPIError.network("Invalid media path") }
+        return try await getRawData(path)
+    }
+
+    /// Polls a media-check path until the upload reads ready, then answers the **absolute**
+    /// media URL to embed — the form the web client persists and `extract_attachments()`
+    /// regex-matches.
+    ///
+    /// The fallback is the point of the whole function: when readiness can't be confirmed within
+    /// the budget, the URL is derived from the upload's own `?key=` rather than reporting
+    /// failure. The upload has already succeeded by then, and treating a slow scanner as a lost
+    /// photo would throw away bytes the server is holding. Only a media-check path with no
+    /// usable key — which no successful upload produces — answers nil.
+    ///
+    /// Shared by the editor's interactive insert and the offline replay pass so the two can
+    /// never disagree about when an upload counts as landed.
+    func readyMediaURLString(
+        fromMediaCheckPath path: String,
+        maxAttempts: Int,
+        retryInterval: Duration
+    ) async -> String? {
+        for attempt in 0..<maxAttempts {
+            if attempt > 0 { try? await Task.sleep(for: retryInterval) }
+            if let response = try? await checkMedia(path: path),
+                response.status == MediaCheckResponse.readyStatus, let file = response.file,
+                let absolute = absoluteServerURL(for: file)
+            {
+                return absolute.absoluteString
+            }
+        }
+        guard let key = attachmentKey(fromMediaCheckPath: path),
+            let absolute = absoluteServerURL(for: "/media/" + key)
+        else { return nil }
+        return absolute.absoluteString
+    }
 }

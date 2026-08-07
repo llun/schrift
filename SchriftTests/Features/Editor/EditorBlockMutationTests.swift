@@ -183,6 +183,56 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
     }
 
+    // MARK: - Attachment leaf semantics
+    //
+    // The `.image` twins below each have an attachment counterpart, because the
+    // leaf rules are per-case `switch` arms: omitting `.attachment` from any of
+    // them falls through to the text-block default and corrupts the block.
+
+    private var attachmentURL: String {
+        "https://docs.example.org/media/11111111-1111-4111-8111-111111111111/attachments/"
+            + "22222222-2222-4222-8222-222222222222.pdf"
+    }
+
+    func testBackspaceAfterAnAttachmentRemovesTheAttachmentBlock() {
+        let url = attachmentURL
+        let viewModel = makeViewModel(blocks: [
+            EditorBlock(kind: .attachment(name: "Q3 report.pdf", url: url)),
+            EditorBlock(kind: .paragraph, text: "after"),
+        ])
+
+        viewModel.mergeBlockWithPrevious(blockID: viewModel.blocks[1].id)
+
+        // Deleted as a unit — never merged into, which would leave an
+        // `.attachment` carrying text.
+        XCTAssertEqual(viewModel.blocks.count, 1)
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertEqual(viewModel.blocks[0].text, "after")
+    }
+
+    func testConvertBlockLeavesAttachmentBlocksUntouched() {
+        let url = attachmentURL
+        let attachment = EditorBlock(kind: .attachment(name: "Q3 report.pdf", url: url))
+        let viewModel = makeViewModel(blocks: [attachment])
+
+        viewModel.convertBlock(blockID: attachment.id, to: .heading(level: 1))
+
+        // Converting would drop the name and url, which live only in the kind.
+        XCTAssertEqual(viewModel.blocks[0].kind, .attachment(name: "Q3 report.pdf", url: url))
+    }
+
+    func testApplyInlineMarkerIgnoresAttachmentBlocks() {
+        let url = attachmentURL
+        let attachment = EditorBlock(kind: .attachment(name: "f", url: url))
+        let viewModel = makeViewModel(blocks: [attachment])
+        viewModel.focusedBlockID = attachment.id
+
+        viewModel.applyInlineMarker("**")
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .attachment(name: "f", url: url))
+        XCTAssertEqual(viewModel.blocks[0].text, "")
+    }
+
     func testConvertBlockLeavesImageBlocksUntouched() {
         let block = EditorBlock(kind: .image(alt: "", url: "https://e.com/a.jpg"))
         let viewModel = makeViewModel(blocks: [block])

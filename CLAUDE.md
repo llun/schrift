@@ -337,6 +337,8 @@ Schrift/
 │   │                    and the server-version row (ServerConfig)
 │   ├── Options/ Share/
 │   └── Editor/          block editor, save coordinator, drafts, content cache,
+│                        file attachments (AttachmentDisplay classifier +
+│                        AttachmentLoader + AttachmentCacheStore + AttachmentCardView),
 │                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
 │                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
@@ -616,7 +618,11 @@ new code reads like the surrounding code.
   free function with a caller-supplied boundary — never interpolate user data into
   it. The uploaded bytes must be a real JPEG named `photo.jpg`: the backend
   magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
-  never renders inline.
+  never renders inline. **Reading** an attachment's bytes back is
+  `mediaData(path:)` — `isSameOriginPath` + `getRawData`, the same rooted-path
+  contract as `checkMedia`, because its path also derives from a string the app
+  did not author (see the attachment rules under
+  [Editor](#editor--the-on-device-save-coreyjs)).
 - **Version history is read-only; in-app restore is deferred.**
   `VersionEndpoints.swift`'s `documentVersions(documentID:)` is
   `GET documents/{id}/versions/`, decoding the backend's `{versions: [...]}`
@@ -1315,9 +1321,9 @@ markdown write endpoint**. Understand this before touching the save path:
   as a unit, is never converted, and never receives inline markers. Photos are
   inserted through that same block: the slash-menu "Photo" item and the
   formatting-bar button run `prepare → upload → bounded media-check poll →
-  insert`, and the `.image` block is created **only on success** — a cancelled
-  pick is a silent no-op, every failure sets `"Couldn't add the photo. Please try
-  again."`, and no placeholder block ever reaches the document or a save. If
+  insert`, and on that path the `.image` block is created **only on success** — a
+  cancelled pick is a silent no-op, every failure sets `"Couldn't add the photo. Please try
+  again."`, and no half-uploaded block reaches the server. If
   readiness can't be confirmed within the poll budget, the URL derived from the
   upload key is used rather than losing an upload that already succeeded.
   `PhotosPicker` is the out-of-process system picker — **no** photo-library usage
@@ -1326,9 +1332,10 @@ markdown write endpoint**. Understand this before touching the save path:
   from a bare `CGImage`, passing only the compression quality, so the original
   photo's EXIF — **including GPS coordinates** — is dropped: never copy the source
   properties into `CGImageDestinationAddImage` (locked by
-  `ImagePreparationTests.testStripsGPSAndIdentifyingMetadata`). **All three** insert
-  paths (blocks, markdown, reading) must verify the edit actually *added* an
-  `.image` block before committing it — a fenced code block, open at the tail,
+  `ImagePreparationTests.testStripsGPSAndIdentifyingMetadata`). **Both** insert
+  paths (blocks, reading) must verify the edit actually *added* an
+  `.image` block before committing it — there were three until the Markdown source
+  tab was removed (#52), which took the raw-markdown path and its guard with it — a fenced code block, open at the tail,
   wrapping the caret, or formed by a neighbouring block on serialization, swallows
   the image line, and `MarkdownYjs.encode` re-parses the same markdown the save
   sends. Never rewrite the source to make room; surface the friendly error. Anything
@@ -1362,6 +1369,123 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorBlock.id` can't auto-load. **Known accepted residual:** `AsyncImage` follows
   redirects, so a same-origin URL the trusted server 302s off-origin still leaks; the
   fix (a redirect-blocking `URLSession` delegate) is a follow-up.
+- **A generic file attachment (PDF, docx, …) is a first-class leaf block, and
+  classification is enabled by an origin.** The web's BlockNote `file` block and
+  docs' custom `pdf` block both export as a standalone `[name](url)` line, so
+  `parseEditorBlocks(_:serverOrigin:)` mints `BlockKind.attachment(name:url:)`
+  for one `parseAttachmentLink` accepts. The origin **defaults to `""`, which
+  classifies nothing**, so every caller that doesn't pass one keeps today's exact
+  behavior. Three gates must all pass, and each is load-bearing: the link shape is
+  unambiguous (the
+  `parseImageLine` conservatism — anything doubtful stays prose, which is
+  lossless); `siteOrigin(for: url) == serverOrigin`, which is **what makes
+  auto-download safe with no consent flow** (an off-origin url is never an
+  attachment, so no request is ever issued for one — stricter than the image
+  gate, which offers tap-to-load); and the decoded path is exactly
+  `/media/{doc-uuid}/attachments/{file-uuid}(-unsafe)?.{ext}` with both UUIDs
+  validated, re-composed and compared against the url's own decoded path. Only
+  `.paragraph` classifies: an attachment line adjacent to prose is part of a
+  multi-line `.unknown` block, and a card there would misrepresent what a save
+  writes back. An `-unsafe` key is routine (a `.docx` sniffs as `zip`), not a
+  danger signal — only the server's `Content-Disposition` differs.
+- **Classification lives in `flushPending`'s single-line branch and must stay
+  there.** A `.attachment` serializes back to the identical line and is
+  deliberately *not* column-zero-classified, so an origin-aware parse and an
+  origin-less one produce the **same serialized markdown for every input**
+  (`testAttachmentClassificationNeverChangesSerializedMarkdown`). That identity is
+  the entire reason `canonicalMarkdown`, `draftSyncDecision`,
+  `markdownSurvivesRoundTrip` and the save coordinator can go on parsing without
+  an origin and stay correct. Move it into `parseClassifiedLine` and it breaks at
+  once: an attachment line adjacent to prose splits into two blocks under one
+  parse and stays one `.unknown` under the other, and the sync machinery starts
+  seeing differences that aren't real. The origin reaches the **encoder** without
+  passing through the coordinator at all — `MarkdownYjs.encode(markdown:serverOrigin:)`
+  has one production caller, `saveDocumentContent`, which reads it off the client's
+  own `baseURL`; it is not defaulted there, because a boundary that moves saved
+  bytes must not be crossable by forgetting an argument.
+- **`.attachment` encodes as BlockNote's `file` node — never `pdf`, for any
+  type.** Four props (`backgroundColor`, `name`, `url`, `caption`); no
+  `textAlignment`, no `textColor`, no `showPreview`, no `previewWidth` — a
+  *different and shorter* set than the image block's, so read the golden fixture
+  rather than copying the image's prop list. The `pdf` node is refused because its
+  `showPreview` defaults to true and such a block exports to nothing (see below),
+  which would make it invisible here and let the next full-overwrite save destroy
+  it. Landing this **changed saved bytes** for documents holding a standalone
+  attachment link and required sign-off, exactly as the `_`-emphasis change did;
+  all pre-existing goldens are unmoved because they parse origin-less.
+- **`.attachment` is a leaf like `.image`**: deletes as a unit
+  (`mergeBlockWithPrevious`), never converted (`convertBlock` refuses), never
+  receives inline markers, `rendersInlineMarkdown` false, no `BlockTextView`. Both
+  surfaces render the same `AttachmentCardView`, and both fall back to plain link
+  text when the url no longer matches this server (a document opened after
+  switching servers) rather than drawing a card that could never load.
+- **Inserting an attachment mirrors the photo path exactly** — `.fileImporter`
+  (out of process; no usage description, no `project.yml` change) → the same
+  `attachment-upload` + media-check poll → `insertAttachmentBlock`, which is a
+  structural twin of `insertImageBlock` down to verifying against the **saved**
+  markdown before committing and never re-parsing the document (that would
+  re-mint every block id and make a live forward diff as delete-all + reinsert).
+  `sanitizedAttachmentFileName` enforces the union of two unrelated requirements,
+  because the picked name is interpolated into both: multipart-header safety (no
+  quote, CR, LF) *and* markdown-label safety (no brackets or parens, or the
+  block's own `[name](url)` line stops parsing back as one link). Size is refused
+  from the file system's answer **before** the bytes are read. Both uploading
+  affordances are withheld offline and on a local document; the **slash menu**
+  routes that through `SlashMenuAction.requiresUpload`, while the formatting
+  bar's photo button still has its own `canOfferPhotoInsertion` (there is no
+  formatting-bar file button — the bar's width budget is full). Only one upload
+  runs at a time.
+  **A file attachment has no offline queue.** Photos have the machinery for one
+  (`PendingAttachmentStore`, the `schrift-attachment://` placeholder and the
+  save hold — see the offline rules further down), but the Photo slash item is
+  still withheld offline too, so nothing is inconsistent *yet*. When photo
+  insertion is offered offline, file insertion should follow through that same
+  path rather than growing a parallel one: the placeholder scheme, the hold and
+  the replay are all type-agnostic, and only `parseImageLine`'s allowlist and
+  the resolve step assume an image.
+- **Attachment bytes go through `AttachmentLoader`, and its file names are the
+  server's, never the author's.** The loader is app-scoped (built in `RootView`
+  beside the collaboration manager, injected through the environment) so two
+  cards showing one attachment de-duplicate a single download instead of racing
+  two writers over one cache file; its state is keyed by **url string**, because
+  `applyLiveRemoteChange` reuses a surviving `EditorBlock.id` and a live edit can
+  swap the url under a card that never re-rendered. It is the **second sanctioned
+  media fetch path** (after `MarkdownImageView`'s `AsyncImage`) and must stay
+  origin-pinned: `DocsAPIClient.mediaData(path:)` re-checks `isSameOriginPath`
+  before issuing, exactly as `checkMedia` does. `AttachmentCacheStore` names each
+  file `{document-uuid}_{file-uuid}[-unsafe].{ext}` from the classifier's
+  validated parts — the display label is the one author-controlled string here and
+  must never reach the filesystem, and the **document** id is in the name because
+  the server's access check is per document: keying on the file id alone let a
+  co-author of document B name a file id cached from document C and be served C's
+  bytes with *no request at all*. It evicts by **last use** with a count *and*
+  byte cap, never evicting the just-written entry. Clear the store in `RootView`'s
+  `onSignOut` closure alongside `DocumentContentCacheStore`.
+- **Four loader rules that each closed a real defect, none of them obvious.**
+  (1) **Offline withholds the network, not the disk** — `loadIfNeeded(_:
+  allowsNetwork:)`. Skipping the call while offline also skips the disk read, and
+  since the loader is session-scoped a cold launch in airplane mode then showed
+  "Available when online" over cached bytes, defeating the feature. `isOffline`
+  is chrome only *because* of this parameter, not by default. (2) **A cancelled
+  download is not a failure** — tapping a block swaps the reading surface for the
+  editing one and tears the card's `.task` down mid-flight; recording `.failed`
+  stranded the card, since `loadIfNeeded` deliberately never auto-retries one.
+  (3) **A `.cached` state is re-validated against the disk** on both appear and
+  tap — eviction can delete the file under a live card (the reading surface is not
+  lazy, so an off-screen card never re-runs its `.task`), and the same call is what
+  makes recency last-*use*. (4) **Markup types are cached but never previewed**
+  (`attachmentIsPreviewable`): QuickLook renders HTML through WebKit, which fetches
+  remote subresources, reopening the very IP/User-Agent/timing disclosure the origin
+  gate closes. Key that on the **extension**, never the `-unsafe` flag, which is
+  routine for `.docx`.
+- **A web `pdf` block with `showPreview: true` (the web default) exports as
+  nothing** — BlockNote 0.51.4's markdown serializer has no `<iframe>` handler —
+  so the app never receives it and a full-overwrite save has always silently
+  dropped it. Accepted, pre-existing, and **not** something to work around in the
+  app: the fix is a one-line y-provider patch on the server
+  (`blockSpecs/Pdf.ts` → emit the `<a>` variant it already builds for
+  `showPreview: false`), after which those PDFs classify here with no app change.
+  Don't add a Yjs-content read path to chase them; see `docs/architecture.md`.
 - Two view-model invariants protect the full-overwrite save: editing may only
   begin once `hasLoadedContent` is true (`startEditing` guards on it —
   otherwise autosave would overwrite the whole server document with an empty
@@ -1952,6 +2076,88 @@ markdown write endpoint**. Understand this before touching the save path:
   copy**. `runSyncPass`'s delete branch therefore also skips any id a checkpointed record
   is waiting to migrate onto. Only the delete, never the push: the push is what clears
   `finishMigration`'s both-drafts guard.
+- **A photo picked with no network becomes a placeholder image block, and a
+  *content-keyed* save hold is what keeps it off the wire.**
+  `PendingAttachmentStore` mints `schrift-attachment://<localID>` and stores the prepared
+  JPEG beside the record (UserDefaults records + files under Application Support
+  `dev.llun.Schrift/PendingAttachments`, **backup-included** — until the upload lands
+  those bytes exist nowhere else, so this deliberately omits
+  `DocumentContentCacheStore`'s `isExcludedFromBackup` line and has **no eviction**;
+  `contentCacheEvictions` selects by recency and here would delete the only copy of a
+  photo still on screen). Records follow the *create* store's corruption discipline —
+  quarantine-on-detect plus a **sticky** `holdsUnreadableData`, not
+  `PendingDraftStore`'s detection-only flag — because the first write after a corrupt
+  read would otherwise rebuild the blob and leave every surviving placeholder
+  record-less, each one holding its document's saves with nothing left to explain why.
+  Every field added must stay Optional-on-decode.
+  - **The scheme is allowlisted in `parseImageLine`** (the only non-http scheme that
+    classifies) so a queued photo is a real `.image` block: `addsImage` verifies an
+    insert by re-parsing and counting image blocks, and an `.unknown` block would both
+    fail that check and drop the document out of live-write eligibility.
+  - **What keeps it off the server is `markdownReferencesPendingAttachment`**, asked of
+    the markdown a save is about to push at every path that can reach `start`:
+    `enqueue`'s park (a fourth disjunct beside pending-create/conflict/in-flight, and a
+    third in the `.pendingSync` stamp — that one additionally gated on nothing being
+    in flight, since this is the first hold that can co-occur with a real save on the
+    wire), `releaseHeldSave`, `finish`'s queued restart, and
+    a pre-fetch skip in `runSyncPass`. **Keyed on content, never on the store** — a store
+    that cannot be decoded stalls the replay instead of leaking a placeholder — and
+    because each gate parses the save in front of it, a document with *two* queued photos
+    releases only when the last one lands, with no per-record bookkeeping.
+  - **The replay is `runAttachmentPass`**, in the coalesced funnel between the create
+    replay and the draft replay (after creates — a photo in a locally-created document
+    has no server id to upload against; before drafts — the upload is what releases the
+    hold). Two-phase like the create replay: the resolved URL is checkpointed onto the
+    record **before** any rewrite, so a death between the two resumes at the rewrite
+    instead of uploading a second copy. Everything after the upload is **one synchronous
+    main-actor turn with no awaits** (draft, queued slot, open editor, record removal,
+    re-enqueue), because an open editor can flush at any suspension point with blocks that
+    still name the placeholder — a split rewrite could drop the record and then have that
+    flush reintroduce a placeholder nothing can resolve. The hand-back is a
+    **re-`enqueue`, not a release**: nothing can rewrite a parked `PendingSave` in place,
+    `enqueue` re-derives every hold from the content, and a draft left by a previous
+    process has no parked save to release at all. A rewritten queued slot is rebuilt
+    **classic** (`liveSnapshot: nil`) — CRDT bytes still encode the placeholder and
+    `start` prefers them. Gate order per record: re-read the mirror → session scope
+    (origin+owner, failing closed; a foreign record is kept, silent, and **never
+    collected**) → collection *before* the failure skip (else a failed record for a
+    deleted document is never cleaned up; deferred while an editor is open) → terminal
+    skip → parent-create gate. `migrateCreatedDocument` re-keys these records **before**
+    `removePendingCreate`, beside the children re-key and for the same reason.
+  - **That covers the REST save path only, and the live-collaboration write path is a
+    separate hole that must be closed before anything mints a placeholder.**
+    `insertImageBlock` calls `markDirty()`, whose first line forwards to
+    `LiveEditingBridge.forwardLocalEdit` and **returns without enqueuing** — so an edit
+    made while a live session is engaged is broadcast to peers and never becomes a save
+    for these gates to hold. `canEngageLiveWrite` cannot catch it either:
+    `YBlockProjection.classifyImage` models *any* string url, so a placeholder block is
+    `isFullyModeled`. The photo-insert path therefore refuses to queue while live editing
+    is engaged (and downgrades to the classic path the hold covers) rather than relying
+    on these four gates.
+  - **The rewrite is keyed on the record, not on the placeholder's spelling.**
+    `pendingAttachmentID` accepts a trailing slash and either case, so the predicate
+    treats those as the same photo; a rewriter matching the canonical URL byte-for-byte
+    would hold a document it could never release. The rewriter also splits lines exactly
+    as `parseEditorBlocks` does (CRLF *and* lone CR), for the same reason — disagreeing
+    about a line boundary is a permanent hold, not a cosmetic difference.
+  - The predicate **parses**; a substring test would hold a document's saves because
+    someone quoted the scheme in a code block, where there is no image leaf to delete and
+    therefore no escape from the hold. The `contains` check is only a fast path.
+  - `runSyncPass`'s skip is **load-bearing, not an economy**: the `.push` branch would be
+    held by `enqueue` anyway, but a placeholder draft carrying no baseline (a legacy
+    chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3, and
+    past the 120s tolerance that answers `.discardServerWins` — whose launch-pass branch
+    *deletes the draft*, taking the queued photo and every text edit beside it.
+  - `releaseHeldSave` also gained a **conflict** guard, as defence in depth rather than
+    as any path's primary gate: nothing can rewrite a parked `PendingSave` in place, so
+    the attachment replay re-`enqueue`s the rewritten body (which re-derives every hold
+    from the content) instead of releasing this slot directly. It earns its place anyway —
+    this is one of the three ways to reach `start`, and a document can pick up a conflict
+    while a photo sits queued offline, where releasing would full-overwrite a diverged
+    server body from a background pass with no pill answered.
+  - `saveMarker.hadPendingSave` stays `inFlightContent != nil`: a parked save is not on
+    the wire. Do not "fix" it to consult `pendingSave` — that wedges "keep the server
+    version", which is the lesson the conflict hold already paid for.
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping
@@ -2495,8 +2701,10 @@ markdown write endpoint**. Understand this before touching the save path:
   copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by
   `serverOrigin` alone, which identifies the server and not the account) nor the
   tombstones in `PendingDocumentDeleteStore` (a queued deletion is work the user asked
-  for that has not happened yet, scoped the same way by `ownerUserID`); only
-  the full bodies in `DocumentContentCacheStore` are. That clearing lives in
+  for that has not happened yet, scoped the same way by `ownerUserID`) nor the
+  queued photos in `PendingAttachmentStore` (records *and* JPEG bytes, backup-included
+  and owner-scoped for exactly the same reason — an un-uploaded photo exists nowhere
+  else); only the full bodies in `DocumentContentCacheStore` are. That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it
   explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).

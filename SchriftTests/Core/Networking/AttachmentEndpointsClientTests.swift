@@ -122,6 +122,78 @@ final class AttachmentEndpointsClientTests: XCTestCase {
         XCTAssertNotEqual(response.status, MediaCheckResponse.readyStatus)
     }
 
+    // MARK: - Media download
+
+    func testMediaDataFetchesTheRootedPathAgainstTheOriginAndReturnsBytes() async throws {
+        // Arbitrary bytes with an embedded NUL and a byte that is not valid
+        // UTF-8: attachments are opaque, so nothing may transcode them.
+        let payload = Data([0x25, 0x50, 0x44, 0x46, 0x00, 0xFF, 0xFE, 0x0A])
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: payload, error: nil) }
+
+        let data = try await makeClient().mediaData(
+            path: "/media/\(documentID.uuidString.lowercased())/attachments/2222.pdf")
+
+        XCTAssertEqual(data, payload)
+        // Resolves against the host root, NOT the /api/v1.0/ base.
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.absoluteString,
+            "https://docs.example.org/media/\(documentID.uuidString.lowercased())/attachments/2222.pdf")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "GET")
+    }
+
+    /// Same contract as `checkMedia`: the path comes from document content, so a
+    /// hostile one must never reach `URLSession`.
+    func testMediaDataRejectsOffOriginPathsWithoutIssuingARequest() async {
+        for hostile in [
+            "//evil.com/media/x.pdf", "https://evil.com/media/x.pdf", "http://evil.com/x",
+            "javascript:alert(1)", "file:///etc/passwd", "media/relative.pdf", "",
+        ] {
+            let log = RequestRecorder()
+            MockURLProtocol.stubHandler = { request in
+                log.record(request)
+                return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+            }
+            do {
+                _ = try await makeClient().mediaData(path: hostile)
+                XCTFail("Expected mediaData to reject \(hostile)")
+            } catch let error as DocsAPIError {
+                if case .network = error {
+                } else {
+                    XCTFail("Expected .network for \(hostile), got \(error)")
+                }
+            } catch {
+                XCTFail("Unexpected error for \(hostile): \(error)")
+            }
+            XCTAssertTrue(log.methods.isEmpty, "mediaData must not issue any request for \(hostile)")
+        }
+    }
+
+    func testMediaDataForbiddenMapsToForbidden() async {
+        // Revoked access to another document's attachment: the loader must be
+        // able to tell this from a transport failure.
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+        do {
+            _ = try await makeClient().mediaData(path: "/media/1111/attachments/2222.pdf")
+            XCTFail("Expected DocsAPIError")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .forbidden)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testMediaDataServerErrorMapsToServer() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        do {
+            _ = try await makeClient().mediaData(path: "/media/1111/attachments/2222.pdf")
+            XCTFail("Expected DocsAPIError")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 500))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     // MARK: - Media-check path validation
 
     /// The media-check path is the one request URL the *server* chooses. It must

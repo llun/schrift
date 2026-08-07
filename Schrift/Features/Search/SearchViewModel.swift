@@ -16,15 +16,17 @@ final class SearchViewModel {
     /// existing call site and `#Preview` gets.
     private let saveCoordinator: DocumentSaveCoordinator?
     private let signedInUser: SignedInUserStore
-    /// Documents whose deletion landed while a fetch was in flight — see `dropDeletedDocument`.
+    /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
+    /// before the DELETE and still names them, so its results are filtered through this before
+    /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
+    /// away every *other* row it carries, and on Home would discard a load fired from inside
+    /// the sync pass that announced the deletion).
     ///
-    /// **Deliberately never cleared**, unlike Home's and Shared's. Those each have one fetch to
-    /// protect and clear once it lands; this screen has two independent ones (`search` and
-    /// `loadQuickAccess`), so clearing in either would strip the other's protection mid-flight.
-    /// A stale entry is inert rather than merely harmless: server ids are never reused, so an
-    /// id that named a deleted document can never name a live one, and nothing here is cached
-    /// for it to wrongly suppress later. It grows by one `UUID` per landed deletion per
-    /// session, which is not a size worth trading correctness for.
+    /// **Never cleared.** A screen can have more than one fetch in flight, so clearing when one
+    /// lands strips the others' protection mid-flight. A stale entry is inert rather than
+    /// merely harmless: server ids are never reused — the revive mints a *new* local id — so an
+    /// id that named a deleted document can never name a live one. It grows by one `UUID` per
+    /// landed deletion per process.
     private var deletedSinceLoad: Set<UUID> = []
 
     init(

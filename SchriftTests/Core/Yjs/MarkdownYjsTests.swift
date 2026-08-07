@@ -7,18 +7,22 @@ import XCTest
 /// and the full markdown→Yjs→markdown fidelity is validated offline against the
 /// real BlockNote library.
 final class MarkdownYjsTests: XCTestCase {
+    /// The server origin these tests classify attachments against. Most tests
+    /// pass no attachment link, for which it makes no difference.
+    private let serverOrigin = "https://docs.example.org"
+
     private func nodes(_ markdown: String) -> [String] {
-        MarkdownYjs.blockNoteBlocks(from: markdown).map(\.node)
+        MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin).map(\.node)
     }
     private func firstBlock(_ markdown: String) -> BlockNoteBlock {
-        MarkdownYjs.blockNoteBlocks(from: markdown)[0]
+        MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin)[0]
     }
     private func prop(_ block: BlockNoteBlock, _ key: String) -> YAnyValue? {
         block.props.first { $0.key == key }?.value
     }
 
     func testEmptyMarkdownProducesOneEmptyParagraph() {
-        let blocks = MarkdownYjs.blockNoteBlocks(from: "")
+        let blocks = MarkdownYjs.blockNoteBlocks(from: "", serverOrigin: serverOrigin)
         XCTAssertEqual(blocks.count, 1)
         XCTAssertEqual(blocks[0].node, "paragraph")
         XCTAssertTrue(blocks[0].runs.isEmpty)
@@ -92,7 +96,7 @@ final class MarkdownYjsTests: XCTestCase {
 
     func testEncodeProducesValidYjsUpdateHeader() {
         // A v1 update begins with the number of clients (0x01 for one client).
-        let data = MarkdownYjs.encode(markdown: "# Title\n\nbody", clientID: 1)
+        let data = MarkdownYjs.encode(markdown: "# Title\n\nbody", serverOrigin: serverOrigin, clientID: 1)
         XCTAssertEqual(data.first, 0x01)
         XCTAssertGreaterThan(data.count, 20)
     }
@@ -151,10 +155,71 @@ final class MarkdownYjsTests: XCTestCase {
         let markdown = "Alpha\n\n# Beta"
         let blocks = parseEditorBlocks(markdown)
         let viaBlocks = MarkdownYjs.blockNoteBlocks(from: blocks)
-        let viaString = MarkdownYjs.blockNoteBlocks(from: markdown)
+        let viaString = MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin)
         XCTAssertEqual(viaString.map(\.node), viaBlocks.map(\.node))
         XCTAssertNotEqual(
             viaString.map(\.id), blocks.map { $0.id.uuidString.lowercased() },
             "the String overload re-parses internally and mints its own ids, independent of any earlier parse")
+    }
+
+    // MARK: - File attachments
+
+    private var attachmentURL: String {
+        "\(serverOrigin)/media/11111111-1111-4111-8111-111111111111/attachments/"
+            + "22222222-2222-4222-8222-222222222222.pdf"
+    }
+
+    func testAttachmentLinkMapsToAFileNode() {
+        let block = firstBlock("[Q3 report.pdf](\(attachmentURL))")
+        XCTAssertEqual(block.node, "file")
+        XCTAssertTrue(block.runs.isEmpty, "a file block is a leaf: no inline runs")
+    }
+
+    /// Prop **order** is part of the wire format, and the golden fixture cannot
+    /// catch a reordering here because it hand-builds its own props. This pins
+    /// the mapping itself, exactly as `testImageBlockPropOrderMatchesTheGoldenFixture`
+    /// does for images.
+    func testFilePropOrderAndValuesMatchTheGoldenFixture() {
+        let block = firstBlock("[Q3 report.pdf](\(attachmentURL))")
+        XCTAssertEqual(block.props.map(\.key), ["backgroundColor", "name", "url", "caption"])
+        XCTAssertEqual(prop(block, "backgroundColor"), .string("default"))
+        XCTAssertEqual(prop(block, "name"), .string("Q3 report.pdf"))
+        XCTAssertEqual(prop(block, "url"), .string(attachmentURL))
+        XCTAssertEqual(prop(block, "caption"), .string(""))
+    }
+
+    /// The `pdf` node is deliberately never emitted — its `showPreview` defaults
+    /// to true, and such a block exports to nothing through the server's
+    /// markdown exporter, so the app would stop seeing it and the next
+    /// full-overwrite save would destroy it.
+    func testAPDFAttachmentIsStillAFileNodeNotAPDFNode() {
+        XCTAssertEqual(firstBlock("[report.pdf](\(attachmentURL))").node, "file")
+    }
+
+    func testAnEmptyAttachmentLabelMapsToAnEmptyName() {
+        XCTAssertEqual(prop(firstBlock("[](\(attachmentURL))"), "name"), .string(""))
+    }
+
+    /// Without an origin the identical markdown is a paragraph carrying a link —
+    /// which is exactly what every caller that does not pass one (the round-trip
+    /// checks, the projection self-check) must keep producing.
+    func testWithoutAServerOriginTheSameLinkStaysAParagraph() {
+        let markdown = "[Q3 report.pdf](\(attachmentURL))"
+        XCTAssertEqual(MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: "").map(\.node), ["paragraph"])
+        XCTAssertEqual(MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: serverOrigin).map(\.node), ["file"])
+    }
+
+    func testAnOffOriginLinkOfTheSameShapeStaysAParagraph() {
+        let foreign =
+            "https://files.example/media/11111111-1111-4111-8111-111111111111/attachments/"
+            + "22222222-2222-4222-8222-222222222222.pdf"
+        XCTAssertEqual(nodes("[x](\(foreign))"), ["paragraph"])
+    }
+
+    func testAttachmentBlocksKeepTheirEditorIDs() {
+        // The live write path diffs by id; a re-parse would mint new ones.
+        let block = EditorBlock(kind: .attachment(name: "f", url: attachmentURL))
+        let mapped = MarkdownYjs.blockNoteBlocks(from: [block])
+        XCTAssertEqual(mapped.map(\.id), [block.id.uuidString.lowercased()])
     }
 }

@@ -1026,6 +1026,70 @@ to what the Home list passes (still a `Document` / id).
   through the existing sign-out path — e.g. alongside where `SessionStore.signOut`
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
+  `AttachmentCacheStore().removeAll()` sits on the same line for the same reason
+  (see below). Both are called from `RootView`'s `onSignOut` closure, **not**
+  from `SessionStore.signOut()` — a new sign-out path must call them explicitly.
+
+### 7. Attachment bytes: `AttachmentCacheStore` (2026-08-07)
+
+Downloaded file attachments (PDF, docx, …) are cached on disk so a document read
+online stays fully readable offline, previews included. It follows
+`DocumentContentCacheStore`'s pattern — one file per entry under
+`Application Support/dev.llun.Schrift/AttachmentCache/`, `isExcludedFromBackup`
+(the bytes are re-downloadable from the user's own server), stateless over its
+directory, never throwing to callers, cleared on sign-out — with three
+deliberate differences:
+
+- **Recency is last *use*, not last write.** `cachedFileURL(for:)` bumps the
+  file's mtime on a hit. Attachments are read-hot: a write-recency cache would
+  evict the one the user keeps reopening. This is the one accessor in the app
+  with a deliberate side effect, and it is documented at the call site.
+- **Two caps, not one** (`attachmentCacheEvictions`, the pure selection function,
+  by analogy with `contentCacheEvictions`): 100 entries **and** 200 MB. Sizes here
+  span orders of magnitude, so a count alone would let a handful of videos fill
+  the disk and a byte cap alone would let thousands of tiny files accumulate. Two
+  properties are load-bearing: the **most-recently-used entry is never evicted**
+  (the store evicts immediately after writing, and evicting the file just written
+  would make the loader re-download it forever), and the walk is **greedy** — an
+  oversized entry is skipped without taking older, smaller ones with it, trading
+  strict LRU order for cache utility.
+- **File names carry both server ids** (`{document-uuid}_{file-uuid}[-unsafe].{ext}`),
+  built from the classifier's validated parts. The author-controlled display
+  label never reaches the filesystem, and the store re-checks for a separator or
+  `..` anyway, because `AttachmentDisplay` is a freely constructible value type.
+  The **document** id is in the name because the server's identity for an
+  attachment includes it and its access check is per document: keying on the file
+  id alone let a co-author of document B name a file id the reader had cached
+  from document C and be served C's bytes with no request at all, so the server
+  never got to say whether B has that attachment.
+
+What this buys offline: an attachment downloaded while online previews in
+airplane mode, and one that was never downloaded says so ("Available when
+online") without issuing a doomed request. `isOffline` is chrome only — it never
+decides whether a *cached* attachment opens — but that is a property of one
+specific choice, not something that falls out for free. The card passes
+`allowsNetwork: !isOffline` into `AttachmentLoader.loadIfNeeded`, so **offline
+withholds the network and not the disk**. Skipping the call outright while
+offline, which is the obvious reading, also skips the disk read; since the
+session-scoped loader starts empty, a cold launch in airplane mode then rendered
+"Available when online" over bytes that were sitting in the cache — the exact
+scenario the cache exists for. A disk read costs no request, which is the only
+thing offline is meant to suppress.
+
+**Inserting** an attachment (2026-08-07) is withheld offline and on a document
+with no server id yet, for the reason photo insertion always was: it POSTs a
+multipart attachment and there is no queue for one, so offered offline it would
+open the picker, read the file, and only then fail. Everything *after* the upload
+is ordinary editing — the `.attachment` block dirties the document and the
+write-ahead draft pipeline carries it like any other edit, including offline.
+
+Nothing else about attachments touches drafts, saves or the replay: the byte
+cache is read-side only, and the block's own persistence is the existing save
+path. One consequence worth knowing: a queued draft holding an attachment line
+replays through the unchanged coordinator, and classification happens at PATCH
+time on the client (the encoder reads the origin off its own `baseURL`), so a
+draft written before this feature existed still encodes as a `file` node when it
+finally syncs.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
@@ -1080,8 +1144,10 @@ matches the invariant.
    passing through `enqueue`'s hold — reached from `clearResolvedConflict`, which
    the editor calls from five places — so releasing a hold on a local document
    would PATCH a nonexistent id straight into the `.failed`-then-skipped trap
-   above. Its guard returns *before* `queued.removeValue`, so the held save is
-   kept rather than dropped on the floor.
+   above. Its guard returns *before* the queued slot is cleared, so the held save
+   is kept rather than dropped on the floor. (It now carries two further guards for
+   the pending-attachment hold — see "A photo queued on this device" below — and
+   every one of them returns before the slot is touched, for this same reason.)
 4. **`finish`'s queued restart refuses.** The other such path: when a settled save
    drains its queued slot it calls `start` directly, re-applying the conflict hold
    — and now the pending-create one, for the same reason. Unreachable today (no
@@ -2254,6 +2320,121 @@ old one still point at something gone.
   the user deletes again. Deliberately milder than the create store's equivalent, which
   suppresses destructive branches instead.
 
+## A photo queued on this device (2026-08-07, in progress)
+
+**Status: foundation only.** The placeholder vocabulary, the store, and the save hold
+have landed. Nothing yet *mints* a placeholder — the photo-insert path is still gated
+offline exactly as described above — so this section describes machinery that is inert
+until the replay pass and the insert/render work land. It is written down now because
+the hold ships now, and a reader hitting a held save needs to know why.
+
+A photo picked with no network cannot be uploaded, so the block that goes into the
+document names the *record* rather than a media URL: `schrift-attachment://<localID>`.
+`PendingAttachmentStore` holds the record (UserDefaults) and the prepared JPEG (a file
+under Application Support). Both halves are **backup-included** and there is no
+eviction — until the upload lands those bytes exist nowhere else, so the
+`DocumentContentCacheStore` template this otherwise copies is wrong on exactly those two
+lines. Records use the *create* store's quarantine + sticky-`holdsUnreadableData`
+discipline, because the first write after a corrupt read would otherwise rebuild the blob
+and leave every surviving placeholder record-less.
+
+`parseImageLine` allowlists that one scheme, so a queued photo is a real `.image` block:
+`addsImage` verifies an insert by re-parsing and counting image blocks, and an `.unknown`
+block would fail that check *and* drop the document out of live-write eligibility.
+
+**What keeps it off the server is a content-keyed save hold.**
+`markdownReferencesPendingAttachment` is asked of the markdown each save is about to
+push, at four gates: the three paths that reach `start` — `enqueue`'s park (a fourth
+disjunct, and a third in the `.pendingSync` stamp, that one additionally gated on nothing
+being in flight), `releaseHeldSave`, and `finish`'s queued restart — plus a pre-fetch skip
+in `runSyncPass`, which reaches `start` only by way of `enqueue`. Keyed on *content*, never on the store, so a store that cannot be decoded
+stalls the replay instead of leaking a placeholder; and because each gate parses the save
+in front of it, a document holding two queued photos releases only when the last one
+lands, with no per-record bookkeeping.
+
+Three properties are easy to get wrong and are each worth a regression test:
+
+- **`runSyncPass`'s skip prevents deletion, not a wasted fetch.** The `.push` branch
+  would be held by `enqueue` anyway — but a placeholder draft carrying no baseline (a
+  legacy chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3,
+  and past the tolerance `.discardServerWins` *removes the draft*, taking the queued
+  photo and every text edit beside it.
+- **The predicate and the rewriter must agree on identity.** `pendingAttachmentID`
+  tolerates either case and a trailing slash, and `parseImageLine` classifies on a
+  lowercased scheme — so both are matched pairs of the same question. Too strict in the
+  predicate **leaks** (an uppercase scheme is a real image block that the hold would
+  miss); too strict in the rewriter **wedges** (held forever, never rewritable). The
+  rewriter also splits lines exactly as `parseEditorBlocks` does, CRLF and lone CR alike;
+  note CRLF is a single Swift `Character`, so matching `"\r"` and `"\n"` separately
+  silently misses every CRLF document.
+- **A held save must not read as a saved save.** The `.pendingSync` stamp is what makes
+  the editor's status honest. This is the first hold that can co-occur with a save
+  genuinely in flight, which is why that disjunct alone is gated on `inFlight == nil`.
+
+**The replay** (`runAttachmentPass`) runs inside `syncPendingDrafts`'s coalesced loop,
+between the create replay and the draft replay — after the creates, because a photo in a
+locally-created document cannot be uploaded until that document has a server id; before
+the drafts, because the upload is what releases the hold. It has no triggers of its own,
+so two overlapping reconnects cannot upload the same record twice.
+
+It is **two-phase**, exactly as the create replay is and for the same reason: the resolved
+media URL is checkpointed onto the record *before* any markdown is rewritten, so a death
+between the two resumes at the rewrite rather than uploading a second copy. The attachment
+endpoint has no idempotency key; nothing else closes that window.
+
+Everything after the upload happens in **one synchronous main-actor turn with no awaits** —
+draft, queued slot, open editor, record removal, re-enqueue. That is the safety argument
+rather than a style preference: an editor open on the document can flush at any suspension
+point with in-memory blocks that still name the placeholder, so a rewrite split across an
+await could remove the record and then have that flush reintroduce a placeholder nothing can
+resolve. Within one turn the interleaving is unrepresentable.
+
+The hand-back is a **re-`enqueue`, not a release**. Nothing can rewrite a parked
+`PendingSave` in place, and `enqueue` re-derives every hold from the content it is handed —
+so a second queued photo, a conflict, or a pending create still parks it correctly, and a
+draft left by a *previous process* (where the in-memory queued slot is empty, so there is
+nothing to release) is pushed rather than waiting for a keystroke. The rewritten queued slot
+is rebuilt **classic**, because a live snapshot's CRDT bytes still encode the placeholder and
+`start` prefers them over the markdown.
+
+Per-record gate order, and each position is load-bearing:
+
+1. **Re-read from the mirror** — every await is a window in which the user can delete the
+   document or discard the photo, and acting on a stale copy would resurrect it.
+2. **Session scope** (`serverOrigin` + `ownerUserID`, failing closed on an unknown owner).
+   A record failing this is kept, silent, and *never collected*: dormant means no requests
+   **and** no deletion, or signing in elsewhere would delete the only copy of someone's photo.
+3. **Collection**, before the failure skip — otherwise a terminally-failed record whose
+   document was deleted is never cleaned up. Deferred while an editor is open, since that
+   screen may be about to flush a body that still names the photo.
+4. **Terminal failure skip** — a server rejection on the merits is the user's to answer, via
+   the image leaf's Retry/Remove.
+5. **Parent-create gate** — a photo in a document the server has never seen would POST to
+   `documents/{local-uuid}/attachment-upload/` and 404.
+
+`migrateCreatedDocument` re-keys attachment records onto the server id **before**
+`removePendingCreate`, beside the children re-key and for the same reason: the create
+record's presence is what makes the pass skip them, so while it exists every record naming
+the document is held whether or not it has been re-keyed, and a kill mid-loop simply redoes
+an idempotent rewrite. The reverse order would both POST a dead local id *and* let collection
+read the removed local draft as "unreferenced" and delete the photo. The placeholder names
+the *attachment's* id, so no markdown needs rewriting there — the hold follows the content.
+
+**Owed by the work that follows**, and deliberately not done here:
+
+- The **live-collaboration write path bypasses these gates entirely.** `markDirty`
+  forwards to `LiveEditingBridge.forwardLocalEdit` and returns *without enqueuing*, so an
+  edit made while a live session is engaged is broadcast to peers and never becomes a save
+  to hold; `canEngageLiveWrite` cannot catch it, because `YBlockProjection` models any
+  string url. The insert path must refuse to queue while live editing is engaged.
+- A rewritten queued save must be rebuilt **classic** (`liveSnapshot: nil`). Rewriting the
+  markdown of a parked live-snapshot save would leave CRDT bytes that still encode the
+  placeholder, and `start` prefers the bytes.
+- `syncCaption` degrades to a passive caption only on `hasConflict`; an attachment hold
+  currently still offers a "tap to retry" that `saveNow` no-ops (`pendingSave != nil`).
+  It needs the same third precedence input the conflict hold has.
+- A placeholder with **no matching record** (hand-authored, or from a co-author) holds
+  that document's saves with the image leaf's deletion as the only escape.
 
 ## Data flow
 

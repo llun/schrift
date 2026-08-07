@@ -79,6 +79,12 @@ final class EditorViewModel {
     /// placeholder block exists during this window — the `.image` block is only
     /// inserted on success.
     var isUploadingPhoto = false
+    /// Presents the system document picker. Set only through
+    /// `requestAttachmentInsertion`, which re-checks `canInsertAttachment`.
+    var isAttachmentImporterPresented = false
+    /// An attachment upload is in flight. Like the photo flag, no placeholder
+    /// block exists during this window: the block is created on success only.
+    var isUploadingAttachment = false
     /// Drives the link sheet. Set by the formatting bar's link button and by a
     /// tap on a link's label; cleared on commit or cancel.
     var linkEditor: LinkEditorRequest?
@@ -86,6 +92,15 @@ final class EditorViewModel {
     let client: DocsAPIClient
     let documentID: UUID
     let saveCoordinator: DocumentSaveCoordinator
+    /// `siteOrigin(for: serverURL)`, which is what turns a standalone
+    /// `[name](url)` line into a `.attachment` block rather than a paragraph.
+    ///
+    /// Defaulted to "" only so the many existing tests that build a view model
+    /// keep compiling; production always passes it (`EditorScreen`). An empty
+    /// origin classifies nothing, so a missed one fails **loud** — the insert
+    /// verification counts zero attachments and refuses — rather than silently
+    /// writing a paragraph where the web expects a file block.
+    let serverOrigin: String
     /// Non-nil once a screen has registered. Its `deinit` is what releases the coordinator's
     /// hold — see `noteEditorAppeared`.
     private var openEditorRegistration: OpenEditorRegistration?
@@ -176,12 +191,15 @@ final class EditorViewModel {
 
     /// Friendly copy for every failure in the photo-insert pipeline.
     private static let photoErrorKey: L10nKey = .editor_error_add_photo
+    private static let fileErrorKey: L10nKey = .editor_error_add_file
+    private static let fileTooLargeErrorKey: L10nKey = .editor_error_file_too_large
 
     init(
         client: DocsAPIClient,
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        serverOrigin: String = "",
         signedInUser: SignedInUserStore = SignedInUserStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
@@ -194,6 +212,7 @@ final class EditorViewModel {
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.serverOrigin = serverOrigin
         self.signedInUser = signedInUser
         self.contentCache = contentCache
         self.childrenCache = childrenCache
@@ -1198,7 +1217,7 @@ final class EditorViewModel {
         }
         savedTitle = title
         rawMarkdown = markdown
-        blocks = parseEditorBlocks(markdown)
+        blocks = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
         // Every block gets a fresh identity here, so any caret state still
         // pointing into the outgoing blocks is now dangling. Clearing it in the
         // one funnel every content swap routes through makes that unrepresentable
@@ -1554,7 +1573,7 @@ final class EditorViewModel {
         // document nobody edited. Comparing serializations (not raw strings) ignores the
         // canonicalization the parser always applies, so a genuine no-op stays a no-op.
         let serialized = serializeMarkdown(blocks)
-        if serialized != serializeMarkdown(parseEditorBlocks(rawMarkdown)) {
+        if serialized != serializeMarkdown(parseEditorBlocks(rawMarkdown, serverOrigin: serverOrigin)) {
             rawMarkdown = serialized
         }
         mode = .reading
@@ -1656,9 +1675,10 @@ final class EditorViewModel {
         guard index > 0 else { return }
         let previous = blocks[index - 1]
         switch previous.kind {
-        case .divider, .image:
-            // Leaf blocks (divider, image) have no text to merge into; backspace
-            // at the start of the following block removes the leaf as a unit.
+        case .divider, .image, .attachment:
+            // Leaf blocks (divider, image, attachment) have no text to merge
+            // into; backspace at the start of the following block removes the
+            // leaf as a unit.
             blocks.remove(at: index - 1)
             focusBlock(block.id, cursorAt: 0)
             markDirty()
@@ -1689,9 +1709,10 @@ final class EditorViewModel {
 
     func convertBlock(blockID: UUID, to kind: BlockKind) {
         guard let index = blockIndex(blockID) else { return }
-        // An image's data lives in its kind's associated values; converting would
-        // silently destroy the image, so images are never converted.
+        // An image's or attachment's data lives in its kind's associated values;
+        // converting would silently destroy it, so leaves are never converted.
         if case .image = blocks[index].kind { return }
+        if case .attachment = blocks[index].kind { return }
         if blocks[index].kind == kind {
             blocks[index].kind = .paragraph
         } else {
@@ -1725,7 +1746,7 @@ final class EditorViewModel {
     func applyInlineMarker(_ marker: String) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         switch blocks[index].kind {
-        case .codeBlock, .unknown, .divider, .image:
+        case .codeBlock, .unknown, .divider, .image, .attachment:
             return
         default:
             break
@@ -1865,10 +1886,12 @@ final class EditorViewModel {
     /// consuming the "/query" text.
     func applySlashSelection(_ item: SlashMenuItem) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
-        // Photo is the one item that can decline: while an upload is in flight the
-        // picker won't open. Bail out *before* consuming the "/photo" text, or the
-        // selection would silently eat what the user typed and do nothing.
+        // The uploading items can decline: while an upload is in flight the
+        // picker won't open. Bail out *before* consuming the typed "/photo" or
+        // "/file", or the selection would silently eat what the user typed and
+        // do nothing.
         if case .insertPhoto = item.action, !canInsertPhoto { return }
+        if case .insertAttachment = item.action, !canInsertAttachment { return }
         blocks[index].text = ""
         slashQueryText = nil
         switch item.action {
@@ -1886,6 +1909,11 @@ final class EditorViewModel {
             // doesn't, so a failed pick never strands a placeholder).
             focusBlock(focusedBlockID, cursorAt: 0)
             requestPhotoInsertion()
+        case .insertAttachment:
+            // Same contract as photo: the block stays an empty paragraph and
+            // `insertAttachmentBlock` replaces it in place on success only.
+            focusBlock(focusedBlockID, cursorAt: 0)
+            requestAttachmentInsertion()
         }
         markDirty()
     }
@@ -1894,7 +1922,12 @@ final class EditorViewModel {
 
     /// Editing may only begin once content has loaded, and one upload at a time.
     /// Both photo entry points share this gate.
-    var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto }
+    /// One upload at a time, whichever kind: both funnel through the same
+    /// `isUploading*` banner and the same insert-verification path, and a second
+    /// concurrent insert would race the first one's block placement.
+    var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment }
+
+    var canInsertAttachment: Bool { hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment }
 
     /// Entry point for both the formatting-bar button and the slash-menu item.
     func requestPhotoInsertion() {
@@ -1950,19 +1983,10 @@ final class EditorViewModel {
     /// the URL derived from the upload key if readiness can't be confirmed in
     /// time — the upload already succeeded, so the URL must never be lost.
     private func readyMediaURLString(fromMediaCheckPath path: String) async -> String? {
-        for attempt in 0..<Self.mediaCheckMaxAttempts {
-            if attempt > 0 { try? await Task.sleep(for: mediaCheckRetryInterval) }
-            if let response = try? await client.checkMedia(path: path),
-                response.status == MediaCheckResponse.readyStatus, let file = response.file,
-                let absolute = await client.absoluteServerURL(for: file)
-            {
-                return absolute.absoluteString
-            }
-        }
-        guard let key = attachmentKey(fromMediaCheckPath: path),
-            let absolute = await client.absoluteServerURL(for: "/media/" + key)
-        else { return nil }
-        return absolute.absoluteString
+        await client.readyMediaURLString(
+            fromMediaCheckPath: path,
+            maxAttempts: Self.mediaCheckMaxAttempts,
+            retryInterval: mediaCheckRetryInterval)
     }
 
     /// Mirrors the divider slash behavior: replace a focused empty paragraph in
@@ -2044,11 +2068,131 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Whether the edit actually *added* an image. **All three** insertion paths
-    /// (markdown, reading, blocks) must check this: none may report success without
+    // MARK: - File attachments
+
+    func requestAttachmentInsertion() {
+        guard canInsertAttachment else { return }
+        isAttachmentImporterPresented = true
+    }
+
+    /// Uploads a picked file and inserts a `.attachment` block on success only.
+    ///
+    /// Mirrors `insertPhoto` deliberately, including the parts that look
+    /// defensive: a cancelled pick is a silent no-op (nil in, nothing out), no
+    /// placeholder block is ever created, and the insert verifies against the
+    /// *saved* markdown before it commits. The one addition is
+    /// `AttachmentImportError.tooLarge`, which gets its own copy — "please try
+    /// again" is useless advice for a file that will always be too big.
+    func insertAttachment(loadingFile: @Sendable () async throws -> PreparedAttachmentFile?) async {
+        guard canInsertAttachment else { return }
+        clearError()
+        isUploadingAttachment = true
+        defer { isUploadingAttachment = false }
+        do {
+            guard let file = try await loadingFile() else { return }
+            let mediaCheckPath = try await client.uploadAttachment(
+                documentID: documentID, fileName: file.fileName, contentType: file.contentType, data: file.data)
+            guard let urlString = await readyMediaURLString(fromMediaCheckPath: mediaCheckPath) else {
+                reportAttachmentFailure()
+                return
+            }
+            insertAttachmentBlock(name: file.fileName, url: urlString)
+        } catch AttachmentImportError.tooLarge {
+            reportAttachmentFailure(Self.fileTooLargeErrorKey)
+        } catch {
+            reportAttachmentFailure()
+        }
+    }
+
+    private func reportAttachmentFailure(_ key: L10nKey? = nil) {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        showError(key ?? Self.fileErrorKey)
+    }
+
+    /// The block-placing twin of `insertImageBlock`, and it must stay one: every
+    /// comment there about not resurrecting a deleted document, not re-parsing
+    /// the whole document (which would re-mint every block id and make a live
+    /// forward clobber a peer), and verifying against the saved representation
+    /// applies here for the same reasons.
+    private func insertAttachmentBlock(name: String, url: String) {
+        guard hasLoadedContent, !isDocumentDiscarded else { return }
+        defer { flushPendingChanges() }
+
+        if mode == .reading {
+            let source = currentMarkdown()
+            let appended = markdownAppendingAttachment(to: source, name: name, url: url)
+            guard addsAttachment(to: source, after: appended, url: url) else {
+                reportAttachmentFailure()
+                return
+            }
+            rawMarkdown = appended
+            blocks.append(EditorBlock(kind: .attachment(name: name, url: url)))
+            hasUnmodelableLocalEdit = true
+            markDirty(forcesClassicPath: true)
+            return
+        }
+
+        let attachment = EditorBlock(kind: .attachment(name: name, url: url))
+        let trailing = EditorBlock(kind: .paragraph)
+        var updated = blocks
+        if let focusedBlockID, let index = blockIndex(focusedBlockID) {
+            if updated[index].kind == .paragraph, updated[index].text.isEmpty {
+                updated[index] = attachment
+                updated.insert(trailing, at: index + 1)
+            } else {
+                updated.insert(attachment, at: index + 1)
+                updated.insert(trailing, at: index + 2)
+            }
+        } else {
+            updated.append(attachment)
+            updated.append(trailing)
+        }
+        guard addsAttachment(to: currentMarkdown(), after: serializeMarkdown(updated), url: url) else {
+            reportAttachmentFailure()
+            return
+        }
+        blocks = updated
+        focusBlock(trailing.id, cursorAt: 0)
+        hasUnmodelableLocalEdit = true
+        markDirty(forcesClassicPath: true)
+    }
+
+    /// Counts rather than asking `contains`, for the reason `addsImage` does.
+    ///
+    /// Note this only ever sees a *classified* parse: with no server origin the
+    /// count is zero on both sides and the guard refuses, which is the loud
+    /// failure a missing origin should produce.
+    private func addsAttachment(to before: String, after: String, url: String) -> Bool {
+        attachmentCount(in: after, url: url) > attachmentCount(in: before, url: url)
+    }
+
+    private func attachmentCount(in markdown: String, url: String) -> Int {
+        parseEditorBlocks(markdown, serverOrigin: serverOrigin)
+            .filter { block in
+                if case .attachment(_, let blockURL) = block.kind { return blockURL == url }
+                return false
+            }
+            .count
+    }
+
+    /// Appends a standalone, blank-line-separated attachment line. Same caveat as
+    /// `markdownAppendingImage`: it does not *guarantee* an attachment block, so
+    /// the caller must verify.
+    private func markdownAppendingAttachment(to source: String, name: String, url: String) -> String {
+        let line = "[\(name)](\(url))\n"
+        guard !source.isEmpty else { return line }
+        let endsWithNewline = source.utf8.last == 0x0A
+        return source + (endsWithNewline ? "" : "\n") + "\n" + line
+    }
+
+    /// Whether the edit actually *added* an image. **Both** insertion paths
+    /// (reading, blocks) must check this: neither may report success without
     /// producing an image. A fenced code block — open at the end of the source,
     /// wrapping the caret, or formed by a neighbouring block on serialization —
     /// swallows the image line whole.
+    ///
+    /// There were three until the Markdown source tab was removed (#52), which took the
+    /// raw-markdown path and its own guard with it.
     ///
     /// Counts rather than asking `contains`: a document that already held a
     /// byte-identical `![](url)` would satisfy `contains` even when the new line was
@@ -2059,7 +2203,7 @@ final class EditorViewModel {
     }
 
     private func imageCount(in markdown: String, url: String) -> Int {
-        parseEditorBlocks(markdown).filter { $0.kind == .image(alt: "", url: url) }.count
+        parseEditorBlocks(markdown, serverOrigin: serverOrigin).filter { $0.kind == .image(alt: "", url: url) }.count
     }
 
     /// Appends a standalone, blank-line-separated image line. That keeps it out of
@@ -2415,7 +2559,21 @@ final class EditorViewModel {
         }
     }
 
-    private func markDirty() {
+    /// `forcesClassicPath` skips the live-write forward for an edit whose result
+    /// the live path provably cannot persist.
+    ///
+    /// `canEngageLiveWrite` inspects the projection *before* the edit, so an
+    /// insert that introduces a node `YBlockProjection` does not model — today
+    /// exactly `.attachment`, which encodes as a BlockNote `file` node — sails
+    /// through it, integrates into the replica, broadcasts to peers, and then
+    /// finds `fireSnapshot`'s re-check of `isFullyModeled` false and never
+    /// PATCHes. Since the live branch also leaves `isDirty` false, the classic
+    /// save never runs either, and the attachment reaches peers but is persisted
+    /// by nothing this app controls. Taking the classic path instead makes the
+    /// document downgrade out of live editing — which is where a document
+    /// holding a `file` node belongs anyway, since the read side already refuses
+    /// to engage on one.
+    private func markDirty(forcesClassicPath: Bool = false) {
         // Live-collaboration write path (C2c). When live-write mode is engaged the bridge
         // forwards this edit to the shared replica, broadcasts it to peers, and schedules the
         // debounced full-state snapshot — so the classic REST autosave must NOT also run (it
@@ -2426,7 +2584,7 @@ final class EditorViewModel {
         // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
         // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
         // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
-        if liveWrite?.forwardLocalEdit() == true {
+        if !forcesClassicPath, liveWrite?.forwardLocalEdit() == true {
             // A stash can exist here too: `canEngageLiveEditing` only guarantees no save/
             // draft/conflict was pending at *engage* time, and an A5 signal is suppressed
             // only while the bridge is actively applying live content — a pull-to-refresh
@@ -2478,6 +2636,29 @@ final class EditorViewModel {
     /// The manager is never referenced here — only this protocol.
     weak var liveWrite: EditorLiveWriteCoordinating?
 
+    /// Latched once this screen has made an edit the shared replica cannot
+    /// represent — today exactly an attachment insert, because
+    /// `YBlockProjection` does not model the BlockNote `file` node.
+    ///
+    /// It is a **latch, not a momentary flag**, and that is the whole point.
+    /// `markDirty(forcesClassicPath:)` keeps the insert off the live path so it
+    /// is really persisted, which leaves the replica behind the document. That
+    /// alone is not enough: `isDirty` clears when the save settles, so live
+    /// editing would re-engage against the stale replica, and the very next peer
+    /// update would diff the document against a projection missing the
+    /// attachment and delete it — persisting the loss on the next snapshot. A
+    /// document that has diverged this way stays classic for the life of the
+    /// screen; reopening it is safe on its own, because a replica that then
+    /// *does* carry the `file` node projects `.opaque` and never engages.
+    ///
+    /// Modelling `file` in the projection would remove the need for both this
+    /// and `forcesClassicPath` — a named follow-up, deliberately not done here:
+    /// `firstMismatch` re-parses without a server origin, so a modelled
+    /// attachment would read back as a paragraph and every attachment would
+    /// report a false fidelity mismatch until the origin is threaded into the
+    /// projection too.
+    private(set) var hasUnmodelableLocalEdit = false
+
     /// Whether a live-collaboration remote change may be applied to this screen
     /// right now (C2+; this is the gate the bridge consults before calling
     /// `applyLiveRemoteChange`). Every clause guards a fact the #76 offline-sync
@@ -2500,6 +2681,13 @@ final class EditorViewModel {
     ///    coordinator's own state machine, as belt-and-braces.
     var canEngageLiveEditing: Bool {
         guard hasLoadedContent, !isDirty, !isDocumentDiscarded, !isUnavailable else { return false }
+        // The editor holds something the replica cannot represent. Re-engaging
+        // would let the replica win: `liveChangeSet` compares the document
+        // against the projection, sees a block the projection does not have, and
+        // emits a `.remove` — converging the attachment back *out* of the
+        // document and then snapshotting that over the server. See
+        // `hasUnmodelableLocalEdit`.
+        guard !hasUnmodelableLocalEdit else { return false }
         guard saveCoordinator.conflict(for: documentID) == nil else { return false }
         guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return false }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return false }
