@@ -422,7 +422,7 @@ final class MarkdownParserTests: XCTestCase {
         let source = "# Title\n\n![Ana](\(placeholder))\n\nAfter"
 
         XCTAssertEqual(
-            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: resolved),
             "# Title\n\n![Ana](\(resolved))\n\nAfter")
     }
 
@@ -434,7 +434,7 @@ final class MarkdownParserTests: XCTestCase {
         // A document with two queued photos resolves one at a time; the second placeholder is
         // what keeps the save held until its own upload lands.
         XCTAssertEqual(
-            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: resolved),
             "![](\(resolved))\n\n![](\(other))\n\n![](https://example.com/a.png)")
     }
 
@@ -443,7 +443,7 @@ final class MarkdownParserTests: XCTestCase {
         let source = "```\n![](\(placeholder))\n```\n\nSee \(placeholder) above."
 
         XCTAssertEqual(
-            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: resolved),
             source)
     }
 
@@ -455,7 +455,7 @@ final class MarkdownParserTests: XCTestCase {
         let source = "* one\r\n* two\r\n\r\n\r\n![](\(placeholder))\r\n\r\n3) three   "
 
         XCTAssertEqual(
-            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: resolved),
             "* one\r\n* two\r\n\r\n\r\n![](\(resolved))\r\n\r\n3) three   ")
     }
 
@@ -464,7 +464,7 @@ final class MarkdownParserTests: XCTestCase {
 
         XCTAssertEqual(
             markdownRewritingPendingAttachment(
-                "![\(placeholder)](\(placeholder))", placeholderURL: placeholder, resolvedURL: resolved),
+                "![\(placeholder)](\(placeholder))", localID: placeholderID, resolvedURL: resolved),
             "![\(placeholder)](\(resolved))")
     }
 
@@ -472,15 +472,79 @@ final class MarkdownParserTests: XCTestCase {
         let source = "# Title\n\n![](https://example.com/a.png)"
         XCTAssertEqual(
             markdownRewritingPendingAttachment(
-                source, placeholderURL: placeholder, resolvedURL: "https://docs.example.org/media/key.jpg"),
+                source, localID: placeholderID, resolvedURL: "https://docs.example.org/media/key.jpg"),
             source)
+    }
+
+    func testAnUppercaseSchemeIsHeldRatherThanPushed() {
+        // `parseImageLine` classifies on `scheme?.lowercased()`, so this IS an image block. A
+        // case-sensitive predicate would answer false, the hold would not engage, and the
+        // placeholder would go to the server — the leak direction, opposite to the wedge below.
+        let shouty = "SCHRIFT-ATTACHMENT://\(placeholderID.uuidString.lowercased())"
+        assertParses("![](\(shouty))", [EditorBlock(kind: .image(alt: "", url: shouty))])
+
+        XCTAssertTrue(markdownReferencesPendingAttachment("![](\(shouty))"))
+        XCTAssertEqual(pendingAttachmentID(fromPlaceholderURL: shouty), placeholderID)
+    }
+
+    func testAnUppercaseSchemeIsAlsoRewritable() {
+        // Held and rewritable must be the same set: held-but-not-rewritable is a permanent wedge.
+        let shouty = "SCHRIFT-ATTACHMENT://\(placeholderID.uuidString.lowercased())"
+        let resolved = "https://docs.example.org/media/key.jpg"
+
+        let rewritten = markdownRewritingPendingAttachment(
+            "![](\(shouty))", localID: placeholderID, resolvedURL: resolved)
+
+        XCTAssertEqual(rewritten, "![](\(resolved))")
+        XCTAssertFalse(markdownReferencesPendingAttachment(rewritten))
+    }
+
+    func testRewritingMatchesEverySpellingThePredicateHoldsOn() {
+        // The predicate resolves a placeholder to a *record*, tolerating either case and a
+        // trailing slash. A rewriter keyed on the canonical URL's bytes would hold a document on
+        // these and never be able to release it — the two must agree on identity.
+        let resolved = "https://docs.example.org/media/key.jpg"
+        for spelling in [
+            "schrift-attachment://\(placeholderID.uuidString)",
+            "schrift-attachment://\(placeholderID.uuidString.lowercased())/",
+        ] {
+            let source = "![](\(spelling))"
+            XCTAssertTrue(markdownReferencesPendingAttachment(source), "should hold: \(spelling)")
+            let rewritten = markdownRewritingPendingAttachment(
+                source, localID: placeholderID, resolvedURL: resolved)
+            XCTAssertEqual(rewritten, "![](\(resolved))", "should rewrite: \(spelling)")
+            XCTAssertFalse(markdownReferencesPendingAttachment(rewritten))
+        }
+    }
+
+    func testRewritingLeavesADifferentRecordsPlaceholderAlone() {
+        let other = UUID(uuidString: "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC")!
+        let source = "![](\(pendingAttachmentPlaceholderURL(for: other)))"
+
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(
+                source, localID: placeholderID, resolvedURL: "https://docs.example.org/media/key.jpg"),
+            source)
+    }
+
+    func testRewritingAgreesWithTheParserOnCROnlyLineEndings() {
+        // `parseEditorBlocks` normalizes a lone CR to LF, so the predicate sees an image block
+        // here. A rewriter splitting on "\n" alone would see one unparseable line and leave the
+        // placeholder in place — held forever.
+        let resolved = "https://docs.example.org/media/key.jpg"
+        let source = "Before\r![](\(placeholder))\rAfter"
+
+        XCTAssertTrue(markdownReferencesPendingAttachment(source))
+        let rewritten = markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: resolved)
+        XCTAssertEqual(rewritten, "Before\r![](\(resolved))\rAfter")
+        XCTAssertFalse(markdownReferencesPendingAttachment(rewritten))
     }
 
     func testARewrittenDocumentNoLongerReferencesThePendingAttachment() {
         // The property the replay's conditional record removal rests on.
         let source = "![](\(placeholder))\n\nText"
         let rewritten = markdownRewritingPendingAttachment(
-            source, placeholderURL: placeholder, resolvedURL: "https://docs.example.org/media/key.jpg")
+            source, localID: placeholderID, resolvedURL: "https://docs.example.org/media/key.jpg")
 
         XCTAssertTrue(markdownReferencesPendingAttachment(source))
         XCTAssertFalse(markdownReferencesPendingAttachment(rewritten))

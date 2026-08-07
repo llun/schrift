@@ -138,6 +138,50 @@ final class DocumentSaveCoordinatorAttachmentHoldTests: XCTestCase {
         XCTAssertEqual(contentPatches(log), 1)
     }
 
+    func testALiveSnapshotSaveIsHeldByItsProjectedMarkdown() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _) = makeCoordinator()
+
+        // A live snapshot PATCHes CRDT bytes, not markdown — but the projected markdown it
+        // carries is derived from the same replica, so a placeholder in the document always
+        // appears there. That is what makes one gate cover both save shapes.
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x01, 0x02]),
+            projectedMarkdown: heldMarkdown, title: "Doc", baseline: nil)
+
+        await waitAndConfirmNever { self.contentPatches(log) > 0 }
+        XCTAssertTrue(isPendingSync(coordinator.state(for: documentID)))
+    }
+
+    func testALiveSnapshotSaveWithNoPendingPhotoStillPushes() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log)
+        let (coordinator, _) = makeCoordinator()
+
+        coordinator.enqueueLiveSnapshot(
+            documentID: documentID, snapshot: Data([0x01, 0x02]),
+            projectedMarkdown: resolvedMarkdown, title: "Doc", baseline: nil)
+
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(contentPatches(log), 1)
+    }
+
+    func testAPlaceholderQueuedBehindALiveSaveStillReadsAsSaving() async {
+        let log = RequestRecorder()
+        stubSavePipeline(log: log, saveDelay: 0.3)
+        let (coordinator, _) = makeCoordinator()
+
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "# Notes")
+        await waitUntil { self.contentPatches(log) == 1 }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: heldMarkdown)
+
+        // A save really is on the wire, so "Saved on this device" would be a lie — this is the
+        // one hold that can co-occur with an in-flight save. `finish` stamps it on re-park.
+        XCTAssertFalse(isPendingSync(coordinator.state(for: documentID)))
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+    }
+
     // MARK: - finish's queued restart
 
     func testFinishReParksAQueuedPlaceholderSaveInsteadOfStartingIt() async {

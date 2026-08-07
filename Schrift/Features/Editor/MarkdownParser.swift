@@ -208,41 +208,43 @@ private func parseImageLine(_ line: String) -> (alt: String, url: String)? {
 ///
 /// Parse-based deliberately. A substring test would hold a document's saves forever because
 /// someone wrote the scheme inside a code block or a sentence, and the escape from such a hold
-/// (deleting the image leaf) would not exist — there would be no leaf. The `contains` check is
-/// only a fast path, so the common case costs one scan rather than a full parse.
+/// (deleting the image leaf) would not exist — there would be no leaf. The prefix check is only
+/// a fast path, and it is **case-insensitive** to match `parseImageLine`'s scheme comparison: a
+/// case-sensitive one would skip the parse for `SCHRIFT-ATTACHMENT://…`, which classifies as an
+/// image block, and that placeholder would be pushed to the server.
 func markdownReferencesPendingAttachment(_ markdown: String) -> Bool {
-    guard markdown.contains(pendingAttachmentURLPrefix) else { return false }
+    guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return false }
     return parseEditorBlocks(markdown).contains { block in
         guard case .image(_, let url) = block.kind else { return false }
         return pendingAttachmentID(fromPlaceholderURL: url) != nil
     }
 }
 
-/// Replaces one placeholder URL with the media URL its upload resolved to, leaving every other
-/// byte of the document alone.
+/// Replaces a queued photo's placeholder with the media URL its upload resolved to, leaving
+/// every other byte of the document alone.
 ///
 /// Targeted replacement rather than a parse-and-re-serialize round trip: a draft can hold
 /// server-authored markdown whose serialization is deliberately lossy (blank-line runs collapse,
 /// `*` bullets become `-`, ordered runs renumber), and this runs from a background pass, so
 /// canonicalizing here would rewrite content the user never touched. Only lines that classify as
-/// an image block carrying exactly this placeholder are touched, so a mention inside a code block
-/// or a sentence is left as the text it is.
+/// an image block naming this record are touched, so a mention inside a code block or a sentence
+/// is left as the text it is.
 ///
-/// Line endings survive: `components(separatedBy: "\n")` + `joined(separator: "\n")` round-trips
-/// exactly, and a trailing `\r` is stripped for classification and put back.
+/// **Keyed on the record, not on the placeholder's spelling.** `pendingAttachmentID` accepts a
+/// trailing slash and either case, so the hold predicate treats those as the same photo — and a
+/// rewriter matching the canonical URL byte-for-byte would then hold a document it could never
+/// release. The two must agree on identity or the difference is a permanent wedge.
 func markdownRewritingPendingAttachment(
     _ markdown: String,
-    placeholderURL: String,
+    localID: UUID,
     resolvedURL: String
 ) -> String {
-    guard markdown.contains(placeholderURL) else { return markdown }
-    var lines = markdown.components(separatedBy: "\n")
+    guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return markdown }
+    var lines = markdownLinesWithTerminators(markdown)
     var openFenceLength: Int?
 
     for index in lines.indices {
-        let raw = lines[index]
-        let hadCarriageReturn = raw.hasSuffix("\r")
-        let line = hadCarriageReturn ? String(raw.dropLast()) : raw
+        let line = lines[index].content
 
         if let length = openFenceLength {
             if closesCodeFence(line, openingLength: length) { openFenceLength = nil }
@@ -252,15 +254,46 @@ func markdownRewritingPendingAttachment(
             openFenceLength = fence.length
             continue
         }
-        guard let image = parseImageLine(line), image.url == placeholderURL else { continue }
-        // Backwards, so an alt text that happens to spell the same placeholder is left alone —
-        // the destination is the last occurrence on the line by construction.
-        guard let range = line.range(of: placeholderURL, options: .backwards) else { continue }
-        let rewritten = line.replacingCharacters(in: range, with: resolvedURL)
-        lines[index] = hadCarriageReturn ? rewritten + "\r" : rewritten
+        guard let image = parseImageLine(line),
+            pendingAttachmentID(fromPlaceholderURL: image.url) == localID
+        else { continue }
+        // Replace the destination as it is actually spelled on the line, searching backwards so
+        // an alt text that happens to spell the same placeholder is left alone — the destination
+        // is the last occurrence by construction.
+        guard let range = line.range(of: image.url, options: .backwards) else { continue }
+        lines[index].content = line.replacingCharacters(in: range, with: resolvedURL)
     }
 
-    return lines.joined(separator: "\n")
+    return lines.map { $0.content + $0.terminator }.joined()
+}
+
+/// Splits into (content, terminator) pairs, so rejoining reproduces the input byte for byte.
+///
+/// `parseEditorBlocks` normalizes CRLF **and a lone CR** to LF before classifying. A rewriter
+/// that split on `"\n"` alone would disagree with it on a CR-only document: the predicate would
+/// see an image block where the rewriter saw one unparseable line, holding a placeholder it
+/// could never rewrite. Agreeing on line boundaries is what keeps the two in step.
+private func markdownLinesWithTerminators(_ markdown: String) -> [(content: String, terminator: String)] {
+    var lines: [(content: String, terminator: String)] = []
+    var current = ""
+    var index = markdown.startIndex
+
+    while index < markdown.endIndex {
+        let character = markdown[index]
+        let next = markdown.index(after: index)
+        // CRLF is **one** `Character` in Swift — a single grapheme cluster — so it must be
+        // matched as itself. Comparing against "\r" and "\n" separately silently misses every
+        // CRLF document, which then collapses into a single line and rewrites nothing.
+        if character == "\r\n" || character == "\r" || character == "\n" {
+            lines.append((current, String(character)))
+            current = ""
+        } else {
+            current.append(character)
+        }
+        index = next
+    }
+    lines.append((current, ""))
+    return lines
 }
 
 private func hasBalancedParentheses(_ text: String) -> Bool {

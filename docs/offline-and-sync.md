@@ -1132,8 +1132,10 @@ matches the invariant.
    passing through `enqueue`'s hold — reached from `clearResolvedConflict`, which
    the editor calls from five places — so releasing a hold on a local document
    would PATCH a nonexistent id straight into the `.failed`-then-skipped trap
-   above. Its guard returns *before* `queued.removeValue`, so the held save is
-   kept rather than dropped on the floor.
+   above. Its guard returns *before* the queued slot is cleared, so the held save
+   is kept rather than dropped on the floor. (It now carries two further guards for
+   the pending-attachment hold — see "A photo queued on this device" below — and
+   every one of them returns before the slot is touched, for this same reason.)
 4. **`finish`'s queued restart refuses.** The other such path: when a settled save
    drains its queued slot it calls `start` directly, re-applying the conflict hold
    — and now the pending-create one, for the same reason. Unreachable today (no
@@ -2033,6 +2035,76 @@ migration — so a deferred migration plus a launch with no list fetch leaves th
 in *neither* surface. Nothing is lost (the draft is on disk) but the only route back is
 going online, and the withholding rationale — "the fetched list is where it belongs" —
 assumes a fetched list exists.
+
+## A photo queued on this device (2026-08-07, in progress)
+
+**Status: foundation only.** The placeholder vocabulary, the store, and the save hold
+have landed. Nothing yet *mints* a placeholder — the photo-insert path is still gated
+offline exactly as described above — so this section describes machinery that is inert
+until the replay pass and the insert/render work land. It is written down now because
+the hold ships now, and a reader hitting a held save needs to know why.
+
+A photo picked with no network cannot be uploaded, so the block that goes into the
+document names the *record* rather than a media URL: `schrift-attachment://<localID>`.
+`PendingAttachmentStore` holds the record (UserDefaults) and the prepared JPEG (a file
+under Application Support). Both halves are **backup-included** and there is no
+eviction — until the upload lands those bytes exist nowhere else, so the
+`DocumentContentCacheStore` template this otherwise copies is wrong on exactly those two
+lines. Records use the *create* store's quarantine + sticky-`holdsUnreadableData`
+discipline, because the first write after a corrupt read would otherwise rebuild the blob
+and leave every surviving placeholder record-less.
+
+`parseImageLine` allowlists that one scheme, so a queued photo is a real `.image` block:
+`addsImage` verifies an insert by re-parsing and counting image blocks, and an `.unknown`
+block would fail that check *and* drop the document out of live-write eligibility.
+
+**What keeps it off the server is a content-keyed save hold.**
+`markdownReferencesPendingAttachment` is asked of the markdown each save is about to
+push, at all four paths that reach `start` — `enqueue`'s park (a fourth disjunct, and a
+third in the `.pendingSync` stamp, that one additionally gated on nothing being in
+flight), `releaseHeldSave`, `finish`'s queued restart — plus a pre-fetch skip in
+`runSyncPass`. Keyed on *content*, never on the store, so a store that cannot be decoded
+stalls the replay instead of leaking a placeholder; and because each gate parses the save
+in front of it, a document holding two queued photos releases only when the last one
+lands, with no per-record bookkeeping.
+
+Three properties are easy to get wrong and are each worth a regression test:
+
+- **`runSyncPass`'s skip prevents deletion, not a wasted fetch.** The `.push` branch
+  would be held by `enqueue` anyway — but a placeholder draft carrying no baseline (a
+  legacy chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3,
+  and past the tolerance `.discardServerWins` *removes the draft*, taking the queued
+  photo and every text edit beside it.
+- **The predicate and the rewriter must agree on identity.** `pendingAttachmentID`
+  tolerates either case and a trailing slash, and `parseImageLine` classifies on a
+  lowercased scheme — so both are matched pairs of the same question. Too strict in the
+  predicate **leaks** (an uppercase scheme is a real image block that the hold would
+  miss); too strict in the rewriter **wedges** (held forever, never rewritable). The
+  rewriter also splits lines exactly as `parseEditorBlocks` does, CRLF and lone CR alike;
+  note CRLF is a single Swift `Character`, so matching `"\r"` and `"\n"` separately
+  silently misses every CRLF document.
+- **A held save must not read as a saved save.** The `.pendingSync` stamp is what makes
+  the editor's status honest. This is the first hold that can co-occur with a save
+  genuinely in flight, which is why that disjunct alone is gated on `inFlight == nil`.
+
+**Owed by the work that follows**, and deliberately not done here:
+
+- The **live-collaboration write path bypasses these gates entirely.** `markDirty`
+  forwards to `LiveEditingBridge.forwardLocalEdit` and returns *without enqueuing*, so an
+  edit made while a live session is engaged is broadcast to peers and never becomes a save
+  to hold; `canEngageLiveWrite` cannot catch it, because `YBlockProjection` models any
+  string url. The insert path must refuse to queue while live editing is engaged.
+- A rewritten queued save must be rebuilt **classic** (`liveSnapshot: nil`). Rewriting the
+  markdown of a parked live-snapshot save would leave CRDT bytes that still encode the
+  placeholder, and `start` prefers the bytes.
+- `syncCaption` degrades to a passive caption only on `hasConflict`; an attachment hold
+  currently still offers a "tap to retry" that `saveNow` no-ops (`pendingSave != nil`).
+  It needs the same third precedence input the conflict hold has.
+- `removeAll(forDocumentID:)` has no caller: `resolveConflictKeepingServer` and
+  `discardPendingWork` throw away the draft that referenced the placeholders without
+  purging the records or bytes.
+- A placeholder with **no matching record** (hand-authored, or from a co-author) holds
+  that document's saves with the image leaf's deletion as the only escape.
 
 ## Data flow
 

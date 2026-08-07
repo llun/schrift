@@ -27,13 +27,21 @@ func pendingAttachmentPlaceholderURL(for localID: UUID) -> String {
 
 /// The record a placeholder URL names, or nil for anything else.
 ///
-/// Deliberately strict — an exact scheme match and nothing after the id but an optional trailing
-/// slash — because this is what the render branch and the hold predicate key off. Parsed by
-/// string rather than through `URL.host` so the answer cannot move with Foundation's handling of
+/// Strict about shape — nothing after the id but an optional trailing slash — and parsed by
+/// string rather than through `URL.host`, so the answer cannot move with Foundation's handling of
 /// authority components in a non-special scheme.
+///
+/// **The scheme comparison is case-insensitive, and that is load-bearing rather than lenient.**
+/// `parseImageLine` classifies on `url.scheme?.lowercased()`, so `SCHRIFT-ATTACHMENT://…` is a
+/// real image block; a case-sensitive test here would answer nil for it, the save hold would not
+/// engage, and the placeholder would be pushed to the server. Whatever the parser accepts as a
+/// placeholder, this must recognise — the two are a matched pair, and a gap in either direction
+/// is a bug (too strict here leaks; too lenient in the *rewriter* wedges).
 func pendingAttachmentID(fromPlaceholderURL urlString: String) -> UUID? {
-    guard urlString.hasPrefix(pendingAttachmentURLPrefix) else { return nil }
-    var identifier = String(urlString.dropFirst(pendingAttachmentURLPrefix.count))
+    guard let separator = urlString.range(of: "://") else { return nil }
+    guard urlString[urlString.startIndex..<separator.lowerBound].lowercased() == pendingAttachmentURLScheme
+    else { return nil }
+    var identifier = String(urlString[separator.upperBound...])
     if identifier.hasSuffix("/") { identifier.removeLast() }
     return UUID(uuidString: identifier)
 }
@@ -49,9 +57,10 @@ struct PendingAttachment: Codable, Equatable, Sendable {
     /// Client-minted, and the identity the placeholder URL carries.
     let localID: UUID
     /// The document the placeholder sits in. `var` because a document created on this device is
-    /// re-keyed from its `localID` onto the server's id by `migrateCreatedDocument`, which
-    /// rewrites this in the same sweep that repoints child create records — before the create
-    /// record is removed, so the pass's parent-create gate holds throughout.
+    /// re-keyed from its `localID` onto the server's id when a locally-created document is
+    /// POSTed. **Owed by the replay work**: `migrateCreatedDocument` does not rewrite this yet,
+    /// and must do so in the same sweep that repoints child create records — before the create
+    /// record is removed, so the parent-create gate holds throughout.
     var documentID: UUID
     /// Replay order.
     let createdAt: Date
@@ -74,9 +83,10 @@ struct PendingAttachment: Codable, Equatable, Sendable {
     var uploadedURLString: String?
     /// Set when the server rejected the upload on the merits (a 400, a too-large file) — a
     /// failure that retrying cannot fix on its own. Unlike the in-memory `.failed` save state,
-    /// this is persisted, because the affordances it drives (Retry / Remove, on the image leaf
-    /// itself) have to survive a relaunch: the document's saves stay held until the user answers,
-    /// and a state the user cannot see is a state they cannot answer.
+    /// this is persisted, because the affordances it will drive (Retry / Remove, on the image
+    /// leaf itself — **owed by the rendering work**, which is what makes this state answerable)
+    /// have to survive a relaunch: the document's saves stay held until the user answers, and a
+    /// state the user cannot see is a state they cannot answer.
     var failedAt: Date?
 
     init(
@@ -102,6 +112,9 @@ struct PendingAttachment: Codable, Equatable, Sendable {
 }
 
 /// Photos queued on this device: records in UserDefaults, bytes as files.
+///
+/// Entries hold the user's own photographs — never log, print, or transmit their contents
+/// anywhere but the attachment upload.
 ///
 /// Split that way for the same reason `DocumentContentCacheStore` is file-based — JPEG bytes do
 /// not belong in a UserDefaults blob — while the records follow the repo's UserDefaults-store
@@ -189,11 +202,13 @@ final class PendingAttachmentStore {
         guard !localIDs.isEmpty else { return }
         quarantineUnreadableDataIfNeeded()
         var attachments = loadAll()
-        for localID in localIDs {
-            attachments[localID.uuidString] = nil
-            removeData(for: localID)
-        }
+        for localID in localIDs { attachments[localID.uuidString] = nil }
+        // Records first, then bytes — the mirror of `saveData`'s rule, and for the same reason.
+        // `persist` swallows an encode failure, so deleting the files first could leave a record
+        // pointing at bytes that no longer exist; this way a failure leaves bytes with no record,
+        // which is inert and collectable.
         persist(attachments)
+        for localID in localIDs { removeData(for: localID) }
     }
 
     /// Drops every record for a document, bytes included — used by the delete and
@@ -208,8 +223,9 @@ final class PendingAttachmentStore {
     /// Load-bearing for the same reason it is on the create store: the replay collects a record
     /// whose placeholder no document references any more, and reading a corrupt blob as "no
     /// records exist" would instead make every *surviving* placeholder record-less — each one a
-    /// document whose saves are held with no way to answer but deleting the image. The pass
-    /// refuses to run at all while this is true.
+    /// document whose saves are held with no way to answer but deleting the image. **Owed by the
+    /// replay work**: that pass must refuse to run at all while this is true. Nothing consults it
+    /// yet.
     ///
     /// **Sticky across launches**, like the create store's and unlike `PendingDraftStore`'s
     /// detection-only flag. Quarantining preserves the bytes, but on its own the live key comes

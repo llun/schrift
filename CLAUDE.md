@@ -1947,11 +1947,29 @@ markdown write endpoint**. Understand this before touching the save path:
   - **What keeps it off the server is `markdownReferencesPendingAttachment`**, asked of
     the markdown a save is about to push at every path that can reach `start`:
     `enqueue`'s park (a fourth disjunct beside pending-create/conflict/in-flight, and a
-    third in the `.pendingSync` stamp), `releaseHeldSave`, `finish`'s queued restart, and
+    third in the `.pendingSync` stamp — that one additionally gated on nothing being
+    in flight, since this is the first hold that can co-occur with a real save on the
+    wire), `releaseHeldSave`, `finish`'s queued restart, and
     a pre-fetch skip in `runSyncPass`. **Keyed on content, never on the store** — a store
     that cannot be decoded stalls the replay instead of leaking a placeholder — and
     because each gate parses the save in front of it, a document with *two* queued photos
     releases only when the last one lands, with no per-record bookkeeping.
+  - **That covers the REST save path only, and the live-collaboration write path is a
+    separate hole that must be closed before anything mints a placeholder.**
+    `insertImageBlock` calls `markDirty()`, whose first line forwards to
+    `LiveEditingBridge.forwardLocalEdit` and **returns without enqueuing** — so an edit
+    made while a live session is engaged is broadcast to peers and never becomes a save
+    for these gates to hold. `canEngageLiveWrite` cannot catch it either:
+    `YBlockProjection.classifyImage` models *any* string url, so a placeholder block is
+    `isFullyModeled`. The photo-insert path therefore refuses to queue while live editing
+    is engaged (and downgrades to the classic path the hold covers) rather than relying
+    on these four gates.
+  - **The rewrite is keyed on the record, not on the placeholder's spelling.**
+    `pendingAttachmentID` accepts a trailing slash and either case, so the predicate
+    treats those as the same photo; a rewriter matching the canonical URL byte-for-byte
+    would hold a document it could never release. The rewriter also splits lines exactly
+    as `parseEditorBlocks` does (CRLF *and* lone CR), for the same reason — disagreeing
+    about a line boundary is a permanent hold, not a cosmetic difference.
   - The predicate **parses**; a substring test would hold a document's saves because
     someone quoted the scheme in a code block, where there is no image leaf to delete and
     therefore no escape from the hold. The `contains` check is only a fast path.
@@ -2502,8 +2520,10 @@ markdown write endpoint**. Understand this before touching the save path:
   on-device create records in `PendingDocumentCreateStore` (same reasoning — for
   a document that exists nowhere else, that record and its draft are the only
   copies; surviving sign-out is made safe by the record's **`ownerUserID`**, not by
-  `serverOrigin` alone, which identifies the server and not the account); only
-  the full bodies in `DocumentContentCacheStore` are. That clearing lives in
+  `serverOrigin` alone, which identifies the server and not the account) nor the
+  queued photos in `PendingAttachmentStore` (records *and* JPEG bytes, backup-included
+  and owner-scoped for exactly the same reason — an un-uploaded photo exists nowhere
+  else); only the full bodies in `DocumentContentCacheStore` are. That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it
   explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
