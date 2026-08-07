@@ -377,4 +377,112 @@ final class MarkdownParserTests: XCTestCase {
         // An unclosed fence gains a closing fence line on serialize.
         XCTAssertFalse(markdownSurvivesRoundTrip("```"))
     }
+
+    // MARK: - Pending attachment placeholders
+
+    private var placeholderID: UUID { UUID(uuidString: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")! }
+    private var placeholder: String { pendingAttachmentPlaceholderURL(for: placeholderID) }
+
+    func testPendingAttachmentPlaceholderBecomesAnImageBlock() {
+        // It has to classify, or `addsImage` — which verifies an insertion by re-parsing and
+        // counting `.image` blocks — reports every queued photo as a failed insert, and the
+        // resulting `.unknown` block drops the document out of live-write eligibility.
+        assertParses("![](\(placeholder))", [EditorBlock(kind: .image(alt: "", url: placeholder))])
+        assertParses("![Ana](\(placeholder))", [EditorBlock(kind: .image(alt: "Ana", url: placeholder))])
+    }
+
+    func testPendingAttachmentPlaceholderSurvivesTheRoundTripGate() {
+        XCTAssertTrue(markdownSurvivesRoundTrip("Before\n\n![](\(placeholder))\n\nAfter"))
+    }
+
+    func testMarkdownReferencesPendingAttachmentSeesAnImageBlock() {
+        XCTAssertTrue(markdownReferencesPendingAttachment("![](\(placeholder))"))
+        XCTAssertTrue(markdownReferencesPendingAttachment("Text\n\n![a](\(placeholder))\n\nMore"))
+    }
+
+    func testMarkdownReferencesPendingAttachmentIgnoresOrdinaryContent() {
+        XCTAssertFalse(markdownReferencesPendingAttachment(""))
+        XCTAssertFalse(markdownReferencesPendingAttachment("![a](https://example.com/a.png)"))
+        XCTAssertFalse(markdownReferencesPendingAttachment("Just a paragraph."))
+    }
+
+    func testMarkdownReferencesPendingAttachmentIgnoresAMentionThatIsNotAnImageBlock() {
+        // The predicate holds a document's saves, and the only escape from that hold is
+        // deleting the image leaf. A substring test would hold a document forever because
+        // someone quoted the scheme in a code block — where there is no leaf to delete.
+        XCTAssertFalse(markdownReferencesPendingAttachment("```\n![](\(placeholder))\n```"))
+        XCTAssertFalse(markdownReferencesPendingAttachment("Type `\(placeholder)` to see it."))
+        XCTAssertFalse(markdownReferencesPendingAttachment("A line mentioning \(placeholder) inline."))
+        // Indented, so the image is `.unknown` rather than a block — nothing to resolve.
+        XCTAssertFalse(markdownReferencesPendingAttachment("    ![](\(placeholder))"))
+    }
+
+    func testRewritingAPlaceholderReplacesOnlyThatImageDestination() {
+        let resolved = "https://docs.example.org/media/key.jpg"
+        let source = "# Title\n\n![Ana](\(placeholder))\n\nAfter"
+
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            "# Title\n\n![Ana](\(resolved))\n\nAfter")
+    }
+
+    func testRewritingLeavesOtherPlaceholdersAndOrdinaryImagesAlone() {
+        let other = pendingAttachmentPlaceholderURL(for: UUID(uuidString: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB")!)
+        let resolved = "https://docs.example.org/media/key.jpg"
+        let source = "![](\(placeholder))\n\n![](\(other))\n\n![](https://example.com/a.png)"
+
+        // A document with two queued photos resolves one at a time; the second placeholder is
+        // what keeps the save held until its own upload lands.
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            "![](\(resolved))\n\n![](\(other))\n\n![](https://example.com/a.png)")
+    }
+
+    func testRewritingSkipsFencedAndInlineMentions() {
+        let resolved = "https://docs.example.org/media/key.jpg"
+        let source = "```\n![](\(placeholder))\n```\n\nSee \(placeholder) above."
+
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            source)
+    }
+
+    func testRewritingPreservesEveryOtherByteIncludingLineEndings() {
+        let resolved = "https://docs.example.org/media/key.jpg"
+        // Non-canonical markdown a draft can genuinely hold (server-authored bullets, blank-line
+        // runs, CRLF). A parse-and-re-serialize rewrite would canonicalize all of it from a
+        // background pass — content the user never touched.
+        let source = "* one\r\n* two\r\n\r\n\r\n![](\(placeholder))\r\n\r\n3) three   "
+
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(source, placeholderURL: placeholder, resolvedURL: resolved),
+            "* one\r\n* two\r\n\r\n\r\n![](\(resolved))\r\n\r\n3) three   ")
+    }
+
+    func testRewritingLeavesTheAltTextAloneWhenItSpellsThePlaceholder() {
+        let resolved = "https://docs.example.org/media/key.jpg"
+
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(
+                "![\(placeholder)](\(placeholder))", placeholderURL: placeholder, resolvedURL: resolved),
+            "![\(placeholder)](\(resolved))")
+    }
+
+    func testRewritingAnAbsentPlaceholderIsAnIdentity() {
+        let source = "# Title\n\n![](https://example.com/a.png)"
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(
+                source, placeholderURL: placeholder, resolvedURL: "https://docs.example.org/media/key.jpg"),
+            source)
+    }
+
+    func testARewrittenDocumentNoLongerReferencesThePendingAttachment() {
+        // The property the replay's conditional record removal rests on.
+        let source = "![](\(placeholder))\n\nText"
+        let rewritten = markdownRewritingPendingAttachment(
+            source, placeholderURL: placeholder, resolvedURL: "https://docs.example.org/media/key.jpg")
+
+        XCTAssertTrue(markdownReferencesPendingAttachment(source))
+        XCTAssertFalse(markdownReferencesPendingAttachment(rewritten))
+    }
 }

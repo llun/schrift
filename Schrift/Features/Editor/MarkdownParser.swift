@@ -159,13 +159,25 @@ private func parseClassifiedLine(_ line: String) -> EditorBlock? {
 }
 
 /// A single standalone `![alt](url)` line at column zero with an absolute
-/// http(s) URL. Anything ambiguous — a relative URL, trailing text, a `]` in the
+/// http(s) URL — or the app's own `schrift-attachment://` placeholder, which is
+/// the one non-http scheme that classifies, and only because the editor mints it
+/// (see `PendingAttachmentStore`). Anything ambiguous — a relative URL, trailing
+/// text, a `]` in the
 /// alt, leading indentation, an unbalanced `)` in the url — is left to the
 /// `.unknown` path so a full-overwrite save can never corrupt content the editor
 /// doesn't fully model. `alt`/`url` are returned as raw substrings, never
 /// normalized (the backend matches the url byte-for-byte). Because
 /// `parseClassifiedLine` feeds both classification and `canonicalizeLine`, adding
 /// this keeps the two consistent automatically.
+///
+/// A placeholder has to classify here rather than fall to `.unknown` for three
+/// reasons that all point the same way: `addsImage` verifies an insertion by
+/// re-parsing and counting `.image` blocks, so an unclassified placeholder would
+/// report every queued photo as a failed insert; `.unknown` blocks are excluded
+/// from live-write eligibility, so a queued photo would silently drop the
+/// document out of collaboration; and the block has to survive the round trip as
+/// an image so the rewrite below can find it again. What keeps it off the wire is
+/// the save hold, not the classification.
 private func parseImageLine(_ line: String) -> (alt: String, url: String)? {
     guard line.first == "!" else { return nil }
     let trimmed = rstrip(line)
@@ -181,9 +193,74 @@ private func parseImageLine(_ line: String) -> (alt: String, url: String)? {
     // mangled url and silently drop the tail. Balanced pairs (`x(1).png`) are fine.
     guard !urlString.contains(where: \.isWhitespace), hasBalancedParentheses(urlString) else { return nil }
     guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
-        scheme == "http" || scheme == "https"
+        scheme == "http" || scheme == "https" || scheme == pendingAttachmentURLScheme
     else { return nil }
     return (alt, urlString)
+}
+
+// MARK: - Pending attachment placeholders
+
+/// Whether this markdown contains a queued-photo placeholder **as an image block**.
+///
+/// This is the predicate the save hold is keyed on, and it is the reason the hold is safe: it
+/// asks about the content a save is about to push rather than about the attachment store, so a
+/// store that cannot be read stalls the replay instead of leaking a placeholder to the server.
+///
+/// Parse-based deliberately. A substring test would hold a document's saves forever because
+/// someone wrote the scheme inside a code block or a sentence, and the escape from such a hold
+/// (deleting the image leaf) would not exist — there would be no leaf. The `contains` check is
+/// only a fast path, so the common case costs one scan rather than a full parse.
+func markdownReferencesPendingAttachment(_ markdown: String) -> Bool {
+    guard markdown.contains(pendingAttachmentURLPrefix) else { return false }
+    return parseEditorBlocks(markdown).contains { block in
+        guard case .image(_, let url) = block.kind else { return false }
+        return pendingAttachmentID(fromPlaceholderURL: url) != nil
+    }
+}
+
+/// Replaces one placeholder URL with the media URL its upload resolved to, leaving every other
+/// byte of the document alone.
+///
+/// Targeted replacement rather than a parse-and-re-serialize round trip: a draft can hold
+/// server-authored markdown whose serialization is deliberately lossy (blank-line runs collapse,
+/// `*` bullets become `-`, ordered runs renumber), and this runs from a background pass, so
+/// canonicalizing here would rewrite content the user never touched. Only lines that classify as
+/// an image block carrying exactly this placeholder are touched, so a mention inside a code block
+/// or a sentence is left as the text it is.
+///
+/// Line endings survive: `components(separatedBy: "\n")` + `joined(separator: "\n")` round-trips
+/// exactly, and a trailing `\r` is stripped for classification and put back.
+func markdownRewritingPendingAttachment(
+    _ markdown: String,
+    placeholderURL: String,
+    resolvedURL: String
+) -> String {
+    guard markdown.contains(placeholderURL) else { return markdown }
+    var lines = markdown.components(separatedBy: "\n")
+    var openFenceLength: Int?
+
+    for index in lines.indices {
+        let raw = lines[index]
+        let hadCarriageReturn = raw.hasSuffix("\r")
+        let line = hadCarriageReturn ? String(raw.dropLast()) : raw
+
+        if let length = openFenceLength {
+            if closesCodeFence(line, openingLength: length) { openFenceLength = nil }
+            continue
+        }
+        if let fence = parseCodeFenceOpening(line) {
+            openFenceLength = fence.length
+            continue
+        }
+        guard let image = parseImageLine(line), image.url == placeholderURL else { continue }
+        // Backwards, so an alt text that happens to spell the same placeholder is left alone —
+        // the destination is the last occurrence on the line by construction.
+        guard let range = line.range(of: placeholderURL, options: .backwards) else { continue }
+        let rewritten = line.replacingCharacters(in: range, with: resolvedURL)
+        lines[index] = hadCarriageReturn ? rewritten + "\r" : rewritten
+    }
+
+    return lines.joined(separator: "\n")
 }
 
 private func hasBalancedParentheses(_ text: String) -> Bool {
