@@ -1,0 +1,66 @@
+Schrift/Core/Localization/Strings+it.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 244-247
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_810ae103ae38c6::t_905c9de7bdeb50 324-337,344-352,357,361,370,377
+  s_810ae103ae38c6::t_44a3b89d5fd4fc 85-96
+  s_810ae103ae38c6::t_89f6244ce6e3f9 358-359
+  s_810ae103ae38c6::t_2af17bb8ed3507 68-69,73-75
+  s_810ae103ae38c6::t_1317c4479aa27a 353-356,360,362-364
+Schrift/Core/Localization/Strings+es.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 249-252
+Schrift/Features/Home/HomeSplitView.swift
+  s_810ae103ae38c6::t_bd9368498de7af 79
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 240-243
+Schrift/Core/Localization/Strings+th.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 242-245
+Schrift/Core/Localization/L10nKey.swift
+  s_810ae103ae38c6::t_c479496c2fa300 274-282
+Schrift/Features/Editor/EditorView.swift
+  s_810ae103ae38c6::t_0e0facc5d4296d 649-650
+  s_810ae103ae38c6::t_8ee1c193c2cbe4 1007
+Schrift/Core/Localization/Strings+en.swift
+  s_810ae103ae38c6::t_6c73ea1dbbce6c 245-248
+SchriftTests/Features/Editor/AttachmentCardViewTests.swift
+  s_810ae103ae38c6::t_89f6244ce6e3f9 53-54
+  s_810ae103ae38c6::t_b137e71e0e79d2 1-52,55-62
+Schrift/App/RootView.swift
+  s_810ae103ae38c6::t_772cc167338a1a 34
+  s_810ae103ae38c6::t_3171d8f11fa1f7 81-84
+  s_810ae103ae38c6::t_fc225c0179e320 186-189
+  s_810ae103ae38c6::t_b7ee385e2ce83d 149
+Schrift/Features/Editor/AttachmentCardView.swift
+  s_810ae103ae38c6::t_89bbfad5d632b5 27-29
+  s_810ae103ae38c6::t_813e53d154be57 1-26,30-83,87-91,95-214
+  s_810ae103ae38c6::t_89f6244ce6e3f9 84-86,92-94
+Schrift/Core/Localization/Strings+pt.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 245-248
+Schrift/Core/Localization/Strings+sl.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 254-257
+Schrift/Features/Home/MainTabView.swift
+  s_810ae103ae38c6::t_253058e7ca4a79 235
+Schrift/Core/Localization/Strings+de.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 248-251
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 240-243
+Schrift/Core/Localization/Strings+nl.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 246-249
+Schrift/Core/Localization/Strings+fr.swift
+  s_810ae103ae38c6::t_0946d8d36f439a 246-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "1fc4a803ed4b0137be485be407114f6c2a292817",
+  "prompts": {},
+  "sessions": {
+    "s_810ae103ae38c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6236ca4-0d88-477c-a92c-8da77f1291e9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
