@@ -1,0 +1,21 @@
+Schrift/Features/Editor/AttachmentDisplay.swift
+  s_810ae103ae38c6::t_9440fe56927115 175-183,185-188
+SchriftTests/Features/Editor/AttachmentCardViewTests.swift
+  s_810ae103ae38c6::t_1073efad1a2ec9 63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "ff322967e57f3aeb05b6ccf01fcff040f5c2f7c5",
+  "prompts": {},
+  "sessions": {
+    "s_810ae103ae38c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6236ca4-0d88-477c-a92c-8da77f1291e9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
