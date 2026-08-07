@@ -17,6 +17,14 @@ final class SearchViewModel {
     private let saveCoordinator: DocumentSaveCoordinator?
     private let signedInUser: SignedInUserStore
     /// Documents whose deletion landed while a fetch was in flight — see `dropDeletedDocument`.
+    ///
+    /// **Deliberately never cleared**, unlike Home's and Shared's. Those each have one fetch to
+    /// protect and clear once it lands; this screen has two independent ones (`search` and
+    /// `loadQuickAccess`), so clearing in either would strip the other's protection mid-flight.
+    /// A stale entry is inert rather than merely harmless: server ids are never reused, so an
+    /// id that named a deleted document can never name a live one, and nothing here is cached
+    /// for it to wrongly suppress later. It grows by one `UUID` per landed deletion per
+    /// session, which is not a size worth trading correctness for.
     private var deletedSinceLoad: Set<UUID> = []
 
     init(
