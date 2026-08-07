@@ -207,7 +207,7 @@ final class EditorViewModel {
         // leaving the row does worse than linger, since the tombstone is gone and it would
         // **un-strike** back into looking like a live document that opens a 404.
         saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
-            self?.dropDeletedSubpage(documentID)
+            self?.noteDocumentDeleted(documentID)
         }
     }
 
@@ -1251,7 +1251,18 @@ final class EditorViewModel {
     /// A sub-page whose deletion has landed leaves the level, rather than un-striking back
     /// into a row that opens a 404. `childrenCache.removeDocument` purged the cache; this is
     /// the in-memory array beside it.
-    private func dropDeletedSubpage(_ documentID: UUID) {
+    private func noteDocumentDeleted(_ documentID: UUID) {
+        // **This screen's own document.** The revive is the one completion that runs with an
+        // editor open (deferring it would let the sync pass reap the draft instead), so this
+        // screen can be left live on an id the server no longer has — where a keystroke would
+        // write a fresh draft under it, PATCH into a 404, and have that draft reaped by the
+        // *next launch's* pass, when the in-memory `.failed` state that protected it is gone.
+        // Ending the session here is what stops those edits being written somewhere that can
+        // only lose them; the body as of the undo is already safe in the revived document.
+        guard documentID != self.documentID else {
+            handleDidDelete()
+            return
+        }
         subpages?.removeAll { $0.id == documentID }
     }
 
@@ -1352,7 +1363,11 @@ final class EditorViewModel {
         // been open already. A child filed here is held by `runCreatePass`'s parent gate until
         // the deletion lands, after which the probe re-roots it — a document the user never
         // asked for, from a parent they threw away.
-        guard !isDocumentPendingDelete else { return nil }
+        guard !isDocumentPendingDelete else {
+            // Say why rather than going silently inert — the button is still on screen.
+            showError(.editor_pending_delete)
+            return nil
+        }
         // **A parent the server has never seen is minted straight away, with no request.** It
         // has no children route to POST to: the call would address
         // `documents/{local-uuid}/children/` and take a 404, which `retryableSaveFailure`

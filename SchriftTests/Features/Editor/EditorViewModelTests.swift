@@ -2229,6 +2229,23 @@ final class EditorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty)
     }
 
+    /// The revive is the one completion that runs with an editor open — deferring it would let
+    /// the sync pass reap the draft instead — so this screen can be left live on an id the
+    /// server no longer has. A keystroke there would write a fresh draft under the dead id and
+    /// have it reaped by the *next launch's* pass, when the in-memory `.failed` that protected
+    /// it is gone. Ending the session is what stops those edits going somewhere that loses them.
+    func testALandedDeletionOfThisDocumentEndsTheSession() async {
+        let env = makeEnvironment()
+        stubLoadAndSavePipeline(content: "# Server", log: RequestRecorder())
+        await env.viewModel.load()
+        XCTAssertFalse(env.viewModel.isDocumentDiscarded, "precondition: a live session")
+
+        env.coordinator.announceDocumentDeletedForTesting(documentID)
+
+        XCTAssertTrue(env.viewModel.isDocumentDiscarded, "nothing here may write again")
+        XCTAssertNil(env.contentCache.content(for: documentID), "and its local copies are gone")
+    }
+
     /// Opening a document whose deletion is queued says so and asks the server nothing — the
     /// whole point of a deletion queued offline. `hasLoadedContent` stays false, so
     /// `startEditing` cannot fire and no funnel here can enqueue.

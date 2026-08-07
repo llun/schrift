@@ -2068,13 +2068,16 @@ editor is gated at `load()`, but a **second, already-loaded** editor goes throug
 push a document from Home and again from Search, delete it in one, and the other's next
 keystroke would PATCH it. The draft is still written, so the work is on disk either way.
 
-Like every other hold here, it **drains on release**: `cancelPendingDelete` calls
-`releaseHeldSave`, because `runSyncPass` skips any document whose `queued` slot is non-nil,
+Like every other hold here, it **drains on release**: both paths that clear a tombstone —
+`cancelPendingDelete` and the `.forbidden` refusal — call `releaseHeldSave`, because `runSyncPass` skips any document whose `queued` slot is non-nil,
 so a save left parked wedges the document out of the replay permanently — until an unrelated
 keystroke happens to drain it, which for a document the user has stopped editing never comes.
 `releaseHeldSave` in turn refuses for a tombstoned id on exactly the terms it already refuses
 for a pending create: it is one of the two paths that reach `start` without passing the hold,
-and the editor clears conflicts from five places.
+and the editor clears conflicts from five places. It also gained the **conflict** check its
+two sibling paths to `start` always had — safe to omit while `clearResolvedConflict`, which
+nils the conflict on the line before, was its only caller, and a full-overwrite of the
+co-author's body the moment a caller that does not clear it was added.
 
 `runSyncPass` skips a tombstoned draft before the fetch, and restates that at **both**
 of its deleting lines (the 404/403 catch and the launch-only `.discardServerWins`
@@ -2141,7 +2144,7 @@ array would tell Home it had fetched and found nothing.
 
 When a deletion lands, every list holding the row **drops it** rather than letting it
 un-strike back into looking alive — `observeDocumentDeleted` is a fan-out precisely because
-Home, Shared, Search and the editor's Subpages each keep their own array, and a single
+Home, Shared, Search, the Pages drawer and the editor's Subpages each keep their own array, and a single
 closure would let one subscriber silently overwrite another.
 
 Every list that can show the document strikes it through and dims it, with a trailing
@@ -2206,9 +2209,10 @@ old one still point at something gone.
   gap a `.failed` create has. The user sees the strikethrough disappear and nothing else.
 - **A revived document loses its parent and its id** (above), so a sub-page comes back as a
   root and inbound links break.
-- **A screen open on a revived document's dead id keeps writing to it** until it is closed —
-  its saves fail against an id the server no longer has. The body is safe in the revived
-  document; only edits made *after* the undo, on that screen, are at risk.
+- **A screen open on a revived document's dead id ends its session** when the deletion is
+  announced, rather than staying live over an id the server no longer has. The body as of the
+  undo is safe in the revived document; edits made on that screen between the undo and the
+  announcement are not carried across.
 - **A gated editor's undo is unscoped.** The row annotations are account-scoped, so a
   tombstone this session cannot see leaves the row looking alive — and the editor gate is
   *not* scoped, so opening it lands on the pending-delete notice. That notice carries its

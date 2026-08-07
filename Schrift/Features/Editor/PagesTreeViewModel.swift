@@ -125,6 +125,25 @@ final class PagesTreeViewModel {
         self.userDefaults = userDefaults
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
+        // The drawer strikes rows through like the other four surfaces, so it owes the same
+        // drop when a deletion lands. Its own hazard is sharper: this view model is `@State`
+        // on the editor and outlives the drawer, and a non-root level is refetched only when
+        // its node is toggled — so a closed-and-reopened drawer would show the row again,
+        // un-struck, indefinitely.
+        saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.dropDeletedPage(documentID)
+        }
+    }
+
+    /// A page whose deletion has landed leaves every level that held it. The children cache is
+    /// purged by the coordinator; `children` is this view model's own copy.
+    private func dropDeletedPage(_ documentID: UUID) {
+        for (parentID, documents) in children where documents.contains(where: { $0.id == documentID }) {
+            children[parentID] = documents.filter { $0.id != documentID }
+        }
+        children[documentID] = nil
+        expanded.remove(documentID)
+        failedLoads.remove(documentID)
     }
 
     var rows: [PagesTreeRow] {
@@ -267,7 +286,9 @@ final class PagesTreeViewModel {
         // parent, which the create pass holds until the deletion lands and the probe then
         // silently re-roots — a document the user never asked for, from a parent they threw away.
         if saveCoordinator?.isPendingDelete(documentID: parent) == true {
-            createErrorKey = .pages_error_create
+            // Not `pages_error_create` — "Please try again" invites a retry that cannot
+            // succeed while the parent is on its way out. State the reason instead.
+            createErrorKey = .editor_pending_delete
             return nil
         }
         let child: Document

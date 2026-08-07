@@ -219,6 +219,12 @@ final class DocumentSaveCoordinator {
             owner: owner, handler: handler)
     }
 
+    /// Test seam: drive the announcement directly, for subscribers whose own reaction is the
+    /// thing under test rather than the pass that triggers it.
+    func announceDocumentDeletedForTesting(_ documentID: UUID) {
+        announceDocumentDeleted(documentID)
+    }
+
     /// Test seam: that the pruning really prunes, rather than the dictionary growing for the
     /// life of the process.
     var documentDeletedObserverCountForTesting: Int { documentDeletedObservers.count }
@@ -2322,6 +2328,11 @@ final class DocumentSaveCoordinator {
                 // can try again or leave it. (Silently, for now: there is no notice channel
                 // here, the same gap a `.failed` create has.)
                 dropPendingDelete(documentID: tombstone.documentID)
+                // The other path that clears a tombstone, so it owes the same drain
+                // `cancelPendingDelete` does: `runSyncPass` skips any document with a parked
+                // `queued` slot, and here the document is alive on the server, so leaving it
+                // parked promises a sync that never comes.
+                releaseHeldSave(documentID: tombstone.documentID)
                 continue
             } catch {
                 // Everything else keeps the tombstone for a later trigger — transport, 5xx,
@@ -2735,6 +2746,14 @@ final class DocumentSaveCoordinator {
         // established. Same ordering rule as above: return *before* `removeValue`, so the held
         // save is kept for the undo rather than silently dropped.
         guard !isPendingDelete(documentID: documentID) else { return }
+        // **And never over an unanswered conflict.** This was safe to omit while
+        // `clearResolvedConflict` — which nils the conflict on the line before — was the only
+        // caller; `cancelPendingDelete` is a caller that does not. Without it, undoing a
+        // deletion of a document that also has a conflict recorded full-overwrites the
+        // co-author's body with the pill still standing. Both sibling paths to `start`
+        // (`enqueue`'s hold and `finish`'s queued restart) already check this; this one was
+        // the odd one out, and only because its single caller hid it.
+        guard conflicts[documentID] == nil else { return }
         guard inFlight[documentID] == nil, let held = queued.removeValue(forKey: documentID) else { return }
         start(documentID: documentID, save: held)
     }

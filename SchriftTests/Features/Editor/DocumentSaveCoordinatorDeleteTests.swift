@@ -737,6 +737,46 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         await waitUntil { env.coordinator.pendingSave(documentID: serverID) == nil }
     }
 
+    /// **The undo must not push over an unanswered conflict.** `releaseHeldSave` never carried
+    /// the conflict check its two sibling paths to `start` do, because its only caller cleared
+    /// the conflict on the line before — and the undo is a caller that does not. Releasing
+    /// there full-overwrites the co-author's body with the pill still standing, which is the
+    /// one thing this subsystem exists to prevent.
+    func testUndoingNeverReleasesASaveHeldByAnUnansweredConflict() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        env.coordinator.enqueue(documentID: serverID, title: "Doc", markdown: "mine")
+
+        env.coordinator.cancelPendingDelete(documentID: serverID)
+
+        await waitAndConfirmNever { log.methods.contains("PATCH") }
+        XCTAssertNotNil(
+            env.coordinator.pendingSave(documentID: serverID),
+            "still parked behind the conflict, which nobody has answered")
+    }
+
+    /// `.forbidden` is the *other* path that clears a tombstone, and it must drain the save
+    /// that hold parked too — otherwise `runSyncPass` skips the document for good and the
+    /// indicator promises a sync that will never come.
+    func testAForbiddenDeletionReleasesTheSaveItsHoldParked() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        env.coordinator.enqueue(documentID: serverID, title: "Doc", markdown: "typed after deleting")
+        stubDeletePipeline(log: log, deleteStatus: 403)
+
+        await env.coordinator.syncPendingDrafts()
+
+        await waitUntil { log.methods.contains("PATCH") }
+        await waitUntil { env.coordinator.pendingSave(documentID: serverID) == nil }
+    }
+
     /// The mirror of the pending-create rule: `releaseHeldSave` is one of the two paths that
     /// reach `start` without passing `enqueue`'s hold, and the editor clears conflicts from
     /// five places — so a conflict resolved while a deletion is queued must not break the hold.

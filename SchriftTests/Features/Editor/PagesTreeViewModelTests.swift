@@ -452,6 +452,33 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertFalse(env.viewModel.isDeletePending(page), "and the undo takes it off again")
     }
 
+    /// The drawer is the fifth surface that strikes rows, so it owes the same drop when the
+    /// deletion lands — and its hazard is the sharpest: this view model outlives the drawer,
+    /// and a non-root level is refetched only when its node is toggled, so a reopened drawer
+    /// would show the row again, **un-struck**, indefinitely.
+    func testALandedDeletionTakesThePageOutOfTheTree() async {
+        let env = makeLocalRootViewModel()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let doomed = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+        MockURLProtocol.stubHandler = { [doomed] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(owner)
+        let syncedParent = UUID()
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        await viewModel.loadRoot()
+        env.coordinator.recordPendingDelete(documentID: doomed, ownerUserID: owner)
+        XCTAssertTrue(viewModel.isDeletePending(viewModel.rows[0].document), "precondition: struck through")
+
+        env.coordinator.announceDocumentDeletedForTesting(doomed)
+
+        XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the row leaves rather than un-striking")
+    }
+
     /// Without a coordinator the predicate answers false rather than trapping.
     func testAPageIsNeverAnnotatedWithoutACoordinator() {
         let (viewModel, _) = makeViewModel()
