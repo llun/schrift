@@ -1926,7 +1926,24 @@ final class DocumentSaveCoordinator {
         // and — since a 404 is not retryable — land on `.failed`, which `runSyncPass`
         // skips. The document would be wedged out of the very replay meant to create it.
         // Write-ahead and latest-wins still apply; only `start` is withheld.
-        if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil || inFlight[documentID] != nil {
+        //
+        // And a fourth: the body still names a photo that has not been uploaded, as the
+        // `schrift-attachment://` placeholder its block carries. Pushing that would write a URL
+        // no client can resolve into the document every collaborator reads — the web editor
+        // included — and the backend's `extract_attachments()` would record it verbatim. The
+        // photo's bytes are already on disk beside the draft, so this is the same bargain as
+        // every other hold: the work is safe locally, and `runAttachmentPass` uploads, rewrites
+        // the placeholder to the real media URL, and releases.
+        //
+        // **Keyed on the content, never on the attachment store.** A save is asked about the
+        // markdown it is about to push, so a store that cannot be decoded stalls the replay
+        // instead of leaking a placeholder — and every other gate that can reach `start`
+        // (`releaseHeldSave`, `finish`'s queued restart) asks the same question of the save it
+        // is about to start, which is what makes a document holding *two* queued photos release
+        // only once the last one has landed.
+        if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil || inFlight[documentID] != nil
+            || markdownReferencesPendingAttachment(save.markdown)
+        {
             queued[documentID] = save
             // **A held save is not a saved save.** Nothing else moves the state on this
             // path (`start` is never called), so it kept whatever it was — usually `.idle`
@@ -1948,7 +1965,12 @@ final class DocumentSaveCoordinator {
             // set it here too rather than relying on that — `finish` can reset a state to
             // `.idle`, and this must not be the one path that leaves a held save reading
             // as saved.
-            if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil {
+            //
+            // A pending attachment likewise: the photo and the text are both on the device and
+            // nothing is on the wire until the upload lands.
+            if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil
+                || markdownReferencesPendingAttachment(save.markdown)
+            {
                 states[documentID] = .pendingSync
             }
             return
@@ -2016,6 +2038,16 @@ final class DocumentSaveCoordinator {
             // guard is why creating offline is safe at all; the create replay (a separate
             // pass) is what actually POSTs these.
             guard !isPendingCreate(documentID: draft.documentID) else { continue }
+            // A draft still naming an un-uploaded photo cannot be reconciled either, and this
+            // skip is **load-bearing rather than an economy**. The `.push` branch below would
+            // re-enter `enqueue` and be held there, true — but the decision has two other
+            // outcomes, and one of them deletes. A placeholder draft that carries no baseline
+            // (a legacy chain, or a relaunch that reset the in-memory state to `.idle`) reaches
+            // rule 3, and once the server's `updated_at` is past the 120s tolerance that answers
+            // `.discardServerWins`, whose launch-pass branch removes the draft — taking the
+            // queued photo and every text edit beside it. `runAttachmentPass` is what unblocks
+            // this document; until then its body is not the pass's to judge.
+            guard !markdownReferencesPendingAttachment(draft.markdown) else { continue }
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
             // A save that FAILED this session is a retry candidate the user may still
             // be looking at (its draft is their only copy), owned by the reading
@@ -2225,10 +2257,24 @@ final class DocumentSaveCoordinator {
         // land on `.failed`, which `runSyncPass` skips: the document wedged out of the replay
         // meant to create it. The save stays parked; the create replay is what sends it.
         //
-        // Ordering matters: this returns **before** `removeValue`, so the held save is kept,
-        // not silently dropped.
+        // Ordering matters: every guard here returns **before** the slot is cleared, so a held
+        // save that may not start yet is kept, not silently dropped.
         guard !isPendingCreate(documentID: documentID) else { return }
-        guard inFlight[documentID] == nil, let held = queued.removeValue(forKey: documentID) else { return }
+        // **A second caller made this necessary.** For as long as `clearResolvedConflict` was the
+        // only one, a conflict check here was redundant — it nils the record immediately above
+        // the call. `runAttachmentPass` releases a hold too, after rewriting a placeholder, and
+        // it has no such guarantee: the same document can have picked up a conflict while the
+        // photo sat queued offline. Releasing then would start an unchecked full overwrite of
+        // the diverged server body from a background pass, with no screen open and no pill
+        // answered — precisely what the conflict hold exists to prevent. Whichever hold is
+        // lifted second reaches this again, so the order the two resolve in does not matter.
+        guard conflicts[documentID] == nil else { return }
+        guard inFlight[documentID] == nil, let held = queued[documentID] else { return }
+        // The held body may still name *another* queued photo: a document with two pending
+        // uploads is released by the second one to land, not the first. Asking the content
+        // rather than tracking which record just finished is what makes that automatic.
+        guard !markdownReferencesPendingAttachment(held.markdown) else { return }
+        queued[documentID] = nil
         start(documentID: documentID, save: held)
     }
 
@@ -2652,7 +2698,15 @@ final class DocumentSaveCoordinator {
             // fourth place the invariant is enforced, counting `runSyncPass`), and the only
             // one where it would otherwise be asserted asymmetrically. The id migration is
             // exactly the change that could make it reachable.
-            guard conflicts[documentID] == nil, !isPendingCreate(documentID: documentID) else {
+            //
+            // The pending-attachment half, by contrast, is reachable the day photos can be
+            // queued: a photo whose upload fails transiently *while an ordinary autosave is in
+            // flight* is parked here by `enqueue`'s third disjunct (behind `inFlight`, so it
+            // never even reaches the `.pendingSync` stamp), and this is the line that would
+            // start it the moment the autosave settles.
+            guard conflicts[documentID] == nil, !isPendingCreate(documentID: documentID),
+                !markdownReferencesPendingAttachment(next.markdown)
+            else {
                 queued[documentID] = next
                 states[documentID] = .pendingSync
                 return
