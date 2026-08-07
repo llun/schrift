@@ -337,6 +337,8 @@ Schrift/
 │   │                    and the server-version row (ServerConfig)
 │   ├── Options/ Share/
 │   └── Editor/          block editor, save coordinator, drafts, content cache,
+│                        file attachments (AttachmentDisplay classifier +
+│                        AttachmentLoader + AttachmentCacheStore + AttachmentCardView),
 │                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
 │                        lazy per-level children via the children cache),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
@@ -614,7 +616,11 @@ new code reads like the surrounding code.
   free function with a caller-supplied boundary — never interpolate user data into
   it. The uploaded bytes must be a real JPEG named `photo.jpg`: the backend
   magic-sniffs the content and stores a mismatched file under an `-unsafe` key that
-  never renders inline.
+  never renders inline. **Reading** an attachment's bytes back is
+  `mediaData(path:)` — `isSameOriginPath` + `getRawData`, the same rooted-path
+  contract as `checkMedia`, because its path also derives from a string the app
+  did not author (see the attachment rules under
+  [Editor](#editor--the-on-device-save-coreyjs)).
 - **Version history is read-only; in-app restore is deferred.**
   `VersionEndpoints.swift`'s `documentVersions(documentID:)` is
   `GET documents/{id}/versions/`, decoding the backend's `{versions: [...]}`
@@ -1360,6 +1366,49 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorBlock.id` can't auto-load. **Known accepted residual:** `AsyncImage` follows
   redirects, so a same-origin URL the trusted server 302s off-origin still leaks; the
   fix (a redirect-blocking `URLSession` delegate) is a follow-up.
+- **A generic file attachment (PDF, docx, …) is recognised, never parsed.** The
+  web's BlockNote `file` block and docs' custom `pdf` block both export as a
+  standalone `[name](url)` line, so `AttachmentDisplay.swift`'s
+  `parseAttachmentLink` classifies one at **render** time and the reading surface
+  draws an `AttachmentCardView` instead of link text. Nothing in the parser,
+  serializer or encoder knows about attachments — a save re-serializes the same
+  paragraph it always did, and every golden hex fixture is untouched. Three gates
+  must all pass, and each is load-bearing: the link shape is unambiguous (the
+  `parseImageLine` conservatism — anything doubtful stays prose, which is
+  lossless); `siteOrigin(for: url) == serverOrigin`, which is **what makes
+  auto-download safe with no consent flow** (an off-origin url is never an
+  attachment, so no request is ever issued for one — stricter than the image
+  gate, which offers tap-to-load); and the decoded path is exactly
+  `/media/{doc-uuid}/attachments/{file-uuid}(-unsafe)?.{ext}` with both UUIDs
+  validated, re-composed and compared against the url's own decoded path. Only
+  `.paragraph` classifies: an attachment line adjacent to prose is part of a
+  multi-line `.unknown` block, and a card there would misrepresent what a save
+  writes back. An `-unsafe` key is routine (a `.docx` sniffs as `zip`), not a
+  danger signal — only the server's `Content-Disposition` differs.
+- **Attachment bytes go through `AttachmentLoader`, and its file names are the
+  server's, never the author's.** The loader is app-scoped (built in `RootView`
+  beside the collaboration manager, injected through the environment) so two
+  cards showing one attachment de-duplicate a single download instead of racing
+  two writers over one cache file; its state is keyed by **url string**, because
+  `applyLiveRemoteChange` reuses a surviving `EditorBlock.id` and a live edit can
+  swap the url under a card that never re-rendered. It is the **second sanctioned
+  media fetch path** (after `MarkdownImageView`'s `AsyncImage`) and must stay
+  origin-pinned: `DocsAPIClient.mediaData(path:)` re-checks `isSameOriginPath`
+  before issuing, exactly as `checkMedia` does. `AttachmentCacheStore` names each
+  file `{file-uuid}[-unsafe].{ext}` from the classifier's validated parts — the
+  display label is the one author-controlled string here and must never reach the
+  filesystem — and evicts by **last use** with a count *and* byte cap, never
+  evicting the just-written entry. `isOffline` is chrome only: it changes what an
+  *uncached* card says, never whether a cached one opens. Clear the store in
+  `RootView`'s `onSignOut` closure alongside `DocumentContentCacheStore`.
+- **A web `pdf` block with `showPreview: true` (the web default) exports as
+  nothing** — BlockNote 0.51.4's markdown serializer has no `<iframe>` handler —
+  so the app never receives it and a full-overwrite save has always silently
+  dropped it. Accepted, pre-existing, and **not** something to work around in the
+  app: the fix is a one-line y-provider patch on the server
+  (`blockSpecs/Pdf.ts` → emit the `<a>` variant it already builds for
+  `showPreview: false`), after which those PDFs classify here with no app change.
+  Don't add a Yjs-content read path to chase them; see `docs/architecture.md`.
 - Two view-model invariants protect the full-overwrite save: editing may only
   begin once `hasLoadedContent` is true (`startEditing` guards on it —
   otherwise autosave would overwrite the whole server document with an empty

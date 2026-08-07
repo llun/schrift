@@ -40,7 +40,11 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   tap-to-load placeholder and fetches nothing until the reader taps it, closing a
   render-time IP/User-Agent/timing disclosure to a host the document's author
   chose (`imageLoadPolicy`). Redirect-after-load — a same-origin URL the trusted
-  server 302s off-origin — is a known accepted residual.
+  server 302s off-origin — is a known accepted residual. **Generic file
+  attachments** (PDF, docx, …) that the web editor added render as inline cards
+  that download once and preview full-screen through QuickLook, and stay
+  readable offline from a disk cache — see
+  [File attachments](#file-attachments-read-side) below.
 - **Design-system refresh.** A complete adaptive dark theme, in-app localization
   across 11 languages with live switching, a restructured Profile, layout-fidelity
   work, and read-only version history browsing. In-app version *restore* and
@@ -938,6 +942,105 @@ This is the part with no direct backend support, so it's called out explicitly:
    (Two requests total; no temporary document and no server-side file conversion. This supersedes an earlier design that created a temp document via `POST /documents/` with a Markdown `file` field, read back its converted Yjs, PATCHed it onto the real doc, then deleted the temp — that path depended on the backend's file-upload-to-Yjs conversion, which is gated behind `CONVERSION_UPLOAD_ENABLED` and off on the target deployment.)
 
 **Known limitation:** this is a full-document overwrite with no conflict detection (no ETag/version check in v1). If someone edits the same document live in the web app concurrently, the loser's changes are silently overwritten. This is an explicit, accepted trade-off of choosing non-realtime editing — not hidden from the user; the Editor screen should make clear this isn't live-collaborative.
+
+## File attachments (read side)
+
+*Added 2026-08-07.* Generic file attachments — PDFs, Office documents, archives —
+render as inline cards with a QuickLook preview and work offline. This is a
+**view-layer** feature: it adds no parser, serializer or encoder change, and no
+byte of a saved document moves.
+
+### How an attachment reaches the app
+
+The web editor stores an attachment as a BlockNote **`file`** block (a download
+chip) or as docs' own custom **`pdf`** block. The app reads markdown, and the
+server's exporter (y-provider's `blocksToMarkdownLossy`, BlockNote 0.51.4)
+flattens them:
+
+| Web block | Exported markdown |
+|---|---|
+| `file` | `[name](url)` on its own line (a caption becomes a following paragraph) |
+| `pdf`, `showPreview: false` | `[name](url)` |
+| `pdf`, `showPreview: true` (the web default) | **nothing** |
+
+The last row is a real gap and is **accepted, not worked around**: BlockNote's
+HTML→markdown serializer has no `<iframe>` handler, so the preview-on variant of
+the pdf block serializes to an empty string. The app therefore never receives
+those blocks — and, note, an app save has *already* been silently dropping them
+since long before this feature, because the markdown it re-encodes never
+contained them. Nothing here makes that worse, and nothing here fixes it either.
+
+The fix is one line **on the server**, not in the app: patch
+`src/frontend/servers/y-provider/src/blockSpecs/Pdf.ts` so `toExternalHTML`
+emits the `<a>` variant it already builds for `showPreview: false` instead of the
+`<iframe>`. Every web PDF then exports `[name](url)` and this feature picks it up
+with no app change. Worth proposing upstream — a markdown export that silently
+loses content is arguably a bug in `suitenumerique/docs`.
+
+### Classification (`AttachmentDisplay.swift`)
+
+Nothing in the markdown marks a link as an attachment, so the **url shape and
+the server origin** decide. `parseAttachmentLink` accepts only a paragraph whose
+entire trimmed text is one `[label](url)` link where:
+
+* the link shape is unambiguous (no bracket in the label, no whitespace or
+  unbalanced parens in the url, nothing before or after it) — the same
+  conservatism `parseImageLine` applies, so anything doubtful stays ordinary
+  prose, which is lossless;
+* `siteOrigin(for: url) == serverOrigin`, the true origin comparison
+  `imageLoadPolicy` makes. **This is what makes auto-download safe without a
+  consent flow**: an off-origin url is never an attachment, so no request is
+  ever issued for one, and a `/media/…`-shaped link on someone else's host
+  renders as the plain link it always was;
+* the decoded path is exactly the server's storage layout —
+  `/media/{document-uuid}/attachments/{file-uuid}(-unsafe)?.{ext}`, the backend's
+  `MEDIA_STORAGE_URL_PATTERN` — with both UUIDs validated and the extension
+  ASCII-alphanumeric, and re-composing that path must reproduce the url's own
+  decoded path (which is what rejects a trailing slash or a doubled separator).
+
+An `-unsafe` key is normal, not suspicious: the backend appends it when a file's
+sniffed bytes and declared extension disagree or its mime type is blocklisted (a
+`.docx` sniffing as `zip` is the routine case). Only the server's
+`Content-Disposition` differs; the bytes download and preview like any other.
+
+Classification is scoped to `.paragraph` blocks because that is the only kind a
+standalone link parses into. An attachment line *adjacent* to prose is part of a
+multi-line `.unknown` block and deliberately does not classify — it is not a
+standalone link, and a card there would misrepresent what a save writes back.
+
+### Download, cache, preview
+
+`AttachmentLoader` (app-scoped, built once per authenticated session in
+`RootView` beside the collaboration manager, injected through the environment)
+owns the whole path: disk cache first, then one GET through
+`DocsAPIClient.mediaData(path:)`, which re-checks `isSameOriginPath` before
+issuing it. It is app-scoped so two cards showing the same attachment
+de-duplicate one download instead of racing two writers over one cache file, and
+its state is keyed by **url string** — `applyLiveRemoteChange` reuses a
+surviving `EditorBlock.id`, so a live edit can swap the url under a card that
+never re-rendered from scratch.
+
+Views do no networking of their own; this is the object they ask. Bytes land in
+`AttachmentCacheStore` (see [`offline-and-sync.md`](offline-and-sync.md)), and
+`AttachmentCardView` renders one of four states from the pure resolver
+`attachmentCardState` — downloading, cached (thumbnail via `QLThumbnailGenerator`
+plus a full-screen `.quickLookPreview` on tap), failed (tap to retry), or
+offline-and-uncached (an inert note that issues no request). Cached bytes outrank
+offline, which is the entire point of caching them.
+
+**Accepted residuals.** (1) `URLSession` follows redirects, so a same-origin path
+the trusted server 302s off-origin still leaks — shared with `MarkdownImageView`,
+and the fix is one redirect-blocking session for both. (2) QuickLook previews
+co-author-controlled bytes; that is the same exposure Mail and Files accept
+(QuickLook renders out-of-process), and an `-unsafe`-keyed file previews like any
+other since the server's `Content-Disposition` protection does not apply to bytes
+already on the device. (3) There is no per-file read-side size cap; the server's
+own upload cap (10 MB by default) bounds it in practice, and the cache's byte cap
+bounds the disk.
+
+**Not yet.** Inserting an attachment from the app, and modelling `file`/`pdf`
+nodes in `YBlockProjection` (they project `.opaque` today, which correctly keeps
+a document holding one out of live editing while the default-off flag is off).
 
 ## Screens
 

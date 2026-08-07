@@ -1026,6 +1026,43 @@ to what the Home list passes (still a `Document` / id).
   through the existing sign-out path — e.g. alongside where `SessionStore.signOut`
   is invoked in the root flow). Full document bodies must not survive sign-out on
   disk. Covered by a test (sign out → `content(for:)` returns nil).
+  `AttachmentCacheStore().removeAll()` sits on the same line for the same reason
+  (see below). Both are called from `RootView`'s `onSignOut` closure, **not**
+  from `SessionStore.signOut()` — a new sign-out path must call them explicitly.
+
+### 7. Attachment bytes: `AttachmentCacheStore` (2026-08-07)
+
+Downloaded file attachments (PDF, docx, …) are cached on disk so a document read
+online stays fully readable offline, previews included. It follows
+`DocumentContentCacheStore`'s pattern — one file per entry under
+`Application Support/dev.llun.Schrift/AttachmentCache/`, `isExcludedFromBackup`
+(the bytes are re-downloadable from the user's own server), stateless over its
+directory, never throwing to callers, cleared on sign-out — with three
+deliberate differences:
+
+- **Recency is last *use*, not last write.** `cachedFileURL(for:)` bumps the
+  file's mtime on a hit. Attachments are read-hot: a write-recency cache would
+  evict the one the user keeps reopening. This is the one accessor in the app
+  with a deliberate side effect, and it is documented at the call site.
+- **Two caps, not one** (`attachmentCacheEvictions`, the pure selection function,
+  by analogy with `contentCacheEvictions`): 100 entries **and** 200 MB. Sizes here
+  span orders of magnitude, so a count alone would let a handful of videos fill
+  the disk and a byte cap alone would let thousands of tiny files accumulate. Two
+  properties are load-bearing: the **most-recently-used entry is never evicted**
+  (the store evicts immediately after writing, and evicting the file just written
+  would make the loader re-download it forever), and the walk is **greedy** — an
+  oversized entry is skipped without taking older, smaller ones with it, trading
+  strict LRU order for cache utility.
+- **File names are the server's storage key** (`{file-uuid}[-unsafe].{ext}`),
+  built from the classifier's validated parts. The author-controlled display
+  label never reaches the filesystem, and the store re-checks for a separator or
+  `..` anyway, because `AttachmentDisplay` is a freely constructible value type.
+
+What this buys offline: an attachment downloaded while online previews in
+airplane mode, and one that was never downloaded says so ("Available when
+online") without issuing a doomed request. `isOffline` here is chrome only — it
+never decides whether a *cached* attachment opens. Nothing about attachments
+touches drafts, saves or the replay: this is read-side caching only.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
