@@ -1,0 +1,22 @@
+SchriftTests/Features/Editor/AttachmentCacheStoreTests.swift
+  s_810ae103ae38c6::t_6f9242df3cafc8 1-270
+Schrift/Features/Editor/AttachmentCacheStore.swift
+  s_810ae103ae38c6::t_dfc364364f0349 40,95
+  s_810ae103ae38c6::t_925a3847fa3069 1-39,41-94,96-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "117c18927450976d872d8e5d7c92cb7c2c8e72c7",
+  "prompts": {},
+  "sessions": {
+    "s_810ae103ae38c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6236ca4-0d88-477c-a92c-8da77f1291e9",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
