@@ -1802,15 +1802,35 @@ markdown write endpoint**. Understand this before touching the save path:
   id.
   **`enqueue` holds for a tombstoned id.** The deleting screen pops and every fresh editor is
   gated at `load()`, but a *second, already-loaded* editor (same document pushed in two tabs)
-  goes through neither. Like every other hold here it drains on release — `cancelPendingDelete`
-  calls `releaseHeldSave`, because `runSyncPass` skips any document with a non-nil `queued`
-  slot and a save left parked wedges it out of the replay for good. And `releaseHeldSave`
-  refuses for a tombstoned id on the same terms it already refuses for a pending create: it is
-  one of the two paths reaching `start` without passing the hold, and the editor clears
-  conflicts from five places.
-  **An unreadable delete store withholds the create pass's resume entirely**
+  goes through neither.
+  Both paths that clear a tombstone — `cancelPendingDelete` and the `.forbidden` refusal —
+  **unwedge** that slot, because `runSyncPass` skips any document with a non-nil `queued` slot
+  and a save left parked wedges it out of the replay for good. They clear it *without sending*:
+  `releaseHeldSave` goes straight to `start`, a full overwrite with no reconciliation, and a
+  tombstone survives launches so the parked body can be days old. The draft is write-ahead, so
+  clearing the slot hands the body back to `runSyncPass` to reconcile normally. Neither touches
+  a slot a **conflict** hold owns — that one is the pill's payload.
+  `releaseHeldSave` itself refuses for a tombstoned id on the terms it already refuses for a
+  pending create, and gained the **conflict** check its two sibling paths to `start` always
+  had: safe to omit while `clearResolvedConflict` (which nils the conflict on the line before)
+  was its only caller, and a full-overwrite of the co-author the moment a second caller
+  appeared.
+  **A landed deletion is announced** to every surface that strikes rows — Home, Shared, Search,
+  the Pages drawer and the editor's Subpages — as a *fan-out*, since each keeps its own array
+  and a single closure would let one subscriber overwrite another. Observers are held weakly
+  and pruned (the coordinator outlives every screen), and each drops the row **and invalidates
+  its in-flight fetch** — invariant 0b: one issued before the DELETE landed completes after it
+  and writes the row, and the cache entry, straight back.
+  **An editor whose own document is announced goes terminal**, not merely discarded. Latching
+  `isDocumentDiscarded` while leaving `hasLoadedContent` true and no message meant every
+  keystroke afterwards reached neither disk, nor server, nor an error — a live Save button that
+  did nothing. The revive is the one completion that runs with an editor open, so it is
+  reachable.
+  **An unreadable delete store withholds the create pass's resume start-over**
   (`deleteStoreUnreadable`) — unknown tombstones disarm the resurrection guard, and a
-  re-POSTed deleted document is the one consequence here no later launch can undo.
+  re-POSTed deleted document is the one consequence here no later launch can undo. Scoped to
+  that branch, not the whole resume: nothing clears the quarantine, so withholding the resume
+  outright would strand every checkpointed record on the install permanently.
   **`completePendingDelete` removes the tombstone last** — cleanup first, so a crash
   mid-way re-sends, takes the 404 and finishes idempotently — then fires `onDocumentDeleted`
   so a list holding the row drops it instead of letting it **un-strike** back into looking

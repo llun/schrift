@@ -2068,10 +2068,17 @@ editor is gated at `load()`, but a **second, already-loaded** editor goes throug
 push a document from Home and again from Search, delete it in one, and the other's next
 keystroke would PATCH it. The draft is still written, so the work is on disk either way.
 
-Like every other hold here, it **drains on release**: both paths that clear a tombstone —
-`cancelPendingDelete` and the `.forbidden` refusal — call `releaseHeldSave`, because `runSyncPass` skips any document whose `queued` slot is non-nil,
-so a save left parked wedges the document out of the replay permanently — until an unrelated
-keystroke happens to drain it, which for a document the user has stopped editing never comes.
+Both paths that clear a tombstone — `cancelPendingDelete` and the `.forbidden` refusal —
+**unwedge** the parked slot, because `runSyncPass` skips any document whose `queued` slot is
+non-nil, so a save left parked wedges the document out of the replay permanently.
+
+They clear it **without sending it**. `releaseHeldSave` goes straight to `start` — a full
+overwrite with no reconciliation — and every other release in this file runs behind a proof: a
+decided `.push`, or the user's own "Keep my version", which also advances the baseline. These
+two have none, and a tombstone survives launches, so the parked body can be days old. The
+draft is write-ahead, so clearing the slot simply hands the body back to `runSyncPass`. Neither
+touches a slot a **conflict** hold owns — that one is the pill's payload, and its own resolvers
+drain it.
 `releaseHeldSave` in turn refuses for a tombstoned id on exactly the terms it already refuses
 for a pending create: it is one of the two paths that reach `start` without passing the hold,
 and the editor clears conflicts from five places. It also gained the **conflict** check its
@@ -2209,10 +2216,13 @@ old one still point at something gone.
   gap a `.failed` create has. The user sees the strikethrough disappear and nothing else.
 - **A revived document loses its parent and its id** (above), so a sub-page comes back as a
   root and inbound links break.
-- **A screen open on a revived document's dead id ends its session** when the deletion is
-  announced, rather than staying live over an id the server no longer has. The body as of the
-  undo is safe in the revived document; edits made on that screen between the undo and the
-  announcement are not carried across.
+- **A screen open on a revived document's dead id goes terminal** when the deletion is
+  announced — content cleared, editing blocked, "no longer available" on screen, exactly as a
+  404 revalidation leaves it. Ending the session *without* that was worse than doing nothing:
+  `isDocumentDiscarded` alone left the body on screen and editable while `flushPendingChanges`
+  and `saveNow` both returned on the latch, so every keystroke reached neither disk nor server
+  nor an error. The body as of the undo is safe in the revived document; edits made on that
+  screen between the undo and the announcement are not carried across.
 - **A gated editor's undo is unscoped.** The row annotations are account-scoped, so a
   tombstone this session cannot see leaves the row looking alive — and the editor gate is
   *not* scoped, so opening it lands on the pending-delete notice. That notice carries its
