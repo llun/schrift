@@ -42,6 +42,14 @@ final class SharedViewModel {
         self.userDefaults = userDefaults
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
+        // A landed deletion: drop the row from the array this view model holds. The caches are
+        // purged by the coordinator, but these are its own — and leaving the row does worse
+        // than linger, since the tombstone is gone and it would **un-strike** back into
+        // looking like a live document.
+        saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.dropDeletedDocument(documentID)
+        }
+
         if let withMe = cache.loadSharedWithMeDocuments() {
             documents = withMe
             hasLoaded = true
@@ -58,6 +66,11 @@ final class SharedViewModel {
     ///
     /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
     /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    private func dropDeletedDocument(_ documentID: UUID) {
+        documents.removeAll { $0.id == documentID }
+        enrichment[documentID] = nil
+    }
+
     func isDeletePending(_ document: Document) -> Bool {
         saveCoordinator?.isListablePendingDelete(
             documentID: document.id, currentUserID: signedInUser.userID) ?? false

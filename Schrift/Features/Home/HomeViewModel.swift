@@ -136,7 +136,7 @@ final class HomeViewModel {
         // is holding. `completePendingDelete` purged the caches, but these arrays are its own
         // — and leaving the row would do worse than linger, since the tombstone is gone and
         // the row would *un-strike* back into looking like a live document.
-        self.saveCoordinator.onDocumentDeleted = { [weak self] documentID in
+        self.saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
             guard let self else { return }
             self.pinnedDocuments.removeAll { $0.id == documentID }
             self.fetchedRecentDocuments.removeAll { $0.id == documentID }

@@ -260,6 +260,16 @@ final class PagesTreeViewModel {
     /// Creates a child of `parent` and slots it into the open tree, so the new
     /// page appears where it belongs instead of only after a reload.
     func addPage(under parent: UUID) async -> Document? {
+        // Nothing may be filed inside a document whose deletion is queued — the twin of
+        // `EditorViewModel.addSubpage`'s gate, and reachable from the same drawer whose level
+        // fetch is already gated two lines away. Online this would POST
+        // `documents/{tombstoned}/children/`; offline it would mint a record naming a doomed
+        // parent, which the create pass holds until the deletion lands and the probe then
+        // silently re-roots — a document the user never asked for, from a parent they threw away.
+        if saveCoordinator?.isPendingDelete(documentID: parent) == true {
+            createErrorKey = .pages_error_create
+            return nil
+        }
         let child: Document
         // A parent the server has never seen is minted straight away, with no request — the
         // same reasoning as `EditorViewModel.addSubpage`: the POST would address

@@ -2139,6 +2139,11 @@ array would tell Home it had fetched and found nothing.
 
 ### What the user sees
 
+When a deletion lands, every list holding the row **drops it** rather than letting it
+un-strike back into looking alive — `observeDocumentDeleted` is a fan-out precisely because
+Home, Shared, Search and the editor's Subpages each keep their own array, and a single
+closure would let one subscriber silently overwrite another.
+
 Every list that can show the document strikes it through and dims it, with a trailing
 delete glyph: Home (pinned and recents), Shared, Search, the editor's Subpages section
 and the Pages drawer. Tapping offers the undo instead of opening. The predicate the rows
@@ -2176,6 +2181,13 @@ So the undo is *honoured* instead. `reviveAsLocalDocument` re-mints the document
 device owns, carrying the body over from the draft (or, failing that, the cached copy), and
 the create replay POSTs it. That is exactly what the checkpointed path already got for free
 through its `.notFound` start-over; this gives the plain server document the same recovery.
+**The revive runs even with an editor open on the dying id**, unlike every other record
+remover here. Deferring is the obvious choice and the unsafe one: the tombstone is already
+gone, so `runSyncPass` later in the same pass reaps the draft — the exact loss the revive
+prevents — and a relaunch never reconsiders it, since `openEditors` is empty but so is the
+tombstone. A screen still open on the dead id keeps its in-memory content and loses only its
+disk backing, and that content is what was just carried into the revived document.
+
 **A checkpointed record takes a different branch, and must.** Its body still lives under the
 record's `localID` — the migration has not moved it — so a revive keyed on the *server* id
 finds nothing, falls through to the purge, and `discardPendingWork`'s checkpointed branch
@@ -2194,9 +2206,9 @@ old one still point at something gone.
   gap a `.failed` create has. The user sees the strikethrough disappear and nothing else.
 - **A revived document loses its parent and its id** (above), so a sub-page comes back as a
   root and inbound links break.
-- **Lists other than Home linger briefly after a landed deletion.** `onDocumentDeleted`
-  drops the row from Home's in-memory arrays; Shared and Search re-derive on their next
-  load. The caches are purged either way, so the row cannot come back.
+- **A screen open on a revived document's dead id keeps writing to it** until it is closed —
+  its saves fail against an id the server no longer has. The body is safe in the revived
+  document; only edits made *after* the undo, on that screen, are at risk.
 - **A gated editor's undo is unscoped.** The row annotations are account-scoped, so a
   tombstone this session cannot see leaves the row looking alive — and the editor gate is
   *not* scoped, so opening it lands on the pending-delete notice. That notice carries its

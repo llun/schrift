@@ -168,16 +168,20 @@ struct PagesTreeDrawer: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // On the **title button**, not the row: the row's `HStack` also holds the
+            // disclosure control, which carries its own label, and a bare label on the
+            // container would either rename that chevron or swallow it as a separate
+            // element. `MaterialSymbol` is `accessibilityHidden`, so a state carried only
+            // by that glyph and a strikethrough has to be spoken here or VoiceOver cannot
+            // tell this row from a live page.
+            .accessibilityLabel(
+                isDeletePending(row)
+                    ? "\(title(of: row.document)), \(loc[.docrow_pending_delete])"
+                    : title(of: row.document))
         }
         .padding(.leading, CGFloat(row.depth) * PagesTreeLayout.indentPerLevel)
         .padding(.horizontal, DocsSpacing.space3xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
-        // `MaterialSymbol` is `accessibilityHidden`, so a state carried only by that glyph and
-        // a strikethrough has to be spoken or VoiceOver cannot tell this row from a live page.
-        .accessibilityLabel(
-            isDeletePending(row)
-                ? "\(title(of: row.document)), \(loc[.docrow_pending_delete])"
-                : title(of: row.document))
     }
 
     /// Whether this row's document is waiting to be deleted. Wraps the view model so the

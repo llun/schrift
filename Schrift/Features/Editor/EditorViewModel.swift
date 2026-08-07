@@ -202,6 +202,13 @@ final class EditorViewModel {
         self.remoteChangeDebounce = remoteChangeDebounce
         self.diagnostics = diagnostics
         self.savedTitle = title
+        // A sub-page whose deletion has landed leaves the Subpages list. The children cache is
+        // purged by the coordinator, but `subpages` is this view model's own array — and
+        // leaving the row does worse than linger, since the tombstone is gone and it would
+        // **un-strike** back into looking like a live document that opens a 404.
+        saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
+            self?.dropDeletedSubpage(documentID)
+        }
     }
 
     var isEditing: Bool { mode != .reading }
@@ -1241,6 +1248,13 @@ final class EditorViewModel {
     ///
     /// The coordinator reads `pendingDeletesVersion` first, so a SwiftUI body calling this
     /// registers the dependency and re-renders the moment a deletion is queued or undone.
+    /// A sub-page whose deletion has landed leaves the level, rather than un-striking back
+    /// into a row that opens a 404. `childrenCache.removeDocument` purged the cache; this is
+    /// the in-memory array beside it.
+    private func dropDeletedSubpage(_ documentID: UUID) {
+        subpages?.removeAll { $0.id == documentID }
+    }
+
     func isDeletePending(_ document: Document) -> Bool {
         saveCoordinator.isListablePendingDelete(
             documentID: document.id, currentUserID: signedInUser.userID)

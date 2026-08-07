@@ -183,6 +183,11 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         }
     }
 
+    /// The fan-out keys observers on object identity, so a test needs something to be.
+    @MainActor private final class Announcements {
+        var ids: [UUID] = []
+    }
+
     private func documentFixture(_ id: UUID, title: String = "Doc") -> Document {
         Document(
             id: id, title: title, excerpt: nil, abilities: DocumentAbilities(),
@@ -754,11 +759,15 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     }
 
     /// **Unknown tombstones must not disarm the resurrection guard.** With the store
-    /// undecodable every suppression is silently off, and the one that matters is the resume:
-    /// a checkpointed record whose DELETE landed in a pass that died before its cleanup would
-    /// read the 404 as "gone", clear its checkpoint, and re-POST the document under a new id —
-    /// which no later launch can undo.
-    func testAnUnreadableDeleteStoreWithholdsTheResumeEntirely() async {
+    /// undecodable every suppression is silently off, and the one that matters is the resume's
+    /// **start-over**: a checkpointed record whose DELETE landed in a pass that died before its
+    /// cleanup would read the 404 as "gone", clear its checkpoint, and re-POST the document
+    /// under a new id — which no later launch can undo.
+    ///
+    /// Only that branch waits, not the whole resume: nothing clears the quarantine, so
+    /// withholding the resume outright would strand every checkpointed record on the install
+    /// permanently — body safe on disk, server document empty, no recovery short of reinstall.
+    func testAnUnreadableDeleteStoreWithholdsTheStartOver() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         let local = env.coordinator.createLocalDocument(title: "Doomed", parentID: nil, ownerUserID: user)
@@ -784,14 +793,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     func testCompletingADeletionAnnouncesIt() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
-        var announced: [UUID] = []
-        env.coordinator.onDocumentDeleted = { announced.append($0) }
+        let announcements = Announcements()
+        env.coordinator.observeDocumentDeleted(announcements) { announcements.ids.append($0) }
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
         stubDeletePipeline(log: log)
 
         await env.coordinator.syncPendingDrafts()
 
-        XCTAssertEqual(announced, [serverID])
+        XCTAssertEqual(announcements.ids, [serverID])
     }
 
     /// The `.forbidden` refusal must **not** announce: the document is still there, and the
@@ -799,14 +808,14 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
     func testAForbiddenDeletionAnnouncesNothing() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
-        var announced: [UUID] = []
-        env.coordinator.onDocumentDeleted = { announced.append($0) }
+        let announcements = Announcements()
+        env.coordinator.observeDocumentDeleted(announcements) { announcements.ids.append($0) }
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
         stubDeletePipeline(log: log, deleteStatus: 403)
 
         await env.coordinator.syncPendingDrafts()
 
-        XCTAssertTrue(announced.isEmpty)
+        XCTAssertTrue(announcements.ids.isEmpty)
     }
 
     /// The undo-loses-the-race path for a **checkpointed** record, where the body is not where
@@ -841,6 +850,33 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertNil(
             record?.syncedServerID,
             "un-checkpointed, so the create replay POSTs it fresh rather than resuming onto a dead id")
+    }
+
+    /// **The revive runs even with an editor open on the dying id**, unlike every other record
+    /// remover here. Deferring was the obvious choice and is the unsafe one: the tombstone is
+    /// already gone, so `runSyncPass` later in the same pass reaps the draft — the exact loss
+    /// the revive prevents — and a relaunch never reconsiders it, since `openEditors` is empty
+    /// but so is the tombstone. Preserving the body wins over preserving the screen's backing.
+    func testTheReviveRunsEvenWithAnEditorOpenOnTheDyingID() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID, markdown: "the user's only copy"))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        // Both acquired *during* the request: the pre-send guard has already run, so this is
+        // the post-await re-check and nothing else.
+        await waitUntil { log.methods.contains("DELETE") }
+        coordinator.retainOpenEditor(documentID: serverID)
+        coordinator.cancelPendingDelete(documentID: serverID)
+        await pass.value
+
+        let revived = env.creates.allCreates().first
+        XCTAssertNotNil(revived, "the body was carried to a document that can actually be sent")
+        XCTAssertEqual(env.drafts.draft(for: revived!.localID)?.markdown, "the user's only copy")
+        XCTAssertNil(env.drafts.draft(for: serverID), "nothing is left under the dead id to be reaped")
     }
 
     /// A foreign tombstone is never sent — and, because the gate is checked before the
