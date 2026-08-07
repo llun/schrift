@@ -1802,7 +1802,12 @@ markdown write endpoint**. Understand this before touching the save path:
   id.
   **`enqueue` holds for a tombstoned id.** The deleting screen pops and every fresh editor is
   gated at `load()`, but a *second, already-loaded* editor (same document pushed in two tabs)
-  goes through neither.
+  goes through neither. Like every other hold here it drains on release — `cancelPendingDelete`
+  calls `releaseHeldSave`, because `runSyncPass` skips any document with a non-nil `queued`
+  slot and a save left parked wedges it out of the replay for good. And `releaseHeldSave`
+  refuses for a tombstoned id on the same terms it already refuses for a pending create: it is
+  one of the two paths reaching `start` without passing the hold, and the editor clears
+  conflicts from five places.
   **An unreadable delete store withholds the create pass's resume entirely**
   (`deleteStoreUnreadable`) — unknown tombstones disarm the resurrection guard, and a
   re-POSTed deleted document is the one consequence here no later launch can undo.

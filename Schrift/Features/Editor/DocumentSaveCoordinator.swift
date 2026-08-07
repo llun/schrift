@@ -483,6 +483,13 @@ final class DocumentSaveCoordinator {
         deleteStore.remove(documentID: documentID)
         pendingDeletes[documentID] = nil
         pendingDeletesVersion += 1
+        // **Drain the save this hold parked**, exactly as `clearResolvedConflict` does for the
+        // conflict hold. `runSyncPass` skips any document with a non-nil `queued` slot, so a
+        // save left parked wedges the document out of the replay for good — until an unrelated
+        // keystroke happens to drain it, which for a document the user has stopped editing
+        // never comes. Called after the mirror is cleared, or `releaseHeldSave`'s own
+        // tombstone guard (just added) would refuse.
+        releaseHeldSave(documentID: documentID)
     }
 
     /// Mint a document locally: a create record (so it is POSTed even if never typed
@@ -2652,6 +2659,12 @@ final class DocumentSaveCoordinator {
         // Ordering matters: this returns **before** `removeValue`, so the held save is kept,
         // not silently dropped.
         guard !isPendingCreate(documentID: documentID) else { return }
+        // **And the same for a queued deletion.** The editor clears conflicts from five
+        // places, so a conflict resolved while a deletion is queued would otherwise reach
+        // `start` here and PATCH a document on its way out — breaking the hold `enqueue` just
+        // established. Same ordering rule as above: return *before* `removeValue`, so the held
+        // save is kept for the undo rather than silently dropped.
+        guard !isPendingDelete(documentID: documentID) else { return }
         guard inFlight[documentID] == nil, let held = queued.removeValue(forKey: documentID) else { return }
         start(documentID: documentID, save: held)
     }

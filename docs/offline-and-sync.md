@@ -2068,6 +2068,14 @@ editor is gated at `load()`, but a **second, already-loaded** editor goes throug
 push a document from Home and again from Search, delete it in one, and the other's next
 keystroke would PATCH it. The draft is still written, so the work is on disk either way.
 
+Like every other hold here, it **drains on release**: `cancelPendingDelete` calls
+`releaseHeldSave`, because `runSyncPass` skips any document whose `queued` slot is non-nil,
+so a save left parked wedges the document out of the replay permanently — until an unrelated
+keystroke happens to drain it, which for a document the user has stopped editing never comes.
+`releaseHeldSave` in turn refuses for a tombstoned id on exactly the terms it already refuses
+for a pending create: it is one of the two paths that reach `start` without passing the hold,
+and the editor clears conflicts from five places.
+
 `runSyncPass` skips a tombstoned draft before the fetch, and restates that at **both**
 of its deleting lines (the 404/403 catch and the launch-only `.discardServerWins`
 branch), in the file's existing belt-and-braces style. The draft is the undo's only

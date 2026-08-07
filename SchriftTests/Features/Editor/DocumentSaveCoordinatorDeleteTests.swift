@@ -709,8 +709,12 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             "written ahead, so the keystrokes are on disk either way")
     }
 
-    /// And the hold is released by the undo, like every other hold here.
-    func testUndoingReleasesAHeldSave() async {
+    /// And the undo **releases** the held save rather than leaving it parked. Every other hold
+    /// here drains on release for the same reason: `runSyncPass` skips any document with a
+    /// non-nil `queued` slot, so a save left parked wedges the document out of the replay
+    /// permanently — until an unrelated keystroke happens to drain it, which for a document
+    /// the user has stopped editing never comes.
+    func testUndoingReleasesAHeldSaveRatherThanLeavingItParked() async {
         let log = RequestRecorder()
         let env = makeEnvironment()
         env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
@@ -721,10 +725,32 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         env.coordinator.enqueue(documentID: serverID, title: "Doc", markdown: "typed after deleting")
         await waitAndConfirmNever { log.methods.contains("PATCH") }
 
+        // The undo alone — no further keystroke to drain the slot for it.
         env.coordinator.cancelPendingDelete(documentID: serverID)
-        env.coordinator.enqueue(documentID: serverID, title: "Doc", markdown: "typed after deleting")
 
         await waitUntil { log.methods.contains("PATCH") }
+        await waitUntil { env.coordinator.pendingSave(documentID: serverID) == nil }
+    }
+
+    /// The mirror of the pending-create rule: `releaseHeldSave` is one of the two paths that
+    /// reach `start` without passing `enqueue`'s hold, and the editor clears conflicts from
+    /// five places — so a conflict resolved while a deletion is queued must not break the hold.
+    func testResolvingAConflictNeverReleasesASaveForATombstonedDocument() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordConflict(documentID: serverID, serverUpdatedAt: Date())
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        env.coordinator.enqueue(documentID: serverID, title: "Doc", markdown: "typed after deleting")
+
+        env.coordinator.clearResolvedConflict(documentID: serverID)
+
+        await waitAndConfirmNever { log.methods.contains("PATCH") }
+        XCTAssertNotNil(
+            env.coordinator.pendingSave(documentID: serverID), "kept parked, not dropped")
     }
 
     /// **Unknown tombstones must not disarm the resurrection guard.** With the store
