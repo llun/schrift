@@ -860,6 +860,24 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             "the checkpoint stands rather than being cleared by an unverifiable 404")
     }
 
+    /// The reap's sibling guard. With the tombstones undecodable `isPendingDelete` answers
+    /// false for every tombstoned document, so a 404 caused by the app's own DELETE reads as a
+    /// co-author's delete and takes the draft — the undo's only payload.
+    func testAnUnreadableDeleteStoreAlsoSuppressesThe404Reap() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID, markdown: "the user's only copy"))
+        env.defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDeletes")
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        stubGoneServer(log: log)
+
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            env.drafts.draft(for: serverID)?.markdown, "the user's only copy",
+            "unknown tombstones must not license the reap")
+    }
+
     /// A landed deletion tells the lists, so a row already on screen leaves rather than
     /// **un-striking** back into looking like a live document — which reads as "my deletion
     /// was cancelled", the opposite of what happened.

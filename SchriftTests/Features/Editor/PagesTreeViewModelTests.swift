@@ -479,6 +479,51 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the row leaves rather than un-striking")
     }
 
+    /// **The drop must survive a level being fetched for the first time**, which is the case
+    /// the earlier conditional bump missed: `children[parent]` is nil, so the row is in the
+    /// response and nowhere else yet. Without the bump the fetch lands after the deletion and
+    /// writes the row back — into the shared cache too.
+    ///
+    /// The negative control is the second half: with the level *already* loaded and no fetch in
+    /// flight, nothing is discarded and the fetched rows still apply.
+    func testALandedDeletionSurvivesAFirstTimeLevelFetch() async {
+        let env = makeLocalRootViewModel()
+        let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
+        let syncedParent = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        let doomed = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        MockURLProtocol.stubHandler = { [doomed] _ in
+            .init(
+                statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil,
+                delay: 0.2)
+        }
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(owner)
+        let viewModel = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+
+        let fetching = Task { await viewModel.loadRoot() }
+        try? await Task.sleep(for: .milliseconds(60))
+        env.coordinator.announceDocumentDeletedForTesting(doomed)
+        await fetching.value
+
+        XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the stale first fetch is not applied")
+        XCTAssertNil(env.cache.children(for: syncedParent), "and never reaches the shared cache")
+
+        // Negative control: nothing announced, same fetch, and the level does load.
+        MockURLProtocol.stubHandler = { [doomed] _ in
+            .init(statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil)
+        }
+        let control = PagesTreeViewModel(
+            rootID: syncedParent, client: client, cache: env.cache, userDefaults: defaults,
+            saveCoordinator: env.coordinator, signedInUser: signedIn)
+        await control.loadRoot()
+        XCTAssertEqual(
+            control.rows.map(\.document.id), [doomed],
+            "so the assertion above is about the deletion, not about the fetch never working")
+    }
+
     /// Without a coordinator the predicate answers false rather than trapping.
     func testAPageIsNeverAnnotatedWithoutACoordinator() {
         let (viewModel, _) = makeViewModel()
