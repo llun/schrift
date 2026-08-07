@@ -1319,9 +1319,9 @@ markdown write endpoint**. Understand this before touching the save path:
   as a unit, is never converted, and never receives inline markers. Photos are
   inserted through that same block: the slash-menu "Photo" item and the
   formatting-bar button run `prepare → upload → bounded media-check poll →
-  insert`, and the `.image` block is created **only on success** — a cancelled
-  pick is a silent no-op, every failure sets `"Couldn't add the photo. Please try
-  again."`, and no placeholder block ever reaches the document or a save. If
+  insert`, and on that path the `.image` block is created **only on success** — a
+  cancelled pick is a silent no-op, every failure sets `"Couldn't add the photo. Please try
+  again."`, and no half-uploaded block reaches the server. If
   readiness can't be confirmed within the poll budget, the URL derived from the
   upload key is used rather than losing an upload that already succeeded.
   `PhotosPicker` is the out-of-process system picker — **no** photo-library usage
@@ -1330,9 +1330,10 @@ markdown write endpoint**. Understand this before touching the save path:
   from a bare `CGImage`, passing only the compression quality, so the original
   photo's EXIF — **including GPS coordinates** — is dropped: never copy the source
   properties into `CGImageDestinationAddImage` (locked by
-  `ImagePreparationTests.testStripsGPSAndIdentifyingMetadata`). **All three** insert
-  paths (blocks, markdown, reading) must verify the edit actually *added* an
-  `.image` block before committing it — a fenced code block, open at the tail,
+  `ImagePreparationTests.testStripsGPSAndIdentifyingMetadata`). **Both** insert
+  paths (blocks, reading) must verify the edit actually *added* an
+  `.image` block before committing it — there were three until the Markdown source
+  tab was removed (#52), which took the raw-markdown path and its guard with it — a fenced code block, open at the tail,
   wrapping the caret, or formed by a neighbouring block on serialization, swallows
   the image line, and `MarkdownYjs.encode` re-parses the same markdown the save
   sends. Never rewrite the source to make room; surface the friendly error. Anything
@@ -1925,6 +1926,48 @@ markdown write endpoint**. Understand this before touching the save path:
   copy**. `runSyncPass`'s delete branch therefore also skips any id a checkpointed record
   is waiting to migrate onto. Only the delete, never the push: the push is what clears
   `finishMigration`'s both-drafts guard.
+- **A photo picked with no network becomes a placeholder image block, and a
+  *content-keyed* save hold is what keeps it off the wire.**
+  `PendingAttachmentStore` mints `schrift-attachment://<localID>` and stores the prepared
+  JPEG beside the record (UserDefaults records + files under Application Support
+  `dev.llun.Schrift/PendingAttachments`, **backup-included** — until the upload lands
+  those bytes exist nowhere else, so this deliberately omits
+  `DocumentContentCacheStore`'s `isExcludedFromBackup` line and has **no eviction**;
+  `contentCacheEvictions` selects by recency and here would delete the only copy of a
+  photo still on screen). Records follow the *create* store's corruption discipline —
+  quarantine-on-detect plus a **sticky** `holdsUnreadableData`, not
+  `PendingDraftStore`'s detection-only flag — because the first write after a corrupt
+  read would otherwise rebuild the blob and leave every surviving placeholder
+  record-less, each one holding its document's saves with nothing left to explain why.
+  Every field added must stay Optional-on-decode.
+  - **The scheme is allowlisted in `parseImageLine`** (the only non-http scheme that
+    classifies) so a queued photo is a real `.image` block: `addsImage` verifies an
+    insert by re-parsing and counting image blocks, and an `.unknown` block would both
+    fail that check and drop the document out of live-write eligibility.
+  - **What keeps it off the server is `markdownReferencesPendingAttachment`**, asked of
+    the markdown a save is about to push at every path that can reach `start`:
+    `enqueue`'s park (a fourth disjunct beside pending-create/conflict/in-flight, and a
+    third in the `.pendingSync` stamp), `releaseHeldSave`, `finish`'s queued restart, and
+    a pre-fetch skip in `runSyncPass`. **Keyed on content, never on the store** — a store
+    that cannot be decoded stalls the replay instead of leaking a placeholder — and
+    because each gate parses the save in front of it, a document with *two* queued photos
+    releases only when the last one lands, with no per-record bookkeeping.
+  - The predicate **parses**; a substring test would hold a document's saves because
+    someone quoted the scheme in a code block, where there is no image leaf to delete and
+    therefore no escape from the hold. The `contains` check is only a fast path.
+  - `runSyncPass`'s skip is **load-bearing, not an economy**: the `.push` branch would be
+    held by `enqueue` anyway, but a placeholder draft carrying no baseline (a legacy
+    chain, or a relaunch that reset the in-memory state to `.idle`) reaches rule 3, and
+    past the 120s tolerance that answers `.discardServerWins` — whose launch-pass branch
+    *deletes the draft*, taking the queued photo and every text edit beside it.
+  - `releaseHeldSave` also gained a **conflict** guard. It was redundant while
+    `clearResolvedConflict` was its only caller (which nils the record immediately
+    above the call); the attachment replay is a second caller with no such guarantee, and
+    releasing there would full-overwrite a diverged server body from a background pass
+    with no pill answered.
+  - `saveMarker.hadPendingSave` stays `inFlightContent != nil`: a parked save is not on
+    the wire. Do not "fix" it to consult `pendingSave` — that wedges "keep the server
+    version", which is the lesson the conflict hold already paid for.
 - **Draft replay is `syncPendingDrafts()`, and it is repeatable** — the funnel for
   the reconnect (`ConnectivityMonitor`), foreground and launch triggers.
   `recoverDrafts()` is just the once-per-process launch wrapper over it. An overlapping

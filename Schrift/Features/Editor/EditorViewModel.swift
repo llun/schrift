@@ -1849,11 +1849,14 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Whether the edit actually *added* an image. **All three** insertion paths
-    /// (markdown, reading, blocks) must check this: none may report success without
+    /// Whether the edit actually *added* an image. **Both** insertion paths
+    /// (reading, blocks) must check this: neither may report success without
     /// producing an image. A fenced code block — open at the end of the source,
     /// wrapping the caret, or formed by a neighbouring block on serialization —
     /// swallows the image line whole.
+    ///
+    /// There were three until the Markdown source tab was removed (#52), which took the
+    /// raw-markdown path and its own guard with it.
     ///
     /// Counts rather than asking `contains`: a document that already held a
     /// byte-identical `![](url)` would satisfy `contains` even when the new line was
