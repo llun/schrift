@@ -870,7 +870,14 @@ final class DocumentSaveCoordinator {
             // document under its real id, which is exactly the editor `finishMigration`'s
             // `serverID` guards now defer to. Without this the deferred migration would wait
             // for an unrelated foreground or reconnect.
-            if isPendingCreate(documentID: documentID) || checkpointedRecord(forServerID: documentID) != nil {
+            // A tombstoned id too: `runDeletePass` defers while an editor holds the document,
+            // and popping back is the moment that deferral clears. Without this the deletion
+            // would wait for an unrelated foreground or reconnect while its row sat struck
+            // through — and on iPad, where the editor is a persistent detail column, closing
+            // it is the designed completion path.
+            if isPendingCreate(documentID: documentID) || checkpointedRecord(forServerID: documentID) != nil
+                || isPendingDelete(documentID: documentID)
+            {
                 Task { await syncPendingDrafts() }
             }
         } else {
@@ -2140,9 +2147,134 @@ final class DocumentSaveCoordinator {
             // trigger can complete it. Both inherit this funnel's
             // re-entrancy guard and coalescing — the create replay must never get its own
             // triggers, or two passes could POST the same record twice.
+            // **Deletions first.** A landed DELETE removes its create record, its draft and
+            // its cache entries, so running it ahead of the other two means they simply find
+            // nothing rather than having to reason about a document that is about to go: both
+            // re-read their stores and the mirror at the top of every iteration, so a
+            // completion inside this pass is visible to them in the same pass. The reverse
+            // order would have `runCreatePass` resume a record the user deleted (the guard
+            // catches it, but only by declining to make progress) and `runSyncPass` do a round
+            // trip for a document that no longer exists.
+            //
+            // It shares the funnel for the same reason the create replay does: its own
+            // triggers could overlap, and two passes sending the same DELETE would report a
+            // 404 to the second, which is indistinguishable from a co-author's delete.
+            await runDeletePass()
             await runCreatePass()
             await runSyncPass(isLaunchRecovery: launchPass)
         } while needsAnotherSyncPass
+    }
+
+    // MARK: - Delete replay
+
+    /// Send the deletions queued while the server was out of reach.
+    ///
+    /// Same shape as `runCreatePass`: a cheap no-work gate before any round trip, one
+    /// `/users/me/` for the whole pass, and every record re-read from the mirror after each
+    /// await. The account fetch is deliberately **not** shared with the create pass. Hoisting
+    /// it into `syncPendingDrafts` would reorder that pass's own gates — it asks only when it
+    /// has work, and several tests pin "not even `/users/me/`" — and the case both passes have
+    /// work in the same iteration costs exactly one extra GET.
+    private func runDeletePass() async {
+        let tombstones = deleteStore.allDeletes()
+        // Nothing this session could send: a foreign origin, or a tombstone nothing can
+        // attribute. Without this every trigger would pay a `/users/me/` forever.
+        guard tombstones.contains(where: { $0.serverOrigin == serverOrigin && $0.ownerUserID != nil }) else {
+            return
+        }
+        // A failure leaves every tombstone unsent, which is the correct answer rather than a
+        // reason to guess — see `runCreatePass`.
+        guard let currentUserID = try? await client.currentUser().id else { return }
+
+        for snapshot in tombstones {
+            // Re-read rather than trusting the snapshot: the loop awaits, and an undo can have
+            // landed since. Sending on the stale copy would delete a document the user just
+            // asked to keep.
+            guard let tombstone = pendingDeletes[snapshot.documentID] else { continue }
+            // **Scoped before the send, not after.** A tombstone belonging to another account
+            // must not be sent under this session's cookies: it would very likely take DRF's
+            // 403-as-404, which the ladder below reads as "already deleted" and completes —
+            // discarding local work for a deletion this session never had the right to make.
+            guard tombstone.serverOrigin == serverOrigin, tombstone.ownerUserID == currentUserID else { continue }
+            // Every record remover in this file defers to an open editor, and this one removes
+            // more than most. The alias is belt and braces: a checkpointed record is withheld
+            // from `pendingLocalDocuments` the instant it is checkpointed, so no screen should
+            // be holding the local id while a tombstone names the server one — but if one were,
+            // `completePendingDelete` would reach `discardPendingWork`'s restart-as-fresh-create
+            // arm, which clears the checkpoint and re-POSTs the document the user deleted.
+            let localAlias = checkpointedRecord(forServerID: tombstone.documentID)?.localID
+            guard !hasOpenEditor(documentID: tombstone.documentID) else { continue }
+            if let localAlias, hasOpenEditor(documentID: localAlias) { continue }
+
+            do {
+                try await client.deleteDocument(documentID: tombstone.documentID)
+            } catch let error as DocsAPIError where error == .notFound {
+                // Already gone — the same outcome as a success, and the reason completion is
+                // ordered the way it is: a pass that died between the DELETE and its cleanup
+                // resumes here, so this is the *expected* second half of a torn completion, not
+                // only a co-author having got there first. Fall through.
+            } catch let error as DocsAPIError where error == .forbidden {
+                // Terminal, and the one outcome that gives the document back. The deletion is
+                // not merely delayed — this session may not make it — so keeping the tombstone
+                // would strike the row through forever while retrying something that cannot
+                // succeed. Local data is untouched: the row returns, un-struck, and the user
+                // can try again or leave it. (Silently, for now: there is no notice channel
+                // here, the same gap a `.failed` create has.)
+                dropPendingDelete(documentID: tombstone.documentID)
+                continue
+            } catch {
+                // Everything else keeps the tombstone for a later trigger — transport, 5xx,
+                // rate limits, an expired session (the re-login sheet is already up), and
+                // `.routeNotFound`, which says something about the *server* rather than about
+                // this document. Deliberately an explicit ladder rather than
+                // `retryableSaveFailure`: that classifier lumps `.notFound`, `.forbidden` and
+                // `.routeNotFound` together as "not retryable", and here they are three
+                // different outcomes.
+                continue
+            }
+            // The DELETE landed (or the document was already gone) — but an undo may have
+            // arrived while it was in flight. That race is one request wide and cannot be
+            // closed from here; what it *must not* do is take the user's work with it. So the
+            // local side is left exactly as it was, and the document simply reads as deleted
+            // by someone else at the next fetch. For a checkpointed record it does better than
+            // that: the resume is un-suppressed again, takes the 404, and re-creates the
+            // document from its draft — the undo winning by re-POST.
+            guard pendingDeletes[tombstone.documentID] != nil else { continue }
+            completePendingDelete(documentID: tombstone.documentID)
+        }
+    }
+
+    /// Everything a landed deletion leaves to clean up, in the one order a crash cannot turn
+    /// into a loss.
+    ///
+    /// **The tombstone is removed last.** Every step before it is idempotent, and the DELETE
+    /// itself answers 404 the second time — which the ladder above reads as success. So a
+    /// crash anywhere in here resumes on the next trigger and finishes the job. The reverse
+    /// order has a window in which the deletion is forgotten while the document's draft,
+    /// record and cache entries all survive: the row comes back, and a checkpointed record's
+    /// resume re-POSTs the document the user deleted. Same argument, and the same direction,
+    /// as `migrateCreatedDocument`'s "the record is removed last".
+    private func completePendingDelete(documentID: UUID) {
+        // First, because it is the one that reasons about the record: it nils `queued` before
+        // clearing the conflict (so no parked save is released against a document that is
+        // now gone), drops the draft, and — for a checkpointed record met under its server id
+        // — cascades the local subtree that went with it.
+        discardPendingWork(documentID: documentID)
+        contentCache.remove(documentID: documentID)
+        childrenCache.remove(parentID: documentID)
+        // And its ghost in every other parent's cached level, or the row survives in the list
+        // that was showing it until a revalidation that offline never comes.
+        childrenCache.removeDocument(documentID)
+        listCache.removeDocument(documentID)
+        dropPendingDelete(documentID: documentID)
+    }
+
+    /// Drop a tombstone without touching anything else — the shared tail of a completed
+    /// deletion and of the `.forbidden` refusal, which must *not* clean up.
+    private func dropPendingDelete(documentID: UUID) {
+        deleteStore.remove(documentID: documentID)
+        pendingDeletes[documentID] = nil
+        pendingDeletesVersion += 1
     }
 
     private func runSyncPass(isLaunchRecovery: Bool) async {

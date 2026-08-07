@@ -50,6 +50,24 @@ final class DocumentCacheStore {
         save(documents, forKey: Self.sharedWithMeKey)
     }
 
+    /// Strip a document from every cached list — what a landed deletion owes the lists that
+    /// were showing it. Without it the row survives until the next *successful* fetch, which
+    /// is exactly what a deletion queued offline does not have.
+    ///
+    /// **Never fabricates.** A list that was never cached stays never-cached: nil and `[]` are
+    /// read as different everywhere (nil is what lets a screen show its one first-run
+    /// placeholder), so writing an empty array here would tell Home it had fetched and found
+    /// nothing. Only a list that actually holds the document is rewritten, so this is also a
+    /// no-op for the common case.
+    func removeDocument(_ documentID: UUID) {
+        for key in [Self.pinnedKey, Self.recentKey, Self.sharedWithMeKey] {
+            guard let documents = load(forKey: key), documents.contains(where: { $0.id == documentID }) else {
+                continue
+            }
+            save(documents.filter { $0.id != documentID }, forKey: key)
+        }
+    }
+
     private func load(forKey key: String) -> [Document]? {
         guard let data = userDefaults.data(forKey: key),
             let documents = try? decoder.decode([Document].self, from: data)

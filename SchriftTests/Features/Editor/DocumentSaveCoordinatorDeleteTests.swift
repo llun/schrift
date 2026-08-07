@@ -69,8 +69,15 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             defaults: defaults)
     }
 
-    /// `/users/me/` plus a server that has forgotten every document — the shape a queued
-    /// deletion predicts, and the one that would reap a draft if a suppression were missing.
+    /// The state the suppressions exist for: a deletion that is queued and **still unsent**,
+    /// against a server that answers 404 for the document itself.
+    ///
+    /// The DELETE fails transiently so the tombstone survives the pass — otherwise the
+    /// deletion completes and takes the draft with it *legitimately*, and the test proves
+    /// nothing about the suppressions. The 404 on everything else is what a queued deletion
+    /// actually predicts (our own DELETE may have landed in a pass that died before its
+    /// cleanup) and is indistinguishable from a co-author's delete — which is exactly why
+    /// the reap must not fire on it.
     private func stubGoneServer(log: RequestRecorder) {
         let userBody = Data(
             """
@@ -82,10 +89,53 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
             if request.httpMethod == "GET", url.hasSuffix("users/me/") {
                 return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
             }
+            if request.httpMethod == "DELETE" {
+                return .init(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
             return .init(
                 statusCode: 404, headers: ["Content-Type": "application/json"],
                 body: Data(#"{"detail":"Not found."}"#.utf8), error: nil)
         }
+    }
+
+    /// `/users/me/` plus a server that accepts the DELETE. `deleteStatus` drives the outcome
+    /// ladder; everything else answers 200 so nothing unrelated fails for the wrong reason.
+    private func stubDeletePipeline(
+        log: RequestRecorder, deleteStatus: Int = 204, deleteError: Error? = nil, deleteDelay: TimeInterval = 0
+    ) {
+        let userBody = Data(
+            """
+            {"id": "\(user.uuidString.lowercased())", "email": "a@example.org"}
+            """.utf8)
+        let documentBody = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Doc", "content": "",
+             "abilities": {}, "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-01T12:00:00Z",
+             "depth": 1, "numchild": 0, "path": "00000A", "link_reach": "restricted",
+             "link_role": "reader", "user_role": "owner"}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.hasSuffix("users/me/") {
+                return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
+            }
+            if request.httpMethod == "DELETE" {
+                return .init(
+                    statusCode: deleteStatus, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"detail":"."}"#.utf8), error: deleteError, delay: deleteDelay)
+            }
+            return .init(statusCode: 200, headers: [:], body: documentBody, error: nil)
+        }
+    }
+
+    private func documentFixture(_ id: UUID, title: String = "Doc") -> Document {
+        Document(
+            id: id, title: title, excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false,
+            depth: 1, numchild: 0, path: "0001",
+            createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
     }
 
     private func draft(_ documentID: UUID, markdown: String = "the user's only copy") -> PendingDraft {
@@ -311,6 +361,251 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertNotNil(env.creates.create(for: child.id), "it waits rather than being lost")
     }
 
+    // MARK: - The replay
+
+    func testAQueuedDeletionIsSentAndEveryLocalTraceGoes() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.lists.saveRecentDocuments([documentFixture(serverID), documentFixture(otherServerID)])
+        env.children.save([documentFixture(serverID)], for: otherServerID)
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(
+            log.count(ofMethod: "DELETE", urlContaining: "documents/\(serverID.uuidString.lowercased())/"), 1)
+        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID), "the tombstone is discharged")
+        XCTAssertNil(env.drafts.draft(for: serverID))
+        XCTAssertEqual(env.lists.loadRecentDocuments()?.map(\.id), [otherServerID], "gone from the list cache")
+        XCTAssertEqual(
+            env.children.children(for: otherServerID)?.map(\.id), [],
+            "and from its ghost under another parent")
+    }
+
+    /// The deletion runs before the create and sync passes, so those simply find nothing
+    /// rather than having to reason about a document that is about to go.
+    func testTheDeletePassRunsFirst() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.filter { $0 == "DELETE" }.count, 1)
+        XCTAssertEqual(
+            log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0,
+            "the sync pass found no draft to reconcile")
+    }
+
+    /// A 404 is the *expected* second half of a completion torn by a crash, as well as what a
+    /// co-author's delete looks like. Either way there is nothing left to delete.
+    func testAnAlreadyDeletedDocumentCompletesLikeASuccess() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log, deleteStatus: 404)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID))
+        XCTAssertNil(env.drafts.draft(for: serverID))
+    }
+
+    /// The crash window: a pass died between the DELETE landing and its cleanup, so the
+    /// tombstone is still there with nothing left to clean up. Re-sending answers 404 and the
+    /// completion finishes idempotently — which is what makes "tombstone removed last" safe.
+    func testACompletionTornByACrashFinishesOnTheNextPass() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log, deleteStatus: 404)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID))
+        XCTAssertNil(env.deletes.pendingDelete(for: serverID), "and off disk, so no pass retries it")
+    }
+
+    /// Terminal, and the one outcome that gives the document back: this session may not make
+    /// the deletion at all, so retrying forever would strike the row through for good.
+    func testAForbiddenDeletionDropsTheTombstoneAndKeepsLocalData() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log, deleteStatus: 403)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID), "no longer struck through")
+        XCTAssertEqual(env.drafts.draft(for: serverID)?.markdown, "the user's only copy", "and nothing was lost")
+    }
+
+    func testATransportFailureKeepsTheTombstoneForALaterPass() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log, deleteError: URLError(.notConnectedToInternet))
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID))
+        XCTAssertNotNil(env.drafts.draft(for: serverID))
+    }
+
+    /// A server error, a rate limit and an expired session all keep the tombstone — the last
+    /// because the re-login sheet is already up and the deletion is still owed afterwards.
+    func testServerFailuresAndAnExpiredSessionKeepTheTombstone() async {
+        for status in [500, 429, 401] {
+            let log = RequestRecorder()
+            let env = makeEnvironment()
+            env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+            stubDeletePipeline(log: log, deleteStatus: status)
+
+            await env.coordinator.syncPendingDrafts()
+
+            XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID), "kept for \(status)")
+            MockURLProtocol.reset()
+        }
+    }
+
+    /// `.routeNotFound` says something about the *server*, not about this document — a
+    /// reverse proxy answering HTML for a path it swallowed must not read as "already gone".
+    func testARouteNotFoundKeepsTheTombstone() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        let userBody = Data(#"{"id": "11111111-1111-4111-8111-111111111111", "email": "a@example.org"}"#.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "GET", request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
+            }
+            return .init(
+                statusCode: 404, headers: ["Content-Type": "text/html; charset=utf-8"],
+                body: Data("<html>Not Found</html>".utf8), error: nil)
+        }
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// Every record remover here defers to an open editor, and this one removes more than
+    /// most — including, for a checkpointed record, the local subtree.
+    func testAnOpenEditorDefersTheDeletion() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        env.coordinator.retainOpenEditor(documentID: serverID)
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.filter { $0 == "DELETE" }.count, 0)
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// And closing that editor is the moment the deferral clears — on iPad the designed
+    /// completion path, since the editor is a persistent detail column.
+    func testClosingThatEditorKicksTheFunnel() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        env.coordinator.retainOpenEditor(documentID: serverID)
+        stubDeletePipeline(log: log)
+        await env.coordinator.syncPendingDrafts()
+
+        env.coordinator.releaseOpenEditor(documentID: serverID)
+
+        await waitUntil { log.methods.filter { $0 == "DELETE" }.count == 1 }
+        await waitUntil { !env.coordinator.isPendingDelete(documentID: serverID) }
+    }
+
+    /// Deleting a *checkpointed* record means deleting the server document it was migrating
+    /// onto, so its whole local subtree goes with it — the sub-pages the server has never
+    /// seen have nowhere left to be filed.
+    func testCompletingACheckpointedTombstoneCascadesTheLocalSubtree() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let parent = env.coordinator.createLocalDocument(title: "Parent", parentID: nil, ownerUserID: user)
+        let child = env.coordinator.createLocalDocument(title: "Child", parentID: parent.id, ownerUserID: user)
+        var checkpointed = env.coordinator.pendingCreateForTesting(localID: parent.id)!
+        checkpointed.syncedServerID = serverID
+        checkpointed.postedTitle = "Parent"
+        env.coordinator.savePendingCreateForTesting(checkpointed)
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(env.creates.create(for: parent.id), "the record goes")
+        XCTAssertNil(env.creates.create(for: child.id), "and its sub-page with it")
+        XCTAssertNil(env.drafts.draft(for: child.id), "including that sub-page's body")
+        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// The undo is one request wide and can lose — but it must never lose the user's *work*.
+    /// The document simply reads as deleted by someone else at the next fetch.
+    func testAnUndoDuringTheRequestKeepsEveryLocalTrace() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        env.drafts.save(draft(serverID))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeletePipeline(log: log, deleteDelay: 0.25)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        // Pin the order: undo only once the DELETE has actually reached the stub, or this
+        // would be testing the plain "cancelled before the pass looked" path instead.
+        await waitUntil { log.methods.contains("DELETE") }
+        coordinator.cancelPendingDelete(documentID: serverID)
+        await pass.value
+
+        XCTAssertEqual(
+            env.drafts.draft(for: serverID)?.markdown, "the user's only copy",
+            "the request was lost, the work was not")
+        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: serverID))
+    }
+
+    /// A foreign tombstone is never sent — and, because the gate is checked before the
+    /// request, never *completed* either. Sending under this session's cookies would very
+    /// likely take DRF's 403-as-404, which the ladder reads as "already deleted".
+    func testAForeignTombstoneIsNeitherSentNorCompleted() async {
+        let log = RequestRecorder()
+        let elsewhere = makeEnvironment(serverOrigin: "https://other.example.org")
+        elsewhere.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: otherUser)
+        let env = makeEnvironment(sharing: elsewhere.defaults)
+        env.drafts.save(draft(serverID))
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.filter { $0 == "DELETE" }.count, 0)
+        XCTAssertTrue(env.coordinator.isPendingDelete(documentID: serverID), "still owed to its own session")
+        XCTAssertNotNil(env.drafts.draft(for: serverID))
+    }
+
+    /// The cheap gate: a pass with nothing this session could send costs no round trip at
+    /// all, so the funnel's other triggers stay free.
+    func testAPassWithNothingToSendCostsNoRequests() async {
+        let log = RequestRecorder()
+        let elsewhere = makeEnvironment(serverOrigin: "https://other.example.org")
+        elsewhere.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: otherUser)
+        let env = makeEnvironment(sharing: elsewhere.defaults)
+        stubDeletePipeline(log: log)
+
+        await env.coordinator.syncPendingDrafts()
+
+        XCTAssertEqual(log.methods.count, 0, "not even /users/me/")
+    }
+
     /// And it is only *waiting*: undoing the deletion lets the sub-page replay normally, so
     /// the gate costs a pass rather than the document.
     func testUndoingTheParentsDeletionReleasesItsChild() async {
@@ -334,6 +629,11 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
                 return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
             case "POST":
                 return .init(statusCode: 201, headers: [:], body: createdBody, error: nil)
+            case "DELETE":
+                // Kept unsent, so the parent stays tombstoned through the precondition. A
+                // DELETE that landed would discharge the tombstone in the same pass and
+                // release the child for the wrong reason.
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
             default:
                 return .init(statusCode: 200, headers: [:], body: createdBody, error: nil)
             }
