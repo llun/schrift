@@ -26,16 +26,28 @@ func applyingFavoriteFlag(_ documents: [Document], documentID: UUID, isFavorite:
 /// deliberately *unfiltered*, so a pinned document is in both responses. Pinned wins, because it
 /// is the section the user asked for; Recent is the residue.
 ///
-/// **Keyed on membership, never on `isFavorite`.** The flag and the Pinned section can disagree
-/// — a cold start seeds `pinnedDocuments` from `loadPinnedDocuments()`, which answers `[]` when
-/// nothing was cached, while the recents cache may still carry rows flagged favorite. Filtering
-/// on the flag would hide those from *both* sections; filtering on what Pinned actually renders
-/// can only ever move a row between sections, never take it off the screen.
+/// **Keyed on membership, never on `isFavorite`.** The flag and the Pinned section can and do
+/// disagree: `favorite_list/` is paginated and Home consumes only `.results`, so a favorite past
+/// its first page is flagged `true` in the recents feed and simply absent from
+/// `pinnedDocuments`. (A cold start can produce the same shape — `loadPinnedDocuments()` answers
+/// `[]` for a key `DocumentCacheStore.setFavorite` declines to fabricate, while the recents cache
+/// still carries flagged rows.) Filtering on the flag would hide such a document from *both*
+/// sections; filtering on what Pinned actually renders can only ever move a row between them,
+/// never take it off the screen — and that is the property worth having, because every id
+/// removed here is drawn by the Pinned section in the same body pass.
 ///
 /// **Why not fetch the feed with `isFavorite: false` instead.** Pinned documents would then be
 /// absent from `fetchedRecentDocuments` and its cache, so an unpin — which only removes the row
 /// from `pinnedDocuments` (see `applyFavoriteChange`) — would leave the document in no section
 /// at all until the next successful fetch. Filtering at read time keeps the hand-back instant.
+///
+/// **Accepted residual: Recent is subtracted from, never topped up.** Home has no pagination —
+/// both lists are page one — so a pinned document removed from Recent is not replaced by the
+/// next unpinned one, and a user whose whole first page is pinned sees no Recent section while
+/// their other documents sit on a page Home never requests. Fixing it properly means paging the
+/// feed, which is a larger change than this one. Related and deliberate: Recent no longer holds
+/// the pinned document edited two minutes ago, and `favorite_list/` states no ordering, so
+/// Home's top row is no longer necessarily the most recently updated document.
 func recentsExcludingPinned(recent: [Document], pinned: [Document]) -> [Document] {
     guard !pinned.isEmpty else { return recent }
     let pinnedIDs = Set(pinned.map(\.id))

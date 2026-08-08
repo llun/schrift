@@ -403,8 +403,9 @@ Schrift/
 │   │                    ReauthenticationViewModel), RecentServersStore
 │   ├── Documents/       DocumentActions — the one delete/pin ladder, shared by the
 │   │                    Options sheet and every swipe-to-delete surface
-│   ├── Home/            document list (pinned + recent), offline metadata cache,
-│   │                    FavoriteOverlay (pins vs. a list fetch that predates them)
+│   ├── Home/            document list (pinned + recent, each document in exactly one),
+│   │                    offline metadata cache, FavoriteOverlay (pins vs. a list fetch that
+│   │                    predates them; and the Pinned/Recent split)
 │   ├── Search/ Shared/  the other tabs; Profile also hosts the Appearance/Language
 │   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet)
 │   │                    and the server-version row (ServerConfig)
@@ -2116,6 +2117,28 @@ markdown write endpoint**. Understand this before touching the save path:
   to the flag — a just-pinned document is simply absent from a `favorite_list/` that predates
   the POST. `DocumentCacheStore.setFavorite` write-throughs and, like `removeDocument`,
   **never fabricates** a list that was never cached.
+- **Each Home document renders in exactly one section: Pinned wins, Recent is the residue.**
+  The feed is fetched *unfiltered* (`isFavorite: nil`), so the server returns a pinned
+  document in both responses and it used to draw twice on one screen.
+  `recentsExcludingPinned` (`FavoriteOverlay.swift`) subtracts one list from the other inside
+  `recentDocuments`. Three rules travel with it. **Keyed on membership of the rendered pinned
+  list, never on `isFavorite`** — the two genuinely disagree, because `favorite_list/` is
+  paginated and Home consumes only `.results`, so a favorite past page one is flagged in the
+  feed and absent from `pinnedDocuments`; a flag-keyed filter would hide it from *both*
+  sections, whereas membership can only move a row, never take it off the screen (every id
+  removed is drawn by the Pinned section in the same body pass). **Not done server-side with
+  `isFavorite: false`**, which would drop pinned documents from `fetchedRecentDocuments` and
+  its cache, so an unpin — which only removes the row from `pinnedDocuments` — would leave it
+  in no section until the next successful fetch. And the **memo key must carry the pinned
+  ids**: most writers reassign `fetchedRecentDocuments` in the same breath, but `load()`'s
+  Work Offline branch assigns the pinned list unconditionally while guarding the recents one
+  behind `if let cachedRecents`, so a fresh install whose only row arrived from a migration
+  and was pinned here loses it from *every* section on the next reseed
+  (`testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`). **Accepted residual:** Home
+  has no pagination, so Recent is subtracted from and never topped up — a user whose whole
+  first page is pinned sees no Recent section while their other documents sit on a page Home
+  never requests; and since `favorite_list/` states no ordering, Home's top row is no longer
+  necessarily the most recently updated document.
 - **`abilities.destroy` / `abilities.favorite` are still not consulted, deliberately.** They
   decode `decodeIfPresent ?? false`, so absent and denied are indistinguishable — and the
   false negative is the harmful direction with no recovery: hiding Delete on a server whose

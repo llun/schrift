@@ -37,17 +37,21 @@ final class HomeViewModel {
         // **The account is part of the key.** Re-authenticating as someone else changes who
         // may be listed without touching either of the other two, so a memo keyed only on
         // them would keep serving the previous user's documents to the new one.
-        // **Reading `pinnedDocuments` here is load-bearing; keying on it is defensive.** The
-        // read is what registers the `@Observable` dependency and, since it sits above the
-        // early return, it happens on every call — so a body that renders only this list is
-        // still invalidated by a pin. The *key* is the belt-and-braces half: no current path
-        // needs it, because every writer of `pinnedDocuments` (`applyFavoriteChange`, `load()`,
-        // the deletion observer) reassigns `fetchedRecentDocuments` in the same breath, and the
-        // paths where that assignment is value-identical are exactly the ones where the
-        // document is absent from the feed and the filtered answer cannot differ. Verified by
-        // mutation — dropping this conjunct fails no test in the suite. It stays because a memo
-        // whose key omits an input its body reads is wrong the moment a writer stops moving in
-        // lockstep, and that is a silent wrong answer rather than a crash. Ids alone:
+        // **And so is the pinned list, in both halves.** The *read* registers the `@Observable`
+        // dependency and sits above the early return so it happens on every call, which is what
+        // moves a row between sections on the pin rather than at the next fetch. The *key* is
+        // load-bearing too, and at exactly one writer: most of them (`applyFavoriteChange`, a
+        // successful `load()`, the deletion observer) reassign `fetchedRecentDocuments` in the
+        // same breath, so the `fetched` conjunct below would cover those on its own — but
+        // `load()`'s **Work Offline** branch assigns `pinnedDocuments` unconditionally while
+        // guarding the recents array behind `if let cachedRecents`, deliberately, so a nil cache
+        // cannot clobber a just-migrated row. Reach it with a fresh install whose only row
+        // arrived in memory from a migration and was then pinned here: `setFavorite` fabricates
+        // no pinned cache, so the reseed empties `pinnedDocuments` while `fetched` stands still,
+        // and a memo without this conjunct hits and keeps filtering the row out. It is then in
+        // **no section at all** — `showsPinnedSection` is false and Recent has dropped it — with
+        // the "No documents yet" state drawn over a document that exists. Pinned by
+        // `testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`. Ids alone:
         // `applyingFavoriteFlag` rewrites a pinned row's *contents* on every toggle, and the
         // filtered answer depends on nothing but identity.
         let version = saveCoordinator.pendingCreatesVersion
