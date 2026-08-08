@@ -120,12 +120,25 @@ jobs:
 
       # The tag + release steps only run if the build & upload above succeeded,
       # so a failed build never burns a version number.
+      #
+      # Both are idempotent, because a re-run has to be able to *finish* a release
+      # rather than die on its own leftovers: the upload step now succeeds when the
+      # binary is already on App Store Connect, which is exactly the state a re-run
+      # of a half-finished release is in. Dying on "tag already exists" there would
+      # put the pipeline back where it started.
       - name: Tag the release
         run: |
           tag="v${{ steps.version.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag is already on origin — nothing to do."
+            exit 0
+          fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "Release $tag"
+          # `fetch-depth: 0` brings tags with it, so the tag may already exist
+          # locally even when origin doesn't have it.
+          git tag -a "$tag" -m "Release $tag" 2>/dev/null \
+            || echo "Tag $tag already exists locally — pushing that."
           git push origin "$tag"
 
       - name: Create GitHub Release
@@ -133,6 +146,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.version.outputs.version }}"
+          if gh release view "v${version}" >/dev/null 2>&1; then
+            echo "Release v${version} already exists — nothing to do."
+            exit 0
+          fi
           gh release create "v${version}" \
             --title "v${version}" \
             --generate-notes \
