@@ -112,6 +112,10 @@ struct ComponentCatalogPreview: View {
                         DocRow(title: "Public notes", reach: .public, date: "Last week")
                     }
                 }
+
+                catalogSection("Swipe Reveal Row") {
+                    SwipeRevealRowCatalogSample()
+                }
             }
             .padding(DocsSpacing.spaceBase)
         }
@@ -125,6 +129,31 @@ struct ComponentCatalogPreview: View {
                 .font(DocsFont.title2)
                 .foregroundStyle(DocsColor.textPrimary)
             content()
+        }
+    }
+}
+
+/// The swipe rows need a live `SwipeRevealState` to coordinate "only one open at a time",
+/// which a `@ViewBuilder` closure cannot hold — hence a small view of its own.
+private struct SwipeRevealRowCatalogSample: View {
+    @State private var state = SwipeRevealState<String>()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(["Q3 Planning", "Roadmap", "Public notes"], id: \.self) { title in
+                SwipeRevealRow(
+                    id: title,
+                    state: $state,
+                    actions: [
+                        SwipeRevealAction(id: "pin", icon: .push_pin, label: "Pin", role: .brand) {},
+                        SwipeRevealAction(id: "delete", icon: .delete, label: "Delete", role: .destructive) {},
+                    ],
+                    accessibilityLabel: title,
+                    onActivate: {}
+                ) {
+                    DocRow(title: title, date: "3 days ago")
+                }
+            }
         }
     }
 }
