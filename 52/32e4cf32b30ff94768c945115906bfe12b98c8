@@ -1,0 +1,24 @@
+CLAUDE.md
+  s_d92eee1800494a::t_7a67948d726407 181-230
+docs/testflight-setup.md
+  s_d92eee1800494a::t_6f24f21cf7535d 90-94,97-99
+  s_d92eee1800494a::t_ebf055c61b3cc2 215-224
+  s_d92eee1800494a::t_d2a0f0fc8e949d 116-130,132-141,149-162,164-167,169-171
+  s_d92eee1800494a::t_dccf5206a7fa07 100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "5232e4cf32b30ff94768c945115906bfe12b98c8",
+  "prompts": {},
+  "sessions": {
+    "s_d92eee1800494a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfd65c7c-927b-472f-b33f-644840a8b57d",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
