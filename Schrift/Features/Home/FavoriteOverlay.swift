@@ -29,12 +29,15 @@ func applyingFavoriteFlag(_ documents: [Document], documentID: UUID, isFavorite:
 /// **Keyed on membership, never on `isFavorite`.** The flag and the Pinned section can and do
 /// disagree: `favorite_list/` is paginated and Home consumes only `.results`, so a favorite past
 /// its first page is flagged `true` in the recents feed and simply absent from
-/// `pinnedDocuments`. (A cold start can produce the same shape — `loadPinnedDocuments()` answers
-/// `[]` for a key `DocumentCacheStore.setFavorite` declines to fabricate, while the recents cache
-/// still carries flagged rows.) Filtering on the flag would hide such a document from *both*
-/// sections; filtering on what Pinned actually renders can only ever move a row between them,
-/// never take it off the screen — and that is the property worth having, because every id
-/// removed here is drawn by the Pinned section in the same body pass.
+/// `pinnedDocuments`. Filtering on the flag would hide such a document from *both* sections;
+/// filtering on what Pinned actually renders can only ever move a row between them, never take
+/// it off the screen — and that is the property worth having, because every id removed here is
+/// drawn by the Pinned section in the same body pass.
+///
+/// (Not, as an earlier draft of this comment claimed, because a cold start can leave the recents
+/// cache populated while the pinned one is missing: `savePinnedDocuments`' only caller is
+/// `load()`'s success path, which writes `saveRecentDocuments` on the next line, and nothing else
+/// fabricates either key — so that shape is unreachable. Pagination is the real mechanism.)
 ///
 /// **Why not fetch the feed with `isFavorite: false` instead.** Pinned documents would then be
 /// absent from `fetchedRecentDocuments` and its cache, so an unpin — which only removes the row

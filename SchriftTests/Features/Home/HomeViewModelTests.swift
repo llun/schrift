@@ -212,7 +212,9 @@ final class HomeViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.showsPinnedSection, "so the empty state stays suppressed")
         XCTAssertTrue(viewModel.recentDocuments.isEmpty, "and the Recent section draws nothing at all")
-        XCTAssertTrue(viewModel.isCurrentListKnown, "the list is known — it is just wholly pinned")
+        // No `isCurrentListKnown` assertion: `load()` sets `hasKnownFetchedList` on success, and
+        // that disjunct alone satisfies it, so it could not fail for anything this change makes
+        // reachable — an assertion that cannot fail reads as coverage without being any.
     }
 
     /// The filter is on **membership of the rendered Pinned section**, never on `isFavorite`.

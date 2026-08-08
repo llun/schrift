@@ -40,12 +40,14 @@ final class HomeViewModel {
         // **And so is the pinned list, in both halves.** The *read* registers the `@Observable`
         // dependency and sits above the early return so it happens on every call, which is what
         // moves a row between sections on the pin rather than at the next fetch. The *key* is
-        // load-bearing too, and at exactly one writer: most of them (`applyFavoriteChange`, a
-        // successful `load()`, the deletion observer) reassign `fetchedRecentDocuments` in the
-        // same breath, so the `fetched` conjunct below would cover those on its own — but
-        // `load()`'s **Work Offline** branch assigns `pinnedDocuments` unconditionally while
-        // guarding the recents array behind `if let cachedRecents`, deliberately, so a nil cache
-        // cannot clobber a just-migrated row. Reach it with a fresh install whose only row
+        // load-bearing too, at every writer that moves `pinnedDocuments` without moving
+        // `fetchedRecentDocuments` — note that includes writers that *assign* the recents array
+        // a **value-equal** copy, since `applyingFavoriteFlag` returns one whenever the row's
+        // flag already matches (`applyFavoriteChange` reached from a stale `searchResults` row),
+        // and `removeAll` is a no-op for an id the feed does not carry. The one where it costs a
+        // document is `load()`'s **Work Offline** branch, which assigns `pinnedDocuments`
+        // unconditionally while guarding the recents array behind `if let cachedRecents`,
+        // deliberately, so a nil cache cannot clobber a just-migrated row. Reach it with a fresh install whose only row
         // arrived in memory from a migration and was then pinned here: `setFavorite` fabricates
         // no pinned cache, so the reseed empties `pinnedDocuments` while `fetched` stands still,
         // and a memo without this conjunct hits and keeps filtering the row out. It is then in
