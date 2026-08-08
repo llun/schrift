@@ -615,6 +615,12 @@ final class PagesTreeViewModelTests: XCTestCase {
     /// **The drawer's root is the document the drawer lives inside.** Deleting it from a
     /// gesture inside itself would tear down the presenter mid-interaction, so the root row
     /// carries no delete action and this is the backstop for that.
+    /// **Asserting on the request count alone would be inert here**, and was: the fixture's
+    /// root is a locally-created document, so with the guard removed `DocumentActions.delete`
+    /// takes the pending-create branch, which by design issues no request — the DELETE count
+    /// is zero either way. What actually differs is that the unguarded call *discards the
+    /// root's create record and its draft*, i.e. destroys the open document's only copy. That
+    /// is what this asserts.
     func testDeletingTheRootIsRefused() async {
         let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
@@ -626,6 +632,9 @@ final class PagesTreeViewModelTests: XCTestCase {
         await env.viewModel.deletePage(env.root)
 
         XCTAssertEqual(log.count(ofMethod: "DELETE"), 0)
+        XCTAssertTrue(
+            env.coordinator.isPendingCreate(documentID: env.root.id),
+            "the root's create record — the open document's only copy — must survive")
     }
 
     /// Reported through the drawer's own error surface, not the editor's — the drawer is

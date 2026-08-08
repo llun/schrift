@@ -346,6 +346,16 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
                 guard !open, offset != 0 else { return }
                 withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { offset = 0 }
             }
+            // **Release the list-wide drag claim if this row goes away mid-swipe.**
+            // `draggingRowID` is normally cleared by `onEnded`, but a row can be torn down
+            // before the finger lifts — its document deleted by a background sync, a
+            // co-author, or the swipe's own Delete. The per-row `@State` dies with the view;
+            // the *shared* state does not, and `swipeRevealAfterScrollInteraction` early-returns
+            // while anything claims to be dragging, so a stale claim would silently disable
+            // close-on-scroll for the whole list until some other row completed a full drag.
+            .onDisappear {
+                if state.draggingRowID == id { state.draggingRowID = nil }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityAddTraits(.isButton)

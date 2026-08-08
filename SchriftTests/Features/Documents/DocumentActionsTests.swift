@@ -205,7 +205,10 @@ final class DocumentActionsTests: XCTestCase {
         env.creates.save(record)
         // Rebuilt so the mirror picks the checkpoint up, exactly as a relaunch would.
         let coordinator = DocumentSaveCoordinator(
-            client: env.client, draftStore: env.drafts, createStore: env.creates, deleteStore: env.deletes,
+            client: env.client, draftStore: env.drafts, contentCache: env.contentCache,
+            createStore: env.creates, deleteStore: env.deletes,
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
@@ -236,7 +239,10 @@ final class DocumentActionsTests: XCTestCase {
         record.syncedServerID = serverID
         env.creates.save(record)
         let coordinator = DocumentSaveCoordinator(
-            client: env.client, draftStore: env.drafts, createStore: env.creates, deleteStore: env.deletes,
+            client: env.client, draftStore: env.drafts, contentCache: env.contentCache,
+            createStore: env.creates, deleteStore: env.deletes,
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
@@ -264,7 +270,10 @@ final class DocumentActionsTests: XCTestCase {
         record.syncedServerID = serverID
         env.creates.save(record)
         let coordinator = DocumentSaveCoordinator(
-            client: env.client, draftStore: env.drafts, createStore: env.creates, deleteStore: env.deletes,
+            client: env.client, draftStore: env.drafts, contentCache: env.contentCache,
+            createStore: env.creates, deleteStore: env.deletes,
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let actions = DocumentActions(
             client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
@@ -321,5 +330,110 @@ final class DocumentActionsTests: XCTestCase {
         let env = makeEnvironment()
         let outcome = await env.actions.setFavorite(documentID: documentID, isFavorite: true)
         XCTAssertEqual(outcome, .failed)
+    }
+
+    // MARK: - Every made deletion announces, on every branch
+
+    /// **The premise `EditorView` now depends on.** Its `onDeleted` no longer tears the
+    /// session down for a made deletion, because `completeImmediateDelete` announces and the
+    /// screen's own `noteDocumentDeleted` does it. That premise has to hold on the
+    /// pending-create branch too — and it did not: deleting a locally-created document from
+    /// its own editor left `isDocumentDiscarded` false with the autosave still running, and a
+    /// dirty screen's flush on disappear would then write a fresh draft under the id whose
+    /// record had just been dropped.
+    func testAnUncheckpointedLocalDeleteAnnouncesToo() async {
+        stubNoContent()
+        let env = makeEnvironment()
+        let document = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: ownerID)
+        let recorder = DeletionRecorder()
+        env.coordinator.observeDocumentDeleted(recorder) { recorder.seen.append($0) }
+
+        _ = await env.actions.delete(documentID: document.id)
+
+        XCTAssertEqual(recorder.seen, [document.id])
+    }
+
+    /// A checkpointed record is known under **both** ids — the local one every trace is keyed
+    /// on, and the server one the lists show and any other editor was reached by — so both owe
+    /// the purge and the announcement.
+    func testACheckpointedLocalDeleteAnnouncesBothItsIDs() async {
+        stubNoContent()
+        let env = makeEnvironment()
+        let document = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: ownerID)
+        var record = env.creates.create(for: document.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let coordinator = DocumentSaveCoordinator(
+            client: env.client, draftStore: env.drafts, contentCache: env.contentCache,
+            createStore: env.creates, deleteStore: env.deletes,
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let actions = DocumentActions(
+            client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
+        let recorder = DeletionRecorder()
+        coordinator.observeDocumentDeleted(recorder) { recorder.seen.append($0) }
+
+        _ = await actions.delete(documentID: document.id)
+
+        XCTAssertEqual(Set(recorder.seen), [document.id, serverID])
+    }
+
+    /// The server id is read **before** the purge drops the record — afterwards
+    /// `syncedServerID` answers nil and the server id's rows and caches would be stranded.
+    func testACheckpointedLocalDeletePurgesTheServerIDsCachedBody() async {
+        stubNoContent()
+        let env = makeEnvironment()
+        let document = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: ownerID)
+        var record = env.creates.create(for: document.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        env.contentCache.save(
+            CachedDocumentContent(
+                documentID: serverID, title: "Q3", markdown: "# Body", syncedAt: Date()))
+        let coordinator = DocumentSaveCoordinator(
+            client: env.client, draftStore: env.drafts, contentCache: env.contentCache,
+            createStore: env.creates, deleteStore: env.deletes,
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let actions = DocumentActions(
+            client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
+
+        _ = await actions.delete(documentID: document.id)
+
+        XCTAssertNil(env.contentCache.content(for: serverID))
+    }
+
+    /// The checkpointed branch's own 404 — the one whose comment explains it prevents the
+    /// re-POST resurrection, and the branch the ladder had drifted on before. Only the plain
+    /// branch's 404 was covered.
+    func testA404OnTheCheckpointedCopyStillClearsTheRecord() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 404, headers: ["Content-Type": "application/json"], body: Data("{}".utf8), error: nil)
+        }
+        let env = makeEnvironment()
+        let document = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: ownerID)
+        var record = env.creates.create(for: document.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let coordinator = DocumentSaveCoordinator(
+            client: env.client, draftStore: env.drafts, contentCache: env.contentCache,
+            createStore: env.creates, deleteStore: env.deletes,
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let actions = DocumentActions(
+            client: env.client, saveCoordinator: coordinator, signedInUser: env.signedIn)
+
+        let outcome = await actions.delete(documentID: document.id)
+
+        XCTAssertEqual(outcome, .deleted)
+        XCTAssertNil(env.creates.create(for: document.id), "or the next resume re-POSTs it")
+        XCTAssertNil(env.drafts.draft(for: document.id))
     }
 }

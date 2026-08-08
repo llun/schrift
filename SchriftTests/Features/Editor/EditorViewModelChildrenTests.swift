@@ -10,6 +10,8 @@ final class EditorViewModelChildrenTests: XCTestCase {
     private var cacheDirectory: URL!
     private var childrenCache: DocumentChildrenCacheStore!
     private var childrenSuiteName: String!
+    /// The per-view-model suites, cleaned up so each test leaves no plist behind.
+    private var suiteNames: [String] = []
 
     override func setUp() {
         super.setUp()
@@ -23,18 +25,35 @@ final class EditorViewModelChildrenTests: XCTestCase {
         MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
         UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
+        for name in suiteNames {
+            UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+        }
+        suiteNames.removeAll()
         super.tearDown()
     }
 
     private func makeViewModel(title: String = "Untitled document") -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // **Every** store on this test's own suite, not just the draft store. A coordinator
+        // whose createStore/deleteStore/listCache fall back to `UserDefaults.standard` writes
+        // app-wide storage — and since this PR a sub-page delete routes through
+        // `completeImmediateDelete` → `purgeLocalTraces`, which *writes* the list and children
+        // caches and reads the create store, so the half-isolated form now genuinely leaks.
+        // See `PagesTreeViewModelTests.makeLocalRootViewModel` for the same reasoning.
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: childrenCache, backgroundTasks: .noop)
         return EditorViewModel(
             client: client, documentID: documentID, title: title, saveCoordinator: coordinator,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
             contentCache: contentCache, childrenCache: childrenCache)
     }
 
@@ -423,16 +442,20 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let child = childDocument(childID)
         viewModel.subpages = [child]
         let body = Self.childrenFixture(id: childID.uuidString.lowercased(), title: "Child page")
+        let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
-            let url = request.url?.absoluteString ?? ""
             if request.httpMethod == "DELETE" {
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
+            log.record(request)
             return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.2)
         }
 
         let loading = Task { await viewModel.loadChildren() }
-        try? await Task.sleep(for: .milliseconds(60))
+        // **Ordered on the recorder, not a sleep.** The children fetch must have reached the
+        // stub — and be held open — before the delete, or it resolves first and the assertion
+        // below is vacuous (`subpages` ends empty either way).
+        await waitUntil { log.count(ofMethod: "GET") >= 1 }
         await viewModel.deleteSubpage(child)
         await loading.value
 

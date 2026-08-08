@@ -73,7 +73,11 @@ struct SubpageRow: View {
         }
         .padding(.horizontal, DocsSpacing.spaceXS)
         .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // A floor, never a fixed height, so the row still grows with Dynamic Type. A row with
+        // no excerpt is a 22pt icon plus 20pt of padding — 42pt, just under the tap target,
+        // which also made the swipe strip it now hosts 42pt tall. `DocRow` and the drawer's
+        // rows have always carried this floor; this one was simply missing it.
+        .frame(maxWidth: .infinity, minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
         // One composed label, like `DocRow` and `SharedRow`. Applying a label to a `Button`

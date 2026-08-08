@@ -76,4 +76,47 @@ final class DocumentRowSwipeActionsTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Handler wiring
+
+    /// **The labels and ids above prove nothing about which closure each action runs.** A
+    /// mutation swapping the pending-delete action's handler from `onKeep` to `onDelete` left
+    /// every other test in this file green — and that inversion is not academic: it would make
+    /// "Keep this document", the last chance to recover a queued deletion, open the *delete*
+    /// confirmation instead.
+    private func firedAction(
+        id wanted: String, isPendingDelete: Bool = false, isLocalDocument: Bool = false
+    ) -> String? {
+        var fired: String?
+        let resolved = documentRowSwipeActions(
+            isPendingDelete: isPendingDelete,
+            isLocalDocument: isLocalDocument,
+            isFavorite: false,
+            offersPin: true,
+            keepLabel: "Keep this document",
+            pinLabel: "Pin",
+            unpinLabel: "Unpin",
+            deleteLabel: "Delete",
+            onKeep: { fired = "keep" },
+            onTogglePin: { fired = "pin" },
+            onDelete: { fired = "delete" })
+        resolved.first { $0.id == wanted }?.handler()
+        return fired
+    }
+
+    func testTheKeepActionRunsTheUndoHandlerAndNotTheDelete() {
+        XCTAssertEqual(firedAction(id: "keep", isPendingDelete: true), "keep")
+    }
+
+    func testThePinActionRunsTheToggleHandler() {
+        XCTAssertEqual(firedAction(id: "pin"), "pin")
+    }
+
+    func testTheDeleteActionRunsTheDeleteHandler() {
+        XCTAssertEqual(firedAction(id: "delete"), "delete")
+    }
+
+    func testALocalRowsDeleteStillRunsTheDeleteHandler() {
+        XCTAssertEqual(firedAction(id: "delete", isLocalDocument: true), "delete")
+    }
 }

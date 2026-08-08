@@ -190,10 +190,10 @@ struct EditorView: View {
     /// actually looking at — a drawer deletion reporting through `EditorViewModel` would put
     /// the message on a screen the drawer is covering.
     @State private var drawerPendingDeleteConfirmation: Document?
-    /// Which row's swipe strip is open, per surface. Separate, because the drawer floats over
-    /// the Subpages list and a single value would let one close the other's strip.
+    /// Which Subpages row's swipe strip is open. The drawer keeps its **own** state rather
+    /// than sharing this one: it floats over this list, and a single value would let either
+    /// close the other's strip.
     @State private var subpageSwipe = SwipeRevealState<UUID>()
-    @State private var drawerSwipe = SwipeRevealState<UUID>()
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -445,7 +445,16 @@ struct EditorView: View {
                 // generations — but one reaction path is better than two, and this way the
                 // teardown is identical however the deletion was made (from this sheet, or
                 // from a swipe on a list while this screen sits in an iPad detail pane).
-                if queued { viewModel.handleDidQueueDelete() }
+                if queued {
+                    viewModel.handleDidQueueDelete()
+                } else {
+                    // The announcement has already torn this session down via
+                    // `handleDeletionLanded`, which is written for a deletion made *elsewhere*
+                    // and so leaves "no longer available" on screen. The user made this one
+                    // and is being popped away from it, so drop the message — in this same
+                    // turn, before anything renders.
+                    viewModel.noteDeletedFromThisScreen()
+                }
                 onDeleted?()
             }
         )
@@ -814,6 +823,12 @@ struct EditorView: View {
         }
         .refreshable {
             await viewModel.refresh()
+        }
+        // The Subpages rows live in this scroll view, so an open swipe strip closes here for
+        // the same reason it does on Home and in the drawer — and guarded the same way, so a
+        // swipe that nudges this scroll view does not close its own strip.
+        .onScrollPhaseChange { _, phase in
+            if phase == .interacting { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) }
         }
         // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
         // autolinker matched — dispatches through this action. Without an override the

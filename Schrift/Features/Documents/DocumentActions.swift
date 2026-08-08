@@ -81,7 +81,10 @@ struct DocumentActions {
         //    copy alive, and it returns in Home's next list fetch with nothing on the device
         //    that knows about it.
         if let coordinator = saveCoordinator, coordinator.isPendingCreate(documentID: documentID) {
-            if let serverID = coordinator.syncedServerID(forLocalID: documentID) {
+            // Read **before** anything clears the record: the purge below drops it, after which
+            // this answers nil and the server id's own caches and rows would be left behind.
+            let checkpointedServerID = coordinator.syncedServerID(forLocalID: documentID)
+            if let serverID = checkpointedServerID {
                 do {
                     try await client.deleteDocument(documentID: serverID)
                 } catch let error as DocsAPIError where error == .notFound {
@@ -111,8 +114,24 @@ struct DocumentActions {
                 }
             }
             // Drops the record *and* its draft, so no replay can resurrect what the user threw
-            // away. Matched on either id — the checkpointed branch is keyed on the server one.
-            coordinator.discardPendingWork(documentID: documentID)
+            // away — and purges the caches and **announces**, which is what
+            // `discardPendingWork` alone does not do.
+            //
+            // The announcement is not optional here. `EditorView`'s `onDeleted` no longer
+            // tears its own session down for a made deletion, on the premise that every made
+            // deletion announces; without this, deleting a locally-created document from its
+            // own editor would leave `isDocumentDiscarded` false and the autosave running, and
+            // a dirty screen's flush on disappear would then write a *fresh* draft under the
+            // id whose record was just dropped — resurrecting it until a later pass reaps the
+            // 404. The premise has to hold on every branch, or it holds on none.
+            coordinator.completeImmediateDelete(documentID: documentID)
+            // A **checkpointed** record is also known under its server id: that is the id the
+            // lists show once the POST has landed, the id any other open editor was reached
+            // by, and the id whose cached body and children levels were written. It owes the
+            // same purge and the same announcement.
+            if let serverID = checkpointedServerID {
+                coordinator.completeImmediateDelete(documentID: serverID)
+            }
             return .deleted
         }
         do {

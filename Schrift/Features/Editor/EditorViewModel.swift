@@ -1398,6 +1398,26 @@ final class EditorViewModel {
         actions.hasLocalSubpages(document.id)
     }
 
+    /// This screen's own document was deleted **from this screen**, so drop the "no longer
+    /// available" message the landing announcement just put up.
+    ///
+    /// Since every made deletion now announces, deleting the open document from its own
+    /// Options sheet reaches `noteDocumentDeleted(self.documentID)` →
+    /// `handleDeletionLanded()`, which is written for the case that matters — a co-author or
+    /// another device deleted this out from under the reader — and therefore sets
+    /// `isUnavailable` and the message. Told about a deletion the user just made and is
+    /// already being popped away from, that message is noise at best.
+    ///
+    /// Everything else `handleDeletionLanded` did stays: the purge, the cancelled autosave,
+    /// the cleared content, `isDocumentDiscarded`. This only silences the wording. It runs in
+    /// the same main-actor turn as the announcement (`completeImmediateDelete` is synchronous,
+    /// and `onDeleted` fires immediately after `delete()` returns), so the intermediate state
+    /// is never rendered.
+    func noteDeletedFromThisScreen() {
+        isUnavailable = false
+        clearError()
+    }
+
     /// Delete a sub-page from the Subpages list.
     ///
     /// Guarded on the **parent**, not only on the child: a screen whose own document has been
