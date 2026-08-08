@@ -2619,6 +2619,33 @@ final class DocumentSaveCoordinator {
         announceDocumentDeleted(documentID)
     }
 
+    /// A deletion that landed **immediately** — the twin of `completePendingDelete`, minus the
+    /// tombstone there is none of.
+    ///
+    /// Exists because a delete made from a *list* row has no editor to clean up after it. The
+    /// editor was the only thing that ever did: `EditorView`'s `onDeleted` called
+    /// `handleDidDelete()`, which purged that one screen's caches and ended its session. Every
+    /// other surface — Home, Shared, Search, the Pages drawer — learns about a deletion only
+    /// through `announceDocumentDeleted`, which until now fired for *queued* deletions alone.
+    ///
+    /// Two failures follow from omitting it, and the second is the one that costs content: a
+    /// **checkpointed** record's document is met from a list under its *server* id, so
+    /// `DocumentActions.delete`'s pending-create branch never runs and nothing clears the
+    /// create record or its draft — the next resume GETs that id, takes the expected 404,
+    /// clears the checkpoint, and the pass after that re-POSTs the document the user deleted.
+    /// `purgeLocalTraces` → `discardPendingWork` reaches the `checkpointedRecord(forServerID:)`
+    /// branch that closes it.
+    ///
+    /// Same ordering as its twin: purge first, announce last, so a subscriber sees a fully
+    /// settled state. Deliberately **not** folded into `discardPendingWork`, which is also
+    /// called by paths where the document is *not* gone from the server (the queued teardown,
+    /// the conflict discharge) — announcing there would un-strike a row whose deletion is
+    /// still on its way.
+    func completeImmediateDelete(documentID: UUID) {
+        purgeLocalTraces(documentID: documentID)
+        announceDocumentDeleted(documentID)
+    }
+
     /// Re-mint a document whose deletion the user undid **after** the DELETE had already
     /// landed, so their content survives an outcome nothing on the device could prevent.
     ///
