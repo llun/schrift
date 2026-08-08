@@ -117,14 +117,11 @@ jobs:
           MATCH_SSH_PRIVATE_KEY: ${{ secrets.MATCH_SSH_PRIVATE_KEY }}
 
       - name: Build & upload
+        id: upload
         run: bundle exec fastlane beta
         env:
           GIT_SSH_COMMAND: "ssh -i ~/.ssh/match_ed25519 -o IdentitiesOnly=yes"
           MARKETING_VERSION: ${{ steps.version.outputs.version }}
-          RELEASE_NOTES_FILE: ${{ github.workspace }}/release-notes.txt
-          # Optional: comma-separated TestFlight beta group names to also
-          # distribute to (internal testers already get every build).
-          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
 
       # The tag + release steps only run if the build & upload above succeeded,
       # so a failed build never burns a version number.
@@ -162,6 +159,27 @@ jobs:
             --title "v${version}" \
             --generate-notes \
             --target "${{ github.sha }}"
+
+      # Last, and deliberately so. Attaching the release notes and handing the
+      # build to testers both need a build Apple has finished *processing*, which
+      # has no upper bound — build 96 was still processing 30 minutes after it was
+      # uploaded. Running it before the tag would mean a cancel or a job timeout
+      # during that wait costs the release record for a build that already
+      # shipped, which is the incident this whole workflow change is about.
+      #
+      # The lane already downgrades its own failures to warnings;
+      # `continue-on-error` is the second belt.
+      - name: Attach release notes & distribute
+        if: steps.upload.outputs.build_number != ''
+        continue-on-error: true
+        run: bundle exec fastlane distribute
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER_TO_DISTRIBUTE: ${{ steps.upload.outputs.build_number }}
+          RELEASE_NOTES_FILE: ${{ github.workspace }}/release-notes.txt
+          # Optional: comma-separated TestFlight beta group names to also
+          # distribute to (internal testers already get every build).
+          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
 
       - name: Upload build artifacts
         if: always()

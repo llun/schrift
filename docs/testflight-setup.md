@@ -88,15 +88,18 @@ which:
    `feat:` → minor, `feat!:` / `BREAKING CHANGE` → major, anything else → patch;
 2. builds a signed Release archive and uploads it to TestFlight (build number =
    the workflow run number, floored by whatever TestFlight already holds);
-3. **then, separately and best-effort**, waits for Apple to finish processing so
-   it can attach auto-generated **release notes** (the commit subjects since the
-   last tag) and make the build available to testers;
-4. on a successful upload, pushes the `v<version>` tag and cuts a GitHub Release
-   with auto-generated notes.
+3. on a successful upload, pushes the `v<version>` tag and cuts a GitHub Release
+   with auto-generated notes;
+4. **last, and best-effort**, waits for Apple to finish processing so it can
+   attach auto-generated **release notes** (the commit subjects since the last
+   tag) and make the build available to testers.
 
-Step 3 is deliberately not allowed to fail the release: by the time it runs the
-binary is already on App Store Connect, and Apple's processing has no upper
-bound. If it times out you lose the release notes on that build, nothing else.
+**That order is deliberate.** Step 4 is a wait with no upper bound, and by the
+time it runs the binary is already on App Store Connect — so it must not be able
+to cost the release record. If it times out you lose the release notes on that
+build, nothing else. Running it before the tag (as this pipeline used to) means a
+cancel or a job timeout during the wait leaves a shipped build with no tag and no
+Release, which is exactly the incident described below.
 
 **Internal testers get every build automatically, with no review** — so once
 you've added internal testers (below), merging is all it takes. External testing
@@ -131,8 +134,9 @@ So the lane splits the two:
 
 | Step | Can fail the release? | Why |
 |---|---|---|
-| Upload the binary (`upload_build`) | yes | irreversible, and returns as soon as Apple has the package |
-| Wait for processing → release notes → distribute (`distribute_uploaded_build`) | **no** | the build has already shipped; a timeout costs the changelog only |
+| Upload the binary (`fastlane beta` → `upload_build`) | yes | irreversible, and returns as soon as Apple has the package |
+| Tag + GitHub Release | yes | cheap, fast, and the durable record that the version shipped |
+| Wait for processing → release notes → distribute (`fastlane distribute`) | **no** | the build has already shipped; a timeout costs the changelog only |
 
 and **after any upload error the first question is asked of App Store Connect, not
 of the error message** — `build_on_app_store_connect?` looks up the latest build
@@ -159,6 +163,33 @@ backstop for when App Store Connect itself cannot be reached.
 
 A red `TestFlight` run therefore means the binary is genuinely **not** on App Store
 Connect — check TestFlight before doing anything else, but expect it to be absent.
+
+### What a green run does and does not promise
+
+Green means *the binary reached App Store Connect and the release was recorded*.
+Three things it deliberately does not promise:
+
+- **Apple accepted it.** A build Apple marks `INVALID` or `FAILED` during
+  processing still counts as "processed" to fastlane (`processed?` is
+  `processing_state != PROCESSING`), so the run stays green and the tag is
+  pushed while no tester ever gets the build. Apple emails you about these;
+  the pipeline cannot currently tell you.
+- **A marketing version identifies one commit.** It does not. A run that fails
+  before the tag leaves the version untagged, so the next run — of a *different*
+  commit — recomputes the same version. TestFlight then lists e.g. 0.57.0 (95)
+  and 0.57.0 (96) from different sources. The build number is the only
+  unambiguous identifier; the tag records only the commit that finally shipped.
+- **Named beta groups were served.** pilot matches `TESTFLIGHT_GROUPS` by exact
+  name and silently no-ops on a name that resolves to nothing, so a rename on
+  Apple's side yields a green run with nobody added.
+
+> **One load-bearing build setting.** Step 4 is only cosmetic because the binary
+> answers export compliance itself, via `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption`
+> in `project.yml`. Without it, pilot's `set_export_compliance_if_needed` — which
+> lives *on that best-effort path* — becomes the thing that sets it, and a failure
+> there would silently leave builds undistributable. The `distribute` lane also
+> passes `uses_non_exempt_encryption: false` so the answer never depends on the
+> plist alone; keep both.
 
 ### Re-running a failed release
 
