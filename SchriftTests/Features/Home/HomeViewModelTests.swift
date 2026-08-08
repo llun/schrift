@@ -272,13 +272,14 @@ final class HomeViewModelTests: XCTestCase {
     /// …and unpinning hands it straight back, which is why the recents array keeps carrying
     /// pinned documents rather than the fetch filtering them out server-side.
     ///
-    /// **This is also the one test that holds the memo's `pinnedIDs` key.** The read between the
-    /// two assignments primes the memo while nothing is pinned, so the pin that follows changes
-    /// `pinnedDocuments` **without** touching `fetchedRecentDocuments` — and that conjunct is
-    /// then the only thing that can invalidate it. Written the obvious way round, the assertion
-    /// is inert: `applyFavoriteChange` rewrites the row's flag through `applyingFavoriteFlag`,
-    /// so the older `fetched` conjunct invalidates the memo and `pinnedIDs` never gets a chance
-    /// to matter.
+    /// **This test also holds the memo's `pinnedIDs` key** — it and
+    /// `testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent` are the two that fail when the
+    /// conjunct is dropped. The read between the two assignments primes the memo while nothing
+    /// is pinned, so the pin that follows changes `pinnedDocuments` **without** touching
+    /// `fetchedRecentDocuments` — and that conjunct is then the only thing that can invalidate
+    /// it. Written the obvious way round, the assertion is inert: `applyFavoriteChange` rewrites
+    /// the row's flag through `applyingFavoriteFlag`, so the older `fetched` conjunct
+    /// invalidates the memo and `pinnedIDs` never gets a chance to matter.
     func testUnpinningARowHandsItBackToRecentWithoutAFetch() async {
         let viewModel = makeViewModel()
         let id = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
