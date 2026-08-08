@@ -1,0 +1,19 @@
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_977ecbf6fb016e::t_c3e7a5f326ffb7 275-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "19626c7d6e9a674622d92bc5abc9d4dbd407fa76",
+  "prompts": {},
+  "sessions": {
+    "s_977ecbf6fb016e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90c79f88-bfdb-4a5b-9fdf-e4718c16d286",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
