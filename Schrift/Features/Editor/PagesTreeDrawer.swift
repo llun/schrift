@@ -28,8 +28,18 @@ struct PagesTreeDrawer: View {
     let rootTitle: String
     var onOpen: (Document) -> Void
     var onClose: () -> Void
+    /// A row's Delete swipe action was tapped. The *editor* owns the confirmation alert, not
+    /// the drawer: an alert presented from inside a view that is itself a transitioning
+    /// overlay is fragile, and the editor already hosts the sibling undo alert.
+    var onRequestDelete: (Document) -> Void = { _ in }
+    /// A struck-through row's "Keep this document".
+    var onUndoPendingDelete: (Document) -> Void = { _ in }
 
     @Environment(LocalizationStore.self) private var loc
+
+    /// Which row's swipe strip is open. Drawer-local: it floats over the editor's own list,
+    /// and one shared value would let either close the other's strip.
+    @State private var swipe = SwipeRevealState<UUID>()
 
     var body: some View {
         GeometryReader { proxy in
@@ -81,6 +91,9 @@ struct PagesTreeDrawer: View {
                 .padding(.horizontal, DocsSpacing.spaceXS)
                 .padding(.vertical, DocsSpacing.spaceXS)
             }
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { swipe = swipeRevealAfterScrollInteraction(swipe) }
+            }
 
             newPageButton
         }
@@ -127,12 +140,42 @@ struct PagesTreeDrawer: View {
     }
 
     private func treeRow(_ row: PagesTreeRow) -> some View {
-        HStack(spacing: DocsSpacing.space3xs) {
+        let label =
+            isDeletePending(row)
+            ? "\(title(of: row.document)), \(loc[.docrow_pending_delete])"
+            : title(of: row.document)
+
+        return HStack(spacing: DocsSpacing.space3xs) {
+            // **Outside the swipe wrapper**, deliberately: the chevron is its own control, and
+            // wrapping it would let a swipe that began on it fight the disclosure tap.
             disclosure(row)
 
-            Button {
-                onOpen(row.document)
-            } label: {
+            // **A tap gesture, not a `Button`** — the same conversion `SubpageRow` took, and
+            // for the same reason: this row is wrapped in `SwipeRevealRow`, and a `Button`'s
+            // gesture starts on touch-down and can still fire on touch-up after a horizontal
+            // swipe, so swiping a page would open it. Only the *title* converts — the
+            // disclosure chevron beside it stays a `Button` and stays outside the swipe
+            // wrapper, so expanding a branch is never swallowed by the gesture.
+            SwipeRevealRow(
+                id: row.document.id,
+                state: $swipe,
+                // Delete only: a drawer row renders no pinned state, so a Pin action would
+                // succeed with nothing here to show for it.
+                actions: documentRowSwipeActions(
+                    isPendingDelete: isDeletePending(row),
+                    isLocalDocument: false,
+                    isFavorite: row.document.isFavorite,
+                    offersPin: false,
+                    keepLabel: loc[.pending_delete_undo],
+                    pinLabel: loc[.options_pin],
+                    unpinLabel: loc[.options_unpin],
+                    deleteLabel: loc[.options_delete],
+                    onKeep: { onUndoPendingDelete(row.document) },
+                    onTogglePin: {},
+                    onDelete: { onRequestDelete(row.document) }),
+                accessibilityLabel: label,
+                onActivate: { onOpen(row.document) }
+            ) {
                 HStack(spacing: DocsSpacing.spaceXS) {
                     DocIcon(size: 16)
                     Text(title(of: row.document))
@@ -166,18 +209,12 @@ struct PagesTreeDrawer: View {
                 // height. See CLAUDE.md's tap-target rule.
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
+                .onTapGesture { onOpen(row.document) }
             }
-            .buttonStyle(.plain)
-            // On the **title button**, not the row: the row's `HStack` also holds the
-            // disclosure control, which carries its own label, and a bare label on the
-            // container would either rename that chevron or swallow it as a separate
-            // element. `MaterialSymbol` is `accessibilityHidden`, so a state carried only
-            // by that glyph and a strikethrough has to be spoken here or VoiceOver cannot
-            // tell this row from a live page.
-            .accessibilityLabel(
-                isDeletePending(row)
-                    ? "\(title(of: row.document)), \(loc[.docrow_pending_delete])"
-                    : title(of: row.document))
+            // The label and the `.isButton` trait now live on `SwipeRevealRow`, which
+            // collapses this subtree with `children: .ignore` — still on the **title**, not
+            // the row, so the disclosure chevron beside it keeps its own element and its own
+            // label rather than being renamed or swallowed.
         }
         .padding(.leading, CGFloat(row.depth) * PagesTreeLayout.indentPerLevel)
         .padding(.horizontal, DocsSpacing.space3xs)

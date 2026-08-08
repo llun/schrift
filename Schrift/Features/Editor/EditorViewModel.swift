@@ -118,6 +118,10 @@ final class EditorViewModel {
     /// silently disagree the moment either is injected, and a drawer whose `userID` is nil shows
     /// none of this device's own pages.
     let signedInUser: SignedInUserStore
+
+    /// The shared delete/pin ladder, the same one the Options sheet goes through. Here it
+    /// serves the Subpages list's swipe-to-delete.
+    private let actions: DocumentActions
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
     let autosaveInterval: Duration
@@ -230,6 +234,10 @@ final class EditorViewModel {
         // purged by the coordinator, but `subpages` is this view model's own array — and
         // leaving the row does worse than linger, since the tombstone is gone and it would
         // **un-strike** back into looking like a live document that opens a 404.
+        // The shared delete ladder, for the Subpages list's swipe action. Assigned before the
+        // observer below, which captures `self`.
+        self.actions = DocumentActions(
+            client: client, saveCoordinator: saveCoordinator, signedInUser: signedInUser)
         saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
             self?.noteDocumentDeleted(documentID)
         }
@@ -1382,6 +1390,36 @@ final class EditorViewModel {
         saveCoordinator.cancelPendingDelete(documentID: document.id)
         let coordinator = saveCoordinator
         Task { await coordinator.syncPendingDrafts() }
+    }
+
+    /// Whether deleting this row also throws away sub-pages that exist nowhere else, so the
+    /// confirmation can say so.
+    func hasLocalSubpages(_ document: Document) -> Bool {
+        actions.hasLocalSubpages(document.id)
+    }
+
+    /// Delete a sub-page from the Subpages list.
+    ///
+    /// Guarded on the **parent**, not only on the child: a screen whose own document has been
+    /// discarded or is itself waiting to be deleted is on its way out, and its list is stale
+    /// by construction — the same reasoning `addSubpage`'s guards give from the other side.
+    ///
+    /// Nothing removes the row here. `noteDocumentDeleted` — registered in `init` — is the
+    /// single writer for `subpages`, and it also bumps `childrenGeneration`, which is
+    /// invariant 0b: a `listChildren` issued before the DELETE would otherwise write the row
+    /// back into `subpages` *and* re-create the children-cache entry the purge just dropped.
+    func deleteSubpage(_ document: Document) async {
+        guard !isDocumentDiscarded, !isDocumentPendingDelete else { return }
+        // Unreachable by construction — the Subpages list holds children, never this
+        // document — but stated rather than assumed, because the teardown it would trigger
+        // runs while this very method is still awaiting.
+        guard document.id != documentID else { return }
+        switch await actions.delete(documentID: document.id) {
+        case .deleted, .queued:
+            break
+        case .failed:
+            errorKey = .options_error_delete
+        }
     }
 
     func loadChildren() async {
