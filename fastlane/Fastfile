@@ -34,23 +34,53 @@ PROCESSING_TIMEOUT = 1800
 # worth another go. The terminal list stays because a credential or entitlement
 # failure is not fixed by waiting, and the duplicate phrases stay as a backstop for
 # the case where App Store Connect cannot be asked.
+TERMINAL_UPLOAD_ERRORS = [
+  /already exists/, /already been used/, /redundant binary/, /duplicate/,
+  /unauthorized/, /authentication/, /invalid credentials/, /forbidden/,
+  /not authorized/, /missing entitlement/, /invalid provisioning/
+].freeze
+
+TRANSIENT_UPLOAD_ERRORS = [
+  # Wording, which is how Apple and fastlane actually phrase these.
+  /server error/, /bad gateway/, /service unavailable/, /gateway timeout/,
+  /timed out/, /timeout/, /temporarily unavailable/,
+  # A 5xx *presented as a status*. A bare /50[0-4]/ would also match a build
+  # number — ours are climbing towards 500 — or a duration such as
+  # "'1500' seconds", and would then reclassify a terminal failure as transient.
+  %r{\b(?:status|code|got|http/?[\d.]*)\W{0,3}50[0-4]\b},
+  # Transport. The class name is part of the subject, so Errno/Faraday/OpenSSL
+  # names match here too.
+  /connection reset/, /connection refused/, /connection failed/, /econnreset/,
+  /network is unreachable/, /network is down/, /getaddrinfo/,
+  # Rate limiting — the textbook retryable failure, which even carries a
+  # Retry-After (spaceship raises "Apple 429 detected" / "Too many requests").
+  /too many requests/, /429 detected/,
+  # altool exiting -1 tells you, verbatim, to "try retrying" — the one upload
+  # failure fastlane explicitly documents as worth another attempt.
+  /try again/, /try retrying/
+].freeze
+
 def transient_upload_failure?(error)
   message = "#{error.class}: #{error.message}".downcase
 
-  terminal = [
-    "already exists", "already been used", "redundant binary", "duplicate",
-    "unauthorized", "authentication", "invalid credentials", "forbidden",
-    "not authorized", "missing entitlement", "invalid provisioning"
-  ]
-  return false if terminal.any? { |phrase| message.include?(phrase) }
+  return false if TERMINAL_UPLOAD_ERRORS.any? { |pattern| message.match?(pattern) }
 
-  transient = [
-    "server error", "500", "502", "503", "504", "bad gateway",
-    "service unavailable", "gateway timeout", "timed out", "timeout",
-    "connection reset", "connection refused", "econnreset", "network is unreachable",
-    "temporarily unavailable", "try again"
-  ]
-  transient.any? { |phrase| message.include?(phrase) }
+  TRANSIENT_UPLOAD_ERRORS.any? { |pattern| message.match?(pattern) }
+end
+
+# A one-line, actually-informative summary of an error, for logging.
+#
+# pilot raises the commonest upload failure as `UI.user_error!("Error uploading
+# ipa file: \n #{errors}")` — a literal newline right after the colon — so
+# `lines.first` logs "Error uploading ipa file:" and nothing else, in exactly the
+# messages worth reading. Taking the first few non-empty lines instead keeps the
+# label *and* what it was labelling, with no guess about which line matters.
+def error_summary(error, limit: 300)
+  lines = error.message.to_s.lines.map(&:strip).reject(&:empty?)
+  return error.class.to_s if lines.empty?
+
+  summary = lines.first(3).join(" ")
+  summary.length > limit ? "#{summary[0, limit]}…" : summary
 end
 
 # Does App Store Connect already hold the build we just tried to upload?
@@ -62,12 +92,20 @@ end
 # counts builds that are still `PROCESSING` — exactly the state a just-landed
 # build is in.
 #
+# The comparison is **equality, deliberately, not `>=`**. `latest_…` answers with
+# the most recently *uploaded* build for the version, so if ours landed it is that
+# build and nothing else — whereas `>=` would answer "yes" for any build numbered
+# above ours, including one this run never produced. That is reachable: when
+# `resolved_build_number`'s own lookup fails it falls back to the bare run number,
+# which can sit *below* what App Store Connect holds, and then every upload error
+# would read as success and tag a release for a binary that does not exist.
+#
 # When the question cannot be asked at all (App Store Connect unreachable), answer
 # **no**. The two wrong answers are not symmetric: a wrong "yes" tags a release for
 # a build that was never uploaded, and no later run would ever notice or correct
 # it, while a wrong "no" costs one more upload attempt whose duplicate rejection is
 # itself evidence — and this is re-asked on that attempt too, so the mistake heals
-# as soon as Apple answers.
+# as soon as Apple answers. Every uncertainty here resolves the same way.
 def build_on_app_store_connect?(api_key:, app_identifier:, app_version:, build_number:)
   latest = latest_testflight_build_number(
     api_key: api_key,
@@ -76,11 +114,11 @@ def build_on_app_store_connect?(api_key:, app_identifier:, app_version:, build_n
     initial_build_number: 0
   ).to_i
 
-  latest >= build_number.to_i
+  latest == build_number.to_i
 rescue StandardError => e
   UI.important(
     "Couldn't ask App Store Connect whether build #{build_number} landed " \
-    "(#{e.message.to_s.lines.first.to_s.strip}) — assuming it did not."
+    "(#{error_summary(e)}) — assuming it did not."
   )
   false
 end
@@ -106,7 +144,7 @@ def upload_build(options, app_version:, build_number:)
     attempt += 1
     upload_to_testflight(**options)
   rescue StandardError => e
-    summary = e.message.to_s.lines.first.to_s.strip
+    summary = error_summary(e)
 
     if build_on_app_store_connect?(
       api_key: options[:api_key],
@@ -148,7 +186,7 @@ def distribute_uploaded_build(options)
 rescue StandardError => e
   UI.important(
     "The build is uploaded, but attaching the release notes / distributing did not finish: " \
-    "#{e.message.to_s.lines.first.to_s.strip}"
+    "#{error_summary(e)}"
   )
   UI.important(
     "This does not affect the build itself — it shows up in TestFlight once Apple has " \
@@ -187,7 +225,7 @@ def resolved_build_number(api_key:, app_identifier:, floor:)
 
       UI.important(
         "Couldn't read the latest TestFlight build number " \
-        "(#{e.message.to_s.lines.first.to_s.strip}) — falling back to #{floor}."
+        "(#{error_summary(e)}) — falling back to #{floor}."
       )
       0
     end

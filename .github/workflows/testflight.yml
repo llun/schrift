@@ -69,6 +69,13 @@ jobs:
       - name: Compute version & release notes
         id: version
         run: |
+          # Without `pipefail` a failing `git tag --list` degrades silently to
+          # "no tags", which reads as a never-released repo: whole-history release
+          # notes, and a version that marches backwards. The tag lookup below is
+          # therefore written without a pipe at all, so it can neither swallow a
+          # git failure nor trip over SIGPIPE from an early-closing `head`.
+          set -euo pipefail
+
           version="$(bash scripts/next-version.sh)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Next release version: $version (build ${BUILD_NUMBER})"
@@ -77,7 +84,8 @@ jobs:
           # file that fastlane reads — the (attacker-controllable) commit text
           # is never interpolated into a shell command or a $GITHUB_OUTPUT
           # heredoc, so it can't inject anything.
-          last_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          tags="$(git tag --list 'v*' --sort=-v:refname)"
+          last_tag="${tags%%$'\n'*}"
           range="${last_tag:+$last_tag..}HEAD"
           {
             echo "v$version (build ${BUILD_NUMBER})"
@@ -166,3 +174,8 @@ jobs:
             ~/Library/Logs/gym/*.log
           if-no-files-found: ignore
           retention-days: 7
+          # Artifacts are scoped to the run, not the attempt, so on a re-run this
+          # step would 409 on the previous attempt's artifact and — being
+          # `if: always()` — become the last red step a maintainer sees, pointing
+          # triage away from the real failure.
+          overwrite: true
