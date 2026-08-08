@@ -1,0 +1,21 @@
+Schrift/Features/Editor/SubpageRow.swift
+  s_dbb66b41df808d::t_a62c4323000fa0 26-36
+  s_dbb66b41df808d::t_fde9fff93cae49 37-38,40-45,47-51,53,55,57-60,62-64,66-71
+  s_dbb66b41df808d::t_dadd6ef7086b0e 74-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "31e5953321c01ad967488ecc0d353977b0a40702",
+  "prompts": {},
+  "sessions": {
+    "s_dbb66b41df808d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28c84719-a5b0-42d9-87a1-8be06f9ceb1e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
