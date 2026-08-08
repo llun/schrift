@@ -23,51 +23,59 @@ struct SubpageRow: View {
     }
 
     var body: some View {
-        Button(action: { onOpen?() }) {
-            HStack(spacing: DocsSpacing.spaceSM) {
-                DocIcon(size: 22)
-                    .frame(width: 24)
+        // **A tap gesture, not a `Button`** — matching `DocRow`, and for a specific reason:
+        // this row is wrapped in `SwipeRevealRow`, and a `Button`'s own gesture begins
+        // tracking on touch-down and can still fire on touch-up *after* a horizontal swipe.
+        // The two recognizers run simultaneously (there is no supported way to make the
+        // enclosing `ScrollView` yield), so nothing else would cancel it and swiping a
+        // sub-page would open the document. `.contentShape(Rectangle())` + `.onTapGesture`
+        // has no such touch-down phase: a drag past the slop simply never becomes a tap.
+        //
+        // The `.isButton` trait below is what a `Button` used to supply, and the composed
+        // label was already explicit, so VoiceOver is unchanged.
+        HStack(spacing: DocsSpacing.spaceSM) {
+            DocIcon(size: 22)
+                .frame(width: 24)
 
-                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(displayTitle)
-                        .font(DocsFont.body)
-                        .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
-                        .strikethrough(pendingDelete)
+            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                Text(displayTitle)
+                    .font(DocsFont.body)
+                    .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                    .strikethrough(pendingDelete)
+                    .lineLimit(1)
+
+                if let summary {
+                    Text(summary)
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textTertiary)
                         .lineLimit(1)
-
-                    if let summary {
-                        Text(summary)
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: DocsSpacing.spaceXS)
-
-                if document.numchild > 0 {
-                    HStack(spacing: DocsSpacing.space4xs) {
-                        MaterialSymbol(.account_tree, size: 14)
-                        Text("\(document.numchild)")
-                    }
-                    .font(DocsFont.caption)
-                    .foregroundStyle(DocsColor.textTertiary)
-                }
-
-                if pendingDelete {
-                    MaterialSymbol(.delete, size: 16)
-                        .foregroundStyle(DocsColor.gray350)
-                } else {
-                    MaterialSymbol(.chevron_right, size: 18)
-                        .foregroundStyle(DocsColor.gray300)
                 }
             }
-            .padding(.horizontal, DocsSpacing.spaceXS)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+
+            Spacer(minLength: DocsSpacing.spaceXS)
+
+            if document.numchild > 0 {
+                HStack(spacing: DocsSpacing.space4xs) {
+                    MaterialSymbol(.account_tree, size: 14)
+                    Text("\(document.numchild)")
+                }
+                .font(DocsFont.caption)
+                .foregroundStyle(DocsColor.textTertiary)
+            }
+
+            if pendingDelete {
+                MaterialSymbol(.delete, size: 16)
+                    .foregroundStyle(DocsColor.gray350)
+            } else {
+                MaterialSymbol(.chevron_right, size: 18)
+                    .foregroundStyle(DocsColor.gray300)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, DocsSpacing.spaceXS)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen?() }
         // One composed label, like `DocRow` and `SharedRow`. Applying a label to a `Button`
         // *replaces* the composition of its children, so this has to fold everything back in
         // — an earlier version set only the title and silently dropped the excerpt and the
