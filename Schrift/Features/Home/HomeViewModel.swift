@@ -9,7 +9,13 @@ final class HomeViewModel {
     /// document** — see `recentDocuments`.
     var fetchedRecentDocuments: [Document] = []
     /// The list the screen renders: the fetched one with this device's unsynced documents
-    /// merged in at read time.
+    /// merged in at read time, minus whatever the Pinned section is already showing.
+    ///
+    /// **Each document belongs to exactly one section.** The feed is fetched unfiltered, so the
+    /// server returns pinned documents in both responses; `recentsExcludingPinned` is what keeps
+    /// the same row from rendering twice, and its doc comment carries the reasoning. It runs
+    /// *after* the merge below, which is free rather than load-bearing: a locally-created
+    /// document is never a favorite, so the filter has nothing of its own to drop.
     ///
     /// Merging at *read* time rather than storing them together is the invariant that keeps
     /// a synthetic `Document` out of `DocumentCacheStore`. A list load replaces its array
@@ -31,24 +37,46 @@ final class HomeViewModel {
         // **The account is part of the key.** Re-authenticating as someone else changes who
         // may be listed without touching either of the other two, so a memo keyed only on
         // them would keep serving the previous user's documents to the new one.
+        // **And so is the pinned list, in both halves.** The *read* registers the `@Observable`
+        // dependency and sits above the early return so it happens on every call, which is what
+        // moves a row between sections on the pin rather than at the next fetch. The *key* is
+        // load-bearing too, at every writer that moves `pinnedDocuments` without moving
+        // `fetchedRecentDocuments` — note that includes writers that *assign* the recents array
+        // a **value-equal** copy, since `applyingFavoriteFlag` returns one whenever the row's
+        // flag already matches (`applyFavoriteChange` reached from a stale `searchResults` row),
+        // and `removeAll` is a no-op for an id the feed does not carry. The one where it costs a
+        // document is `load()`'s **Work Offline** branch, which assigns `pinnedDocuments`
+        // unconditionally while guarding the recents array behind `if let cachedRecents`,
+        // deliberately, so a nil cache cannot clobber a just-migrated row. Reach it with a fresh install whose only row
+        // arrived in memory from a migration and was then pinned here: `setFavorite` fabricates
+        // no pinned cache, so the reseed empties `pinnedDocuments` while `fetched` stands still,
+        // and a memo without this conjunct hits and keeps filtering the row out. It is then in
+        // **no section at all** — `showsPinnedSection` is false and Recent has dropped it — with
+        // the "No documents yet" state drawn over a document that exists. Pinned by
+        // `testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`. Ids alone:
+        // `applyingFavoriteFlag` rewrites a pinned row's *contents* on every toggle, and the
+        // filtered answer depends on nothing but identity.
         let version = saveCoordinator.pendingCreatesVersion
         let owner = signedInUser.userID
+        let pinnedIDs = pinnedDocuments.map(\.id)
         if let cached = mergedRecents, cached.version == version, cached.owner == owner,
-            cached.fetched == fetchedRecentDocuments
+            cached.pinnedIDs == pinnedIDs, cached.fetched == fetchedRecentDocuments
         {
             return cached.merged
         }
-        let merged = mergedWithLocalDocuments(
-            fetched: fetchedRecentDocuments,
-            local: saveCoordinator.pendingLocalDocuments(parentID: nil, currentUserID: owner))
-        mergedRecents = (version, owner, fetchedRecentDocuments, merged)
+        let merged = recentsExcludingPinned(
+            recent: mergedWithLocalDocuments(
+                fetched: fetchedRecentDocuments,
+                local: saveCoordinator.pendingLocalDocuments(parentID: nil, currentUserID: owner)),
+            pinned: pinnedDocuments)
+        mergedRecents = (version, owner, pinnedIDs, fetchedRecentDocuments, merged)
         return merged
     }
 
     /// Memo for `recentDocuments`. `@ObservationIgnored` so writing it from a *getter* does
     /// not register a mutation and re-invalidate the very view that just read it.
     @ObservationIgnored
-    private var mergedRecents: (version: Int, owner: UUID?, fetched: [Document], merged: [Document])?
+    private var mergedRecents: (version: Int, owner: UUID?, pinnedIDs: [UUID], fetched: [Document], merged: [Document])?
     var searchResults: [Document] = []
     var isLoading = false
     var errorKey: L10nKey?
