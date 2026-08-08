@@ -106,6 +106,37 @@ secret) `TESTFLIGHT_GROUPS` to a comma-separated list of group names
 > via a file, never interpolated into the workflow, so a crafted commit message
 > can't inject into CI.
 
+### When the upload fails
+
+App Store Connect returns 5xx and gateway timeouts routinely, and the archive is
+already built by the time the upload runs — so a bare `Server error got 500` used to
+mean a merged, fully-tested commit shipped nothing and `main` sat red until someone
+re-ran the job. Build 95 (v0.57.0) is the worked example.
+
+The `beta` lane retries the upload up to **three times** (30s then 60s), but only for
+failures worth retrying. `transient_upload_failure?` in the `Fastfile` decides, and it
+checks the **terminal** phrases first:
+
+| Outcome | Examples |
+|---|---|
+| Retried | `Server error got 500`, `502`/`503`/`504`, gateway timeout, connection reset |
+| **Never** retried | `already exists`, `redundant binary`, `duplicate`, credential/authorisation failures, invalid provisioning |
+| Not retried (fails loudly) | anything unrecognised |
+
+The duplicate case is the one that matters. The build number is `github.run_number`
+and a **re-run reuses it**, so once a binary has landed every further attempt is a
+duplicate rejection — retrying it would bury the single message that explains the
+state. If you see a duplicate-build error, the build is already in App Store Connect:
+check TestFlight before doing anything else.
+
+Because unrecognised errors are not retried, a red `TestFlight` run now means the
+upload was refused on the merits rather than that Apple hiccuped — worth reading
+rather than re-running reflexively.
+
+Nothing is committed back to `main` and the `v*` tag is pushed only on success, so a
+failed release leaves no tag and no GitHub Release: re-running the job (or merging
+again) is safe and picks the same version up.
+
 So **write PR titles as Conventional Commits** (they become the squash-commit
 subject the bump is read from). A non-conforming title still ships — it just
 falls back to a patch bump.
