@@ -200,8 +200,13 @@ names the section with the details.
   **After an upload error the deciding question is asked of App Store Connect, not
   of the error text.** `build_on_app_store_connect?` re-reads the latest build
   number for the version being shipped (`PROCESSING` counts — that is what a
-  just-landed build is), and a build that is there means the upload *succeeded*,
-  whatever it reported. Only when the binary is genuinely absent does
+  just-landed build is), and **our exact number being that build** means the
+  upload *succeeded*, whatever it reported. The comparison is equality, not
+  `>=`: a build numbered *above* ours is not evidence that ours landed, and that
+  case is reachable, because `resolved_build_number` falls back to the bare run
+  number when its own lookup fails — which can sit below what Apple holds. `>=`
+  there would read every upload error as success and tag a release for a binary
+  that does not exist. Only when the binary is genuinely absent does
   `transient_upload_failure?` decide whether to retry: three attempts, 30s/60s, for
   5xx / gateway / connection wording — build 95's bare `Server error got 500`, which
   really did fail before landing. Terminal phrases (`already exists`, `duplicate`,

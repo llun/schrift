@@ -136,15 +136,21 @@ So the lane splits the two:
 
 and **after any upload error the first question is asked of App Store Connect, not
 of the error message** — `build_on_app_store_connect?` looks up the latest build
-number for the version being shipped, and if our build is there the upload
-succeeded no matter what it reported. Only a genuinely absent binary reaches
-`transient_upload_failure?`:
+number for the version being shipped, and if that is *exactly* our build number
+the upload succeeded no matter what it reported. (Equality, not `>=`: a build
+numbered above ours is not evidence that ours landed.) Only a genuinely absent
+binary reaches `transient_upload_failure?`:
 
 | Outcome | Examples |
 |---|---|
-| Retried | `Server error got 500`, `502`/`503`/`504`, gateway timeout, connection reset |
+| Retried | `Server error got 500`, a 5xx given as a status, gateway timeout, connection reset/refused/failed, DNS failure, Apple 429 rate limiting, altool exit `-1` ("try retrying") |
 | **Never** retried | `already exists`, `redundant binary`, `duplicate`, credential/authorisation failures, invalid provisioning |
 | Not retried (fails loudly) | anything unrecognised |
+
+A 5xx only counts when the number is presented *as a status*: matching a bare
+`500`/`502` anywhere in the message would let a build number (ours are climbing
+towards 500), a duration like `'1500' seconds`, or a byte count reclassify a
+terminal rejection as transient.
 
 Error wording cannot distinguish a 5xx thrown before the upload landed from one
 thrown after it, and retrying the latter walks straight into a duplicate rejection
