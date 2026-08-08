@@ -5,6 +5,67 @@ XCODE_PROJECT  = "Schrift.xcodeproj"
 SCHEME         = "Schrift"
 PROFILE_NAME   = "match AppStore dev.llun.Schrift"
 
+# How many times to attempt the TestFlight upload, and how long to wait between
+# attempts. Three attempts at 30s/60s costs at most 90s of extra wall clock on a
+# genuinely broken upload, against a job whose timeout is 90 minutes.
+UPLOAD_ATTEMPTS = 3
+UPLOAD_RETRY_DELAYS = [30, 60].freeze
+
+# Whether a failed upload is worth trying again.
+#
+# App Store Connect returns 5xx and gateway timeouts routinely — build 95 (v0.57.0)
+# died on a bare "Server error got 500" **after** a clean archive and export, which
+# meant a merged, fully-tested commit shipped nothing and `main` sat red until
+# someone re-ran the job by hand. The binary was already built; only the handoff to
+# Apple failed. That is worth retrying.
+#
+# **What must never be retried is a failure that means the build already landed.**
+# The build number is `github.run_number`, and a re-run reuses it, so if the first
+# attempt uploaded the binary and then failed somewhere after, every retry hits a
+# duplicate-build rejection. Retrying that would bury the one message explaining why
+# — so those are matched first and re-raised untouched, as is anything about
+# credentials or entitlements, which no amount of waiting fixes.
+def transient_upload_failure?(error)
+  message = "#{error.class}: #{error.message}".downcase
+
+  terminal = [
+    "already exists", "already been used", "redundant binary", "duplicate",
+    "unauthorized", "authentication", "invalid credentials", "forbidden",
+    "not authorized", "missing entitlement", "invalid provisioning"
+  ]
+  return false if terminal.any? { |phrase| message.include?(phrase) }
+
+  transient = [
+    "server error", "500", "502", "503", "504", "bad gateway",
+    "service unavailable", "gateway timeout", "timed out", "timeout",
+    "connection reset", "connection refused", "econnreset", "network is unreachable",
+    "temporarily unavailable", "try again"
+  ]
+  transient.any? { |phrase| message.include?(phrase) }
+end
+
+# Upload, retrying only what is worth retrying. Kept separate from the lane so the
+# predicate above is the single place that decides, rather than a condition buried
+# in a rescue.
+def upload_to_testflight_with_retry(options)
+  attempt = 0
+  begin
+    attempt += 1
+    upload_to_testflight(**options)
+  rescue StandardError => e
+    raise if attempt >= UPLOAD_ATTEMPTS
+    raise unless transient_upload_failure?(e)
+
+    delay = UPLOAD_RETRY_DELAYS[attempt - 1] || UPLOAD_RETRY_DELAYS.last
+    UI.important(
+      "TestFlight upload attempt #{attempt}/#{UPLOAD_ATTEMPTS} failed with a transient error " \
+      "(#{e.message.to_s.lines.first.to_s.strip}). Retrying in #{delay}s."
+    )
+    sleep(delay)
+    retry
+  end
+end
+
 platform :ios do
   desc "Build a Release archive and upload it to TestFlight"
   lane :beta do
@@ -98,7 +159,8 @@ platform :ios do
       pilot_options[:skip_waiting_for_build_processing] = true
     end
 
-    upload_to_testflight(**pilot_options)
+    # Retried on a transient Apple-side failure only — see `transient_upload_failure?`.
+    upload_to_testflight_with_retry(pilot_options)
   end
 
   desc "One-time: register the App ID and generate + store signing assets"

@@ -186,7 +186,22 @@ names the section with the details.
   from commit text) and distribute; that's why the job timeout is 90 min.
   Internal testers get every build automatically (no review); set the repo
   variable `TESTFLIGHT_GROUPS` (comma-separated) to also target named beta
-  groups. TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
+  groups.
+  **The upload itself is retried, and the predicate that decides is the load-bearing
+  part.** App Store Connect returns 5xx and gateway timeouts routinely — build 95
+  (v0.57.0) died on a bare `Server error got 500` *after* a clean archive and export,
+  so a merged, fully-tested commit shipped nothing and `main` sat red until the job
+  was re-run by hand. `upload_to_testflight_with_retry` gives it three attempts
+  (30s/60s backoff). **What must never be retried is a failure meaning the build
+  already landed**: the build number is `github.run_number` and a re-run reuses it, so
+  once a binary is up, every retry hits a duplicate rejection and would bury the one
+  message explaining why. `transient_upload_failure?` therefore matches the terminal
+  phrases *first* (`already exists`, `redundant binary`, `duplicate`, plus
+  credential/entitlement failures, which no amount of waiting fixes) and re-raises
+  those untouched; only then does it look for 5xx/timeout/connection wording. An
+  unrecognised error is **not** retried — the default is to fail loudly. Note this
+  makes a red `TestFlight` run mean something specific: the upload was refused on the
+  merits, not that Apple hiccuped. TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
   build/test-only (no archive/deploy on `main`) so the two don't double-build or
   collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not
