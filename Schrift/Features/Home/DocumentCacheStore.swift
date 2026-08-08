@@ -68,6 +68,44 @@ final class DocumentCacheStore {
         }
     }
 
+    /// Reflect a pin/unpin in every cached list, so a relaunch — or an offline launch, which
+    /// has nothing else to go on — does not show the pre-pin answer until the next successful
+    /// fetch.
+    ///
+    /// **Never fabricates**, for exactly the reason `removeDocument` does not: nil and `[]`
+    /// are read as different everywhere, and writing an empty recents array here would tell
+    /// Home it had fetched and found nothing, suppressing its first-run placeholder. The
+    /// pinned key is the one safe exception and only when it already exists —
+    /// `loadPinnedDocuments` collapses nil to `[]`, so it has no never-cached state to
+    /// destroy, but staying consistent with the others costs nothing.
+    ///
+    /// `document` is the row to insert when pinning something the cached pinned list does not
+    /// yet hold; unpinning ignores it.
+    func setFavorite(_ documentID: UUID, isFavorite: Bool, document: Document?) {
+        // The flag, wherever the document appears.
+        for key in [Self.recentKey, Self.sharedWithMeKey] {
+            guard let documents = load(forKey: key), documents.contains(where: { $0.id == documentID }) else {
+                continue
+            }
+            save(
+                applyingFavoriteFlag(documents, documentID: documentID, isFavorite: isFavorite),
+                forKey: key)
+        }
+
+        // …and membership of the pinned list.
+        guard var pinned = load(forKey: Self.pinnedKey) else { return }
+        let alreadyPinned = pinned.contains { $0.id == documentID }
+        if isFavorite {
+            guard !alreadyPinned, var copy = document else { return }
+            copy.isFavorite = true
+            pinned.insert(copy, at: 0)
+        } else {
+            guard alreadyPinned else { return }
+            pinned.removeAll { $0.id == documentID }
+        }
+        save(pinned, forKey: Self.pinnedKey)
+    }
+
     private func load(forKey key: String) -> [Document]? {
         guard let data = userDefaults.data(forKey: key),
             let documents = try? decoder.decode([Document].self, from: data)

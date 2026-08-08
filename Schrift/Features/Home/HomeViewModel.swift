@@ -100,6 +100,19 @@ final class HomeViewModel {
     /// landed deletion per process.
     private var deletedSinceLoad: Set<UUID> = []
 
+    /// Pins and unpins made on this device that a list fetch in flight does not yet know
+    /// about. Unlike `deletedSinceLoad` these are **retired** as soon as a fetch agrees with
+    /// them — see `applyFavoriteOverrides` for why keeping them would veto the next change
+    /// made from the web.
+    private var favoriteOverrides: [UUID: Bool] = [:]
+
+    /// Documents with a delete or pin in flight from a swipe, so a second swipe on the same
+    /// row cannot double-send. Not a spinner: the row keeps drawing normally.
+    private(set) var mutatingDocumentIDs: Set<UUID> = []
+
+    /// The shared delete/pin ladder, the same one the Options sheet goes through.
+    private let actions: DocumentActions
+
     init(
         client: DocsAPIClient,
         cache: DocumentCacheStore = DocumentCacheStore(),
@@ -120,6 +133,10 @@ final class HomeViewModel {
             saveCoordinator ?? DocumentSaveCoordinator(client: client, serverOrigin: serverOrigin)
         self.userDefaults = userDefaults
         self.diagnostics = diagnostics
+        // Before the two subscriptions below, which capture `self`. Takes the *resolved*
+        // coordinator, not the optional parameter.
+        self.actions = DocumentActions(
+            client: client, saveCoordinator: self.saveCoordinator, signedInUser: signedInUser)
         // A migration re-keys a document onto its server id, after which the local row is
         // correctly withheld and the real one exists only in a server response this view model
         // has not made yet. Refetch on the event itself — see `onDocumentMigrated`.
@@ -228,10 +245,15 @@ final class HomeViewModel {
             // cached — the fetch predates the DELETE and cannot know.
             let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
             let recent = fetchedRecent.filter { !deletedSinceLoad.contains($0.id) }
-            pinnedDocuments = pinned
-            fetchedRecentDocuments = recent
-            cache.savePinnedDocuments(pinned)
-            cache.saveRecentDocuments(recent)
+            // …and a pin made here while this was in flight is folded back in, for the same
+            // reason and by the same rule: filter, never cancel. Retiring the confirmed
+            // overrides happens inside this guard, so only the winning fetch may retire one.
+            let overlaid = applyFavoriteOverrides(pinned: pinned, recent: recent, overrides: favoriteOverrides)
+            for documentID in overlaid.confirmed { favoriteOverrides[documentID] = nil }
+            pinnedDocuments = overlaid.pinned
+            fetchedRecentDocuments = overlaid.recent
+            cache.savePinnedDocuments(overlaid.pinned)
+            cache.saveRecentDocuments(overlaid.recent)
             hasKnownFetchedList = true
             isOffline = false
         } catch {
@@ -303,7 +325,15 @@ final class HomeViewModel {
         let marker = diagnostics?.marker()
         do {
             let page = try await client.searchDocuments(query: trimmed)
-            searchResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            var results = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            // The inline results are the same documents the two lists above show, so a pin
+            // made here has to reach them too or the same row reads as pinned in one section
+            // and not in another on the same screen. Flags only — search results have no
+            // membership to correct.
+            for (documentID, isFavorite) in favoriteOverrides {
+                results = applyingFavoriteFlag(results, documentID: documentID, isFavorite: isFavorite)
+            }
+            searchResults = results
         } catch {
             errorKey = .home_error_search
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
@@ -353,6 +383,97 @@ final class HomeViewModel {
     /// Whether this row is a document created here that the server has not seen yet.
     func isLocalDocument(_ document: Document) -> Bool {
         saveCoordinator.isPendingCreate(documentID: document.id)
+    }
+
+    /// Whether deleting this row also throws away sub-pages that exist nowhere else, so the
+    /// confirmation can say so.
+    func hasLocalSubpages(_ document: Document) -> Bool {
+        actions.hasLocalSubpages(document.id)
+    }
+
+    /// Delete a document from its list row.
+    ///
+    /// **Nothing here removes the row**, deliberately. A landed deletion is announced by the
+    /// coordinator and this view model's own `observeDocumentDeleted` handler — registered in
+    /// `init` — is the single writer that drops it from `pinnedDocuments`,
+    /// `fetchedRecentDocuments` and `searchResults` and records it in `deletedSinceLoad`. Two
+    /// writers for the same fact is how the two get to disagree.
+    ///
+    /// A *queued* deletion needs nothing either: `recordPendingDelete` bumps
+    /// `pendingDeletesVersion`, which the row's `isDeletePending` read in the view body
+    /// depends on, so it strikes through on its own.
+    ///
+    /// A **locally-created** document is announced by nothing — there is no server id to
+    /// announce — but `discardPendingWork` bumps `pendingCreatesVersion`, which invalidates
+    /// `recentDocuments`' memo, so its synthetic row leaves the same way it arrived.
+    func deleteDocument(_ document: Document) async {
+        guard !mutatingDocumentIDs.contains(document.id) else { return }
+        clearError()
+        mutatingDocumentIDs.insert(document.id)
+        defer { mutatingDocumentIDs.remove(document.id) }
+        let marker = diagnostics?.marker()
+        switch await actions.delete(documentID: document.id) {
+        case .deleted, .queued:
+            break
+        case .failed:
+            errorKey = .options_error_delete
+            errorDetail = requestFailureDetail(after: marker, in: diagnostics)
+        }
+    }
+
+    /// Pin or unpin from a list row.
+    ///
+    /// Withheld for a document the server has never seen: there is no
+    /// `documents/{local-uuid}/favorite/` route, so the request would 404 and
+    /// `retryableSaveFailure` rightly refuses to retry it. The view withholds the action too;
+    /// this is the backstop, and it mirrors `OptionsSheetView`'s own `!isLocalDocument` gate.
+    func toggleFavorite(_ document: Document) async {
+        guard !mutatingDocumentIDs.contains(document.id), !isLocalDocument(document) else { return }
+        clearError()
+        mutatingDocumentIDs.insert(document.id)
+        defer { mutatingDocumentIDs.remove(document.id) }
+        let marker = diagnostics?.marker()
+        let desired = !document.isFavorite
+        switch await actions.setFavorite(documentID: document.id, isFavorite: desired) {
+        case .changed(let isFavorite):
+            applyFavoriteChange(document, isFavorite: isFavorite)
+        case .failed:
+            errorKey = .options_error_toggle_favorite
+            errorDetail = requestFailureDetail(after: marker, in: diagnostics)
+        }
+    }
+
+    /// Reflect a landed pin/unpin across every list this screen holds, without a reload.
+    ///
+    /// Three lists show the same server documents — the Pinned section, the recents feed and
+    /// the inline search results — and all three render `DocRow(pinned: document.isFavorite)`,
+    /// so a mutation reaching only one of them shows the user a document that is pinned in one
+    /// place and not in another on the same screen.
+    ///
+    /// A reload instead of this would cost two round trips for a bit the client already knows,
+    /// re-run `recoverDrafts()`, re-derive `isOffline` and possibly flash a skeleton — and it
+    /// would not even remove the race, since a slower pre-pin fetch already in flight still
+    /// wins. The override below is needed either way, at which point the reload buys nothing.
+    private func applyFavoriteChange(_ document: Document, isFavorite: Bool) {
+        fetchedRecentDocuments = applyingFavoriteFlag(
+            fetchedRecentDocuments, documentID: document.id, isFavorite: isFavorite)
+        searchResults = applyingFavoriteFlag(
+            searchResults, documentID: document.id, isFavorite: isFavorite)
+
+        if isFavorite {
+            if !pinnedDocuments.contains(where: { $0.id == document.id }) {
+                var copy = document
+                copy.isFavorite = true
+                pinnedDocuments.insert(copy, at: 0)
+            }
+        } else {
+            pinnedDocuments.removeAll { $0.id == document.id }
+        }
+        // The recents *order* is deliberately untouched: that list is `-updated_at`, and
+        // whether the server bumps `updated_at` on a favorite is its answer to give.
+
+        favoriteOverrides[document.id] = isFavorite
+        cache.setFavorite(document.id, isFavorite: isFavorite, document: document)
     }
 
     /// Mint a document that exists only on this device. Nil when nobody is known to own it —

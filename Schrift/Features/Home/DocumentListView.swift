@@ -14,6 +14,10 @@ struct DocumentListView: View {
     @AppStorage("schrift.workOffline") private var workOffline = false
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
+    /// The row whose Delete swipe action was tapped, awaiting confirmation.
+    @State private var documentPendingDeleteConfirmation: Document?
+    /// Which row's swipe strip is open. List-wide, so opening one closes the rest.
+    @State private var swipe = SwipeRevealState<UUID>()
 
     private var isOffline: Bool { viewModel.isOffline || workOffline }
 
@@ -64,6 +68,12 @@ struct DocumentListView: View {
             .refreshable {
                 await viewModel.refresh()
             }
+            // Scrolling dismisses an open strip, as it does in a system list. Guarded inside
+            // `swipeRevealAfterScrollInteraction` so a swipe that nudges the scroll view —
+            // which it will, the two gestures being simultaneous — does not close its own.
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { swipe = swipeRevealAfterScrollInteraction(swipe) }
+            }
         }
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
@@ -71,6 +81,12 @@ struct DocumentListView: View {
         .background(DocsColor.surfacePage)
         .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
             viewModel.undoPendingDelete(document)
+        }
+        .deleteConfirmationAlert(
+            for: $documentPendingDeleteConfirmation,
+            hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
+        ) { document in
+            Task { await viewModel.deleteDocument(document) }
         }
         // System chrome, not a drawn bar: the large title collapses on scroll,
         // the server host rides along as the subtitle, and on iOS 26 the bar
@@ -184,30 +200,67 @@ struct DocumentListView: View {
                 .padding(.bottom, DocsSpacing.space3xs)
 
                 ForEach(documents) { document in
-                    DocRow(
-                        emoji: nil,
-                        title: document.title ?? loc[.common_untitled],
+                    // Every predicate is read *here*, in the body, which is what registers the
+                    // `@Observable` dependency — so a row strikes through, un-strikes, or
+                    // swaps Pin for Unpin without waiting for a list fetch.
+                    let isPendingDelete = viewModel.isDeletePending(document)
+                    let isLocal = viewModel.isLocalDocument(document)
+                    let title = document.title ?? loc[.common_untitled]
+                    let date = documentRowDate(document, locale: loc.locale)
+                    // Hoisted and handed to both the row and its swipe wrapper: the wrapper
+                    // collapses with `children: .ignore`, which discards whatever `DocRow`
+                    // composed, so it has to be given the identical string.
+                    let label = docRowAccessibilityLabel(
+                        title: title, reach: document.linkReach, date: date,
                         pinned: document.isFavorite,
-                        reach: document.linkReach,
-                        date: documentRowDate(document, locale: loc.locale),
-                        offlineAvailable: isOffline,
-                        // Created here and not yet on the server — the one row state the
-                        // user can act on (it is why the document is missing from the web).
-                        pendingSync: viewModel.isLocalDocument(document),
-                        // Deleted here, not yet sent. Reading the predicate inside this body
-                        // is what registers the `@Observable` dependency, so the row strikes
-                        // through (and un-strikes on undo) without waiting for a list fetch.
-                        pendingDelete: viewModel.isDeletePending(document),
-                        // A document on its way out is not opened — the tap offers to keep it
-                        // instead, which is the only place that choice is still available.
-                        onOpen: {
-                            if viewModel.isDeletePending(document) {
-                                documentPendingUndo = document
-                            } else {
-                                onSelect(document)
-                            }
+                        pendingSync: isLocal, pendingSyncLabel: loc[.docrow_on_this_device],
+                        pendingDelete: isPendingDelete, pendingDeleteLabel: loc[.docrow_pending_delete],
+                        pinnedLabel: loc[.docrow_pinned],
+                        sharedWithOrganizationLabel: loc[.docrow_shared_with_organization],
+                        publicLabel: loc[.docrow_public])
+                    // A document on its way out is not opened — the tap offers to keep it
+                    // instead, which is the only place that choice is still available.
+                    let open = {
+                        if isPendingDelete {
+                            documentPendingUndo = document
+                        } else {
+                            onSelect(document)
                         }
-                    )
+                    }
+
+                    SwipeRevealRow(
+                        id: document.id,
+                        state: $swipe,
+                        actions: documentRowSwipeActions(
+                            isPendingDelete: isPendingDelete,
+                            isLocalDocument: isLocal,
+                            isFavorite: document.isFavorite,
+                            offersPin: true,
+                            keepLabel: loc[.pending_delete_undo],
+                            pinLabel: loc[.options_pin],
+                            unpinLabel: loc[.options_unpin],
+                            deleteLabel: loc[.options_delete],
+                            onKeep: { viewModel.undoPendingDelete(document) },
+                            onTogglePin: { Task { await viewModel.toggleFavorite(document) } },
+                            onDelete: { documentPendingDeleteConfirmation = document }),
+                        accessibilityLabel: label,
+                        onActivate: open
+                    ) {
+                        DocRow(
+                            emoji: nil,
+                            title: title,
+                            pinned: document.isFavorite,
+                            reach: document.linkReach,
+                            date: date,
+                            offlineAvailable: isOffline,
+                            // Created here and not yet on the server — the one row state the
+                            // user can act on (it is why the document is missing from the web).
+                            pendingSync: isLocal,
+                            // Deleted here, not yet sent.
+                            pendingDelete: isPendingDelete,
+                            onOpen: open
+                        )
+                    }
                 }
             }
             .padding(.bottom, DocsSpacing.spaceSM)
