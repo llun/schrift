@@ -299,11 +299,14 @@ final class HomeViewModelTests: XCTestCase {
     }
 
     /// **The memo's `pinnedIDs` key, at the one place dropping it would lose a document
-    /// entirely.** Every other writer of `pinnedDocuments` reassigns `fetchedRecentDocuments` in
-    /// the same breath, so the older `fetched` conjunct covers them; `load()`'s Work Offline
-    /// branch is the exception, assigning the pinned list unconditionally while guarding the
-    /// recents one behind `if let cachedRecents` (so a nil cache cannot clobber a just-migrated
-    /// row). Reached here exactly as it is in life: a fresh install whose only row arrived in
+    /// entirely.** It is not the only place the key bites — a writer that assigns
+    /// `fetchedRecentDocuments` a *value-equal* copy leaves the older `fetched` conjunct
+    /// satisfied too, which `applyingFavoriteFlag` and `removeAll` both do for a row the feed
+    /// does not carry (see `HomeViewModel.recentDocuments`). This is the case where the cost is
+    /// a document rather than a redraw: `load()`'s Work Offline branch assigns the pinned list
+    /// unconditionally while guarding the recents one behind `if let cachedRecents` (so a nil
+    /// cache cannot clobber a just-migrated row). Reached here exactly as it is in life: a
+    /// fresh install whose only row arrived in
     /// memory from a migration, pinned on the device — `setFavorite` fabricates no pinned cache,
     /// so the reseed empties `pinnedDocuments` while `fetched` stands still. With a stale memo
     /// the row is in **no section at all** and the "No documents yet" state draws over it.

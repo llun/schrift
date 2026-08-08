@@ -107,10 +107,14 @@ final class FavoriteOverlayTests: XCTestCase {
         XCTAssertEqual(recents, [recent[0], recent[2]])
     }
 
-    /// **Membership, never the flag.** A cold start can leave `loadPinnedDocuments()` empty
-    /// while the recents cache still carries `isFavorite: true` rows. Filtering on the flag
-    /// would hide those from *both* sections; filtering on what the Pinned section actually
-    /// renders can only ever move a row, never make it disappear from the screen.
+    /// **Membership, never the flag.** The two genuinely disagree because `favorite_list/` is
+    /// paginated and Home consumes only `.results`: a favorite past its first page is flagged
+    /// `true` in the recents feed and simply absent from `pinnedDocuments`. Filtering on the
+    /// flag would hide such a document from *both* sections; filtering on what the Pinned
+    /// section actually renders can only ever move a row, never make it disappear from the
+    /// screen. (Not, as an earlier draft said, because a cold start can leave the pinned cache
+    /// empty while recents carries flagged rows — that shape is unreachable; see
+    /// `recentsExcludingPinned`.)
     func testAFavoriteRowSurvivesWhenThePinnedListIsEmpty() {
         let recents = recentsExcludingPinned(recent: [document(a, isFavorite: true)], pinned: [])
         XCTAssertEqual(recents.map(\.id), [a])

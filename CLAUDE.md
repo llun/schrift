@@ -2130,15 +2130,20 @@ markdown write endpoint**. Understand this before touching the save path:
   `isFavorite: false`**, which would drop pinned documents from `fetchedRecentDocuments` and
   its cache, so an unpin — which only removes the row from `pinnedDocuments` — would leave it
   in no section until the next successful fetch. And the **memo key must carry the pinned
-  ids**: most writers reassign `fetchedRecentDocuments` in the same breath, but `load()`'s
-  Work Offline branch assigns the pinned list unconditionally while guarding the recents one
-  behind `if let cachedRecents`, so a fresh install whose only row arrived from a migration
-  and was pinned here loses it from *every* section on the next reseed
+  ids** — at every writer that moves `pinnedDocuments` without moving
+  `fetchedRecentDocuments`, which includes writers that assign the recents array a
+  **value-equal** copy (`applyingFavoriteFlag` returns one when the row's flag already
+  matches; `removeAll` is a no-op for an id the feed lacks), since those leave the `fetched`
+  conjunct satisfied. The one where it costs a *document* rather than a redraw is `load()`'s
+  Work Offline branch, which assigns the pinned list unconditionally while guarding the
+  recents one behind `if let cachedRecents`: a fresh install whose only row arrived from a
+  migration and was pinned here loses it from *every* section on the next reseed
   (`testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`). **Accepted residual:** Home
   has no pagination, so Recent is subtracted from and never topped up — a user whose whole
   first page is pinned sees no Recent section while their other documents sit on a page Home
-  never requests; and since `favorite_list/` states no ordering, Home's top row is no longer
-  necessarily the most recently updated document.
+  never requests. Note what this does *not* change: Home's top row was already
+  `pinnedDocuments[0]` whenever anything was pinned, since `DocumentListView` has always drawn
+  Pinned above Recent.
 - **`abilities.destroy` / `abilities.favorite` are still not consulted, deliberately.** They
   decode `decodeIfPresent ?? false`, so absent and denied are indistinguishable — and the
   false negative is the harmful direction with no recovery: hiding Delete on a server whose

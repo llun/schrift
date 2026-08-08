@@ -49,8 +49,10 @@ func applyingFavoriteFlag(_ documents: [Document], documentID: UUID, isFavorite:
 /// next unpinned one, and a user whose whole first page is pinned sees no Recent section while
 /// their other documents sit on a page Home never requests. Fixing it properly means paging the
 /// feed, which is a larger change than this one. Related and deliberate: Recent no longer holds
-/// the pinned document edited two minutes ago, and `favorite_list/` states no ordering, so
-/// Home's top row is no longer necessarily the most recently updated document.
+/// the pinned document edited two minutes ago, so the `-updated_at` section no longer shows
+/// every recently-touched document. (Home's *top row* was already `pinnedDocuments[0]` in
+/// `favorite_list/`'s unstated order whenever anything was pinned — `DocumentListView` draws
+/// Pinned above Recent and is untouched here — so that part is not this change's doing.)
 func recentsExcludingPinned(recent: [Document], pinned: [Document]) -> [Document] {
     guard !pinned.isEmpty else { return recent }
     let pinnedIDs = Set(pinned.map(\.id))
