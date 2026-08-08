@@ -10,6 +10,8 @@ final class EditorViewModelChildrenTests: XCTestCase {
     private var cacheDirectory: URL!
     private var childrenCache: DocumentChildrenCacheStore!
     private var childrenSuiteName: String!
+    /// The per-view-model suites, cleaned up so each test leaves no plist behind.
+    private var suiteNames: [String] = []
 
     override func setUp() {
         super.setUp()
@@ -23,18 +25,35 @@ final class EditorViewModelChildrenTests: XCTestCase {
         MockURLProtocol.reset()
         try? FileManager.default.removeItem(at: cacheDirectory)
         UserDefaults(suiteName: childrenSuiteName)?.removePersistentDomain(forName: childrenSuiteName)
+        for name in suiteNames {
+            UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+        }
+        suiteNames.removeAll()
         super.tearDown()
     }
 
     private func makeViewModel(title: String = "Untitled document") -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
-        let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        suiteNames.append(suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let draftStore = PendingDraftStore(userDefaults: defaults)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // **Every** store on this test's own suite, not just the draft store. A coordinator
+        // whose createStore/deleteStore/listCache fall back to `UserDefaults.standard` writes
+        // app-wide storage — and since this PR a sub-page delete routes through
+        // `completeImmediateDelete` → `purgeLocalTraces`, which *writes* the list and children
+        // caches and reads the create store, so the half-isolated form now genuinely leaks.
+        // See `PagesTreeViewModelTests.makeLocalRootViewModel` for the same reasoning.
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache, backgroundTasks: .noop)
+            client: client, draftStore: draftStore, contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: childrenCache, backgroundTasks: .noop)
         return EditorViewModel(
             client: client, documentID: documentID, title: title, saveCoordinator: coordinator,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
             contentCache: contentCache, childrenCache: childrenCache)
     }
 
@@ -389,5 +408,89 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
         XCTAssertEqual(child?.title, "Untitled subpage")
         XCTAssertNil(viewModel.errorKey)
+    }
+
+    // MARK: - Swipe-to-delete on a sub-page
+
+    private func childDocument(_ id: UUID) -> Document {
+        Document(
+            id: id, title: "Child page", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false, depth: 2, numchild: 0,
+            path: "00010001", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+    }
+
+    /// The row is dropped by `noteDocumentDeleted` — registered in `init` — not by
+    /// `deleteSubpage` reaching into `subpages`.
+    func testDeletingASubpageRemovesItFromTheList() async {
+        let viewModel = makeViewModel()
+        let child = childDocument(UUID(uuidString: "77777777-7777-4777-8777-777777777777")!)
+        viewModel.subpages = [child]
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.deleteSubpage(child)
+
+        XCTAssertEqual(viewModel.subpages ?? [], [])
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    /// **Invariant 0b.** A `listChildren` issued before the DELETE still names the sub-page and
+    /// would write it back into `subpages` *and* re-create the children-cache entry the purge
+    /// just dropped — a tappable row for a deleted document, restored durably on disk.
+    func testASubpageDeleteInvalidatesAChildrenFetchAlreadyInFlight() async {
+        let viewModel = makeViewModel()
+        let childID = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+        let child = childDocument(childID)
+        viewModel.subpages = [child]
+        let body = Self.childrenFixture(id: childID.uuidString.lowercased(), title: "Child page")
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            if request.httpMethod == "DELETE" {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: body, error: nil, delay: 0.2)
+        }
+
+        let loading = Task { await viewModel.loadChildren() }
+        // **Ordered on the recorder, not a sleep.** The children fetch must have reached the
+        // stub — and be held open — before the delete, or it resolves first and the assertion
+        // below is vacuous (`subpages` ends empty either way).
+        await waitUntil { log.count(ofMethod: "GET") >= 1 }
+        await viewModel.deleteSubpage(child)
+        await loading.value
+
+        XCTAssertEqual(
+            viewModel.subpages ?? [], [],
+            "the stale children fetch must not restore the deleted row")
+    }
+
+    func testAFailedSubpageDeleteReportsAndKeepsTheRow() async {
+        let viewModel = makeViewModel()
+        let child = childDocument(UUID(uuidString: "77777777-7777-4777-8777-777777777777")!)
+        viewModel.subpages = [child]
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.deleteSubpage(child)
+
+        XCTAssertEqual(viewModel.subpages?.map(\.id), [child.id])
+        XCTAssertEqual(viewModel.errorKey, .options_error_delete)
+    }
+
+    /// A screen already torn down has a stale list by construction — the same reasoning
+    /// `addSubpage`'s guards give from the other direction.
+    func testASubpageDeleteIsRefusedOnADiscardedParent() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let viewModel = makeViewModel()
+        let child = childDocument(UUID(uuidString: "77777777-7777-4777-8777-777777777777")!)
+        viewModel.subpages = [child]
+        viewModel.handleDidDelete()
+
+        await viewModel.deleteSubpage(child)
+
+        XCTAssertEqual(log.count(ofMethod: "DELETE"), 0)
     }
 }

@@ -111,6 +111,9 @@ final class PagesTreeViewModel {
     private let saveCoordinator: DocumentSaveCoordinator?
     private let signedInUser: SignedInUserStore
 
+    /// The shared delete ladder, the same one the Options sheet goes through.
+    private let actions: DocumentActions
+
     init(
         rootID: UUID,
         client: DocsAPIClient,
@@ -125,6 +128,8 @@ final class PagesTreeViewModel {
         self.userDefaults = userDefaults
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
+        self.actions = DocumentActions(
+            client: client, saveCoordinator: saveCoordinator, signedInUser: signedInUser)
         // The drawer strikes rows through like the other four surfaces, so it owes the same
         // drop when a deletion lands. Its own hazard is sharper: this view model is `@State`
         // on the editor and outlives the drawer, and a non-root level is refetched only when
@@ -132,6 +137,27 @@ final class PagesTreeViewModel {
         // un-struck, indefinitely.
         saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
             self?.dropDeletedPage(documentID)
+        }
+    }
+
+    /// Delete a page from the drawer.
+    ///
+    /// The drawer's **root** row is the document the drawer lives inside and carries no
+    /// delete action — deleting it from a gesture inside itself would tear down the presenter
+    /// mid-interaction, and the Options sheet already owns that verb with its confirmation and
+    /// its pop. This guard is the backstop for that.
+    ///
+    /// Nothing removes the row here: `dropDeletedPage` — registered in `init` — is the single
+    /// writer for `children`, and it bumps `mutations` for every loading level so an in-flight
+    /// `listChildren` cannot restore the row.
+    func deletePage(_ document: Document) async {
+        guard document.id != rootID else { return }
+        createErrorKey = nil
+        switch await actions.delete(documentID: document.id) {
+        case .deleted, .queued:
+            break
+        case .failed:
+            createErrorKey = .options_error_delete
         }
     }
 

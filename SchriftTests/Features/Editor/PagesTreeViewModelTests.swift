@@ -593,4 +593,80 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertNil(created)
         XCTAssertEqual(env.viewModel.createErrorKey, .pages_error_create)
     }
+
+    // MARK: - Swipe-to-delete
+
+    /// The row is dropped by the coordinator's announcement — `dropDeletedPage`, registered in
+    /// `init` — not by `deletePage` reaching into `children`.
+    func testDeletingAPageDropsItFromTheLevel() async {
+        let env = makeLocalRootViewModel()
+        let child = document(childID, title: "Child")
+        env.cache.save([child], for: env.root.id)
+        await env.viewModel.loadRoot()
+        XCTAssertEqual(env.viewModel.children[env.root.id]?.map(\.id), [childID], "precondition")
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }
+
+        await env.viewModel.deletePage(child)
+
+        XCTAssertEqual(env.viewModel.children[env.root.id] ?? [], [])
+        XCTAssertNil(env.viewModel.errorKey)
+    }
+
+    /// **The drawer's root is the document the drawer lives inside.** Deleting it from a
+    /// gesture inside itself would tear down the presenter mid-interaction, so the root row
+    /// carries no delete action and this is the backstop for that.
+    /// **Asserting on the request count alone would be inert here**, and was: the fixture's
+    /// root is a locally-created document, so with the guard removed `DocumentActions.delete`
+    /// takes the pending-create branch, which by design issues no request — the DELETE count
+    /// is zero either way. What actually differs is that the unguarded call *discards the
+    /// root's create record and its draft*, i.e. destroys the open document's only copy. That
+    /// is what this asserts.
+    func testDeletingTheRootIsRefused() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeLocalRootViewModel()
+
+        await env.viewModel.deletePage(env.root)
+
+        XCTAssertEqual(log.count(ofMethod: "DELETE"), 0)
+        XCTAssertTrue(
+            env.coordinator.isPendingCreate(documentID: env.root.id),
+            "the root's create record — the open document's only copy — must survive")
+    }
+
+    /// Reported through the drawer's own error surface, not the editor's — the drawer is
+    /// covering the editor, so a message there would be invisible.
+    func testAFailedPageDeleteReportsThroughTheDrawersOwnError() async {
+        let env = makeLocalRootViewModel()
+        let child = document(childID, title: "Child")
+        env.cache.save([child], for: env.root.id)
+        await env.viewModel.loadRoot()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
+
+        await env.viewModel.deletePage(child)
+
+        XCTAssertEqual(env.viewModel.errorKey, .options_error_delete)
+        XCTAssertEqual(env.viewModel.children[env.root.id]?.map(\.id), [childID], "the row stays")
+    }
+
+    /// Offline the deletion is queued, the row stays, and it strikes through.
+    func testDeletingAPageOfflineQueuesItAndKeepsTheRow() async {
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let env = makeLocalRootViewModel(signedInUserID: user)
+        let child = document(childID, title: "Child")
+        env.cache.save([child], for: env.root.id)
+        await env.viewModel.loadRoot()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await env.viewModel.deletePage(child)
+
+        XCTAssertEqual(env.viewModel.children[env.root.id]?.map(\.id), [childID])
+        XCTAssertTrue(env.viewModel.isDeletePending(child))
+        XCTAssertNil(env.viewModel.errorKey)
+    }
 }

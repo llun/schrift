@@ -183,6 +183,17 @@ struct EditorView: View {
     /// The struck-through sub-page (or drawer page) the user tapped — see
     /// `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
+    /// The Subpages row whose Delete swipe action was tapped, awaiting confirmation.
+    @State private var subpagePendingDeleteConfirmation: Document?
+    /// The drawer row whose Delete was tapped. Deliberately **not** shared with the one above:
+    /// each routes to its own view model, so a failure reports on the surface the user is
+    /// actually looking at — a drawer deletion reporting through `EditorViewModel` would put
+    /// the message on a screen the drawer is covering.
+    @State private var drawerPendingDeleteConfirmation: Document?
+    /// Which Subpages row's swipe strip is open. The drawer keeps its **own** state rather
+    /// than sharing this one: it floats over this list, and a single value would let either
+    /// close the other's strip.
+    @State private var subpageSwipe = SwipeRevealState<UUID>()
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -251,6 +262,18 @@ struct EditorView: View {
         mainContent
             .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
                 viewModel.undoPendingDelete(document)
+            }
+            .deleteConfirmationAlert(
+                for: $subpagePendingDeleteConfirmation,
+                hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
+            ) { document in
+                Task { await viewModel.deleteSubpage(document) }
+            }
+            .deleteConfirmationAlert(
+                for: $drawerPendingDeleteConfirmation,
+                hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
+            ) { document in
+                Task { await pagesTreeViewModel.deletePage(document) }
             }
             .background(DocsColor.surfacePage)
             // While editing, clear the formatting bar the canvas floats at the
@@ -411,11 +434,26 @@ struct EditorView: View {
                 // A *queued* deletion is still cancellable, so the teardown must not purge:
                 // the draft, the create record and the cached body are what the undo puts
                 // back. `DocumentSaveCoordinator.completePendingDelete` removes them once the
-                // DELETE has really landed.
+                // DELETE has really landed. A queued deletion also announces nothing, so this
+                // is the only thing that ends the session for it.
+                //
+                // A *made* deletion deliberately has no branch here any more. It now goes
+                // through `completeImmediateDelete`, whose announcement reaches this screen's
+                // own `noteDocumentDeleted` → `handleDeletionLanded`, which calls
+                // `handleDidDelete()` and additionally goes terminal. Calling it here too
+                // would be a harmless second call — it only sets latches and bumps
+                // generations — but one reaction path is better than two, and this way the
+                // teardown is identical however the deletion was made (from this sheet, or
+                // from a swipe on a list while this screen sits in an iPad detail pane).
                 if queued {
                     viewModel.handleDidQueueDelete()
                 } else {
-                    viewModel.handleDidDelete()
+                    // The announcement has already torn this session down via
+                    // `handleDeletionLanded`, which is written for a deletion made *elsewhere*
+                    // and so leaves "no longer available" on screen. The user made this one
+                    // and is being popped away from it, so drop the message — in this same
+                    // turn, before anything renders.
+                    viewModel.noteDeletedFromThisScreen()
                 }
                 onDeleted?()
             }
@@ -443,7 +481,18 @@ struct EditorView: View {
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
                     },
-                    onClose: { dismissPagesTree() }
+                    onClose: { dismissPagesTree() },
+                    // The drawer closes first: the confirmation is presented by the editor
+                    // beneath it, and leaving the drawer up would put a system alert over a
+                    // transitioning overlay.
+                    onRequestDelete: { document in
+                        dismissPagesTree()
+                        drawerPendingDeleteConfirmation = document
+                    },
+                    onUndoPendingDelete: { document in
+                        dismissPagesTree()
+                        documentPendingUndo = document
+                    }
                 )
                 .task {
                     // Nothing announces an overlay the way it would a sheet, so
@@ -775,6 +824,12 @@ struct EditorView: View {
         .refreshable {
             await viewModel.refresh()
         }
+        // The Subpages rows live in this scroll view, so an open swipe strip closes here for
+        // the same reason it does on Home and in the drawer — and guarded the same way, so a
+        // swipe that nudges this scroll view does not close its own strip.
+        .onScrollPhaseChange { _, phase in
+            if phase == .interacting { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) }
+        }
         // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
         // autolinker matched — dispatches through this action. Without an override the
         // default one hands every link to the system, so a link to a sub-page left the app
@@ -915,6 +970,58 @@ struct EditorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// One Subpages row, wrapped in its swipe container.
+    ///
+    /// A method rather than inline in the `ForEach`, matching `PagesTreeDrawer.treeRow`: the
+    /// row needs several derived values, and `let` bindings inside a `ForEach`'s `ViewBuilder`
+    /// defeat its type inference (it falls back to the `Range<Int>` overload and reports the
+    /// failure against the collection, several lines away from the cause).
+    private func subpageRow(_ child: Document) -> some View {
+        // Reading the predicate here registers the `@Observable` dependency, so a sub-page
+        // deleted from its own screen strikes through the moment the user pops back, with no
+        // children refetch — which offline never comes.
+        let isPendingDelete = viewModel.isDeletePending(child)
+        let trimmed = child.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let childTitle = trimmed.isEmpty ? loc[.common_untitled] : trimmed
+        // Annotated: `onOpenDocument?(child)` is optional-chained, so an inferred closure
+        // would be `() -> ()?` and match neither parameter it is handed to.
+        let open: () -> Void = {
+            if isPendingDelete {
+                documentPendingUndo = child
+            } else {
+                onOpenDocument?(child)
+            }
+        }
+
+        return SwipeRevealRow(
+            id: child.id,
+            state: $subpageSwipe,
+            // No Pin here: `SubpageRow` renders no pinned state, so the action would succeed
+            // with nothing on the row to show for it.
+            actions: documentRowSwipeActions(
+                isPendingDelete: isPendingDelete,
+                isLocalDocument: false,
+                isFavorite: child.isFavorite,
+                offersPin: false,
+                keepLabel: loc[.pending_delete_undo],
+                pinLabel: loc[.options_pin],
+                unpinLabel: loc[.options_unpin],
+                deleteLabel: loc[.options_delete],
+                onKeep: { viewModel.undoPendingDelete(child) },
+                onTogglePin: {},
+                onDelete: { subpagePendingDeleteConfirmation = child }),
+            accessibilityLabel: subpageRowAccessibilityLabel(
+                title: childTitle,
+                summary: child.excerpt,
+                childCount: child.numchild,
+                pendingDelete: isPendingDelete,
+                pendingDeleteLabel: loc[.docrow_pending_delete]),
+            onActivate: open
+        ) {
+            SubpageRow(document: child, pendingDelete: isPendingDelete, onOpen: open)
+        }
+    }
+
     private var subpagesSection: some View {
         // 40pt above the rule, 16pt below it before the header (reference spacing).
         VStack(alignment: .leading, spacing: 0) {
@@ -950,19 +1057,7 @@ struct EditorView: View {
                     } else {
                         VStack(spacing: 0) {
                             ForEach(subpages) { child in
-                                SubpageRow(
-                                    document: child,
-                                    // Reading the predicate here registers the `@Observable` dependency, so a
-                                    // sub-page deleted from its own screen strikes through the moment the user
-                                    // pops back, with no children refetch — which offline never comes.
-                                    pendingDelete: viewModel.isDeletePending(child),
-                                    onOpen: {
-                                        if viewModel.isDeletePending(child) {
-                                            documentPendingUndo = child
-                                        } else {
-                                            onOpenDocument?(child)
-                                        }
-                                    })
+                                subpageRow(child)
                             }
                         }
                     }

@@ -324,14 +324,17 @@ Schrift/
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
 │                        IconButton, LinkReachPill, ListRow, ListSection,
 │                        MaterialSymbol, OfflineBanner, SearchField, SheetHeader,
-│                        ShareMemberRow, Skeleton, Switch, TextField, Toast
-│                        (SwiftUI + style resolvers, each with light+dark hex)
+│                        ShareMemberRow, Skeleton, SwipeRevealRow, Switch, TextField,
+│                        Toast (SwiftUI + style resolvers, each with light+dark hex)
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry
 │   │                    re-login sheet (ReauthenticationSheetView +
 │   │                    ReauthenticationViewModel), RecentServersStore
-│   ├── Home/            document list (pinned + recent), offline metadata cache
+│   ├── Documents/       DocumentActions — the one delete/pin ladder, shared by the
+│   │                    Options sheet and every swipe-to-delete surface
+│   ├── Home/            document list (pinned + recent), offline metadata cache,
+│   │                    FavoriteOverlay (pins vs. a list fetch that predates them)
 │   ├── Search/ Shared/  the other tabs; Profile also hosts the Appearance/Language
 │   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet)
 │   │                    and the server-version row (ServerConfig)
@@ -994,6 +997,46 @@ new code reads like the surrounding code.
   the fill removed, which must measure *short*. Without one, "44pt" only says the
   instrument never reports anything else, and a measurement that cannot fail is
   not evidence.
+- **Swipe actions are hand-rolled (`SwipeRevealRow`), because the app has no SwiftUI
+  `List` — and `.swipeActions` silently no-ops outside one.** Every document list is a
+  `ScrollView` + `VStack` + `ForEach`, which is what gives the app its flat, boxless rows;
+  converting to `List` would restyle every screen and break `PagesTreeDrawer`'s
+  `.frame(maxHeight: .infinity)` row trick, which is only safe because a `ScrollView`
+  proposes an *unspecified* height. Six rules travel with the component, each closing a
+  real defect:
+  - **Trailing edge only.** A leading swipe would fight the system's interactive-pop
+    gesture on every `NavigationStack` screen.
+  - **`.simultaneousGesture`, never `.gesture` or `.highPriorityGesture`.** A plain
+    `.gesture` competes with the scroll view's pan and claims vertical drags, killing
+    scrolling. Simultaneous lets both run; non-horizontal drags are discarded by an **axis
+    lock decided once** past the slop and then frozen (`swipeDragAxis`, whose ambiguous
+    diagonal resolves *vertical* — the tie goes to the scroll view). There is no supported
+    way to make the scroll view yield, so some diagonal drift is accepted.
+  - **Wrap tap-gesture rows, not `Button` rows.** A `Button`'s gesture begins tracking on
+    touch-down and can still fire on touch-up *after* a swipe, and nothing cancels it (our
+    drag is horizontal, the scroll pan vertical). `SubpageRow` and `PagesTreeDrawer`'s title
+    were converted to `.contentShape(Rectangle()) + .onTapGesture` for exactly this; the
+    drawer's disclosure chevron stays a `Button` and stays *outside* the wrapper.
+  - **The strip is a `background` of the content, not a `ZStack` sibling.** Its buttons are
+    `maxHeight: .infinity` so they fill the row, and as a sibling that made the stack greedy —
+    a document row measured 874pt instead of 58pt. A background is proposed the decorated
+    view's size, so the same `.infinity` clamps to the row. `SwipeRevealRowGeometryTests`
+    pins it, with a negative control.
+  - **A `background` applied after `.offset` does *not* follow it** — verified by rendering,
+    not assumed, and pinned by `testABackgroundDoesNotFollowAPriorOffset`. That is what keeps
+    the strip pinned while the content slides; compensating for the offset would double the
+    displacement, and no size assertion can see the difference.
+  - **Accessibility is not free here.** A real `List`'s `.swipeActions` exposes its actions
+    automatically; this exposes nothing. The wrapper becomes the one element
+    (`children: .ignore`) and **re-declares** the label and the activation the content
+    composed — hence its required `accessibilityLabel` / `onActivate` parameters — plus one
+    `.accessibilityAction(named:)` per action. The drawn strip is `accessibilityHidden`, or
+    it puts one phantom VoiceOver stop per action after every row.
+
+  `documentRowSwipeActions` is the shared, tested resolver for *which* actions a row gets:
+  a row already waiting to be deleted offers only "Keep this document"; a locally-created
+  row offers no Pin (there is no `documents/{local-uuid}/favorite/` route); and only Home
+  offers Pin at all, because `SubpageRow` and the drawer render no pinned state.
 - **Inter-row hairlines are opt-in per call site, not a `ListSection`
   parameter.** There is no `divided:` flag in the Swift code (that's the React
   handoff's prop) — a section draws separators only where its own body
@@ -1964,6 +2007,53 @@ markdown write endpoint**. Understand this before touching the save path:
   `migrateCreatedDocument`'s "the record is removed last". `DocumentCacheStore
   .removeDocument` never fabricates a list that was never cached (nil ≠ `[]`).
   See [`docs/offline-and-sync.md`](docs/offline-and-sync.md) for the accepted residuals.
+- **The delete/pin ladder lives in one place — `Features/Documents/DocumentActions.swift` —
+  and every surface goes through it.** It is the body of the old `OptionsViewModel.delete()`
+  moved verbatim, returning `DocumentDeleteOutcome` (`.deleted` / `.queued(serverID:)` /
+  `.failed`) instead of setting screen state; `OptionsViewModel` and the three swipe
+  surfaces translate that into their own `errorKey`. Extracted rather than copied because
+  the ladder had already drifted **inside a single function** (the plain-server branch was
+  missing the `.notFound`-reads-as-deleted rule the checkpointed branch always had), and
+  because ~70 lines of load-bearing reasoning would otherwise need keeping true in three
+  places. **The proof of preservation is that `OptionsViewModelTests` passes unedited — if a
+  case there needs changing, the extraction is wrong.**
+  **An immediate delete now purges and announces** (`completeImmediateDelete`, the twin of
+  `completePendingDelete` minus the tombstone: `purgeLocalTraces` then
+  `announceDocumentDeleted`). This is genuinely new, and load-bearing in a way that is easy
+  to miss: the editor used to be the only thing that cleaned up after a made deletion, via
+  `EditorView`'s `onDeleted` → `handleDidDelete()`, and a list row has no editor. Skipping
+  it leaves stale rows everywhere — and worse, **resurrects checkpointed documents**: such a
+  document is met from a list under its *server* id, where `isPendingCreate` is false, so
+  nothing clears the create record; the next resume takes the expected 404, clears the
+  checkpoint, and the pass after that re-POSTs the document the user deleted.
+  `purgeLocalTraces` → `discardPendingWork`'s `checkpointedRecord(forServerID:)` branch is
+  what closes it. Consequently `EditorView`'s `onDeleted` no longer calls
+  `handleDidDelete()` for a made deletion — the announcement reaches the screen's own
+  `noteDocumentDeleted` → `handleDeletionLanded`, which does that *and* goes terminal, so
+  the teardown is identical however the deletion was made. The queued branch keeps
+  `handleDidQueueDelete()`; a queued deletion announces nothing.
+- **A pin made on a list row is folded into fetches that predate it, and the override is
+  *retired* — unlike `deletedSinceLoad`, which never is.** `load()` assigns both arrays
+  wholesale, so a fetch issued before a pin resolves after it and visibly reverts it (the
+  whole Pinned section appears or disappears). Same race as the deletion path, same answer:
+  **filter, never bump `loadGeneration`** — bumping is self-cancelling, because `load()`
+  captures its generation, kicks `recoverDrafts()`, then awaits, so a mutation landing in
+  that window cancels the very load it fired from and leaves `isLoading` stuck true. But a
+  favorite is a bit that can be flipped back from anywhere, so an override kept past the
+  point the server agrees with it would veto the next change made from the web for the life
+  of the process. `applyFavoriteOverrides` therefore also reports `confirmed`, retired inside
+  the winning generation's guard, and applies to *membership* of the pinned list, not only
+  to the flag — a just-pinned document is simply absent from a `favorite_list/` that predates
+  the POST. `DocumentCacheStore.setFavorite` write-throughs and, like `removeDocument`,
+  **never fabricates** a list that was never cached.
+- **`abilities.destroy` / `abilities.favorite` are still not consulted, deliberately.** They
+  decode `decodeIfPresent ?? false`, so absent and denied are indistinguishable — and the
+  false negative is the harmful direction with no recovery: hiding Delete on a server whose
+  serializer omits the key leaves no way to delete from a list at all. The false positive
+  costs one request the server answers 403, which surfaces as a friendly error. It would
+  also break the case that needs Delete most: `localDocument(from:)` mints `destroy = false`
+  *on purpose*. The meaningful gates are `isLocalDocument` (withhold Pin) and
+  `isDeletePending` (withhold both) — the same ones `OptionsSheetView` already applies.
 - **A live-collaboration snapshot save reuses the same coordinator, not a second path.**
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
