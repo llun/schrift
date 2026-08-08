@@ -298,15 +298,18 @@ final class HomeViewModelTests: XCTestCase {
             "otherwise the row is in no section until the next successful fetch")
     }
 
-    /// **The memo's `pinnedIDs` key, at the one place dropping it would lose a document
-    /// entirely.** It is not the only place the key bites — a writer that assigns
-    /// `fetchedRecentDocuments` a *value-equal* copy leaves the older `fetched` conjunct
-    /// satisfied too, which `applyingFavoriteFlag` and `removeAll` both do for a row the feed
-    /// does not carry (see `HomeViewModel.recentDocuments`). This is the case where the cost is
-    /// a document rather than a redraw: `load()`'s Work Offline branch assigns the pinned list
-    /// unconditionally while guarding the recents one behind `if let cachedRecents` (so a nil
-    /// cache cannot clobber a just-migrated row). Reached here exactly as it is in life: a
-    /// fresh install whose only row arrived in
+    /// **The memo's `pinnedIDs` key, at the case where dropping it loses a document entirely.**
+    /// It is not the only place the key bites: a writer that assigns `fetchedRecentDocuments` a
+    /// *value-equal* copy leaves the older `fetched` conjunct satisfied too — which
+    /// `applyingFavoriteFlag` does whenever the row's flag already matches (a pin from a stale
+    /// `searchResults` row against a feed the server already flags, which without the conjunct
+    /// renders that row in **both** sections, the very bug this PR fixes), and `removeAll` does
+    /// for an id the feed does not carry (there genuinely harmless, since the filtered answer is
+    /// the same either way). What is specific to this test is the *severity*: `load()`'s Work
+    /// Offline branch assigns the pinned list unconditionally while guarding the recents one
+    /// behind `if let cachedRecents` (so a nil cache cannot clobber a just-migrated row), and
+    /// there the row is lost from every section rather than shown twice. Reached exactly as it
+    /// is in life: a fresh install whose only row arrived in
     /// memory from a migration, pinned on the device — `setFavorite` fabricates no pinned cache,
     /// so the reseed empties `pinnedDocuments` while `fetched` stands still. With a stale memo
     /// the row is in **no section at all** and the "No documents yet" state draws over it.

@@ -2132,9 +2132,12 @@ markdown write endpoint**. Understand this before touching the save path:
   in no section until the next successful fetch. And the **memo key must carry the pinned
   ids** — at every writer that moves `pinnedDocuments` without moving
   `fetchedRecentDocuments`, which includes writers that assign the recents array a
-  **value-equal** copy (`applyingFavoriteFlag` returns one when the row's flag already
-  matches; `removeAll` is a no-op for an id the feed lacks), since those leave the `fetched`
-  conjunct satisfied. The one where it costs a *document* rather than a redraw is `load()`'s
+  **value-equal** copy, since those leave the `fetched` conjunct satisfied.
+  `applyingFavoriteFlag` returns one whenever the row's flag already matches — reachable by
+  pinning a stale `searchResults` row against a feed the server already flags, where without
+  the conjunct that row renders in *both* sections, i.e. the bug this whole bullet is about;
+  `removeAll` returns one for an id the feed lacks, harmlessly, the filtered answer being the
+  same either way. The **worst** case is `load()`'s
   Work Offline branch, which assigns the pinned list unconditionally while guarding the
   recents one behind `if let cachedRecents`: a fresh install whose only row arrived from a
   migration and was pinned here loses it from *every* section on the next reseed
