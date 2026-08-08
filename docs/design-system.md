@@ -15,6 +15,38 @@
 > phrasing below as "English is primary" for the shipped state; the §5.7 body
 > is kept as the original plan of record.
 
+> **Revised: 2026-08-08 (swipe actions on document rows).** Document rows now
+> offer **swipe-to-delete** — plus **pin/unpin on Home** — on three surfaces: the
+> Home list, the editor's Subpages section, and the Pages drawer. (Shared and
+> Search were deliberately left out of this pass.) Delete always confirms with an
+> alert, reusing the Options sheet's own copy so the two routes to the same verb
+> read identically; offline it queues a tombstone exactly as the sheet's Delete
+> does, and the row stays struck through with its existing undo.
+>
+> The mechanism is a new hand-rolled DesignSystem component, **`SwipeRevealRow`**
+> — *not* `.swipeActions`, which silently no-ops outside a SwiftUI `List`, and the
+> app has none: every document list is a `ScrollView` + `VStack` + `ForEach`, which
+> is precisely what gives these screens their flat, boxless rows. Converting to
+> `List` would have restyled every screen and broken `PagesTreeDrawer`'s
+> `.frame(maxHeight: .infinity)` row trick, which is only safe under a scroll
+> view's unspecified height proposal.
+>
+> Three consequences worth knowing, all documented in full in
+> [`CLAUDE.md`](../CLAUDE.md): the drag is `.simultaneousGesture` with a
+> decided-once axis lock (a plain `.gesture` claims vertical drags and kills
+> scrolling); `SubpageRow` and the drawer's title were converted off `Button` to
+> `.contentShape` + `.onTapGesture`, because a `Button` can still fire on touch-up
+> after a swipe; and the action strip is a **`background` of the content, not a
+> `ZStack` sibling**, or its `maxHeight: .infinity` buttons make the row claim the
+> whole proposed height. Accessibility is re-declared by the wrapper
+> (`children: .ignore` discards what the row composed) and the drawn strip is
+> `accessibilityHidden`, or every row gains phantom VoiceOver stops.
+>
+> **Pin is Home-only** because `SubpageRow` and the drawer render no pinned state,
+> so the action there would succeed with nothing to show for it. No new localized
+> strings were needed — the Options sheet's `options.pin` / `options.unpin` /
+> `options.delete` and the existing `pending_delete.undo` cover every label.
+
 > **Revised: 2026-07-12 (Options sheet → flat menu).** The document **Options
 > sheet** was redesigned to the handoff's updated `OptionsSheet`: a **flat,
 > boxless, dividerless** list under a `SheetHeader` (inline `title2` title + a
