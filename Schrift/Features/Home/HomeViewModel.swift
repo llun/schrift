@@ -9,7 +9,13 @@ final class HomeViewModel {
     /// document** — see `recentDocuments`.
     var fetchedRecentDocuments: [Document] = []
     /// The list the screen renders: the fetched one with this device's unsynced documents
-    /// merged in at read time.
+    /// merged in at read time, minus whatever the Pinned section is already showing.
+    ///
+    /// **Each document belongs to exactly one section.** The feed is fetched unfiltered, so the
+    /// server returns pinned documents in both responses; `recentsExcludingPinned` is what keeps
+    /// the same row from rendering twice, and its doc comment carries the reasoning. It runs
+    /// *after* the merge below, which is free rather than load-bearing: a locally-created
+    /// document is never a favorite, so the filter has nothing of its own to drop.
     ///
     /// Merging at *read* time rather than storing them together is the invariant that keeps
     /// a synthetic `Document` out of `DocumentCacheStore`. A list load replaces its array
@@ -31,24 +37,40 @@ final class HomeViewModel {
         // **The account is part of the key.** Re-authenticating as someone else changes who
         // may be listed without touching either of the other two, so a memo keyed only on
         // them would keep serving the previous user's documents to the new one.
+        // **Reading `pinnedDocuments` here is load-bearing; keying on it is defensive.** The
+        // read is what registers the `@Observable` dependency and, since it sits above the
+        // early return, it happens on every call — so a body that renders only this list is
+        // still invalidated by a pin. The *key* is the belt-and-braces half: no current path
+        // needs it, because every writer of `pinnedDocuments` (`applyFavoriteChange`, `load()`,
+        // the deletion observer) reassigns `fetchedRecentDocuments` in the same breath, and the
+        // paths where that assignment is value-identical are exactly the ones where the
+        // document is absent from the feed and the filtered answer cannot differ. Verified by
+        // mutation — dropping this conjunct fails no test in the suite. It stays because a memo
+        // whose key omits an input its body reads is wrong the moment a writer stops moving in
+        // lockstep, and that is a silent wrong answer rather than a crash. Ids alone:
+        // `applyingFavoriteFlag` rewrites a pinned row's *contents* on every toggle, and the
+        // filtered answer depends on nothing but identity.
         let version = saveCoordinator.pendingCreatesVersion
         let owner = signedInUser.userID
+        let pinnedIDs = pinnedDocuments.map(\.id)
         if let cached = mergedRecents, cached.version == version, cached.owner == owner,
-            cached.fetched == fetchedRecentDocuments
+            cached.pinnedIDs == pinnedIDs, cached.fetched == fetchedRecentDocuments
         {
             return cached.merged
         }
-        let merged = mergedWithLocalDocuments(
-            fetched: fetchedRecentDocuments,
-            local: saveCoordinator.pendingLocalDocuments(parentID: nil, currentUserID: owner))
-        mergedRecents = (version, owner, fetchedRecentDocuments, merged)
+        let merged = recentsExcludingPinned(
+            recent: mergedWithLocalDocuments(
+                fetched: fetchedRecentDocuments,
+                local: saveCoordinator.pendingLocalDocuments(parentID: nil, currentUserID: owner)),
+            pinned: pinnedDocuments)
+        mergedRecents = (version, owner, pinnedIDs, fetchedRecentDocuments, merged)
         return merged
     }
 
     /// Memo for `recentDocuments`. `@ObservationIgnored` so writing it from a *getter* does
     /// not register a mutation and re-invalidate the very view that just read it.
     @ObservationIgnored
-    private var mergedRecents: (version: Int, owner: UUID?, fetched: [Document], merged: [Document])?
+    private var mergedRecents: (version: Int, owner: UUID?, pinnedIDs: [UUID], fetched: [Document], merged: [Document])?
     var searchResults: [Document] = []
     var isLoading = false
     var errorKey: L10nKey?

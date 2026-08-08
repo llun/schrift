@@ -82,4 +82,50 @@ final class FavoriteOverlayTests: XCTestCase {
         XCTAssertTrue(updated[0].isFavorite)
         XCTAssertFalse(updated[1].isFavorite)
     }
+
+    // MARK: - recentsExcludingPinned
+
+    /// The recents feed is fetched unfiltered (`isFavorite: nil`), so a pinned document is in
+    /// both responses and used to render in both sections.
+    func testADocumentInBothListsIsDroppedFromRecents() {
+        let recents = recentsExcludingPinned(
+            recent: [document(a, isFavorite: true), document(b)],
+            pinned: [document(a, isFavorite: true)])
+        XCTAssertEqual(recents.map(\.id), [b])
+    }
+
+    func testRecentsAreUntouchedWhenNothingIsPinned() {
+        let recent = [document(a), document(b)]
+        XCTAssertEqual(recentsExcludingPinned(recent: recent, pinned: []), recent)
+    }
+
+    /// Order and identity are preserved — this only ever removes.
+    func testTheSurvivingRowsKeepTheirOrderAndContents() {
+        let c = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let recent = [document(a), document(b, isFavorite: true), document(c)]
+        let recents = recentsExcludingPinned(recent: recent, pinned: [document(b, isFavorite: true)])
+        XCTAssertEqual(recents, [recent[0], recent[2]])
+    }
+
+    /// **Membership, never the flag.** A cold start can leave `loadPinnedDocuments()` empty
+    /// while the recents cache still carries `isFavorite: true` rows. Filtering on the flag
+    /// would hide those from *both* sections; filtering on what the Pinned section actually
+    /// renders can only ever move a row, never make it disappear from the screen.
+    func testAFavoriteRowSurvivesWhenThePinnedListIsEmpty() {
+        let recents = recentsExcludingPinned(recent: [document(a, isFavorite: true)], pinned: [])
+        XCTAssertEqual(recents.map(\.id), [a])
+    }
+
+    func testEveryRecentBeingPinnedLeavesAnEmptyList() {
+        let recents = recentsExcludingPinned(
+            recent: [document(a, isFavorite: true)], pinned: [document(a, isFavorite: true)])
+        XCTAssertTrue(recents.isEmpty)
+    }
+
+    /// A pinned document the recents feed does not carry is simply not there to remove.
+    func testAPinnedDocumentAbsentFromRecentsRemovesNothing() {
+        let recent = [document(a)]
+        XCTAssertEqual(
+            recentsExcludingPinned(recent: recent, pinned: [document(b, isFavorite: true)]), recent)
+    }
 }

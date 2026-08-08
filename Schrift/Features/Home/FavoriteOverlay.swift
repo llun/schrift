@@ -18,6 +18,30 @@ func applyingFavoriteFlag(_ documents: [Document], documentID: UUID, isFavorite:
     }
 }
 
+/// The Recent section's rows: the recents feed minus whatever the Pinned section is already
+/// rendering, so no document appears twice on Home.
+///
+/// **Why anything is needed.** Home fetches its two lists separately — `favorite_list/` for the
+/// Pinned section and `listDocuments(isFavorite: nil, …)` for the feed — and the second is
+/// deliberately *unfiltered*, so a pinned document is in both responses. Pinned wins, because it
+/// is the section the user asked for; Recent is the residue.
+///
+/// **Keyed on membership, never on `isFavorite`.** The flag and the Pinned section can disagree
+/// — a cold start seeds `pinnedDocuments` from `loadPinnedDocuments()`, which answers `[]` when
+/// nothing was cached, while the recents cache may still carry rows flagged favorite. Filtering
+/// on the flag would hide those from *both* sections; filtering on what Pinned actually renders
+/// can only ever move a row between sections, never take it off the screen.
+///
+/// **Why not fetch the feed with `isFavorite: false` instead.** Pinned documents would then be
+/// absent from `fetchedRecentDocuments` and its cache, so an unpin — which only removes the row
+/// from `pinnedDocuments` (see `applyFavoriteChange`) — would leave the document in no section
+/// at all until the next successful fetch. Filtering at read time keeps the hand-back instant.
+func recentsExcludingPinned(recent: [Document], pinned: [Document]) -> [Document] {
+    guard !pinned.isEmpty else { return recent }
+    let pinnedIDs = Set(pinned.map(\.id))
+    return recent.filter { !pinnedIDs.contains($0.id) }
+}
+
 /// Fold pins and unpins made on this device into a list fetch that predates them, and report
 /// which of those overrides the fetch has now confirmed.
 ///

@@ -105,15 +105,15 @@ final class HomeViewModelTests: XCTestCase {
     }
 
     private static func paginatedFixture(id: String, title: String, isFavorite: Bool) -> Data {
-        """
-        {
-            "count": 1,
-            "next": null,
-            "previous": null,
-            "results": [
+        paginatedFixture(entries: [(id: id, title: title, isFavorite: isFavorite)])
+    }
+
+    private static func paginatedFixture(entries: [(id: String, title: String, isFavorite: Bool)]) -> Data {
+        let results = entries.map { entry in
+            """
                 {
-                    "id": "\(id)",
-                    "title": "\(title)",
+                    "id": "\(entry.id)",
+                    "title": "\(entry.title)",
                     "excerpt": null,
                     "abilities": {},
                     "computed_link_reach": "restricted",
@@ -127,11 +127,20 @@ final class HomeViewModelTests: XCTestCase {
                     "path": "0001",
                     "updated_at": "2026-01-15T10:30:00Z",
                     "user_role": "owner",
-                    "is_favorite": \(isFavorite)
+                    "is_favorite": \(entry.isFavorite)
                 }
-            ]
-        }
-        """.data(using: .utf8)!
+            """
+        }.joined(separator: ",\n")
+        return """
+            {
+                "count": \(entries.count),
+                "next": null,
+                "previous": null,
+                "results": [
+            \(results)
+                ]
+            }
+            """.data(using: .utf8)!
     }
 
     private static let emptyFixture: Data = #"{"count": 0, "next": null, "previous": null, "results": []}"#.data(
@@ -157,6 +166,103 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Recent Doc"])
         XCTAssertFalse(viewModel.isLoading)
         XCTAssertNil(viewModel.errorKey)
+    }
+
+    /// **The recents feed is fetched unfiltered**, so the server returns pinned documents in
+    /// both responses and the same row rendered in both sections. Pinned wins; Recent is what
+    /// is left.
+    func testAPinnedDocumentIsNotAlsoListedUnderRecent() async {
+        let viewModel = makeViewModel()
+        let pinnedID = "11111111-1111-4111-8111-111111111111"
+        let pinnedBody = Self.paginatedFixture(id: pinnedID, title: "Pinned Doc", isFavorite: true)
+        let recentBody = Self.paginatedFixture(
+            entries: [
+                (id: pinnedID, title: "Pinned Doc", isFavorite: true),
+                (id: "22222222-2222-4222-8222-222222222222", title: "Recent Doc", isFavorite: false),
+            ])
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            return .init(
+                statusCode: 200, headers: [:],
+                body: path.contains("favorite_list") ? pinnedBody : recentBody, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.pinnedDocuments.map(\.title), ["Pinned Doc"])
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Recent Doc"])
+        XCTAssertEqual(
+            viewModel.fetchedRecentDocuments.map(\.title), ["Pinned Doc", "Recent Doc"],
+            "the fetched list — and so the cache — still holds the server's own answer")
+    }
+
+    /// The filter is on **membership of the rendered Pinned section**, never on `isFavorite`.
+    /// A cold start can leave `loadPinnedDocuments()` empty while the recents cache still
+    /// carries favorite rows; filtering on the flag would hide those from both sections.
+    func testAFavoriteRowStillShowsUnderRecentWhenNothingIsPinned() {
+        let cache = makeCache()
+        let favorite = documentFixture(UUID(uuidString: "44444444-4444-4444-8444-444444444444")!)
+        var pinnedFlagOnly = favorite
+        pinnedFlagOnly.isFavorite = true
+        cache.saveRecentDocuments([pinnedFlagOnly])
+        let viewModel = makeViewModel(cache: cache)
+
+        XCTAssertTrue(viewModel.pinnedDocuments.isEmpty, "precondition: nothing in the Pinned section")
+        XCTAssertEqual(
+            viewModel.recentDocuments.map(\.id), [favorite.id],
+            "it renders in no section at all if the flag decides this")
+    }
+
+    /// The memo behind `recentDocuments` is keyed on the pinned list too, so a pin made on this
+    /// device moves the row between sections with no fetch — the same immediacy
+    /// `applyFavoriteChange` already gives the Pinned section.
+    func testPinningARowMovesItOutOfRecentWithoutAFetch() async {
+        let viewModel = makeViewModel()
+        let id = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let document = documentFixture(id)
+        viewModel.fetchedRecentDocuments = [document]
+        XCTAssertEqual(viewModel.recentDocuments.map(\.id), [id], "precondition: under Recent")
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: Data(), error: nil) }
+        await viewModel.toggleFavorite(document)
+
+        XCTAssertEqual(viewModel.pinnedDocuments.map(\.id), [id])
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty, "a stale memo would leave it in both")
+    }
+
+    /// …and unpinning hands it straight back, which is why the recents array keeps carrying
+    /// pinned documents rather than the fetch filtering them out server-side.
+    func testUnpinningARowHandsItBackToRecentWithoutAFetch() async {
+        let viewModel = makeViewModel()
+        let id = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        var document = documentFixture(id)
+        document.isFavorite = true
+        viewModel.fetchedRecentDocuments = [document]
+        viewModel.pinnedDocuments = [document]
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty, "precondition: under Pinned only")
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }
+        await viewModel.toggleFavorite(document)
+
+        XCTAssertTrue(viewModel.pinnedDocuments.isEmpty)
+        XCTAssertEqual(
+            viewModel.recentDocuments.map(\.id), [id],
+            "otherwise the row is in no section until the next successful fetch")
+    }
+
+    /// A document created here is never a favorite, so the filter can never swallow the one row
+    /// that exists nowhere else.
+    func testALocallyCreatedRowIsNeverFilteredOut() {
+        let user = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser(userID: user))
+        var pinned = documentFixture(UUID(uuidString: "44444444-4444-4444-8444-444444444444")!)
+        pinned.isFavorite = true
+        viewModel.pinnedDocuments = [pinned]
+
+        let local = viewModel.saveCoordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+
+        XCTAssertEqual(viewModel.recentDocuments.map(\.id), [local.id])
     }
 
     func testLoadRequestsTheUnfilteredRecentList() async {
