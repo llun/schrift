@@ -11,6 +11,18 @@ PROFILE_NAME   = "match AppStore dev.llun.Schrift"
 UPLOAD_ATTEMPTS = 3
 UPLOAD_RETRY_DELAYS = [30, 60].freeze
 
+# How long to wait for Apple to finish processing the uploaded build before giving
+# up on attaching the release notes and handing it to testers. That wait is
+# **best-effort** (see `distribute_uploaded_build`): the binary is already on App
+# Store Connect before it starts, so exceeding it costs the changelog, never the
+# release.
+PROCESSING_TIMEOUT = 1800
+
+# How hard to look for a just-delivered build before concluding it is absent.
+# Only spent on the last upload attempt, where a wrong "absent" is unrecoverable.
+LANDED_POLL_ATTEMPTS = 5
+LANDED_POLL_DELAY = 15
+
 # Whether a failed upload is worth trying again.
 #
 # App Store Connect returns 5xx and gateway timeouts routinely — build 95 (v0.57.0)
@@ -19,51 +31,284 @@ UPLOAD_RETRY_DELAYS = [30, 60].freeze
 # someone re-ran the job by hand. The binary was already built; only the handoff to
 # Apple failed. That is worth retrying.
 #
-# **What must never be retried is a failure that means the build already landed.**
-# The build number is `github.run_number`, and a re-run reuses it, so if the first
-# attempt uploaded the binary and then failed somewhere after, every retry hits a
-# duplicate-build rejection. Retrying that would bury the one message explaining why
-# — so those are matched first and re-raised untouched, as is anything about
-# credentials or entitlements, which no amount of waiting fixes.
+# This predicate is **not** what protects an already-landed build — error wording
+# cannot tell a 5xx thrown before the binary landed from one thrown after it, and
+# guessing wrong means retrying into a guaranteed duplicate rejection.
+# `build_on_app_store_connect?` answers that question from App Store Connect itself
+# and is consulted *first*; this only decides whether a genuinely failed upload is
+# worth another go. The terminal list stays because a credential or entitlement
+# failure is not fixed by waiting, and the duplicate phrases stay as a backstop for
+# the case where App Store Connect cannot be asked.
+TERMINAL_UPLOAD_ERRORS = [
+  /already exists/, /already been used/, /redundant binary/, /duplicate/,
+  /unauthorized/, /authentication/, /invalid credentials/, /forbidden/,
+  /not authorized/, /missing entitlement/, /invalid provisioning/
+].freeze
+
+TRANSIENT_UPLOAD_ERRORS = [
+  # Wording, which is how Apple and fastlane actually phrase these.
+  /server error/, /bad gateway/, /service unavailable/, /gateway timeout/,
+  /timed out/, /timeout/, /temporarily unavailable/,
+  # A 5xx *presented as a status*. A bare /50[0-4]/ would also match a build
+  # number — ours are climbing towards 500 — or a duration such as
+  # "'1500' seconds", and would then reclassify a terminal failure as transient.
+  %r{\b(?:status|code|got|http/?[\d.]*)\W{0,3}50[0-4]\b},
+  # Transport. The class name is part of the subject, so Errno/Faraday/OpenSSL
+  # names match here too.
+  /connection reset/, /connection refused/, /connection failed/, /econnreset/,
+  /network is unreachable/, /network is down/, /getaddrinfo/,
+  # Rate limiting — the textbook retryable failure, which even carries a
+  # Retry-After (spaceship raises "Apple 429 detected" / "Too many requests").
+  /too many requests/, /429 detected/,
+  # altool exiting -1 tells you, verbatim, to "try retrying" — the one upload
+  # failure fastlane explicitly documents as worth another attempt.
+  /try again/, /try retrying/
+].freeze
+
 def transient_upload_failure?(error)
   message = "#{error.class}: #{error.message}".downcase
 
-  terminal = [
-    "already exists", "already been used", "redundant binary", "duplicate",
-    "unauthorized", "authentication", "invalid credentials", "forbidden",
-    "not authorized", "missing entitlement", "invalid provisioning"
-  ]
-  return false if terminal.any? { |phrase| message.include?(phrase) }
+  return false if TERMINAL_UPLOAD_ERRORS.any? { |pattern| message.match?(pattern) }
 
-  transient = [
-    "server error", "500", "502", "503", "504", "bad gateway",
-    "service unavailable", "gateway timeout", "timed out", "timeout",
-    "connection reset", "connection refused", "econnreset", "network is unreachable",
-    "temporarily unavailable", "try again"
-  ]
-  transient.any? { |phrase| message.include?(phrase) }
+  TRANSIENT_UPLOAD_ERRORS.any? { |pattern| message.match?(pattern) }
 end
 
-# Upload, retrying only what is worth retrying. Kept separate from the lane so the
-# predicate above is the single place that decides, rather than a condition buried
-# in a rescue.
-def upload_to_testflight_with_retry(options)
+# A one-line, actually-informative summary of an error, for logging.
+#
+# pilot raises the commonest upload failure as `UI.user_error!("Error uploading
+# ipa file: \n #{errors}")` — a literal newline right after the colon — so
+# `lines.first` logs "Error uploading ipa file:" and nothing else, in exactly the
+# messages worth reading. Taking the first few non-empty lines instead keeps the
+# label *and* what it was labelling, with no guess about which line matters.
+def error_summary(error, limit: 300)
+  lines = error.message.to_s.lines.map(&:strip).reject(&:empty?)
+  return error.class.to_s if lines.empty?
+
+  summary = lines.first(3).join(" ")
+  summary.length > limit ? "#{summary[0, limit]}…" : summary
+end
+
+# Does App Store Connect already hold the build we just tried to upload?
+#
+# After an upload error this is the only question whose answer is a *fact* rather
+# than an inference from Apple's error wording, and it is the one that decides
+# whether retrying is safe. It is asked against the marketing version being
+# shipped, because that is the train Apple checks a build number against, and it
+# counts builds that are still `PROCESSING` — exactly the state a just-landed
+# build is in.
+#
+# The comparison is **equality, deliberately, not `>=`**. `latest_…` answers with
+# the most recently *uploaded* build for the version, so if ours landed it is that
+# build and nothing else — whereas `>=` would answer "yes" for any build numbered
+# above ours, including one this run never produced. That is reachable: when
+# `resolved_build_number`'s own lookup fails it falls back to the bare run number,
+# which can sit *below* what App Store Connect holds, and then every upload error
+# would read as success and tag a release for a binary that does not exist.
+#
+# It queries `cfBundleShortVersionString` — the raw plist value we ourselves set
+# from `MARKETING_VERSION` — rather than App Store Connect's version *train*, so
+# the X.Y / X.Y.0 aliasing that `BuildWatcher.alternate_version` exists to work
+# around cannot make it miss.
+#
+# When the question cannot be asked at all (App Store Connect unreachable), answer
+# **no**. The two wrong answers are not symmetric: a wrong "yes" tags a release for
+# a build that was never uploaded, and no later run would ever notice or correct
+# it, while a wrong "no" costs one more upload attempt whose duplicate rejection is
+# itself evidence — and this is re-asked on that attempt too, so the mistake heals
+# as soon as Apple answers. Every uncertainty here resolves the same way.
+#
+# `attempts` exists because that self-healing argument needs a *later attempt* to
+# exist. On the last one there is none, and App Store Connect can take a moment to
+# index a delivery — so the final question is asked repeatedly before concluding
+# the binary is absent, since concluding that wrongly is precisely the
+# "shipped, red, untagged" state this whole file is about.
+def build_on_app_store_connect?(api_key:, app_identifier:, app_version:, build_number:, attempts: 1)
+  answered = false
+
+  attempts.times do |index|
+    sleep(LANDED_POLL_DELAY) if index.positive?
+
+    latest = latest_build_number(
+      api_key: api_key,
+      app_identifier: app_identifier,
+      app_version: app_version
+    )
+    next if latest.nil?
+
+    answered = true
+    return true if latest == build_number.to_i
+  end
+
+  # "Apple says it isn't there" and "Apple wouldn't say" both mean *don't treat
+  # this as shipped*, but only the second is a guess — so say which one happened.
+  unless answered
+    UI.important(
+      "Couldn't confirm with App Store Connect whether build #{build_number} landed " \
+      "— assuming it did not."
+    )
+  end
+
+  false
+end
+
+# The latest build number App Store Connect holds, or nil if it could not be
+# asked — a distinction every caller here has to make, so it is not flattened
+# into a number.
+def latest_build_number(api_key:, app_identifier:, app_version: nil)
+  latest_testflight_build_number(
+    api_key: api_key,
+    app_identifier: app_identifier,
+    version: app_version,
+    initial_build_number: 0
+  ).to_i
+rescue StandardError => e
+  UI.important("Couldn't read the latest TestFlight build number (#{error_summary(e)}).")
+  nil
+end
+
+# Hand the binary to Apple, and treat "it is already up there" as success.
+#
+# The upload is the one irreversible step in a release, so it is deliberately the
+# only thing here that waits for nothing: `skip_waiting_for_build_processing` with
+# no changelog makes pilot return the moment the transporter has handed the package
+# over, so nothing that happens on Apple's side afterwards can turn a shipped build
+# into a red pipeline. Everything needing a *processed* build happens later, and
+# best-effort.
+#
+# That split is the whole fix. Build 96 (v0.57.0) logged "Successfully uploaded the
+# new binary to App Store Connect" and then failed 30 minutes later waiting for
+# processing — so a merged commit shipped with no `v*` tag and no GitHub Release,
+# and the re-run that followed rebuilt under the same build number and was refused
+# as a duplicate.
+#
+# **What the landed-check guards here is narrower than that incident**, and worth
+# stating precisely: with this lane's options pilot returns immediately after the
+# transporter succeeds, so the rescue below is reached only when the transporter
+# itself reported failure. The case it catches is a delivery that reached Apple and
+# was then reported as failed — build 95's shape, and partial deliveries — not
+# build 96's, which now happens in the separate distribute step and cannot fail the
+# release at all. Both need the same rule: App Store Connect, not the error text,
+# is the authority on whether the binary landed.
+def upload_build(options, app_version:, build_number:)
   attempt = 0
   begin
     attempt += 1
     upload_to_testflight(**options)
   rescue StandardError => e
+    summary = error_summary(e)
+
+    if build_on_app_store_connect?(
+      api_key: options[:api_key],
+      app_identifier: options[:app_identifier],
+      app_version: app_version,
+      build_number: build_number,
+      # Poll hard only once the retry budget is spent: there is then no later
+      # attempt whose duplicate rejection would reveal a delivery App Store
+      # Connect simply hasn't indexed yet, nothing else to spend the time on, and
+      # the alternative outcome is the incident. A terminal failure on an earlier
+      # attempt gets one question — a credential or entitlement rejection means
+      # nothing was delivered, so polling would only delay a loud failure.
+      attempts: attempt >= UPLOAD_ATTEMPTS ? LANDED_POLL_ATTEMPTS : 1
+    )
+      UI.important("The upload reported an error: #{summary}")
+      UI.important(
+        "But build #{build_number} is on App Store Connect, so the binary shipped — " \
+        "treating the upload as successful and continuing the release."
+      )
+      return
+    end
+
     raise if attempt >= UPLOAD_ATTEMPTS
     raise unless transient_upload_failure?(e)
 
     delay = UPLOAD_RETRY_DELAYS[attempt - 1] || UPLOAD_RETRY_DELAYS.last
     UI.important(
       "TestFlight upload attempt #{attempt}/#{UPLOAD_ATTEMPTS} failed with a transient error " \
-      "(#{e.message.to_s.lines.first.to_s.strip}). Retrying in #{delay}s."
+      "(#{summary}), and the build is not on App Store Connect. Retrying in #{delay}s."
     )
     sleep(delay)
     retry
   end
+end
+
+# Attach the release notes and hand the build to testers. Best-effort by design.
+#
+# This needs a build Apple has finished *processing*, and that has no upper bound —
+# build 96 was still processing half an hour after it was uploaded. Failing the
+# release here would be failing it for a build that has already shipped: it appears
+# in TestFlight, and internal testers get it, whatever happens in this step. So a
+# timeout or an Apple-side error costs the changelog and nothing else — warn, never
+# raise.
+def distribute_uploaded_build(options)
+  upload_to_testflight(**options)
+rescue StandardError => e
+  UI.important(
+    "The build is uploaded, but attaching the release notes / distributing did not finish: " \
+    "#{error_summary(e)}"
+  )
+  UI.important(
+    "This does not affect the build itself — it shows up in TestFlight once Apple has " \
+    "finished processing it. Set the notes from App Store Connect if you need them."
+  )
+end
+
+# The build number to ship, which must be higher than every build App Store Connect
+# has already seen.
+#
+# CI passes `github.run_number` via BUILD_NUMBER. That is monotonic across *runs*
+# but **stable across re-runs of one run**, so on its own it is not enough: a re-run
+# of a run whose upload already landed rebuilds under a number Apple has seen and is
+# refused for ever, with no way out but pushing an empty commit. It is therefore a
+# *floor*, and whatever App Store Connect already holds wins when it is higher.
+#
+# The lookup is deliberately unscoped by version, so the result clears every build
+# ever uploaded rather than only this version's train.
+#
+# A lookup failure falls back to the floor — knowing Apple's latest is an
+# improvement on the run number, never a prerequisite for shipping. With no floor
+# to fall back on (a local run, where the lookup is the only source) it is fatal, as
+# it was before: better to stop than to upload a number nothing has checked.
+def resolved_build_number(api_key:, app_identifier:, floor:)
+  floor = floor.to_s.strip
+  latest = latest_build_number(api_key: api_key, app_identifier: app_identifier)
+
+  if latest.nil?
+    if floor.empty?
+      UI.user_error!(
+        "Couldn't read the latest TestFlight build number, and there is no BUILD_NUMBER " \
+        "to fall back on — refusing to upload a build number nothing has checked."
+      )
+    end
+
+    UI.important("Falling back to build number #{floor}.")
+    latest = 0
+  end
+
+  # A String: pilot's `build_number` is a String-validated ConfigItem, and the
+  # distribute step names the build by it.
+  [floor.to_i, latest + 1].max.to_s
+end
+
+# Hand the resolved build number to the CI job.
+#
+# This is what lets the release be tagged *before* the slow, best-effort
+# distribution step instead of after it — the distribute lane needs to name the
+# exact build, and by then the lane that chose the number has exited.
+def export_build_number(build_number)
+  path = ENV["GITHUB_OUTPUT"].to_s
+  return if path.empty?
+
+  File.open(path, "a") { |file| file.puts("build_number=#{build_number}") }
+end
+
+# The App Store Connect API key, built the same way for every lane that needs it.
+def connect_api_key
+  app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_content: ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true
+  )
 end
 
 platform :ios do
@@ -73,12 +318,7 @@ platform :ios do
     # certificate without touching (or being blocked by) the login keychain.
     setup_ci if ENV["CI"]
 
-    api_key = app_store_connect_api_key(
-      key_id: ENV["ASC_KEY_ID"],
-      issuer_id: ENV["ASC_ISSUER_ID"],
-      key_content: ENV["ASC_KEY_CONTENT"],
-      is_key_content_base64: true
-    )
+    api_key = connect_api_key
 
     # The .xcodeproj is not committed; it is generated from project.yml.
     # (fastlane runs from the fastlane/ dir, so hop up to the repo root.)
@@ -104,22 +344,22 @@ platform :ios do
       profile_name: PROFILE_NAME
     )
 
-    # Monotonic build number. CI passes github.run_number via BUILD_NUMBER;
-    # locally we bump past whatever is already on TestFlight.
-    build_number =
-      ENV["BUILD_NUMBER"] ||
-      latest_testflight_build_number(
-        api_key: api_key,
-        app_identifier: APP_IDENTIFIER,
-        initial_build_number: 0
-      ).next.to_s
+    # Monotonic build number — the run number floored by what TestFlight already
+    # holds, so a re-run can never collide with its own earlier upload.
+    build_number = resolved_build_number(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      floor: ENV["BUILD_NUMBER"]
+    )
+    UI.message("Building #{APP_IDENTIFIER} as build #{build_number}")
 
     # Marketing version. CI passes the Conventional-Commits value it computed
     # (scripts/next-version.sh) via MARKETING_VERSION; locally we leave it unset
     # so the build keeps project.yml's default.
-    marketing_version = ENV["MARKETING_VERSION"]
+    marketing_version = ENV["MARKETING_VERSION"].to_s.strip
+    marketing_version = nil if marketing_version.empty?
     xcargs = "CURRENT_PROJECT_VERSION=#{build_number}"
-    xcargs += " MARKETING_VERSION=#{marketing_version}" unless marketing_version.to_s.empty?
+    xcargs += " MARKETING_VERSION=#{marketing_version}" if marketing_version
 
     build_app(
       project: XCODE_PROJECT,
@@ -134,33 +374,67 @@ platform :ios do
       }
     )
 
-    pilot_options = {
-      api_key: api_key,
-      app_identifier: APP_IDENTIFIER
+    # The only step allowed to fail the release. It returns as soon as Apple has
+    # the binary; see `upload_build` for why nothing after that point may turn a
+    # shipped build into a red pipeline.
+    upload_build(
+      {
+        api_key: api_key,
+        app_identifier: APP_IDENTIFIER,
+        skip_waiting_for_build_processing: true
+      },
+      app_version: marketing_version,
+      build_number: build_number
+    )
+
+    # Everything that needs a *processed* build — the release notes, handing it to
+    # testers — is the `distribute` lane, which CI runs as a separate step **after**
+    # tagging. That ordering is deliberate: it is a wait with no upper bound, and a
+    # cancel or job timeout during it must not cost the tag for a build that has
+    # already shipped. That is the build-96 incident in a different costume.
+    export_build_number(build_number)
+  end
+
+  desc "Attach the release notes to an already-uploaded build and hand it to testers"
+  lane :distribute do
+    build_number = ENV["BUILD_NUMBER_TO_DISTRIBUTE"].to_s.strip
+    UI.user_error!("BUILD_NUMBER_TO_DISTRIBUTE is required") if build_number.empty?
+
+    marketing_version = ENV["MARKETING_VERSION"].to_s.strip
+    marketing_version = nil if marketing_version.empty?
+
+    options = {
+      api_key: connect_api_key,
+      app_identifier: APP_IDENTIFIER,
+      distribute_only: true,
+      build_number: build_number,
+      # `distribute_only` deliberately leaves `ipa` unset, and pilot otherwise
+      # reads the platform *out of the ipa* — with neither, it falls back to
+      # `UI.input`, which raises on CI. Stating it is what keeps this step from
+      # failing every single run (silently, since failures here are warnings).
+      app_platform: "ios",
+      # Export compliance is answered by the binary itself via project.yml's
+      # INFOPLIST_KEY_ITSAppUsesNonExemptEncryption, so pilot's
+      # `set_export_compliance_if_needed` — which lives on *this* best-effort path
+      # — never has to PATCH it. Stated here too so that removing the plist key
+      # cannot quietly make every green release undistributable.
+      uses_non_exempt_encryption: false,
+      # Internal testers get every build with no review; we never auto-submit to
+      # external review.
+      distribute_external: false,
+      notify_external_testers: false,
+      wait_processing_timeout_duration: PROCESSING_TIMEOUT
     }
+    options[:app_version] = marketing_version if marketing_version
+    notes_file = ENV["RELEASE_NOTES_FILE"]
+    options[:changelog] = File.read(notes_file) if notes_file && File.exist?(notes_file)
+    # Set TESTFLIGHT_GROUPS (comma-separated) to also distribute to named beta
+    # groups. pilot matches them by exact name and silently no-ops on a name that
+    # resolves to nothing, so a rename on Apple's side fails quietly.
+    groups = (ENV["TESTFLIGHT_GROUPS"] || "").split(",").map(&:strip).reject(&:empty?)
+    options[:groups] = groups unless groups.empty?
 
-    if is_ci
-      # Wait for Apple to finish processing so we can attach the release notes
-      # and hand the build to testers automatically (both require a processed
-      # build). Internal testers get every build with no review; we never
-      # auto-submit to external review. Set TESTFLIGHT_GROUPS (comma-separated)
-      # to also distribute to specific beta groups.
-      notes_file = ENV["RELEASE_NOTES_FILE"]
-      pilot_options[:changelog] = File.read(notes_file) if notes_file && File.exist?(notes_file)
-      pilot_options[:distribute_external] = false
-      pilot_options[:notify_external_testers] = false
-      pilot_options[:wait_processing_timeout_duration] = 1800
-      groups = (ENV["TESTFLIGHT_GROUPS"] || "").split(",").map(&:strip).reject(&:empty?)
-      pilot_options[:groups] = groups unless groups.empty?
-      # skip_waiting_for_build_processing defaults to false -> waits, so the
-      # changelog + distribution are applied.
-    else
-      # Local runs: just upload, don't block the Mac waiting for processing.
-      pilot_options[:skip_waiting_for_build_processing] = true
-    end
-
-    # Retried on a transient Apple-side failure only — see `transient_upload_failure?`.
-    upload_to_testflight_with_retry(pilot_options)
+    distribute_uploaded_build(options)
   end
 
   desc "One-time: register the App ID and generate + store signing assets"

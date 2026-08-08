@@ -178,30 +178,85 @@ names the section with the details.
   patch. Nothing is committed back to `main` (version is tag-derived) and the
   tag is pushed with `GITHUB_TOKEN`, so there is no release loop. Ship manually
   via **Actions → TestFlight → Run workflow**; add `[skip ci]` to a commit to
-  skip a build. Build number = `github.run_number` (monotonic — do **not**
-  rename/move the workflow file or it resets). On CI the upload **waits for
-  Apple to finish processing** so it can attach auto-generated **release
-  notes** (commit subjects since the last tag, written to `release-notes.txt`
-  and read by the `beta` lane — never interpolated, to avoid workflow injection
-  from commit text) and distribute; that's why the job timeout is 90 min.
-  Internal testers get every build automatically (no review); set the repo
-  variable `TESTFLIGHT_GROUPS` (comma-separated) to also target named beta
-  groups.
-  **The upload itself is retried, and the predicate that decides is the load-bearing
-  part.** App Store Connect returns 5xx and gateway timeouts routinely — build 95
-  (v0.57.0) died on a bare `Server error got 500` *after* a clean archive and export,
-  so a merged, fully-tested commit shipped nothing and `main` sat red until the job
-  was re-run by hand. `upload_to_testflight_with_retry` gives it three attempts
-  (30s/60s backoff). **What must never be retried is a failure meaning the build
-  already landed**: the build number is `github.run_number` and a re-run reuses it, so
-  once a binary is up, every retry hits a duplicate rejection and would bury the one
-  message explaining why. `transient_upload_failure?` therefore matches the terminal
-  phrases *first* (`already exists`, `redundant binary`, `duplicate`, plus
-  credential/entitlement failures, which no amount of waiting fixes) and re-raises
-  those untouched; only then does it look for 5xx/timeout/connection wording. An
-  unrecognised error is **not** retried — the default is to fail loudly. Note this
-  makes a red `TestFlight` run mean something specific: the upload was refused on the
-  merits, not that Apple hiccuped. TestFlight has **one** owner: if you re-enable Xcode Cloud, keep it
+  skip a build. Internal testers get every build automatically (no review); set
+  the repo variable `TESTFLIGHT_GROUPS` (comma-separated) to also target named
+  beta groups.
+  **The release is split into one irreversible step and one cosmetic one, only the
+  first may fail the job, and the tag goes between them.** Handing the binary to
+  Apple is irreversible, so the `beta` lane's `upload_build` does *only* that:
+  `skip_waiting_for_build_processing` with no changelog makes pilot return the
+  moment the transporter is done. Attaching the auto-generated **release notes**
+  (commit subjects since the last tag, written to `release-notes.txt` and read by
+  the `distribute` lane — never interpolated, to avoid workflow injection from
+  commit text) and distributing to groups both need a *processed* build, so they
+  are a **separate `distribute` lane** (`distribute_only: true`) that the workflow
+  runs **after** tagging, and `distribute_uploaded_build` **warns instead of
+  raising**. The ordering is part of the fix, not a detail: that wait has no upper
+  bound, so running it before the tag means a cancel or a job timeout during it
+  costs the release record for a build that already shipped — the same incident in
+  a different costume. `beta` hands the resolved build number to the job via
+  `export_build_number` (a `$GITHUB_OUTPUT` line) so `distribute` can name the
+  exact build. This is the
+  fix for the incident that produced the rule: build 96 (v0.57.0) logged
+  `Successfully uploaded the new binary to App Store Connect` and then died 30
+  minutes later on `FastlaneCore::BuildWatcher exceeded the '1800' seconds` — so a
+  merged commit shipped to TestFlight while `main` went red with no `v*` tag and no
+  GitHub Release. Apple's processing has no upper bound; a build that has already
+  shipped must never be failed for it. (The 90-min job timeout is still sized for
+  that wait.)
+  **After an upload error the deciding question is asked of App Store Connect, not
+  of the error text.** `build_on_app_store_connect?` re-reads the latest build
+  number for the version being shipped (`PROCESSING` counts — that is what a
+  just-landed build is), and **our exact number being that build** means the
+  upload *succeeded*, whatever it reported. The comparison is equality, not
+  `>=`: a build numbered *above* ours is not evidence that ours landed, and that
+  case is reachable, because `resolved_build_number` falls back to the bare run
+  number when its own lookup fails — which can sit below what Apple holds. `>=`
+  there would read every upload error as success and tag a release for a binary
+  that does not exist. Only when the binary is genuinely absent does
+  `transient_upload_failure?` decide whether to retry: three attempts, 30s/60s, for
+  5xx / gateway / connection wording — build 95's bare `Server error got 500`, which
+  really did fail before landing. Terminal phrases (`already exists`, `duplicate`,
+  credential/entitlement failures) are still matched first as a backstop for when
+  App Store Connect cannot be reached, and an unrecognised error is **not** retried.
+  Error wording alone cannot tell a 5xx thrown *before* the binary landed from one
+  thrown *after*, and guessing wrong means retrying into a guaranteed duplicate
+  rejection — which is why the fact, not the wording, leads. If the check itself
+  can't be run it answers "not landed": a wrong *yes* tags a release for a build
+  that was never uploaded and nothing would ever correct it, while a wrong *no*
+  costs one attempt and heals on the next answer. That healing argument needs a
+  *later attempt to exist*, so once the retry budget is spent the question is
+  **polled** (`LANDED_POLL_ATTEMPTS`) rather than asked once — App Store Connect
+  can take a moment to index a delivery, and on the last attempt a wrong "absent"
+  is the incident itself. An earlier terminal failure still gets one question: a
+  credential rejection means nothing was delivered, so polling would only delay a
+  loud failure.
+  **The build number is `github.run_number` floored by what TestFlight already
+  holds** (`resolved_build_number`). The run number alone is monotonic across runs
+  but **stable across re-runs of one run**, so re-running a job whose upload had
+  already landed rebuilt under a number Apple had seen and was refused for ever,
+  with no escape but an empty commit — that is the second half of the build-96
+  incident. A lookup failure falls back to the run number (an improvement, not a
+  prerequisite); with no floor at all — a local run — it is fatal, because
+  uploading an unchecked number is worse than stopping. Consequently a re-run
+  ships a *new* build of the same commit rather than resurrecting the old one,
+  which is fine: several builds may share one marketing version.
+  For the same reason the **tag and release steps are idempotent** (skip when the
+  tag/release already exists) — a re-run must be able to finish a half-done
+  release instead of dying on its own leftovers; the Release step checks for
+  *itself*, never gating on whether the tag step pushed, or a tag-pushed-then-
+  Release-failed run could never be completed. A red `TestFlight` run now means
+  the binary is genuinely not on App Store Connect. **Green is narrower than it
+  looks** and the docs say so: it does not promise Apple *accepted* the build
+  (`INVALID`/`FAILED` still count as processed, so the run stays green), that a
+  marketing version identifies one commit (a run failing before the tag lets the
+  next run reuse the version), or that named `TESTFLIGHT_GROUPS` resolved to
+  anything (pilot no-ops silently on a name that matches nothing). One build
+  setting is load-bearing for the split: `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption`
+  is what keeps export compliance off the best-effort path — the `distribute` lane
+  passes `uses_non_exempt_encryption: false` too, and both should stay.
+  TestFlight has **one** owner:
+  if you re-enable Xcode Cloud, keep it
   build/test-only (no archive/deploy on `main`) so the two don't double-build or
   collide on build numbers. See [`docs/testflight-setup.md`](docs/testflight-setup.md).
 - **CI must regenerate the project before building** (the `.xcodeproj` is not

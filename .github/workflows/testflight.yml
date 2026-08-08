@@ -69,6 +69,13 @@ jobs:
       - name: Compute version & release notes
         id: version
         run: |
+          # Without `pipefail` a failing `git tag --list` degrades silently to
+          # "no tags", which reads as a never-released repo: whole-history release
+          # notes, and a version that marches backwards. The tag lookup below is
+          # therefore written without a pipe at all, so it can neither swallow a
+          # git failure nor trip over SIGPIPE from an early-closing `head`.
+          set -euo pipefail
+
           version="$(bash scripts/next-version.sh)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Next release version: $version (build ${BUILD_NUMBER})"
@@ -77,7 +84,8 @@ jobs:
           # file that fastlane reads — the (attacker-controllable) commit text
           # is never interpolated into a shell command or a $GITHUB_OUTPUT
           # heredoc, so it can't inject anything.
-          last_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          tags="$(git tag --list 'v*' --sort=-v:refname)"
+          last_tag="${tags%%$'\n'*}"
           range="${last_tag:+$last_tag..}HEAD"
           {
             echo "v$version (build ${BUILD_NUMBER})"
@@ -109,23 +117,33 @@ jobs:
           MATCH_SSH_PRIVATE_KEY: ${{ secrets.MATCH_SSH_PRIVATE_KEY }}
 
       - name: Build & upload
+        id: upload
         run: bundle exec fastlane beta
         env:
           GIT_SSH_COMMAND: "ssh -i ~/.ssh/match_ed25519 -o IdentitiesOnly=yes"
           MARKETING_VERSION: ${{ steps.version.outputs.version }}
-          RELEASE_NOTES_FILE: ${{ github.workspace }}/release-notes.txt
-          # Optional: comma-separated TestFlight beta group names to also
-          # distribute to (internal testers already get every build).
-          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
 
       # The tag + release steps only run if the build & upload above succeeded,
       # so a failed build never burns a version number.
+      #
+      # Both are idempotent, because a re-run has to be able to *finish* a release
+      # rather than die on its own leftovers: the upload step now succeeds when the
+      # binary is already on App Store Connect, which is exactly the state a re-run
+      # of a half-finished release is in. Dying on "tag already exists" there would
+      # put the pipeline back where it started.
       - name: Tag the release
         run: |
           tag="v${{ steps.version.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag is already on origin — nothing to do."
+            exit 0
+          fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "Release $tag"
+          # `fetch-depth: 0` brings tags with it, so the tag may already exist
+          # locally even when origin doesn't have it.
+          git tag -a "$tag" -m "Release $tag" 2>/dev/null \
+            || echo "Tag $tag already exists locally — pushing that."
           git push origin "$tag"
 
       - name: Create GitHub Release
@@ -133,10 +151,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.version.outputs.version }}"
+          if gh release view "v${version}" >/dev/null 2>&1; then
+            echo "Release v${version} already exists — nothing to do."
+            exit 0
+          fi
           gh release create "v${version}" \
             --title "v${version}" \
             --generate-notes \
             --target "${{ github.sha }}"
+
+      # Last, and deliberately so. Attaching the release notes and handing the
+      # build to testers both need a build Apple has finished *processing*, which
+      # has no upper bound — build 96 was still processing 30 minutes after it was
+      # uploaded. Running it before the tag would mean a cancel or a job timeout
+      # during that wait costs the release record for a build that already
+      # shipped, which is the incident this whole workflow change is about.
+      #
+      # The lane already downgrades its own failures to warnings;
+      # `continue-on-error` is the second belt.
+      - name: Attach release notes & distribute
+        if: steps.upload.outputs.build_number != ''
+        continue-on-error: true
+        run: bundle exec fastlane distribute
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER_TO_DISTRIBUTE: ${{ steps.upload.outputs.build_number }}
+          RELEASE_NOTES_FILE: ${{ github.workspace }}/release-notes.txt
+          # Optional: comma-separated TestFlight beta group names to also
+          # distribute to (internal testers already get every build).
+          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
 
       - name: Upload build artifacts
         if: always()
@@ -149,3 +192,8 @@ jobs:
             ~/Library/Logs/gym/*.log
           if-no-files-found: ignore
           retention-days: 7
+          # Artifacts are scoped to the run, not the attempt, so on a re-run this
+          # step would 409 on the previous attempt's artifact and — being
+          # `if: always()` — become the last red step a maintainer sees, pointing
+          # triage away from the real failure.
+          overwrite: true

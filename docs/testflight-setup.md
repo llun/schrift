@@ -87,11 +87,19 @@ which:
    Commits ([`scripts/next-version.sh`](../scripts/next-version.sh)) —
    `feat:` → minor, `feat!:` / `BREAKING CHANGE` → major, anything else → patch;
 2. builds a signed Release archive and uploads it to TestFlight (build number =
-   the workflow run number, which is monotonic), **waits for Apple to finish
-   processing**, then attaches auto-generated **release notes** (the commit
-   subjects since the last tag) and makes the build available to testers;
+   the workflow run number, floored by whatever TestFlight already holds);
 3. on a successful upload, pushes the `v<version>` tag and cuts a GitHub Release
-   with auto-generated notes.
+   with auto-generated notes;
+4. **last, and best-effort**, waits for Apple to finish processing so it can
+   attach auto-generated **release notes** (the commit subjects since the last
+   tag) and make the build available to testers.
+
+**That order is deliberate.** Step 4 is a wait with no upper bound, and by the
+time it runs the binary is already on App Store Connect — so it must not be able
+to cost the release record. If it times out you lose the release notes on that
+build, nothing else. Running it before the tag (as this pipeline used to) means a
+cancel or a job timeout during the wait leaves a shipped build with no tag and no
+Release, which is exactly the incident described below.
 
 **Internal testers get every build automatically, with no review** — so once
 you've added internal testers (below), merging is all it takes. External testing
@@ -108,34 +116,96 @@ secret) `TESTFLIGHT_GROUPS` to a comma-separated list of group names
 
 ### When the upload fails
 
-App Store Connect returns 5xx and gateway timeouts routinely, and the archive is
-already built by the time the upload runs — so a bare `Server error got 500` used to
-mean a merged, fully-tested commit shipped nothing and `main` sat red until someone
-re-ran the job. Build 95 (v0.57.0) is the worked example.
+Two things can go wrong, and they need opposite treatment.
 
-The `beta` lane retries the upload up to **three times** (30s then 60s), but only for
-failures worth retrying. `transient_upload_failure?` in the `Fastfile` decides, and it
-checks the **terminal** phrases first:
+**A failure before the binary lands** is worth retrying: App Store Connect returns
+5xx and gateway timeouts routinely, and the archive is already built by then, so a
+bare `Server error got 500` used to mean a merged, fully-tested commit shipped
+nothing. Build 95 (v0.57.0) is the worked example. The `beta` lane retries such an
+upload up to **three times** (30s then 60s).
+
+**A failure after the binary lands must not fail the release at all.** Build 96
+(v0.57.0) is that worked example: the upload logged `Successfully uploaded the new
+binary to App Store Connect`, then the job spent 30 minutes waiting for Apple to
+process it and died on `FastlaneCore::BuildWatcher exceeded the '1800' seconds`. The
+build was on TestFlight; `main` was red, with no tag and no GitHub Release.
+
+So the lane splits the two:
+
+| Step | Can fail the release? | Why |
+|---|---|---|
+| Upload the binary (`fastlane beta` → `upload_build`) | yes | irreversible, and returns as soon as Apple has the package |
+| Tag + GitHub Release | yes | cheap, fast, and the durable record that the version shipped |
+| Wait for processing → release notes → distribute (`fastlane distribute`) | **no** | the build has already shipped; a timeout costs the changelog only |
+
+and **after any upload error the first question is asked of App Store Connect, not
+of the error message** — `build_on_app_store_connect?` looks up the latest build
+number for the version being shipped, and if that is *exactly* our build number
+the upload succeeded no matter what it reported. (Equality, not `>=`: a build
+numbered above ours is not evidence that ours landed.) Only a genuinely absent
+binary reaches `transient_upload_failure?`:
 
 | Outcome | Examples |
 |---|---|
-| Retried | `Server error got 500`, `502`/`503`/`504`, gateway timeout, connection reset |
+| Retried | `Server error got 500`, a 5xx given as a status, gateway timeout, connection reset/refused/failed, DNS failure, Apple 429 rate limiting, altool exit `-1` ("try retrying") |
 | **Never** retried | `already exists`, `redundant binary`, `duplicate`, credential/authorisation failures, invalid provisioning |
 | Not retried (fails loudly) | anything unrecognised |
 
-The duplicate case is the one that matters. The build number is `github.run_number`
-and a **re-run reuses it**, so once a binary has landed every further attempt is a
-duplicate rejection — retrying it would bury the single message that explains the
-state. If you see a duplicate-build error, the build is already in App Store Connect:
-check TestFlight before doing anything else.
+A 5xx only counts when the number is presented *as a status*: matching a bare
+`500`/`502` anywhere in the message would let a build number (ours are climbing
+towards 500), a duration like `'1500' seconds`, or a byte count reclassify a
+terminal rejection as transient.
 
-Because unrecognised errors are not retried, a red `TestFlight` run now means the
-upload was refused on the merits rather than that Apple hiccuped — worth reading
-rather than re-running reflexively.
+Error wording cannot distinguish a 5xx thrown before the upload landed from one
+thrown after it, and retrying the latter walks straight into a duplicate rejection
+— which is why the lookup, not the wording, leads. The terminal phrases remain as a
+backstop for when App Store Connect itself cannot be reached.
 
-Nothing is committed back to `main` and the `v*` tag is pushed only on success, so a
-failed release leaves no tag and no GitHub Release: re-running the job (or merging
-again) is safe and picks the same version up.
+A red `TestFlight` run therefore means the binary is genuinely **not** on App Store
+Connect — check TestFlight before doing anything else, but expect it to be absent.
+
+### What a green run does and does not promise
+
+Green means *the binary reached App Store Connect and the release was recorded*.
+Three things it deliberately does not promise:
+
+- **Apple accepted it.** A build Apple marks `INVALID` or `FAILED` during
+  processing still counts as "processed" to fastlane (`processed?` is
+  `processing_state != PROCESSING`), so the run stays green and the tag is
+  pushed while no tester ever gets the build. Apple emails you about these;
+  the pipeline cannot currently tell you.
+- **A marketing version identifies one commit.** It does not. A run that fails
+  before the tag leaves the version untagged, so the next run — of a *different*
+  commit — recomputes the same version. TestFlight then lists e.g. 0.57.0 (95)
+  and 0.57.0 (96) from different sources. The build number is the only
+  unambiguous identifier; the tag records only the commit that finally shipped.
+- **Named beta groups were served.** pilot matches `TESTFLIGHT_GROUPS` by exact
+  name and silently no-ops on a name that resolves to nothing, so a rename on
+  Apple's side yields a green run with nobody added.
+
+> **One load-bearing build setting.** Step 4 is only cosmetic because the binary
+> answers export compliance itself, via `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption`
+> in `project.yml`. Without it, pilot's `set_export_compliance_if_needed` — which
+> lives *on that best-effort path* — becomes the thing that sets it, and a failure
+> there would silently leave builds undistributable. The `distribute` lane also
+> passes `uses_non_exempt_encryption: false` so the answer never depends on the
+> plist alone; keep both.
+
+### Re-running a failed release
+
+Re-running is safe, and the pipeline is built to let you: the `v*` tag is pushed
+only on success, the tag and GitHub Release steps skip themselves when they already
+exist, and the build number is the run number **floored by whatever TestFlight
+already holds**.
+
+That floor is load-bearing. `github.run_number` is stable across re-runs of the
+same run, so before this a re-run of a run whose upload had landed rebuilt under a
+build number Apple had already seen and was rejected — for ever, with no way out
+but pushing an empty commit. That was the second half of the build-96 incident.
+
+One consequence worth knowing: a re-run ships a **new build of the same commit**
+(one higher than the last), rather than adopting the build already uploaded.
+Several builds sharing one marketing version is normal and harmless.
 
 So **write PR titles as Conventional Commits** (they become the squash-commit
 subject the bump is read from). A non-conforming title still ships — it just
@@ -179,12 +249,16 @@ bundle exec fastlane beta
   builds. To ship a new user-visible version, land a `feat:` (minor) or
   `feat!:`/`BREAKING CHANGE` (major) commit; editing `project.yml` does **not**
   change the released version.
-- **Build number** is set to the GitHub Actions run number automatically, so
-  every upload is unique and monotonic (Apple requires this). Do **not** rename
-  or move `.github/workflows/testflight.yml`: `github.run_number` is scoped to
-  the workflow file's identity and resets to 1, after which Apple rejects the
-  upload (lower build number than an existing build). Local `fastlane beta`
-  runs instead use the latest TestFlight build number + 1.
+- **Build number** is the GitHub Actions run number, **floored by the latest
+  build number already on TestFlight** (`resolved_build_number` in the
+  `Fastfile`), so every upload is unique and monotonic — which Apple requires.
+  The floor covers the two ways the run number alone is not enough: it repeats
+  across re-runs of one run, and it resets to 1 if you rename or move
+  `.github/workflows/testflight.yml` (it is scoped to the workflow file's
+  identity — still worth not doing, but no longer fatal). Local `fastlane beta`
+  runs have no run number and use the latest TestFlight build number + 1, as
+  before; there the lookup is the only source, so a failure to reach App Store
+  Connect stops the run rather than guessing.
 
 ## The GitHub Actions secrets (set for you by bootstrap)
 
