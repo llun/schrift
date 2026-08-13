@@ -19,10 +19,17 @@ enum SwipeRevealMetrics {
     /// The strip may never cover more than this share of the row, or at accessibility text
     /// sizes the title it is attached to disappears entirely.
     static let maxStripFraction: CGFloat = 0.6
-    /// UIKit's normal scroll deceleration rate, per millisecond — the same number
-    /// `UIScrollView.DecelerationRate.normal` carries, spelled out so `swipeFlickProjection`
-    /// stays a pure, isolation-free value function.
-    static let decelerationRate: CGFloat = 0.998
+    /// The deceleration rate the flick projection uses, per millisecond — UIKit's **fast**
+    /// rate (the number `UIScrollView.DecelerationRate.fast` carries), spelled out so
+    /// `swipeFlickProjection` stays a pure, isolation-free value function.
+    ///
+    /// A *feel* constant like the rest of this enum, and one to tune on a device. The **normal**
+    /// scroll rate (0.998) projects roughly half a second of further travel, which is right for
+    /// throwing a long list and far too eager for a 144pt strip: it clears the 72pt open
+    /// threshold on velocity alone at ~145 pt/s, so a row would settle open on almost any
+    /// release that was still drifting. The fast rate projects ~0.1s, which asks for a real
+    /// flick (~700 pt/s from a standing start).
+    static let decelerationRate: CGFloat = 0.99
 }
 
 /// What a drag session turned out to be, decided **once** past the slop and then frozen for

@@ -13,11 +13,16 @@ import XCTest
 /// claimed the drag, so on a screen made entirely of swipeable rows there was nowhere left to
 /// start a scroll. Real touches still cannot be synthesized here, but everything that decides
 /// the arbitration can be reached as a value function and is: the refusal gate, *which* refusal
-/// a given recognizer state takes, the state→callback mapping, the flick projection, and the
-/// simultaneous-recognition answer read through a recognizer the production factory built.
+/// a given recognizer state takes, the once-and-frozen axis latch, the state→callback mapping,
+/// the flick projection, and the simultaneous-recognition answer — read through a recognizer
+/// the production factory built, not through a coordinator in isolation.
 ///
-/// What is still out of reach — a `Context` cannot be constructed outside SwiftUI — is the one
-/// line of `makeUIGestureRecognizer` that hands the coordinator to that factory.
+/// What is still out of reach, and is not claimed: the one line of `makeUIGestureRecognizer`
+/// that hands the coordinator to that factory (a `Context` cannot be constructed outside
+/// SwiftUI); the recognizer's own touch bookkeeping — that `origin` is latched from the first
+/// touch and cleared only by `reset()`, and that `.began` zeroes the translation; and the
+/// ordering of the gate before `super.touchesMoved`, which is a property of the override rather
+/// than of any value.
 @MainActor
 final class SwipeRevealGestureTests: XCTestCase {
 
@@ -70,15 +75,74 @@ final class SwipeRevealGestureTests: XCTestCase {
         }
     }
 
+    /// A recognizer that has already finished has nothing left to refuse, and `.cancelled` is
+    /// not a legal transition out of a terminal state — so the answer is "do nothing", not a
+    /// move UIKit would reject. Reachable only if UIKit ever delivers a trailing move after a
+    /// refusal; cheap enough not to depend on it not doing so.
+    func testATerminalRecognizerIsNotToldToRefuseAgain() {
+        for state in [UIGestureRecognizer.State.failed, .cancelled, .ended] {
+            XCTAssertNil(swipeGestureRefusalState(current: state, axis: .vertical))
+        }
+    }
+
+    // MARK: - The axis latch
+
+    /// **Decided once, then frozen.** Past the commitment the latch does not re-judge the
+    /// drag at all — which is what stops a swipe that curves downward from cancelling itself
+    /// halfway through the strip.
+    func testACommittedDragIsNeverReJudged() {
+        XCTAssertEqual(
+            swipeGestureLatchDecision(
+                isHorizontal: true, current: .changed, travel: CGSize(width: 2, height: 300)),
+            .committed,
+            "a drag that already committed horizontal must not be refused by a later vertical "
+                + "stretch of the same swipe")
+    }
+
+    func testTheFirstClearlySidewaysMoveCommits() {
+        XCTAssertEqual(
+            swipeGestureLatchDecision(
+                isHorizontal: false, current: .possible, travel: CGSize(width: -30, height: 4)),
+            .commit)
+    }
+
+    /// Inside the slop nothing is proved, and the latch says so rather than guessing — this is
+    /// what lets a swipe start gently instead of being refused on its first few points.
+    func testADragInsideTheSlopNeitherCommitsNorRefuses() {
+        XCTAssertEqual(
+            swipeGestureLatchDecision(
+                isHorizontal: false, current: .possible, travel: CGSize(width: -6, height: 2)),
+            .wait)
+    }
+
+    /// The latch routes a refusal through `swipeGestureRefusalState`, so which refusal it is
+    /// still depends on how far the recognizer had got.
+    func testAnUncommittedVerticalDragIsRefusedAccordingToTheRecognizersState() {
+        XCTAssertEqual(
+            swipeGestureLatchDecision(
+                isHorizontal: false, current: .possible, travel: CGSize(width: 4, height: 30)),
+            .refuse(.failed))
+        XCTAssertEqual(
+            swipeGestureLatchDecision(
+                isHorizontal: false, current: .began, travel: CGSize(width: 4, height: 30)),
+            .refuse(.cancelled))
+    }
+
     // MARK: - Recognizer state → the row's vocabulary
 
-    /// **`.failed` must reach the row as a cancellation.** A late refusal has to release the
-    /// list-wide `draggingRowID` claim exactly as a system cancellation does — left unmapped,
+    /// **Anything that ends a drag without a release reaches the row as a cancellation**, or
+    /// the list-wide `draggingRowID` claim is never given back:
     /// `swipeRevealAfterScrollInteraction` early-returns forever and close-on-scroll is dead
     /// for the whole list until some other row completes a full drag.
-    func testALateRefusalReachesTheRowAsACancellation() {
-        XCTAssertEqual(swipeGestureEvent(for: .failed), .cancelled)
+    ///
+    /// `.cancelled` is the case the runtime takes — a late refusal goes out as `.cancelled`,
+    /// and a system cancellation is `.cancelled` too. `.failed` is asserted **defensively**:
+    /// UIKit sends action messages only for `.began`/`.changed`/`.ended`/`.cancelled`, so it is
+    /// never delivered here. Do not read this test as evidence that a `.failed` path is
+    /// exercised.
+    func testAnythingThatEndsADragWithoutAReleaseReachesTheRowAsACancellation() {
         XCTAssertEqual(swipeGestureEvent(for: .cancelled), .cancelled)
+        XCTAssertEqual(swipeGestureEvent(for: .failed), .cancelled)
     }
 
     func testTheRecognizedStatesMapThrough() {
@@ -114,6 +178,21 @@ final class SwipeRevealGestureTests: XCTestCase {
             swipeFlickProjection(velocity: -1000),
             -1 * rate / (1 - rate),
             accuracy: 0.0001)
+    }
+
+    /// **The projection must not open a row on its own.** With UIKit's *normal* scroll rate
+    /// (0.998) this projects half a second of travel, and a barely-moving release clears the
+    /// 72pt threshold from a 5pt drag — every brush of the list would leave a strip open. The
+    /// rate is a feel constant that still wants a device, but this pins the direction: a slow
+    /// drift is not a flick. Its counterpart below is what stops the fix from being "project
+    /// nothing".
+    func testAReleaseStillDriftingSlowlyDoesNotOpenAClosedRow() {
+        let strip: CGFloat = 144
+        let predicted = swipeRevealOffset(
+            translation: swipeGestureEndTranslation(translation: -5, velocity: -200),
+            startingOffset: 0, stripWidth: strip)
+
+        XCTAssertEqual(swipeRevealSettle(predictedEndOffset: predicted, stripWidth: strip), .closed)
     }
 
     func testADegenerateDecelerationRateProjectsNothing() {
@@ -172,8 +251,14 @@ final class SwipeRevealGestureTests: XCTestCase {
     /// `?? false` too.) A `Context` cannot be constructed outside SwiftUI, so what remains
     /// unreachable from here is only `makeUIGestureRecognizer`'s one line passing the
     /// coordinator in.
+    ///
+    /// The coordinator is held in a **local for the duration of the test**, and has to be:
+    /// `UIGestureRecognizer.delegate` is `weak`, so passing it as a temporary would leave the
+    /// recognizer delegate-less by the next line and fail this on perfectly correct code. In
+    /// production SwiftUI owns the coordinator it made.
     func testTheRecognizerTheFactoryBuildsAnswersThroughItsDelegate() {
-        let recognizer = SwipeRevealGesture.makeRecognizer(delegate: SwipeRevealGesture.Coordinator())
+        let coordinator = SwipeRevealGesture.Coordinator()
+        let recognizer = SwipeRevealGesture.makeRecognizer(delegate: coordinator)
         let scrollView = UIScrollView()
 
         XCTAssertTrue(
@@ -181,6 +266,15 @@ final class SwipeRevealGestureTests: XCTestCase {
                 recognizer, shouldRecognizeSimultaneouslyWith: scrollView.panGestureRecognizer) ?? false,
             "the recognizer handed to SwiftUI must carry a delegate that permits the scroll "
                 + "view's pan to run alongside it")
+    }
+
+    /// A row swipe is a one-finger gesture. Left at UIKit's default a second finger joins this
+    /// same recognizer, and the axis gate ends up judging one finger's travel against an origin
+    /// latched from another — which reads as a big vertical jump and cancels the swipe.
+    func testTheFactoryBuildsAOneFingerRecognizer() {
+        let coordinator = SwipeRevealGesture.Coordinator()
+        XCTAssertEqual(
+            SwipeRevealGesture.makeRecognizer(delegate: coordinator).maximumNumberOfTouches, 1)
     }
 
     /// The recognizer takes its thresholds from the same constants the pure axis lock does, so

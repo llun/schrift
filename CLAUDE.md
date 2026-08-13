@@ -1100,7 +1100,10 @@ new code reads like the surrounding code.
     recognizer now instead of downstream of it. Some diagonal drift is still accepted.
     `DragGesture.Value.predictedEndTranslation` has no UIKit equivalent, so the flick is
     projected explicitly by `swipeFlickProjection` (Apple's deceleration formula,
-    `v ÷ 1000 × r ÷ (1 − r)`); the recognizer also has a real **cancel** path, which the
+    `v ÷ 1000 × r ÷ (1 − r)`) at UIKit's **fast** rate, not its normal scroll one — the
+    normal rate projects ~0.5s of travel, which clears a 144pt strip's 72pt open threshold on
+    velocity alone at ~145 pt/s and would leave a strip open after almost any release that was
+    still drifting; the recognizer also has a real **cancel** path, which the
     `DragGesture` never had — it leaned on `.onDisappear` to release a claim the system had
     taken, leaving close-on-scroll disabled list-wide until some other row completed a drag.
     **The lesson generalises:** a gesture that must coexist with a scroll view has to decline
