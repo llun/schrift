@@ -123,11 +123,14 @@ func swipeRevealOffset(
 /// Where the row lands when the finger lifts.
 ///
 /// Judged on the **flick-projected** offset, not the live one. With no velocity
-/// `DragGesture`'s `predictedEndTranslation` equals the live translation, so a slow drag is
-/// decided by where the finger actually stopped; with velocity it runs ahead, which is what
-/// turns a short fast flick into an open and a long drag thrown back into a close. Feeding
-/// the projection through `swipeRevealOffset` first is what keeps the threshold comparison
-/// in the same (rubber-banded, clamped) space as the live offset.
+/// `swipeGestureEndTranslation` equals the live translation, so a slow drag is decided by
+/// where the finger actually stopped; with velocity it runs ahead, which is what turns a short
+/// fast flick into an open and a long drag thrown back into a close. Feeding the projection
+/// through `swipeRevealOffset` first is what keeps the threshold comparison in the same
+/// (rubber-banded, clamped) space as the live offset.
+///
+/// How far ahead it runs is `SwipeRevealMetrics.decelerationRate`'s business, and tuning this
+/// threshold without reading that constant will give the wrong answer.
 func swipeRevealSettle(
     predictedEndOffset: CGFloat,
     stripWidth: CGFloat,

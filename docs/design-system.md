@@ -36,7 +36,18 @@
 > `swipeRevealOffset`, `swipeRevealSettle`, the widths) is untouched; what changed
 > is where the axis decision runs.
 >
-> **One thing about the feel did change, deliberately.** Flick projection —
+> **Two things about the feel did change, both deliberately.** First, a row now
+> claims itself (closing whichever sibling was open) when the *pan* begins, which
+> can be a move before the axis lock has judged it — a pan commits at roughly the
+> distance the gate uses, so a near-diagonal reaches `.began` first and is refused
+> after. The old `DragGesture` never claimed until the drag had proved horizontal.
+> The claim is handed straight back through `onCancelled`, so nothing is stuck;
+> what a reader should expect is that a near-diagonal drag can close an open strip
+> and nudge its row a point or two, where before it did neither. A plain scroll
+> closes an open strip anyway, so this widens an existing behaviour rather than
+> introducing one.
+>
+> Second, flick projection —
 > `DragGesture.Value.predictedEndTranslation`, which has no UIKit equivalent — is
 > now computed from the recognizer's velocity by `swipeFlickProjection`, at UIKit's
 > **fast** deceleration rate rather than its normal scroll one. The normal rate
