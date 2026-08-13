@@ -26,8 +26,8 @@ struct SubpageRow: View {
         // **A tap gesture, not a `Button`** — matching `DocRow`, and for a specific reason:
         // this row is wrapped in `SwipeRevealRow`, and a `Button`'s own gesture begins
         // tracking on touch-down and can still fire on touch-up *after* a horizontal swipe.
-        // The two recognizers run simultaneously (there is no supported way to make the
-        // enclosing `ScrollView` yield), so nothing else would cancel it and swiping a
+        // The two recognizers run simultaneously by design (`SwipeRevealGesture.Coordinator`
+        // declares it), so nothing else would cancel it and swiping a
         // sub-page would open the document. `.contentShape(Rectangle())` + `.onTapGesture`
         // has no such touch-down phase: a drag past the slop simply never becomes a tap.
         //

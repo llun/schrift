@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 import XCTest
 
@@ -277,11 +276,4 @@ final class SwipeRevealGestureTests: XCTestCase {
             SwipeRevealGesture.makeRecognizer(delegate: coordinator).maximumNumberOfTouches, 1)
     }
 
-    /// The recognizer takes its thresholds from the same constants the pure axis lock does, so
-    /// tuning the feel in one place cannot leave the gate judging by another.
-    func testTheRecognizerUsesTheComponentsOwnMetrics() {
-        let recognizer = SwipeRevealPanGestureRecognizer()
-        XCTAssertEqual(recognizer.slop, SwipeRevealMetrics.slop)
-        XCTAssertEqual(recognizer.dominanceRatio, SwipeRevealMetrics.dominanceRatio)
-    }
 }

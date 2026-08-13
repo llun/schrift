@@ -33,10 +33,18 @@
 > than ignores — a drag the axis lock proves non-horizontal, and its coordinator
 > declares simultaneous recognition with the scroll view's pan as a
 > `UIGestureRecognizerDelegate`. The pure geometry (`swipeDragAxis`,
-> `swipeRevealOffset`, `swipeRevealSettle`, the widths) is untouched, so the swipe
-> feels the same; what changed is where the axis decision runs. Flick projection,
-> which `DragGesture.Value.predictedEndTranslation` used to hand over for free, is
-> now computed from the recognizer's velocity by `swipeFlickProjection`.
+> `swipeRevealOffset`, `swipeRevealSettle`, the widths) is untouched; what changed
+> is where the axis decision runs.
+>
+> **One thing about the feel did change, deliberately.** Flick projection —
+> `DragGesture.Value.predictedEndTranslation`, which has no UIKit equivalent — is
+> now computed from the recognizer's velocity by `swipeFlickProjection`, at UIKit's
+> **fast** deceleration rate rather than its normal scroll one. The normal rate
+> projects ~0.5s of travel, which is right for throwing a long list and much too
+> eager for a 144pt strip: it clears the 72pt open threshold on velocity alone at
+> ~145 pt/s, so a row would settle open after almost any release that was still
+> drifting. The fast rate asks for a real flick (~700 pt/s from a standing start).
+> It is a feel constant and wants tuning on a device.
 >
 > The gesture's arbitration was previously called out as "verified by hand", and
 > that is what let this ship. It has a suite now (`SwipeRevealGestureTests`).

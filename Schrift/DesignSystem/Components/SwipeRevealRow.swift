@@ -219,10 +219,12 @@ func swipeRevealSettling<ID: Hashable>(
 
 /// A scroll interaction closes any open row — **unless a drag is in flight**.
 ///
-/// That guard is the whole reason `draggingRowID` exists: the swipe and the scroll view's
-/// pan run simultaneously (there is no supported way to make the scroll view yield), so a
-/// swipe routinely reports a scroll interaction while the finger is still down. Without it
-/// the strip would close the instant you swiped.
+/// That guard is the whole reason `draggingRowID` exists: the swipe and the scroll view's pan
+/// run simultaneously **by design** — `SwipeRevealGesture.Coordinator` says so at the UIKit
+/// level, which is the half of the fix that keeps the list scrolling — so a swipe routinely
+/// reports a scroll interaction while the finger is still down. Without it the strip would
+/// close the instant you swiped. (The delegate *could* make the scroll view yield instead,
+/// with `shouldBeRequiredToFailBy`. It deliberately does not: the bias belongs to the list.)
 func swipeRevealAfterScrollInteraction<ID: Hashable>(_ state: SwipeRevealState<ID>) -> SwipeRevealState<ID> {
     guard !state.isDragging else { return state }
     var next = state
@@ -308,9 +310,13 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
     @State private var dragStartOffset: CGFloat = 0
 
     private var isOpen: Bool { state.openRowID == id }
-    /// Read off the *list-wide* state rather than a second per-row flag: the recognizer only
-    /// ever begins for a drag it has already judged horizontal, and claiming the row is the
-    /// same assignment that closes every sibling.
+    /// Read off the *list-wide* state rather than a second per-row flag — claiming the row is
+    /// the same assignment that closes every sibling, so there is nothing a second flag could
+    /// say that this does not.
+    ///
+    /// Not a promise that the drag is horizontal: a near-diagonal can begin the pan before the
+    /// axis gate refuses it (see `SwipeRevealGesture.onBegan`), in which case the claim is
+    /// handed back a move later through `onCancelled`.
     private var isDragging: Bool { state.draggingRowID == id }
     private var directionSign: CGFloat { swipeRevealDirectionSign(layoutDirection) }
     private var buttonWidth: CGFloat {

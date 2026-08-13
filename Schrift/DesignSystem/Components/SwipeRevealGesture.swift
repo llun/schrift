@@ -106,8 +106,11 @@ func swipeGestureEvent(for state: UIGestureRecognizer.State) -> SwipeGestureEven
 ///
 /// `DragGesture.Value.predictedEndTranslation` supplied this for free; a UIKit recognizer
 /// reports a *velocity* instead, so the projection is spelled out here. It is Apple's own
-/// (WWDC18, *Designing Fluid Interfaces*): `velocity ÷ 1000 × rate ÷ (1 − rate)`, which at
-/// UIKit's normal scroll deceleration rate is roughly half a second of further travel.
+/// (WWDC18, *Designing Fluid Interfaces*): `velocity ÷ 1000 × rate ÷ (1 − rate)`.
+///
+/// The rate it defaults to is `SwipeRevealMetrics.decelerationRate` — UIKit's **fast** one,
+/// ~0.1s of further travel, deliberately not the normal scroll rate's ~0.5s. That choice and
+/// its arithmetic live on the constant.
 ///
 /// `velocity` is points per second — the unit `UIPanGestureRecognizer.velocity(in:)` reports.
 /// A rate outside `(0, 1)` has no projection rather than a negative or infinite one.
@@ -158,8 +161,11 @@ func swipeGestureEndTranslation(
 /// The axis is decided **once** and then frozen for the session, exactly as before: a
 /// mid-gesture re-decision is what makes a hand-rolled swipe feel like it is fighting the list.
 final class SwipeRevealPanGestureRecognizer: UIPanGestureRecognizer {
-    var slop: CGFloat = SwipeRevealMetrics.slop
-    var dominanceRatio: CGFloat = SwipeRevealMetrics.dominanceRatio
+    // `let`, not configurable knobs: nothing sets these, and a settable copy of a shared feel
+    // constant is a second place for the gate and the row to disagree about the same swipe.
+    // Tune `SwipeRevealMetrics` instead — on a device, as its own doc comment says.
+    private let slop = SwipeRevealMetrics.slop
+    private let dominanceRatio = SwipeRevealMetrics.dominanceRatio
 
     /// **The one touch this gesture is about.** `Set<UITouch>` is unordered, so judging each
     /// move by `touches.first` compares whichever finger UIKit happened to hand over against an
@@ -221,8 +227,13 @@ final class SwipeRevealPanGestureRecognizer: UIPanGestureRecognizer {
 /// release — so `SwipeRevealRow` keeps driving the same pure mappings
 /// (`swipeRevealOffset`/`swipeRevealSettle`) it always has.
 struct SwipeRevealGesture: UIGestureRecognizerRepresentable {
-    /// The drag has committed to the horizontal axis. Only ever called for a drag the
-    /// recognizer did not refuse, so the row may claim itself here unconditionally.
+    /// The pan has begun. Usually that means the drag committed horizontal — but **not
+    /// always**: a pan commits on its own at roughly the distance the axis gate uses, so a
+    /// near-diagonal can reach `.began` before the gate has judged it and then be refused a
+    /// move later. So a row claiming itself here may find the claim taken back through
+    /// `onCancelled`, which is exactly what that callback is for. The cost is that such a drag
+    /// briefly closes whichever sibling was open — the same thing a scroll does — and may nudge
+    /// the row a point or two before settling back.
     var onBegan: () -> Void
     /// Live x-axis translation, in points.
     var onChanged: (CGFloat) -> Void
