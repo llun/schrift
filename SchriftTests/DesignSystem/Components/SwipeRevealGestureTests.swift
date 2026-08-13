@@ -268,8 +268,10 @@ final class SwipeRevealGestureTests: XCTestCase {
     }
 
     /// A row swipe is a one-finger gesture. Left at UIKit's default a second finger joins this
-    /// same recognizer, and the axis gate ends up judging one finger's travel against an origin
-    /// latched from another — which reads as a big vertical jump and cancels the swipe.
+    /// same recognizer — and what that costs is **not** the axis gate, which reads the tracked
+    /// touch's own location and is unaffected: it is `super`'s `translation(in:)`, the centroid
+    /// of every touch the pan accepts, which is what the row's offset follows. A finger landing
+    /// mid-swipe would jump the strip.
     func testTheFactoryBuildsAOneFingerRecognizer() {
         let coordinator = SwipeRevealGesture.Coordinator()
         XCTAssertEqual(

@@ -259,9 +259,11 @@ struct SwipeRevealGesture: UIGestureRecognizerRepresentable {
     static func makeRecognizer(delegate: UIGestureRecognizerDelegate) -> SwipeRevealPanGestureRecognizer {
         let recognizer = SwipeRevealPanGestureRecognizer()
         recognizer.delegate = delegate
-        // A row swipe is a one-finger gesture. Left at UIKit's default a second finger joins
-        // this same recognizer, which the tracked-touch bookkeeping already survives; saying so
-        // here keeps the extra touch from reaching it at all.
+        // A row swipe is a one-finger gesture. The tracked-touch bookkeeping already keeps the
+        // *axis gate* honest with a second finger down — it reads that one touch's location —
+        // but `super`'s `translation(in:)` is the centroid of every touch the pan accepts, and
+        // that is what the row's offset follows. Without this a finger landing mid-swipe jumps
+        // the strip sideways.
         recognizer.maximumNumberOfTouches = 1
         return recognizer
     }
