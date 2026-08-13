@@ -3,10 +3,12 @@ import XCTest
 
 @testable import Schrift
 
-/// The pure core of `SwipeRevealRow`. The gesture itself — whether a horizontal drag
-/// coexists with the enclosing `ScrollView`'s pan, how the slop and dominance constants
-/// *feel* — is not reachable from here and is verified by hand; what these pin is the
-/// shape of every mapping the gesture drives.
+/// The pure core of `SwipeRevealRow` — the shape of every mapping the gesture drives.
+///
+/// How the slop and dominance constants *feel* is still a device question. Whether a
+/// horizontal drag coexists with the enclosing `ScrollView`'s pan is **not**: that used to be
+/// left to hand verification, and the gap is what shipped a Home list that could not scroll.
+/// It now has its own suite in `SwipeRevealGestureTests`.
 final class SwipeRevealRowTests: XCTestCase {
 
     // MARK: - Axis lock

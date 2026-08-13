@@ -15,6 +15,32 @@
 > phrasing below as "English is primary" for the shipped state; the §5.7 body
 > is kept as the original plan of record.
 
+> **Revised: 2026-08-13 (the Home list could not scroll).** With more documents
+> than fit the screen, the Home list would not scroll at all. The cause was the
+> swipe gesture the 2026-08-08 revision below introduced: a SwiftUI `DragGesture`
+> is *recognized* for every drag past its `minimumDistance`, whichever direction
+> it went, and `SwipeRevealRow` then discarded the vertical ones inside
+> `onChanged`. That reads as "the scroll view still wins" but is not — by the time
+> the closure runs the recognizer has the touch, and `.simultaneousGesture` does
+> not reliably keep an *ancestor* `ScrollView`'s pan alive on iOS 26. Home is the
+> only screen whose rows cover the entire viewport, so it was the only one with
+> nowhere left to start a scroll; the editor's Subpages section and the Pages
+> drawer both have non-row areas to grab, which is why they looked fine.
+>
+> The drag is now a UIKit `UIPanGestureRecognizer` bridged in with
+> **`UIGestureRecognizerRepresentable`** (`SwipeRevealGesture.swift`). It fixes the
+> arbitration at the level it actually happens: the recognizer **refuses** — rather
+> than ignores — a drag the axis lock proves non-horizontal, and its coordinator
+> declares simultaneous recognition with the scroll view's pan as a
+> `UIGestureRecognizerDelegate`. The pure geometry (`swipeDragAxis`,
+> `swipeRevealOffset`, `swipeRevealSettle`, the widths) is untouched, so the swipe
+> feels the same; what changed is where the axis decision runs. Flick projection,
+> which `DragGesture.Value.predictedEndTranslation` used to hand over for free, is
+> now computed from the recognizer's velocity by `swipeFlickProjection`.
+>
+> The gesture's arbitration was previously called out as "verified by hand", and
+> that is what let this ship. It has a suite now (`SwipeRevealGestureTests`).
+
 > **Revised: 2026-08-08 (swipe actions on document rows).** Document rows now
 > offer **swipe-to-delete** — plus **pin/unpin on Home** — on three surfaces: the
 > Home list, the editor's Subpages section, and the Pages drawer. (Shared and
@@ -32,9 +58,9 @@
 > view's unspecified height proposal.
 >
 > Three consequences worth knowing, all documented in full in
-> [`CLAUDE.md`](../CLAUDE.md): the drag is `.simultaneousGesture` with a
-> decided-once axis lock (a plain `.gesture` claims vertical drags and kills
-> scrolling); `SubpageRow` and the drawer's title were converted off `Button` to
+> [`CLAUDE.md`](../CLAUDE.md): the drag is a **UIKit recognizer** with a
+> decided-once axis lock, and it *refuses* non-horizontal drags rather than
+> ignoring them (see the 2026-08-13 revision below); `SubpageRow` and the drawer's title were converted off `Button` to
 > `.contentShape` + `.onTapGesture`, because a `Button` can still fire on touch-up
 > after a swipe; and the action strip is a **`background` of the content, not a
 > `ZStack` sibling**, or its `maxHeight: .infinity` buttons make the row claim the

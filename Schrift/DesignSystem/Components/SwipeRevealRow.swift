@@ -19,6 +19,10 @@ enum SwipeRevealMetrics {
     /// The strip may never cover more than this share of the row, or at accessibility text
     /// sizes the title it is attached to disappears entirely.
     static let maxStripFraction: CGFloat = 0.6
+    /// UIKit's normal scroll deceleration rate, per millisecond — the same number
+    /// `UIScrollView.DecelerationRate.normal` carries, spelled out so `swipeFlickProjection`
+    /// stays a pure, isolation-free value function.
+    static let decelerationRate: CGFloat = 0.998
 }
 
 /// What a drag session turned out to be, decided **once** past the slop and then frozen for
@@ -259,6 +263,12 @@ struct SwipeRevealAction: Identifiable {
 /// **Trailing edge only.** A leading (rightward) swipe would fight the system's interactive
 /// pop gesture on every `NavigationStack` screen.
 ///
+/// **The drag is a UIKit recognizer, not a SwiftUI `DragGesture`** — see
+/// `SwipeRevealPanGestureRecognizer` for why. The short version: a `DragGesture` is recognized
+/// for vertical drags too and only discards them *downstream*, by which point the enclosing
+/// `ScrollView` has already lost the touch. On Home, where rows cover the whole viewport, that
+/// left the list unable to scroll at all.
+///
 /// **Wrap tap-gesture rows, not `Button` rows.** `DocRow`'s
 /// `.contentShape(Rectangle()).onTapGesture` composes cleanly with a simultaneous drag (a
 /// 10pt drag never satisfies a tap). A `Button`'s own gesture begins tracking on touch-down
@@ -286,12 +296,15 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
 
     @State private var rowWidth: CGFloat = 0
     @State private var offset: CGFloat = 0
-    @State private var dragAxis: SwipeDragAxis = .undecided
     /// Where the content sat when this drag began, so a drag starting on an already-open row
     /// continues from the strip edge instead of snapping to zero.
     @State private var dragStartOffset: CGFloat = 0
 
     private var isOpen: Bool { state.openRowID == id }
+    /// Read off the *list-wide* state rather than a second per-row flag: the recognizer only
+    /// ever begins for a drag it has already judged horizontal, and claiming the row is the
+    /// same assignment that closes every sibling.
+    private var isDragging: Bool { state.draggingRowID == id }
     private var directionSign: CGFloat { swipeRevealDirectionSign(layoutDirection) }
     private var buttonWidth: CGFloat {
         swipeActionButtonWidth(actionCount: actions.count, scaledBase: scaledButtonBase, rowWidth: rowWidth)
@@ -316,7 +329,7 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
                 // Present only while open or mid-swipe, so a *closed* row behaves exactly as
                 // it did before this wrapper existed — which is what makes adopting it safe
                 // on an untouched path.
-                if isOpen || dragAxis == .horizontal {
+                if isOpen || isDragging {
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { close() }
@@ -338,16 +351,18 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
             } action: {
                 rowWidth = $0
             }
-            // Simultaneous, never `.gesture` (which competes with the scroll pan and claims
-            // vertical drags, killing scrolling) and never `.highPriorityGesture` (designed to
-            // win). Both recognizers run; non-horizontal drags are discarded here instead.
-            .simultaneousGesture(dragGesture)
+            // A UIKit recognizer that refuses non-horizontal drags outright and declares
+            // simultaneous recognition with the scroll view's own pan. A SwiftUI
+            // `DragGesture` — `.simultaneousGesture` included — recognizes every drag and can
+            // only discard the vertical ones after the fact, which on iOS 26 costs the
+            // enclosing `ScrollView` the touch. See `SwipeRevealPanGestureRecognizer`.
+            .gesture(swipeGesture)
             .onChange(of: isOpen) { _, open in
                 guard !open, offset != 0 else { return }
                 withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { offset = 0 }
             }
             // **Release the list-wide drag claim if this row goes away mid-swipe.**
-            // `draggingRowID` is normally cleared by `onEnded`, but a row can be torn down
+            // `draggingRowID` is normally cleared by `onEnded`/`onCancelled`, but a row can be torn down
             // before the finger lifts — its document deleted by a background sync, a
             // co-author, or the swipe's own Delete. The per-row `@State` dies with the view;
             // the *shared* state does not, and `swipeRevealAfterScrollInteraction` early-returns
@@ -367,35 +382,39 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
             }
     }
 
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: SwipeRevealMetrics.slop, coordinateSpace: .local)
-            .onChanged { value in
+    private var swipeGesture: SwipeRevealGesture {
+        SwipeRevealGesture(
+            onBegan: {
                 guard !actions.isEmpty else { return }
-                if dragAxis == .undecided {
-                    dragAxis = swipeDragAxis(translation: value.translation)
-                    guard dragAxis == .horizontal else { return }
-                    dragStartOffset = offset
-                    state = swipeRevealBeginningDrag(state, rowID: id)
-                }
-                guard dragAxis == .horizontal else { return }
+                dragStartOffset = offset
+                state = swipeRevealBeginningDrag(state, rowID: id)
+            },
+            onChanged: { translation in
+                // Every callback below is gated on this row still holding the claim, so a
+                // recognizer whose `onBegan` was refused (no actions) moves nothing, and a
+                // stale row can never settle over whichever row is currently open.
+                guard isDragging else { return }
                 offset = swipeRevealOffset(
-                    translation: value.translation.width * directionSign,
+                    translation: translation * directionSign,
                     startingOffset: dragStartOffset,
                     stripWidth: stripWidth)
-            }
-            .onEnded { value in
-                defer { dragAxis = .undecided }
-                guard dragAxis == .horizontal else { return }
+            },
+            onEnded: { predictedTranslation in
+                guard isDragging else { return }
                 let predicted = swipeRevealOffset(
-                    translation: value.predictedEndTranslation.width * directionSign,
+                    translation: predictedTranslation * directionSign,
                     startingOffset: dragStartOffset,
                     stripWidth: stripWidth)
-                let settle = swipeRevealSettle(predictedEndOffset: predicted, stripWidth: stripWidth)
-                state = swipeRevealSettling(state, rowID: id, settle: settle)
-                withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
-                    offset = settle == .open ? -stripWidth : 0
-                }
-            }
+                settle(swipeRevealSettle(predictedEndOffset: predicted, stripWidth: stripWidth))
+            },
+            onCancelled: {
+                // A cancelled drag settles from where it actually sits — the same decision a
+                // release with no velocity makes. The old `DragGesture` had no cancel path at
+                // all and leaned on `onDisappear` to release the claim, which left the
+                // list-wide close-on-scroll rule disabled for any drag the system took away.
+                guard isDragging else { return }
+                settle(swipeRevealSettle(predictedEndOffset: offset, stripWidth: stripWidth))
+            })
     }
 
     private var actionStrip: some View {
@@ -440,8 +459,14 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
     }
 
     private func close() {
-        state = swipeRevealSettling(state, rowID: id, settle: .closed)
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { offset = 0 }
+        settle(.closed)
+    }
+
+    private func settle(_ outcome: SwipeRevealSettle) {
+        state = swipeRevealSettling(state, rowID: id, settle: outcome)
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
+            offset = outcome == .open ? -stripWidth : 0
+        }
     }
 }
 
