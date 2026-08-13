@@ -396,6 +396,10 @@ Schrift/
 │                        MaterialSymbol, OfflineBanner, SearchField, SheetHeader,
 │                        ShareMemberRow, Skeleton, SwipeRevealRow, Switch, TextField,
 │                        Toast (SwiftUI + style resolvers, each with light+dark hex)
+│                        — plus SwipeRevealGesture, the one file here that is not a
+│                        component: the UIKit gesture bridge SwipeRevealRow drags with
+│                        (UIGestureRecognizerRepresentable + pure gates), so it has no
+│                        #Preview catalog and no style resolver
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry

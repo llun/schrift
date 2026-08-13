@@ -60,7 +60,7 @@
 > Three consequences worth knowing, all documented in full in
 > [`CLAUDE.md`](../CLAUDE.md): the drag is a **UIKit recognizer** with a
 > decided-once axis lock, and it *refuses* non-horizontal drags rather than
-> ignoring them (see the 2026-08-13 revision below); `SubpageRow` and the drawer's title were converted off `Button` to
+> ignoring them (see the 2026-08-13 revision above); `SubpageRow` and the drawer's title were converted off `Button` to
 > `.contentShape` + `.onTapGesture`, because a `Button` can still fire on touch-up
 > after a swipe; and the action strip is a **`background` of the content, not a
 > `ZStack` sibling**, or its `maxHeight: .infinity` buttons make the row claim the

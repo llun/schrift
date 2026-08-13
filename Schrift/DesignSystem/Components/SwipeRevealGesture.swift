@@ -18,6 +18,48 @@ func swipeGestureRefusesDrag(_ axis: SwipeDragAxis) -> Bool {
     axis == .vertical
 }
 
+/// The state the recognizer must move to when the axis lock refuses a drag — `nil` when there
+/// is nothing to refuse.
+///
+/// **The two cases are not interchangeable, and this is the load-bearing half of the fix.**
+/// `.failed` while the recognizer is still `.possible` hands the touch straight back to the
+/// scroll view, which is the outcome that matters. Once the pan has begun on its own — it
+/// commits at roughly the same distance this gate uses, so a diagonal can beat the gate to it
+/// — `.failed` is not a legal transition, and `.cancelled` is what gets the recognizer out of
+/// the way instead.
+func swipeGestureRefusalState(
+    current: UIGestureRecognizer.State, axis: SwipeDragAxis
+) -> UIGestureRecognizer.State? {
+    guard swipeGestureRefusesDrag(axis) else { return nil }
+    return current == .possible ? .failed : .cancelled
+}
+
+/// What a recognizer state change means to the row.
+enum SwipeGestureEvent: Equatable {
+    case began
+    case changed
+    case ended
+    case cancelled
+}
+
+/// Maps a recognizer's state onto the row's vocabulary; `nil` for the states the row has
+/// nothing to do with.
+///
+/// **`.failed` maps to `.cancelled` deliberately.** A late refusal — the axis gate cancelling
+/// a pan that had already begun — has to release the row's list-wide claim exactly as a system
+/// cancellation does. Left unmapped, `draggingRowID` keeps naming a row nobody is dragging,
+/// `swipeRevealAfterScrollInteraction` early-returns forever, and close-on-scroll is disabled
+/// for the whole list until some other row completes a full drag.
+func swipeGestureEvent(for state: UIGestureRecognizer.State) -> SwipeGestureEvent? {
+    switch state {
+    case .began: return .began
+    case .changed: return .changed
+    case .ended: return .ended
+    case .cancelled, .failed: return .cancelled
+    default: return nil
+    }
+}
+
 /// How far a flick keeps travelling after the finger lifts.
 ///
 /// `DragGesture.Value.predictedEndTranslation` supplied this for free; a UIKit recognizer
@@ -33,6 +75,19 @@ func swipeFlickProjection(
 ) -> CGFloat {
     guard decelerationRate > 0, decelerationRate < 1 else { return 0 }
     return (velocity / 1000) * decelerationRate / (1 - decelerationRate)
+}
+
+/// Where a released drag is heading: the travel so far, plus where its momentum carries it.
+///
+/// This is the whole of `DragGesture.Value.predictedEndTranslation`'s job, and it is a free
+/// function so the settle decision can be driven end to end from a test rather than
+/// re-assembled in one.
+func swipeGestureEndTranslation(
+    translation: CGFloat,
+    velocity: CGFloat,
+    decelerationRate: CGFloat = SwipeRevealMetrics.decelerationRate
+) -> CGFloat {
+    translation + swipeFlickProjection(velocity: velocity, decelerationRate: decelerationRate)
 }
 
 // MARK: - The recognizer
@@ -89,11 +144,8 @@ final class SwipeRevealPanGestureRecognizer: UIPanGestureRecognizer {
             let axis = swipeDragAxis(
                 translation: CGSize(width: point.x - origin.x, height: point.y - origin.y),
                 slop: slop, dominanceRatio: dominanceRatio)
-            if swipeGestureRefusesDrag(axis) {
-                // `.failed` while still `.possible` hands the touch straight back; once the pan
-                // has begun on its own the only legal refusal is `.cancelled`, which gets the
-                // recognizer out of the way just the same.
-                state = state == .possible ? .failed : .cancelled
+            if let refusal = swipeGestureRefusalState(current: state, axis: axis) {
+                state = refusal
                 return
             }
             isHorizontal = axis == .horizontal
@@ -126,17 +178,24 @@ struct SwipeRevealGesture: UIGestureRecognizerRepresentable {
         Coordinator()
     }
 
-    func makeUIGestureRecognizer(context: Context) -> SwipeRevealPanGestureRecognizer {
+    /// Split out of `makeUIGestureRecognizer` so the delegate wiring is reachable from a test:
+    /// dropping the assignment is exactly the edit that brings the unscrollable list back, and
+    /// it is otherwise invisible to the suite (a `Context` cannot be constructed outside
+    /// SwiftUI). What stays untested is the one line below that passes `context.coordinator` in.
+    static func makeRecognizer(delegate: UIGestureRecognizerDelegate) -> SwipeRevealPanGestureRecognizer {
         let recognizer = SwipeRevealPanGestureRecognizer()
-        recognizer.delegate = context.coordinator
+        recognizer.delegate = delegate
         return recognizer
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> SwipeRevealPanGestureRecognizer {
+        Self.makeRecognizer(delegate: context.coordinator)
     }
 
     func updateUIGestureRecognizer(_ recognizer: SwipeRevealPanGestureRecognizer, context: Context) {}
 
     func handleUIGestureRecognizerAction(_ recognizer: SwipeRevealPanGestureRecognizer, context: Context) {
-        let translation = recognizer.translation(in: recognizer.view)
-        switch recognizer.state {
+        switch swipeGestureEvent(for: recognizer.state) {
         case .began:
             // Zeroed at the moment of commitment, so the row tracks the finger from *here*
             // rather than jumping the slop the recognizer spent deciding. It also keeps
@@ -145,13 +204,15 @@ struct SwipeRevealGesture: UIGestureRecognizerRepresentable {
             recognizer.setTranslation(.zero, in: recognizer.view)
             onBegan()
         case .changed:
-            onChanged(translation.x)
+            onChanged(recognizer.translation(in: recognizer.view).x)
         case .ended:
-            let velocity = recognizer.velocity(in: recognizer.view).x
-            onEnded(translation.x + swipeFlickProjection(velocity: velocity))
-        case .cancelled, .failed:
+            onEnded(
+                swipeGestureEndTranslation(
+                    translation: recognizer.translation(in: recognizer.view).x,
+                    velocity: recognizer.velocity(in: recognizer.view).x))
+        case .cancelled:
             onCancelled()
-        default:
+        case nil:
             break
         }
     }
