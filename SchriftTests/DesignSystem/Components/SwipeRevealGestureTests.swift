@@ -271,7 +271,7 @@ final class SwipeRevealGestureTests: XCTestCase {
     /// same recognizer — and what that costs is **not** the axis gate, which reads the tracked
     /// touch's own location and is unaffected: it is `super`'s `translation(in:)`, the centroid
     /// of every touch the pan accepts, which is what the row's offset follows. A finger landing
-    /// mid-swipe would jump the strip.
+    /// mid-swipe would drag the strip off the finger doing the swiping.
     func testTheFactoryBuildsAOneFingerRecognizer() {
         let coordinator = SwipeRevealGesture.Coordinator()
         XCTAssertEqual(

@@ -262,8 +262,10 @@ struct SwipeRevealGesture: UIGestureRecognizerRepresentable {
         // A row swipe is a one-finger gesture. The tracked-touch bookkeeping already keeps the
         // *axis gate* honest with a second finger down — it reads that one touch's location —
         // but `super`'s `translation(in:)` is the centroid of every touch the pan accepts, and
-        // that is what the row's offset follows. Without this a finger landing mid-swipe jumps
-        // the strip sideways.
+        // that is what the row's offset follows. So a finger landing mid-swipe drags the strip
+        // off the finger that is actually swiping — by a jump if UIKit does not re-base the
+        // translation across the touch-count change (undocumented), and by half speed if it
+        // does. Either way this keeps the extra touch away from it.
         recognizer.maximumNumberOfTouches = 1
         return recognizer
     }
