@@ -396,6 +396,10 @@ Schrift/
 │                        MaterialSymbol, OfflineBanner, SearchField, SheetHeader,
 │                        ShareMemberRow, Skeleton, SwipeRevealRow, Switch, TextField,
 │                        Toast (SwiftUI + style resolvers, each with light+dark hex)
+│                        — plus SwipeRevealGesture, the one file here that is not a
+│                        component: the UIKit gesture bridge SwipeRevealRow drags with
+│                        (UIGestureRecognizerRepresentable + pure gates), so it has no
+│                        #Preview catalog and no style resolver
 ├── DesignSystemCatalog/ ComponentCatalogPreview (visual QA catalog)
 ├── Features/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry
@@ -1077,12 +1081,33 @@ new code reads like the surrounding code.
   real defect:
   - **Trailing edge only.** A leading swipe would fight the system's interactive-pop
     gesture on every `NavigationStack` screen.
-  - **`.simultaneousGesture`, never `.gesture` or `.highPriorityGesture`.** A plain
-    `.gesture` competes with the scroll view's pan and claims vertical drags, killing
-    scrolling. Simultaneous lets both run; non-horizontal drags are discarded by an **axis
-    lock decided once** past the slop and then frozen (`swipeDragAxis`, whose ambiguous
-    diagonal resolves *vertical* — the tie goes to the scroll view). There is no supported
-    way to make the scroll view yield, so some diagonal drift is accepted.
+  - **The drag is a UIKit recognizer, not a SwiftUI `DragGesture` — and refusing a drag is not
+    the same as ignoring one.** This shipped as `.simultaneousGesture(DragGesture(...))` with
+    the axis lock applied inside `onChanged`, on the reasoning that "simultaneous lets both
+    run". It does not, reliably, for the *ancestor* `ScrollView`'s pan on iOS 26: a
+    `DragGesture` is **recognized** for every drag past its `minimumDistance` whichever way it
+    went, and discarding the vertical ones downstream leaves the touch already claimed. On
+    Home — the one screen whose rows cover the whole viewport — that left nowhere to start a
+    scroll, and the list did not move at all with more documents than fit. Two independent
+    things fix it, both in `SwipeRevealGesture.swift`:
+    `SwipeRevealPanGestureRecognizer` **refuses** a drag the moment the axis lock proves it
+    non-horizontal (`.failed` while still `.possible`, `.cancelled` after — a pan begins on
+    its own at about the same distance the gate uses, so a diagonal can beat the gate to it),
+    and its coordinator declares `shouldRecognizeSimultaneouslyWith` **at the UIKit level**,
+    which is where the scroll view's pan actually arbitrates. The axis lock itself is
+    unchanged — decided once past the slop and then frozen (`swipeDragAxis`, whose ambiguous
+    diagonal resolves *vertical*, the tie going to the scroll view) — it just runs in the
+    recognizer now instead of downstream of it. Some diagonal drift is still accepted.
+    `DragGesture.Value.predictedEndTranslation` has no UIKit equivalent, so the flick is
+    projected explicitly by `swipeFlickProjection` (Apple's deceleration formula,
+    `v ÷ 1000 × r ÷ (1 − r)`) at UIKit's **fast** rate, not its normal scroll one — the
+    normal rate projects ~0.5s of travel, which clears a 144pt strip's 72pt open threshold on
+    velocity alone at ~145 pt/s and would leave a strip open after almost any release that was
+    still drifting; the recognizer also has a real **cancel** path, which the
+    `DragGesture` never had — it leaned on `.onDisappear` to release a claim the system had
+    taken, leaving close-on-scroll disabled list-wide until some other row completed a drag.
+    **The lesson generalises:** a gesture that must coexist with a scroll view has to decline
+    in the recognizer, not in a callback the recognizer feeds.
   - **Wrap tap-gesture rows, not `Button` rows.** A `Button`'s gesture begins tracking on
     touch-down and can still fire on touch-up *after* a swipe, and nothing cancels it (our
     drag is horizontal, the scroll pan vertical). `SubpageRow` and `PagesTreeDrawer`'s title

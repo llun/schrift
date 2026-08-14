@@ -15,6 +15,51 @@
 > phrasing below as "English is primary" for the shipped state; the §5.7 body
 > is kept as the original plan of record.
 
+> **Revised: 2026-08-13 (the Home list could not scroll).** With more documents
+> than fit the screen, the Home list would not scroll at all. The cause was the
+> swipe gesture the 2026-08-08 revision below introduced: a SwiftUI `DragGesture`
+> is *recognized* for every drag past its `minimumDistance`, whichever direction
+> it went, and `SwipeRevealRow` then discarded the vertical ones inside
+> `onChanged`. That reads as "the scroll view still wins" but is not — by the time
+> the closure runs the recognizer has the touch, and `.simultaneousGesture` does
+> not reliably keep an *ancestor* `ScrollView`'s pan alive on iOS 26. Home is the
+> only screen whose rows cover the entire viewport, so it was the only one with
+> nowhere left to start a scroll; the editor's Subpages section and the Pages
+> drawer both have non-row areas to grab, which is why they looked fine.
+>
+> The drag is now a UIKit `UIPanGestureRecognizer` bridged in with
+> **`UIGestureRecognizerRepresentable`** (`SwipeRevealGesture.swift`). It fixes the
+> arbitration at the level it actually happens: the recognizer **refuses** — rather
+> than ignores — a drag the axis lock proves non-horizontal, and its coordinator
+> declares simultaneous recognition with the scroll view's pan as a
+> `UIGestureRecognizerDelegate`. The pure geometry (`swipeDragAxis`,
+> `swipeRevealOffset`, `swipeRevealSettle`, the widths) is untouched; what changed
+> is where the axis decision runs.
+>
+> **Two things about the feel did change, both deliberately.** First, a row now
+> claims itself (closing whichever sibling was open) when the *pan* begins, which
+> can be a move before the axis lock has judged it — a pan commits at roughly the
+> distance the gate uses, so a near-diagonal reaches `.began` first and is refused
+> after. The old `DragGesture` never claimed until the drag had proved horizontal.
+> The claim is handed straight back through `onCancelled`, so nothing is stuck;
+> what a reader should expect is that a near-diagonal drag can close an open strip
+> and nudge its row a point or two, where before it did neither. A plain scroll
+> closes an open strip anyway, so this widens an existing behaviour rather than
+> introducing one.
+>
+> Second, flick projection —
+> `DragGesture.Value.predictedEndTranslation`, which has no UIKit equivalent — is
+> now computed from the recognizer's velocity by `swipeFlickProjection`, at UIKit's
+> **fast** deceleration rate rather than its normal scroll one. The normal rate
+> projects ~0.5s of travel, which is right for throwing a long list and much too
+> eager for a 144pt strip: it clears the 72pt open threshold on velocity alone at
+> ~145 pt/s, so a row would settle open after almost any release that was still
+> drifting. The fast rate asks for a real flick (~700 pt/s from a standing start).
+> It is a feel constant and wants tuning on a device.
+>
+> The gesture's arbitration was previously called out as "verified by hand", and
+> that is what let this ship. It has a suite now (`SwipeRevealGestureTests`).
+
 > **Revised: 2026-08-08 (swipe actions on document rows).** Document rows now
 > offer **swipe-to-delete** — plus **pin/unpin on Home** — on three surfaces: the
 > Home list, the editor's Subpages section, and the Pages drawer. (Shared and
@@ -32,9 +77,9 @@
 > view's unspecified height proposal.
 >
 > Three consequences worth knowing, all documented in full in
-> [`CLAUDE.md`](../CLAUDE.md): the drag is `.simultaneousGesture` with a
-> decided-once axis lock (a plain `.gesture` claims vertical drags and kills
-> scrolling); `SubpageRow` and the drawer's title were converted off `Button` to
+> [`CLAUDE.md`](../CLAUDE.md): the drag is a **UIKit recognizer** with a
+> decided-once axis lock, and it *refuses* non-horizontal drags rather than
+> ignoring them (see the 2026-08-13 revision above); `SubpageRow` and the drawer's title were converted off `Button` to
 > `.contentShape` + `.onTapGesture`, because a `Button` can still fire on touch-up
 > after a swipe; and the action strip is a **`background` of the content, not a
 > `ZStack` sibling**, or its `maxHeight: .infinity` buttons make the row claim the
