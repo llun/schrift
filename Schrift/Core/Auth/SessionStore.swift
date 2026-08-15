@@ -15,9 +15,11 @@ final class SessionStore {
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
     private let cookieStorage: CookieStoring
-    /// Cleared at sign-in and sign-out — see `signIn`. Deliberately *not* on a mere expiry.
+    /// Cleared when a login hands over its cookies, at sign-in and at sign-out — all three
+    /// through `forgetSignedInIdentity`. Deliberately *not* on a mere expiry, and deliberately
+    /// not left to `signIn` alone: see `noteSessionCookiesReplaced`.
     private let signedInUser: SignedInUserStore
-    /// The Profile screen's offline copy of the account, cleared at exactly the same two
+    /// The Profile screen's offline copy of the account, cleared at exactly the same three
     /// moments and for the same reason: it is *displayed* before any fetch, so a kept entry
     /// would name the previous account on the new one's screen.
     private let cachedUser: CurrentUserCacheStore
@@ -29,7 +31,9 @@ final class SessionStore {
     /// re-login sheet from it) but never persisted: a fresh launch re-derives
     /// it from the first failing request.
     private(set) var needsReauthentication = false
-    /// Bumped by `signIn`, so a screen already on display can tell that the session it was
+    /// Bumped by `signIn` and by `noteSessionCookiesReplaced` — the two moments the session
+    /// underneath a live screen can become a different account's — so a screen already on
+    /// display can tell that the session it was
     /// showing has been replaced. Clearing the stores is only half of session-scoping the
     /// account row: `ProfileViewModel` is `@State` in `MainTabView`, which is **not** rebuilt
     /// across a re-login (the sheet is presented over it), so its in-memory user outlives the
