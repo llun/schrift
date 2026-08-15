@@ -261,6 +261,83 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(cookieStorage.storedCookies.isEmpty)
     }
 
+    // MARK: - Cached account profile
+
+    /// Sign-in is the moment a possibly-different account takes over, and the cached profile
+    /// is shown *before* any fetch — so a kept entry would put the previous user's name and
+    /// email on the new user's Profile screen, indefinitely if they are offline.
+    func testSignInForgetsThePreviousAccountsCachedProfile() throws {
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+
+        try store.signIn(serverURL: serverURL)
+
+        XCTAssertNil(cache.user)
+    }
+
+    /// Unlike pending-create records — which survive because they may be the only copy of a
+    /// document — this is re-fetchable server data about the session that just ended.
+    func testSignOutForgetsTheCachedProfile() throws {
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
+
+        try store.signOut()
+
+        XCTAssertNil(cache.user)
+    }
+
+    /// The twin of `testExpiringASessionKeepsTheAccountId`, and the same contract: a dismissed
+    /// re-login sheet keeps showing what it already showed, so a transient 401 must not empty
+    /// the account row.
+    func testExpiringASessionKeepsTheCachedProfile() throws {
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
+
+        store.noteSessionExpired()
+
+        XCTAssertEqual(cache.user?.email, "ada@example.org")
+    }
+
+    /// Clearing the store is only half of session-scoping the account row: `ProfileViewModel`
+    /// is `@State` in `MainTabView`, which survives a re-login, so its in-memory copy needs a
+    /// reason to be re-read. This counter is that reason — `ProfileScreen` keys its `.task` on
+    /// it, so answering the sheet as a different account re-runs `load()` instead of leaving
+    /// the previous account's email on screen until the user happens to switch tabs.
+    func testSignInAdvancesTheSignInGenerationSoOpenScreensReload() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let before = store.signInGeneration
+
+        try store.signIn(serverURL: serverURL)
+
+        XCTAssertEqual(store.signInGeneration, before + 1)
+    }
+
+    /// It marks a *change of session*, not a failure of one — a dismissed sheet must not
+    /// re-run every screen's load.
+    func testExpiringASessionDoesNotAdvanceTheSignInGeneration() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        let afterSignIn = store.signInGeneration
+
+        store.noteSessionExpired()
+        store.cancelReauthentication()
+
+        XCTAssertEqual(store.signInGeneration, afterSignIn)
+    }
+
     // MARK: - Reauthentication flag
 
     func testNoteSessionExpiredSetsFlagOnlyWhenAuthenticated() throws {

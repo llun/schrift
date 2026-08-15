@@ -55,6 +55,7 @@ final class HomeViewModelTests: XCTestCase {
         cache: DocumentCacheStore? = nil,
         userDefaults: UserDefaults? = nil,
         signedInUser: SignedInUserStore? = nil,
+        cachedUser: CurrentUserCacheStore? = nil,
         diagnostics: APIDiagnosticsLog? = nil
     ) -> HomeViewModel {
         // The client records into the same log the view model reads, exactly as RootView
@@ -100,6 +101,7 @@ final class HomeViewModelTests: XCTestCase {
             saveCoordinator: coordinator,
             userDefaults: userDefaults ?? preferences,
             signedInUser: signedInUser ?? makeSignedInUser(userID: nil),
+            cachedUser: cachedUser ?? CurrentUserCacheStore(userDefaults: defaults),
             diagnostics: diagnostics
         )
     }
@@ -1509,5 +1511,38 @@ final class HomeViewModelTests: XCTestCase {
 
         XCTAssertEqual(log.count(ofMethod: "DELETE"), 0, "there is nothing on the server to delete")
         XCTAssertTrue(viewModel.recentDocuments.isEmpty)
+    }
+
+    // MARK: - Caching the account for offline display
+
+    /// This runs at launch and after re-authentication, and it is the only `/users/me/` a user
+    /// who never opens Profile while online ever makes. Without the write-through, their first
+    /// offline visit to Profile would still have nothing to show — the bug, moved rather than
+    /// fixed. The response is already in hand, so the cache costs no extra request.
+    func testRefreshingTheSignedInUserCachesTheProfileForOfflineDisplay() async {
+        let suiteName = "HomeViewModelTests.profileCache.\(UUID().uuidString)"
+        coordinatorSuiteNames.append(suiteName)
+        let cachedUser = CurrentUserCacheStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(
+                    """
+                    {"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org",
+                     "full_name":"Ada Lovelace","short_name":"Ada","language":"en-us"}
+                    """.utf8),
+                error: nil)
+        }
+        let signedIn = makeSignedInUser(userID: nil)
+        let viewModel = makeViewModel(signedInUser: signedIn, cachedUser: cachedUser)
+
+        await viewModel.refreshSignedInUser()
+
+        XCTAssertEqual(cachedUser.user?.email, "ada@example.org")
+        XCTAssertEqual(cachedUser.user?.fullName, "Ada Lovelace")
+        // The method's other write-through, otherwise untested anywhere: this is the only
+        // call to `refreshSignedInUser` in the suite, and the id is what gates whether an
+        // offline-created document may be listed or replayed at all.
+        XCTAssertEqual(signedIn.userID, UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
     }
 }

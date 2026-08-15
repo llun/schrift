@@ -2,6 +2,25 @@ import XCTest
 
 @testable import Schrift
 
+/// The Profile row's own title, which is the email and not `accountDisplayName` (the handoff
+/// puts the address there). Blank-vs-absent is the whole point: a server sending `""` used to
+/// render a visually empty row, since `?? "—"` only covers nil.
+final class AccountRowTitleTests: XCTestCase {
+    func testUsesTheEmail() {
+        XCTAssertEqual(accountRowEmail(CurrentUser(email: "ada@example.org")), "ada@example.org")
+    }
+
+    func testTreatsABlankEmailAsAbsentSoTheRowShowsItsPlaceholder() {
+        XCTAssertNil(accountRowEmail(CurrentUser(email: "   ")))
+        XCTAssertNil(accountRowEmail(CurrentUser(email: "")))
+    }
+
+    func testIsNilWithNoUserOrNoEmail() {
+        XCTAssertNil(accountRowEmail(nil))
+        XCTAssertNil(accountRowEmail(CurrentUser(fullName: "Ada Lovelace")))
+    }
+}
+
 /// `accountDisplayName` decides whether there is an account to show at all, so
 /// its `nil` cases are the ones that matter: returning a placeholder instead
 /// would render a person named "Untitled" that reads as real data.

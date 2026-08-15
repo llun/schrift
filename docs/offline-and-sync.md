@@ -1091,6 +1091,130 @@ time on the client (the encoder reads the origin off its own `baseURL`), so a
 draft written before this feature existed still encodes as a `file` node when it
 finally syncs.
 
+### 8. The account's profile: `CurrentUserCacheStore` (2026-08-15)
+
+The Profile screen showed **"—"** where the account's email belongs whenever the
+device was offline, and its account detail was unreachable behind a disabled row —
+on a screen whose every other row (appearance, language, server host, app version)
+renders fine with no network. The cause was that `/users/me/` is the only source of
+those fields and `ProfileViewModel` held the response in memory only: `load()`
+assigned `user = await fetchedUser` from a `try?`, so a failed fetch actively
+replaced whatever was there with `nil`.
+
+`CurrentUserCacheStore` (`dev.llun.Schrift.currentUser`, a JSON `CurrentUser` in
+UserDefaults, read-through like `SignedInUserStore`) gives that row the same
+treatment the document lists already get from `DocumentCacheStore`:
+
+- **Seeded synchronously in `ProfileViewModel.init`.** The screen renders `user` in
+  its `body` and only then runs `.task`, so anything awaited is a frame too late to
+  be the sole source — offline, that frame's placeholder was the permanent state.
+- **`load()` takes its user from a successful fetch, and otherwise re-reads the
+  store** — it never keeps what is already on screen. The entry on disk survives a
+  failed fetch, so offline the row is unchanged; but the in-memory copy is not the
+  session-scoped one and the store is, which matters twice. `ProfileViewModel` is
+  `@State` in `MainTabView`, and `MainTabView` is **not** rebuilt across a re-login
+  (the sheet is presented over it while `isAuthenticated` stays true), so a retained
+  `user` can belong to the account that just went away — after re-authenticating as
+  somebody else, keeping it would display the previous account's email until a fetch
+  succeeded. And at launch `MainTabView.init` runs *before* `RootView`'s task fills
+  the cache, so a one-shot seed would leave Profile empty for the rest of the session
+  if the network died in between. The server-version row, which hides itself when
+  nil, is deliberately *not* preserved — it describes the server, which may have been
+  upgraded since.
+- **A response carrying no account detail counts as no answer.** Every field is
+  `decodeIfPresent`, so a `200` answering `{}` is a valid all-nil `CurrentUser` that
+  would pass a bare `if let` and destroy a good profile; `carriesAccountDetail` gates
+  both the display and the write-through (`CurrentUserCacheStore.remember` applies it
+  too, so the `HomeViewModel` caller is covered). An id with no name or email *is* an
+  answer — that is this account, and a row falling back to "—" is honest where
+  forgetting the account is not. `language` is deliberately excluded from the test:
+  it is a preference, not identity, so a payload carrying only that would be one
+  junk field short of `{}` and would destroy a good profile through the very guard
+  written to stop it.
+- **Two callers write through**: `ProfileViewModel.load` and
+  `HomeViewModel.refreshSignedInUser` (launch and post-re-auth). Without the
+  second, a user who signs in and never opens Profile while online would still
+  find nothing cached on their first offline visit — the bug moved, not fixed.
+  The app's other `/users/me/` calls deliberately stay out of it: the save
+  coordinator's three replay gates and RootView's awareness provider take only the
+  id or the display name from the response, and none of them is a Profile refresh.
+- **The re-seed happens *before* the fetch, and nothing learned under a replaced
+  session may be written after it.** `load()`'s first line that touches `user` re-reads the store, so a
+  session change blanks the row at once rather than after a round trip — or after a
+  ~60s timeout, if connectivity died right after the re-login, all of it spent
+  displaying an account that is gone with its detail screen one tap away. On an
+  ordinary visit the store holds what is already on screen, so that line is a no-op.
+  And because keying the task on the session makes `load()` restartable, the restart
+  *cancels* the load in flight: cancellation is cooperative, so both awaits are
+  followed by a `Task.isCancelled` guard, or a load whose `/users/me/` had already
+  resolved would resume and write the previous account back into both stores —
+  re-arming `SignedInUserStore`, which gates whose unsynced documents may be listed
+  and replayed. `signedInUser.remember` sits beside the user write, before the second
+  await, so there is one such window rather than two.
+- **The row reloads on a *session* change, not only on appearing.** Clearing the
+  store is half of scoping the row to the session; the other half is that
+  `ProfileViewModel` is `@State` in `MainTabView`, which the re-login sheet is
+  presented *over*, so a plain `.task` never re-runs after the sheet is answered.
+  `SessionStore.signInGeneration` — bumped by `signIn`, never by an expiry or a
+  cancel, since a dismissed sheet must keep showing what it showed — keys
+  `ProfileScreen`'s `.task`. Without it the round-1 re-read fixes the *value* while
+  nothing asks for it, and the previous account's row survives until the user
+  happens to switch tabs.
+- **One predicate decides whether the row is tappable**: `accountDisplayName`, the
+  same one `AccountScreen` branches on. `user != nil` is not the same question — an
+  id-only response satisfies it and pushes straight into the unavailable state, and
+  now that such a response is *cached* it would do so on every launch.
+- **Cleared at sign-in *and* sign-out**, in `SessionStore` beside
+  `SignedInUserStore.clear()` (plus RootView's belt-and-braces call — deliberately
+  unlike §6's "called from RootView's `onSignOut`, **not** from
+  `SessionStore.signOut()`" rule, which is about the *content* caches: this one has
+  to go on sign-*in* as well, which only `SessionStore` sees). Unlike the
+  drafts, create records, tombstones and queued photos — which survive a sign-out
+  because they may be a document's only copy — this is re-fetchable server data
+  whose only use is naming the current account, and it is *displayed before any
+  fetch*, so a kept entry would put the previous user's name and email on the new
+  user's screen, indefinitely if they are offline.
+- **Cleartext PII at rest, accepted deliberately.** The entry holds an email and a
+  full name in a UserDefaults plist, which — unlike `DocumentContentCacheStore` — is
+  backup-included. Keychain is the wrong home (not a credential; the
+  background-launch readability argument applies as it does to `SignedInUserStore`),
+  and the exposure is comparable to the document *titles* `DocumentCacheStore`
+  already keeps beside it. It is never logged or transmitted, and it goes at
+  sign-in and sign-out.
+- **Kept separate from `SignedInUserStore`, deliberately.** That store answers
+  *whose session is this*, which gates what may be listed and sent for offline
+  documents — a wrong answer sends one user's work into another's account — so it
+  stays written only from a live fetch and fails closed. This one answers *what do
+  we show*, where staleness costs a name one rename out of date. Hence
+  `ProfileViewModel` seeds its display from the cache but passes only the
+  **fetched** id to `signedInUser.remember`.
+
+An undecodable blob (a later schema) reads as no user, which degrades to exactly the
+pre-cache behavior: both readers already render "we have nothing" for nil.
+
+**Two accepted residuals, both strictly narrower than what this closes.** A re-login
+that completes while the *Account detail* is pushed leaves that screen naming the
+previous account until the user pops back — `ProfileScreen`'s `.task` is not running
+while the detail covers it, and the detail is handed `profileViewModel.user`. And the
+cancellation guard is a *check*, not a barrier: if the old load's continuation is
+scheduled ahead of the cancel on the main actor, it still writes. Closing that one
+properly means comparing a captured `signInGeneration`, which would mean handing the
+view model the session identity — not worth it for a window this narrow, which the
+restarted load then corrects anyway.
+
+**One pre-existing gap this store inherits, stated so the clearing guarantee above is
+not read as absolute.** `WebLoginView`'s coordinator syncs the web view's cookies into
+`HTTPCookieStorage.shared` *before* the confirming `GET users/me/` runs, and
+`ReauthenticationViewModel.handleLoginComplete` calls `signIn` only if that request
+succeeds. So a transport blip on the confirm leaves the new account's cookies live
+while nothing was cleared — and if the user then dismisses the sheet the state is
+stable, because the new session no longer 401s. Until the next successful `/users/me/`
+(app relaunch, or a Profile visit) the app runs with B's cookies, A's cached profile
+and A's `signedInUserID`. The display half is new here; the `SignedInUserStore` half
+predates it and is the worse one, since a document minted in that window is stamped
+with A and replays into B's account. Tracked separately — the fix belongs in the
+sign-in flow (clear on cookie capture, or confirm before syncing), not in this store.
+
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
 Offline *creation* has landed — the non-goal above is withdrawn — and its **storage, its safety gates
