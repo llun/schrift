@@ -1,0 +1,37 @@
+CLAUDE.md
+  s_ea1c5b51f563a4::t_bf781eb0a03e73 2946-2949
+Schrift/Features/Profile/ProfileViewModel.swift
+  s_ea1c5b51f563a4::t_867881a7c2d3f8 32-41,43-44,48-54,59-61,69-70,72-77
+SchriftTests/Features/Profile/AccountDisplayNameTests.swift
+  s_ea1c5b51f563a4::t_c0e594b8a06aa5 5-23
+Schrift/Features/Profile/AccountScreen.swift
+  s_ea1c5b51f563a4::t_c5c029293ac82e 25-35
+Schrift/Features/Home/MainTabView.swift
+  s_ea1c5b51f563a4::t_63c8afd5110c5f 243-244
+  s_ea1c5b51f563a4::t_c5c029293ac82e 41-42,61
+Schrift/Features/Profile/ProfileScreen.swift
+  s_ea1c5b51f563a4::t_c5c029293ac82e 8-12,93
+  s_ea1c5b51f563a4::t_63c8afd5110c5f 197
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_ea1c5b51f563a4::t_bf781eb0a03e73 273-274,285-286,301-302,318-319,330-331
+Schrift/Core/Auth/CurrentUserCacheStore.swift
+  s_ea1c5b51f563a4::t_63c8afd5110c5f 13,46-52
+SchriftTests/Features/Profile/ProfileViewModelTests.swift
+  s_ea1c5b51f563a4::t_028845a43ca402 216-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "15119e7b5d778532118955b9127f1f4e2a92ccdc",
+  "prompts": {},
+  "sessions": {
+    "s_ea1c5b51f563a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9fcd7bc-948d-4d16-a3a3-10884ecce61c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
