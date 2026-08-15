@@ -1,0 +1,21 @@
+SchriftTests/DesignSystem/Components/SwipeRevealRowGeometryTests.swift
+  s_f27958f65ad0af::t_7bfdee704a51af 136-253
+Schrift/DesignSystem/Components/SwipeRevealRow.swift
+  s_f27958f65ad0af::t_953a44a8140c5e 365-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "eac9c629073ea43936d04c5713751472797f398b",
+  "prompts": {},
+  "sessions": {
+    "s_f27958f65ad0af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b0c4fe0-4b61-417c-8c94-765dc9e12c22",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
