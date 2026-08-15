@@ -36,6 +36,9 @@ struct MainTabView: View {
     let serverHost: String
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
     let serverOrigin: String
+    /// Advanced by every sign-in, including one made through the re-login sheet — which this
+    /// shell survives, so a tab holding account-scoped state must be told to re-read it.
+    var signInGeneration: Int = 0
     var onSignOut: () -> Void = {}
 
     @State private var selectedTab: AppTab = .docs
@@ -54,11 +57,13 @@ struct MainTabView: View {
     @State private var profileViewModel: ProfileViewModel
 
     init(
-        viewModel: HomeViewModel, serverHost: String, serverOrigin: String, onSignOut: @escaping () -> Void = {}
+        viewModel: HomeViewModel, serverHost: String, serverOrigin: String, signInGeneration: Int = 0,
+        onSignOut: @escaping () -> Void = {}
     ) {
         self.viewModel = viewModel
         self.serverHost = serverHost
         self.serverOrigin = serverOrigin
+        self.signInGeneration = signInGeneration
         self.onSignOut = onSignOut
         // The coordinator so these tabs can strike through a document whose deletion is
         // queued, and offer the undo. Home's own list reads it directly (it owns the
@@ -156,6 +161,7 @@ struct MainTabView: View {
                 viewModel: profileViewModel,
                 serverHost: serverHost,
                 isOffline: viewModel.isOffline,
+                signInGeneration: signInGeneration,
                 onSignOut: onSignOut
             )
             .navigationDestination(for: ProfileRoute.self) { route in

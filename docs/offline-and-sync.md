@@ -1127,11 +1127,30 @@ treatment the document lists already get from `DocumentCacheStore`:
   both the display and the write-through (`CurrentUserCacheStore.remember` applies it
   too, so the `HomeViewModel` caller is covered). An id with no name or email *is* an
   answer — that is this account, and a row falling back to "—" is honest where
-  forgetting the account is not.
-- **Both `/users/me/` callers write through**: `ProfileViewModel.load` and
+  forgetting the account is not. `language` is deliberately excluded from the test:
+  it is a preference, not identity, so a payload carrying only that would be one
+  junk field short of `{}` and would destroy a good profile through the very guard
+  written to stop it.
+- **Two callers write through**: `ProfileViewModel.load` and
   `HomeViewModel.refreshSignedInUser` (launch and post-re-auth). Without the
   second, a user who signs in and never opens Profile while online would still
   find nothing cached on their first offline visit — the bug moved, not fixed.
+  The app's other `/users/me/` calls deliberately stay out of it: the save
+  coordinator's three replay gates and RootView's awareness provider take only the
+  id or the display name from the response, and none of them is a Profile refresh.
+- **The row reloads on a *session* change, not only on appearing.** Clearing the
+  store is half of scoping the row to the session; the other half is that
+  `ProfileViewModel` is `@State` in `MainTabView`, which the re-login sheet is
+  presented *over*, so a plain `.task` never re-runs after the sheet is answered.
+  `SessionStore.signInGeneration` — bumped by `signIn`, never by an expiry or a
+  cancel, since a dismissed sheet must keep showing what it showed — keys
+  `ProfileScreen`'s `.task`. Without it the round-1 re-read fixes the *value* while
+  nothing asks for it, and the previous account's row survives until the user
+  happens to switch tabs.
+- **One predicate decides whether the row is tappable**: `accountDisplayName`, the
+  same one `AccountScreen` branches on. `user != nil` is not the same question — an
+  id-only response satisfies it and pushes straight into the unavailable state, and
+  now that such a response is *cached* it would do so on every launch.
 - **Cleared at sign-in *and* sign-out**, in `SessionStore` beside
   `SignedInUserStore.clear()` (plus RootView's belt-and-braces call — deliberately
   unlike §6's "called from RootView's `onSignOut`, **not** from
@@ -1142,6 +1161,13 @@ treatment the document lists already get from `DocumentCacheStore`:
   whose only use is naming the current account, and it is *displayed before any
   fetch*, so a kept entry would put the previous user's name and email on the new
   user's screen, indefinitely if they are offline.
+- **Cleartext PII at rest, accepted deliberately.** The entry holds an email and a
+  full name in a UserDefaults plist, which — unlike `DocumentContentCacheStore` — is
+  backup-included. Keychain is the wrong home (not a credential; the
+  background-launch readability argument applies as it does to `SignedInUserStore`),
+  and the exposure is comparable to the document *titles* `DocumentCacheStore`
+  already keeps beside it. It is never logged or transmitted, and it goes at
+  sign-in and sign-out.
 - **Kept separate from `SignedInUserStore`, deliberately.** That store answers
   *whose session is this*, which gates what may be listed and sent for offline
   documents — a wrong answer sends one user's work into another's account — so it

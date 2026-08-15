@@ -2958,8 +2958,9 @@ markdown write endpoint**. Understand this before touching the save path:
   queued photos in `PendingAttachmentStore` (records *and* JPEG bytes, backup-included
   and owner-scoped for exactly the same reason — an un-uploaded photo exists nowhere
   else); the full bodies in `DocumentContentCacheStore` are, and so is the account
-  profile in `CurrentUserCacheStore` (next bullet — the one store cleared in
-  `SessionStore` itself rather than only in RootView). That clearing lives in
+  profile in `CurrentUserCacheStore` (next bullet — cleared, like the account id
+  beside it, in `SessionStore` itself and not only in RootView, because it has to go
+  on sign-*in* too, which only `SessionStore` sees). That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it
   explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
@@ -2982,9 +2983,12 @@ markdown write endpoint**. Understand this before touching the save path:
   if the network died in between. A response carrying **no** account detail at all
   (`{}` decodes to an all-nil `CurrentUser` — every field is `decodeIfPresent`) counts
   as answering nothing, or it would sail past `if let` and destroy a good profile;
-  an id with no name still counts as an answer. Both `/users/me/` callers write through
-  (`ProfileViewModel.load`, `HomeViewModel.refreshSignedInUser` — without the
-  second, a user who never opens Profile while online still has nothing cached).
+  an id with no name still counts as an answer. **Two** of the app's `/users/me/`
+  callers write through — `ProfileViewModel.load` and
+  `HomeViewModel.refreshSignedInUser` (without the second, a user who never opens
+  Profile while online still has nothing cached). The others deliberately do not:
+  the save coordinator's three replay gates and RootView's awareness provider read
+  only the id or the display name, and none of them is a Profile refresh.
   Unlike the stores above it is **cleared at sign-in *and* sign-out**
   (`SessionStore`, plus RootView's belt-and-braces call): it is re-fetchable server
   data with no unsynced-work argument, and it is *displayed* before any fetch, so a
@@ -2993,7 +2997,13 @@ markdown write endpoint**. Understand this before touching the save path:
   that one answers *whose session is this*, gating what may be listed and sent for
   another account's unsynced documents, so it stays written only from a live fetch —
   `ProfileViewModel` seeds its display from the cache but never lets a cached id
-  reach `remember`.
+  reach `remember`. Clearing the store is only half of session-scoping the row: the
+  view model is `@State` in `MainTabView`, which the re-login sheet is presented
+  *over*, so `SessionStore.signInGeneration` (bumped by `signIn`, never by an expiry
+  or a cancel) keys `ProfileScreen`'s `.task` and makes an answered sheet re-run
+  `load()` — otherwise the previous account's row survives until the user happens to
+  switch tabs. The one predicate that decides whether that row is *tappable* is
+  `accountDisplayName`, the same one `AccountScreen` branches on.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.

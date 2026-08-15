@@ -83,6 +83,18 @@ final class CurrentUserCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.user, ada)
     }
 
+    /// `language` is a *preference*, not identity: a payload carrying only that says nothing
+    /// about who is signed in, so letting it through would destroy a good profile — one junk
+    /// field short of the `{}` case above.
+    func testAUserCarryingOnlyALanguageIsIgnored() {
+        let store = CurrentUserCacheStore(userDefaults: defaults)
+        store.remember(ada)
+
+        store.remember(CurrentUser(language: "en-us"))
+
+        XCTAssertEqual(store.user, ada)
+    }
+
     /// The mirror of the rule above: an id with no name or email is still *this* account, and
     /// the display falling back to "—" is honest where forgetting the account is not.
     func testAUserWithOnlyAnIdIsStillRemembered() {

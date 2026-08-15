@@ -4,6 +4,9 @@ struct ProfileScreen: View {
     @Bindable var viewModel: ProfileViewModel
     let serverHost: String
     var isOffline: Bool = false
+    /// Changes whenever a sign-in replaces the session — including one made through the
+    /// re-login sheet, which this screen survives. See the `.task` below.
+    var signInGeneration: Int = 0
     var onSignOut: () -> Void
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
@@ -53,7 +56,12 @@ struct ProfileScreen: View {
         .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
         .navigationTitle(loc[.profile_title])
-        .task { await viewModel.load() }
+        // Keyed on the session, not just on appearing. The re-login sheet is presented
+        // *over* this screen, so a plain `.task` never re-runs after it is answered — and
+        // the view model is `@State` in `MainTabView`, which survives the sheet too. Left
+        // unkeyed, an account row loaded for the previous user stays on screen (and stays
+        // tappable through to their detail) until the user happens to switch tabs.
+        .task(id: signInGeneration) { await viewModel.load() }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
                 .presentationDetents([.height(appearanceSheetHeight)])
@@ -85,13 +93,14 @@ struct ProfileScreen: View {
                 }
             }
             .buttonStyle(.plain)
-            // Nothing to push into until there is an account to describe, from the
-            // fetch or from `CurrentUserCacheStore` — the detail screen would have
-            // nothing to show but its own unavailable message. Offline is no longer
-            // that state: the cached profile makes this row live without a network,
-            // and it stays disabled only before the first successful fetch of a
-            // session (or after one that answered with nothing).
-            .disabled(viewModel.user == nil)
+            // Enabled exactly when the detail screen has something to render, which is
+            // `accountDisplayName` — the predicate `AccountScreen` itself branches on.
+            // Asking `user == nil` instead lets an id-only response (no name, no email)
+            // enable a row that pushes straight into "we have nothing", and since that
+            // response is now *cached*, it would do so on every launch rather than once.
+            // Offline is no longer the userless state: a cached profile makes this row
+            // live with no network.
+            .disabled(accountDisplayName(viewModel.user) == nil)
         }
     }
 

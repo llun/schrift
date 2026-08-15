@@ -41,6 +41,11 @@ struct CurrentUserCacheStore {
     /// this build cannot decode what an earlier one wrote. Both readers already render "we have
     /// nothing" for nil (the row's placeholder, the detail's unavailable state), so a schema
     /// change degrades to exactly the pre-cache behavior rather than throwing.
+    /// The **bare** coder pair is deliberate on both sides, and they have to stay a pair: this
+    /// is our own on-disk record, not an API payload, so the keys are `CurrentUser`'s own
+    /// camelCase `CodingKeys`. Switching this to `JSONDecoder.docsAPI` (the rule for *responses*)
+    /// would look like a fix and fail silently — every field is `decodeIfPresent`, so a
+    /// snake_case decode of camelCase data yields an all-nil user rather than an error.
     var user: CurrentUser? {
         guard let data = userDefaults.data(forKey: Self.key) else { return nil }
         return try? JSONDecoder().decode(CurrentUser.self, from: data)
@@ -69,9 +74,12 @@ extension CurrentUser {
     /// Whether this response says anything at all about an account, and so whether it is worth
     /// showing or storing. An id with no name or email still counts — that is *this* account,
     /// and a row falling back to "—" is honest where forgetting the account is not.
+    /// `language` is deliberately **not** in the list: it is a preference, not identity, so a
+    /// payload carrying only that would be one junk field short of `{}` and would destroy a
+    /// good profile through the very guard written to prevent it.
     var carriesAccountDetail: Bool {
         if id != nil { return true }
-        return [email, fullName, shortName, language].contains { field in
+        return [email, fullName, shortName].contains { field in
             guard let field else { return false }
             return !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }

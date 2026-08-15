@@ -29,6 +29,16 @@ final class SessionStore {
     /// re-login sheet from it) but never persisted: a fresh launch re-derives
     /// it from the first failing request.
     private(set) var needsReauthentication = false
+    /// Bumped by `signIn`, so a screen already on display can tell that the session it was
+    /// showing has been replaced. Clearing the stores is only half of session-scoping the
+    /// account row: `ProfileViewModel` is `@State` in `MainTabView`, which is **not** rebuilt
+    /// across a re-login (the sheet is presented over it), so its in-memory user outlives the
+    /// account it belongs to and needs a reason to be re-read. `ProfileScreen` keys its `.task`
+    /// on this. Deliberately not bumped by an expiry or a cancel — that is a failure of a
+    /// session, not a change of one, and the dismissed-sheet contract is that cached data
+    /// keeps showing. Never persisted: what matters is only that it *changes* within a
+    /// process, and a fresh launch rebuilds every screen anyway.
+    private(set) var signInGeneration = 0
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -84,6 +94,8 @@ final class SessionStore {
         // The account's displayed profile goes with the id, and here rather than at expiry for
         // the same reason: a dismissed re-login sheet must keep showing what it already showed.
         cachedUser.clear()
+        // Tell screens that survived the sheet to re-read what they are showing.
+        signInGeneration += 1
     }
 
     func signOut() throws {

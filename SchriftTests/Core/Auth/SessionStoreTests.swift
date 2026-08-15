@@ -291,6 +291,48 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertNil(cache.user)
     }
 
+    /// The twin of `testExpiringASessionKeepsTheAccountId`, and the same contract: a dismissed
+    /// re-login sheet keeps showing what it already showed, so a transient 401 must not empty
+    /// the account row.
+    func testExpiringASessionKeepsTheCachedProfile() throws {
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
+
+        store.noteSessionExpired()
+
+        XCTAssertEqual(cache.user?.email, "ada@example.org")
+    }
+
+    /// Clearing the store is only half of session-scoping the account row: `ProfileViewModel`
+    /// is `@State` in `MainTabView`, which survives a re-login, so its in-memory copy needs a
+    /// reason to be re-read. This counter is that reason — `ProfileScreen` keys its `.task` on
+    /// it, so answering the sheet as a different account re-runs `load()` instead of leaving
+    /// the previous account's email on screen until the user happens to switch tabs.
+    func testSignInAdvancesTheSignInGenerationSoOpenScreensReload() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        let before = store.signInGeneration
+
+        try store.signIn(serverURL: serverURL)
+
+        XCTAssertEqual(store.signInGeneration, before + 1)
+    }
+
+    /// It marks a *change of session*, not a failure of one — a dismissed sheet must not
+    /// re-run every screen's load.
+    func testExpiringASessionDoesNotAdvanceTheSignInGeneration() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        let afterSignIn = store.signInGeneration
+
+        store.noteSessionExpired()
+        store.cancelReauthentication()
+
+        XCTAssertEqual(store.signInGeneration, afterSignIn)
+    }
+
     // MARK: - Reauthentication flag
 
     func testNoteSessionExpiredSetsFlagOnlyWhenAuthenticated() throws {
