@@ -228,10 +228,23 @@ final class PagesTreeViewModelTests: XCTestCase {
 
     /// A list fetch that started before the create carries a pre-create
     /// snapshot; letting it land would drop the page the user just made.
+    ///
+    /// The two orderings this needs are stated, not timed. The GET must be **in flight**
+    /// before the create runs — that is what `waitUntil` pins, and it is also what proves
+    /// the fetch captured its `mutations` stamp, since `load` reads that stamp on the main
+    /// actor before it suspends. The snapshot must then land **after** the create resolved,
+    /// which is the gate; `Stub(delay:)` could only bet an interval against the machine.
+    ///
+    /// Worth knowing what losing that bet costs *here*, because it is not a failure: with
+    /// the GET delivered first the level is already known, the create appends to it, and
+    /// the assertion still reads `[childID, createdID]` — so the test goes **vacuous**,
+    /// passing green while guarding nothing. The visible half of the same slip is its
+    /// sibling below, which is what actually went red on CI.
     func testAnInFlightFetchCannotDropAJustCreatedPage() async {
         let (viewModel, cache) = makeViewModel()
         cache.save([document(childID, title: "Existing")], for: rootID)
         let log = RequestRecorder()
+        let staleSnapshot = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [childID, createdID] request in
             log.record(request)
             if request.httpMethod == "POST" {
@@ -239,15 +252,16 @@ final class PagesTreeViewModelTests: XCTestCase {
                     statusCode: 201, headers: [:],
                     body: Data(Self.documentFixture(id: createdID, title: "Untitled subpage").utf8), error: nil)
             }
-            // The pre-create snapshot, held open so the create resolves first.
+            // The pre-create snapshot, held until the create has resolved.
             return .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(childID, "Existing")]), error: nil,
-                delay: 0.3)
+                releasedBy: staleSnapshot)
         }
 
         async let slowLoad: Void = viewModel.loadRoot()
         await waitUntil { log.count(ofMethod: "GET") == 1 }
         _ = await viewModel.addPage(under: rootID)
+        staleSnapshot.open()
         await slowLoad
 
         XCTAssertEqual(
@@ -259,9 +273,16 @@ final class PagesTreeViewModelTests: XCTestCase {
     /// create that *declined* to append (unknown level) would block the in-flight
     /// fetch too — and then neither writer fills the level, so a document that
     /// just got its first child reads as "No subpages yet".
+    ///
+    /// Gated for the same reason as its sibling above: the create must resolve into an
+    /// **unknown** level, which is only true while the fetch is still held. Timed, a
+    /// runner that delivered the GET first made the level known, the create appended to
+    /// it, and the assertion saw `[childID, createdID]` — a failure with nothing behind
+    /// it but load.
     func testACreateIntoAnUnknownLevelStillLetsTheFetchLand() async {
         let (viewModel, cache) = makeViewModel()
         let log = RequestRecorder()
+        let coldSnapshot = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [childID, createdID] request in
             log.record(request)
             if request.httpMethod == "POST" {
@@ -271,13 +292,14 @@ final class PagesTreeViewModelTests: XCTestCase {
             }
             return .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(childID, "From the server")]), error: nil,
-                delay: 0.3)
+                releasedBy: coldSnapshot)
         }
 
         // Nothing cached: this fetch is the only thing that can populate the level.
         async let coldLoad: Void = viewModel.loadRoot()
         await waitUntil { log.count(ofMethod: "GET") == 1 }
         _ = await viewModel.addPage(under: rootID)
+        coldSnapshot.open()
         await coldLoad
 
         XCTAssertEqual(
