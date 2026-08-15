@@ -1,0 +1,38 @@
+Schrift/Core/Auth/CurrentUserCacheStore.swift
+  s_50339f085f130b::t_1da67b3c974656 22
+Schrift/Features/Home/HomeViewModel.swift
+  s_50339f085f130b::t_1da67b3c974656 453-456
+  s_50339f085f130b::t_e39c74931582eb 435-437
+Schrift/Core/Auth/SignedInUserStore.swift
+  s_50339f085f130b::t_1da67b3c974656 51-54
+SchriftTests/Features/Editor/EditorPhotoInsertionTests.swift
+  s_50339f085f130b::t_f21c39f8797194 1020-1023,1026-1027
+  s_50339f085f130b::t_1b0bf4babd6c3b 1017-1019,1024-1025
+  s_50339f085f130b::t_c19aceb77fe8de 1004-1016,1028-1034
+docs/offline-and-sync.md
+  s_50339f085f130b::t_a1d89801fbe3b8 1263-1269
+  s_50339f085f130b::t_c0d6c0c7e63428 1271-1273
+Schrift/Features/Editor/EditorViewModel.swift
+  s_50339f085f130b::t_af5f1aa1788160 2167-2176
+CLAUDE.md
+  s_50339f085f130b::t_a1d89801fbe3b8 3055-3059
+  s_50339f085f130b::t_fd3d4930a821af 3061-3062,3068-3069
+Schrift/App/RootView.swift
+  s_50339f085f130b::t_82e8ba7796b4fb 134-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "55f43d838f0829d77390edfe455eca8defc3016b",
+  "prompts": {},
+  "sessions": {
+    "s_50339f085f130b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2702dd8e-d1c1-4603-b216-554b89f4fad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
