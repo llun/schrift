@@ -3003,7 +3003,12 @@ markdown write endpoint**. Understand this before touching the save path:
   *over*, so `SessionStore.signInGeneration` (bumped by `signIn`, never by an expiry
   or a cancel) keys `ProfileScreen`'s `.task` and makes an answered sheet re-run
   `load()` — otherwise the previous account's row survives until the user happens to
-  switch tabs. The one predicate that decides whether that row is *tappable* is
+  switch tabs. Two consequences of that restart: the re-seed is `load()`'s **first**
+  line, so a session change blanks the row immediately instead of after a round trip
+  (or a ~60s timeout), and both awaits are followed by a **`Task.isCancelled` guard**,
+  since the restart cancels the load in flight and a cancelled load holding an
+  already-resolved response would otherwise write the previous account back into both
+  stores — re-arming `SignedInUserStore`, the one that gates replay. The one predicate that decides whether that row is *tappable* is
   `accountDisplayName`, the same one `AccountScreen` branches on.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).

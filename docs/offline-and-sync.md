@@ -1138,6 +1138,19 @@ treatment the document lists already get from `DocumentCacheStore`:
   The app's other `/users/me/` calls deliberately stay out of it: the save
   coordinator's three replay gates and RootView's awareness provider take only the
   id or the display name from the response, and none of them is a Profile refresh.
+- **The re-seed happens *before* the fetch, and nothing learned under a replaced
+  session may be written after it.** `load()`'s first line re-reads the store, so a
+  session change blanks the row at once rather than after a round trip — or after a
+  ~60s timeout, if connectivity died right after the re-login, all of it spent
+  displaying an account that is gone with its detail screen one tap away. On an
+  ordinary visit the store holds what is already on screen, so that line is a no-op.
+  And because keying the task on the session makes `load()` restartable, the restart
+  *cancels* the load in flight: cancellation is cooperative, so both awaits are
+  followed by a `Task.isCancelled` guard, or a load whose `/users/me/` had already
+  resolved would resume and write the previous account back into both stores —
+  re-arming `SignedInUserStore`, which gates whose unsynced documents may be listed
+  and replayed. `signedInUser.remember` sits beside the user write, before the second
+  await, so there is one such window rather than two.
 - **The row reloads on a *session* change, not only on appearing.** Clearing the
   store is half of scoping the row to the session; the other half is that
   `ProfileViewModel` is `@State` in `MainTabView`, which the re-login sheet is
@@ -1178,6 +1191,16 @@ treatment the document lists already get from `DocumentCacheStore`:
 
 An undecodable blob (a later schema) reads as no user, which degrades to exactly the
 pre-cache behavior: both readers already render "we have nothing" for nil.
+
+**Two accepted residuals, both strictly narrower than what this closes.** A re-login
+that completes while the *Account detail* is pushed leaves that screen naming the
+previous account until the user pops back — `ProfileScreen`'s `.task` is not running
+while the detail covers it, and the detail is handed `profileViewModel.user`. And the
+cancellation guard is a *check*, not a barrier: if the old load's continuation is
+scheduled ahead of the cancel on the main actor, it still writes. Closing that one
+properly means comparing a captured `signInGeneration`, which would mean handing the
+view model the session identity — not worth it for a window this narrow, which the
+restarted load then corrects anyway.
 
 **One pre-existing gap this store inherits, stated so the clearing guarantee above is
 not read as absolute.** `WebLoginView`'s coordinator syncs the web view's cookies into

@@ -52,10 +52,10 @@ struct AccountScreen: View {
     @Environment(\.openURL) private var openURL
 
     private var displayName: String? { accountDisplayName(user) }
-    private var email: String? {
-        guard let email = user?.email, !email.isEmpty else { return nil }
-        return email
-    }
+    // The same helper the Profile row's title uses, so the two agree about a blank
+    // address: `!isEmpty` alone lets `"   "` through and draws an empty line under
+    // the header.
+    private var email: String? { accountRowEmail(user) }
 
     var body: some View {
         ScrollView {

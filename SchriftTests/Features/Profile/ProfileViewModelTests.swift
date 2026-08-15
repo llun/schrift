@@ -23,9 +23,15 @@ final class ProfileViewModelTests: XCTestCase {
     /// suites a signed-in account they never set up, silently enabling the offline-create
     /// fallbacks in tests written before those existed.
     private func makeIsolatedDefaults() -> UserDefaults {
+        UserDefaults(suiteName: makeIsolatedSuiteName())!
+    }
+
+    /// The name as well as the store, for the one test that has to reach these defaults from
+    /// inside a `@Sendable` stub handler.
+    private func makeIsolatedSuiteName() -> String {
         let suiteName = "ProfileViewModelTests.\(UUID().uuidString)"
         signedInSuiteNames.append(suiteName)
-        return UserDefaults(suiteName: suiteName)!
+        return suiteName
     }
 
     private func makeViewModel(defaults: UserDefaults? = nil) -> ProfileViewModel {
@@ -50,7 +56,8 @@ final class ProfileViewModelTests: XCTestCase {
         """.data(using: .utf8)!
 
     func testLoadPopulatesUser() async {
-        let viewModel = makeViewModel()
+        let defaults = makeIsolatedDefaults()
+        let viewModel = makeViewModel(defaults: defaults)
         MockURLProtocol.stubHandler = { _ in
             .init(statusCode: 200, headers: [:], body: Self.userFixture, error: nil)
         }
@@ -61,6 +68,9 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.user?.displayName, "Ada Lovelace")
         XCTAssertEqual(viewModel.user?.languageLabel, "English")
         XCTAssertFalse(viewModel.isLoading)
+        // The other write-through, and the direction nothing else pins: round 3 moved this
+        // line to sit before the second await, and only its nil case was covered.
+        XCTAssertEqual(SignedInUserStore(userDefaults: defaults).userID, Self.adaID)
     }
 
     func testLoadTolerates500WithoutThrowing() async {
@@ -195,17 +205,25 @@ final class ProfileViewModelTests: XCTestCase {
     }
 
     /// The launch order this has to survive: `MainTabView.init` builds this view model before
-    /// `RootView`'s task runs the `/users/me/` that first fills the cache. Seeding once in
-    /// `init` and never looking again would leave Profile empty for the whole session if the
-    /// network died in between — the original bug, reached by a different route.
-    func testAFailedFetchPicksUpAProfileCachedAfterTheViewModelWasBuilt() async {
-        let defaults = makeIsolatedDefaults()
+    /// `RootView`'s task runs the `/users/me/` that first fills the cache. Seeding once and
+    /// never looking again would leave Profile empty for the whole session if the network died
+    /// in between — the original bug, reached by a different route.
+    ///
+    /// The cache is filled from **inside the stub**, i.e. while `load()` is suspended on its
+    /// own fetch, because that is the only window the re-read after the fetch still covers:
+    /// anything cached *before* `load()` is picked up by the pre-fetch seed instead, and a
+    /// test written that way keeps passing with the post-fetch re-read deleted.
+    func testAFailedFetchPicksUpAProfileCachedWhileItWasInFlight() async {
+        let suiteName = makeIsolatedSuiteName()
+        let defaults = UserDefaults(suiteName: suiteName)!
         let viewModel = makeViewModel(defaults: defaults)
         XCTAssertNil(viewModel.user, "precondition: nothing cached when the screen was built")
-        CurrentUserCacheStore(userDefaults: defaults).remember(
-            CurrentUser(id: Self.adaID, email: "ada@example.org"))
         MockURLProtocol.stubHandler = { _ in
-            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            // What `HomeViewModel.refreshSignedInUser` does at launch, racing this very load.
+            CurrentUserCacheStore(userDefaults: UserDefaults(suiteName: suiteName)!).remember(
+                CurrentUser(
+                    id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
         }
 
         await viewModel.load()
