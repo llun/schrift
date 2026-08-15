@@ -43,6 +43,12 @@ final class ConnectViewModel {
 
     func handleLoginComplete() async {
         isPresentingWebLogin = false
+        // The same handover the re-login sheet makes: this login's cookies are already live in
+        // the shared storage, whatever the confirmation below does. A sign-out has normally
+        // emptied the identity stores long before anyone reaches this screen, so there is
+        // usually nothing to forget — but the rule belongs to the cookie handover, not to
+        // whichever path happened to precede it. See `SessionStore.noteSessionCookiesReplaced`.
+        sessionStore.noteSessionCookiesReplaced()
         guard let serverURL = pendingServerURL else { return }
 
         isSigningIn = true

@@ -86,6 +86,28 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.recentServers.servers.isEmpty)
     }
 
+    /// The same handover the re-login sheet makes, and it goes through the same call for the
+    /// same reason. Reaching this screen normally means a sign-out has already emptied both
+    /// identity stores, so there is usually nothing to forget — but the cookies are live either
+    /// way, and a rule that holds only because of what some *other* path happens to have done
+    /// is one a later path can quietly break.
+    func testAFailedConfirmationForgetsWhoeverTheIdentityStoresStillName() async throws {
+        let viewModel = makeViewModel { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        let previousUser = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        signedIn.remember(previousUser)
+        CurrentUserCacheStore(userDefaults: userDefaults)
+            .remember(CurrentUser(id: previousUser, email: "ada@example.org"))
+        viewModel.serverURLInput = "docs.llun.dev"
+        viewModel.startSignIn()
+
+        await viewModel.handleLoginComplete()
+
+        XCTAssertEqual(viewModel.errorKey, .connect_error_sign_in_failed)
+        XCTAssertNil(signedIn.userID)
+        XCTAssertNil(CurrentUserCacheStore(userDefaults: userDefaults).user)
+    }
+
     func testSelectRecentServerPresentsWebLoginForThatServer() {
         let viewModel = makeViewModel { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
         let url = URL(string: "https://old.example.com")!

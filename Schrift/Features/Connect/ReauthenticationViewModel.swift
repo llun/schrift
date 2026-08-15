@@ -2,9 +2,13 @@ import Foundation
 
 /// Drives the re-login sheet RootView presents when the server session dies
 /// (any request 401s → `SessionStore.needsReauthentication`). Mirrors
-/// `ConnectViewModel.handleLoginComplete`: confirm the fresh cookies with
-/// `GET users/me/`, then `signIn` — which re-persists the session cookies to
-/// the Keychain and clears the flag, dismissing the sheet.
+/// `ConnectViewModel.handleLoginComplete`: forget whose session this was, confirm
+/// the fresh cookies with `GET users/me/`, then `signIn` — which re-persists the
+/// session cookies to the Keychain and clears the flag, dismissing the sheet.
+///
+/// The forget comes first because only it is unconditional; the sheet may have been
+/// answered by a different account, and everything after the confirmation is skipped
+/// when that one request fails.
 @MainActor
 @Observable
 final class ReauthenticationViewModel {
@@ -31,6 +35,11 @@ final class ReauthenticationViewModel {
     }
 
     func handleLoginComplete() async {
+        // Before the confirmation, not after it. The web view has already put this login's
+        // cookies in the shared storage, so whoever was signed in a moment ago may no longer be
+        // whose session this is — and the confirmation below can fail, leaving a perfectly
+        // valid session that never 401s again to correct it. See `noteSessionCookiesReplaced`.
+        sessionStore.noteSessionCookiesReplaced()
         isConfirming = true
         errorKey = nil
         defer { isConfirming = false }
