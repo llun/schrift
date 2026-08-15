@@ -261,6 +261,34 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(cookieStorage.storedCookies.isEmpty)
     }
 
+    // MARK: - Cached account profile
+
+    /// Sign-in is the moment a possibly-different account takes over, and the cached profile
+    /// is shown *before* any fetch — so a kept entry would put the previous user's name and
+    /// email on the new user's Profile screen, indefinitely if they are offline.
+    func testSignInForgetsThePreviousAccountsCachedProfile() throws {
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        cache.remember(CurrentUser(id: UUID(), email: "ada@example.org"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+
+        try store.signIn(serverURL: serverURL)
+
+        XCTAssertNil(cache.user)
+    }
+
+    /// Unlike pending-create records — which survive because they may be the only copy of a
+    /// document — this is re-fetchable server data about the session that just ended.
+    func testSignOutForgetsTheCachedProfile() throws {
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        cache.remember(CurrentUser(id: UUID(), email: "ada@example.org"))
+
+        try store.signOut()
+
+        XCTAssertNil(cache.user)
+    }
+
     // MARK: - Reauthentication flag
 
     func testNoteSessionExpiredSetsFlagOnlyWhenAuthenticated() throws {

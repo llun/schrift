@@ -106,6 +106,9 @@ final class HomeViewModel {
     /// test, because showing user B another user's unsynced document is the worse half of the
     /// same disclosure: B's edits would land in A's document when A signs back in.
     private let signedInUser: SignedInUserStore
+    /// The Profile screen's offline copy of the account, write-through only — this view model
+    /// never reads it. See `refreshSignedInUser`.
+    private let cachedUser: CurrentUserCacheStore
     private let userDefaults: UserDefaults
     /// The same log the shared client records into. nil in previews and in tests that don't
     /// care, which simply means no detail is offered. Not private: the editor screens this
@@ -148,9 +151,11 @@ final class HomeViewModel {
         serverOrigin: String = "",
         userDefaults: UserDefaults = .standard,
         signedInUser: SignedInUserStore = SignedInUserStore(),
+        cachedUser: CurrentUserCacheStore = CurrentUserCacheStore(),
         diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.signedInUser = signedInUser
+        self.cachedUser = cachedUser
         self.client = client
         self.cache = cache
         // `serverOrigin` reaches the coordinator only to stamp documents created on this
@@ -383,6 +388,11 @@ final class HomeViewModel {
     func refreshSignedInUser() async {
         guard let user = try? await client.currentUser() else { return }
         signedInUser.remember(user.id)
+        // Same response, one more consumer: Profile shows this account from disk when there is
+        // no network, and a user who never opens Profile while online would otherwise have
+        // nothing cached to show. `ProfileViewModel` also write-throughs on its own fetch;
+        // both are idempotent.
+        cachedUser.remember(user)
     }
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through

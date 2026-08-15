@@ -317,6 +317,8 @@ Schrift/
 │                        AppAppearance + AppearanceStore (dark-mode preference)
 ├── Core/
 │   ├── Auth/            SignedInUserStore (the account id offline creation needs),
+│   │                    CurrentUserCacheStore (the account's *displayed* profile,
+│   │                    so Profile has a name to show with no network),
 │   │                    SessionStore (persists session cookies in the Keychain and
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
@@ -2959,6 +2961,26 @@ markdown write endpoint**. Understand this before touching the save path:
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it
   explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
+- **The account's displayed profile is cached too** (`CurrentUserCacheStore`,
+  `dev.llun.Schrift.currentUser`), because `/users/me/` is the only source of the
+  email and names and it is a network call: `ProfileViewModel` held it in memory
+  only, so offline the user row rendered its "—" placeholder and the account detail
+  was unreachable on a screen whose every other row works offline. It seeds the view
+  model **synchronously in `init`** (the screen renders `user` in its `body` before
+  `.task` runs, so a fetch is a frame too late to be the only source), and `load()`
+  replaces `user` **only on a successful fetch** — assigning the failed fetch's nil
+  is the bug itself, one frame later. Both `/users/me/` callers write through
+  (`ProfileViewModel.load`, `HomeViewModel.refreshSignedInUser` — without the
+  second, a user who never opens Profile while online still has nothing cached).
+  Unlike the stores above it is **cleared at sign-in *and* sign-out**
+  (`SessionStore`, plus RootView's belt-and-braces call): it is re-fetchable server
+  data with no unsynced-work argument, and it is *displayed* before any fetch, so a
+  kept entry would name the previous account on the new user's screen — indefinitely
+  if they are offline. It is deliberately **not** merged into `SignedInUserStore`:
+  that one answers *whose session is this*, gating what may be listed and sent for
+  another account's unsynced documents, so it stays written only from a live fetch —
+  `ProfileViewModel` seeds its display from the cache but never lets a cached id
+  reach `remember`.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.

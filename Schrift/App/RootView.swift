@@ -193,6 +193,10 @@ struct RootView: View {
                     // the record's own `ownerUserID` being compared against whoever signs in
                     // next, which requires this to answer nil until the server says otherwise.
                     SignedInUserStore().clear()
+                    // The Profile screen's offline copy of the account goes with it: it is
+                    // re-fetchable server data whose only use is naming the session that
+                    // just ended.
+                    CurrentUserCacheStore().clear()
                     try? sessionStore.signOut()
                 })
         } else {

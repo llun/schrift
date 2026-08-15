@@ -1091,6 +1091,49 @@ time on the client (the encoder reads the origin off its own `baseURL`), so a
 draft written before this feature existed still encodes as a `file` node when it
 finally syncs.
 
+### 8. The account's profile: `CurrentUserCacheStore` (2026-08-15)
+
+The Profile screen showed **"—"** where the account's email belongs whenever the
+device was offline, and its account detail was unreachable behind a disabled row —
+on a screen whose every other row (appearance, language, server host, app version)
+renders fine with no network. The cause was that `/users/me/` is the only source of
+those fields and `ProfileViewModel` held the response in memory only: `load()`
+assigned `user = await fetchedUser` from a `try?`, so a failed fetch actively
+replaced whatever was there with `nil`.
+
+`CurrentUserCacheStore` (`dev.llun.Schrift.currentUser`, a JSON `CurrentUser` in
+UserDefaults, read-through like `SignedInUserStore`) gives that row the same
+treatment the document lists already get from `DocumentCacheStore`:
+
+- **Seeded synchronously in `ProfileViewModel.init`.** The screen renders `user` in
+  its `body` and only then runs `.task`, so anything awaited is a frame too late to
+  be the sole source — offline, that frame's placeholder was the permanent state.
+- **`load()` replaces `user` only on success**, and write-throughs the fresh copy.
+  A failed fetch keeps the cached account on screen and the entry on disk; the
+  version row, which hides itself when nil, is deliberately *not* preserved (it
+  describes the server, which may have been upgraded since).
+- **Both `/users/me/` callers write through**: `ProfileViewModel.load` and
+  `HomeViewModel.refreshSignedInUser` (launch and post-re-auth). Without the
+  second, a user who signs in and never opens Profile while online would still
+  find nothing cached on their first offline visit — the bug moved, not fixed.
+- **Cleared at sign-in *and* sign-out**, in `SessionStore` beside
+  `SignedInUserStore.clear()` (plus RootView's belt-and-braces call). Unlike the
+  drafts, create records, tombstones and queued photos — which survive a sign-out
+  because they may be a document's only copy — this is re-fetchable server data
+  whose only use is naming the current account, and it is *displayed before any
+  fetch*, so a kept entry would put the previous user's name and email on the new
+  user's screen, indefinitely if they are offline.
+- **Kept separate from `SignedInUserStore`, deliberately.** That store answers
+  *whose session is this*, which gates what may be listed and sent for offline
+  documents — a wrong answer sends one user's work into another's account — so it
+  stays written only from a live fetch and fails closed. This one answers *what do
+  we show*, where staleness costs a name one rename out of date. Hence
+  `ProfileViewModel` seeds its display from the cache but passes only the
+  **fetched** id to `signedInUser.remember`.
+
+An undecodable blob (a later schema) reads as no user, which degrades to exactly the
+pre-cache behavior: both readers already render "we have nothing" for nil.
+
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
 Offline *creation* has landed — the non-goal above is withdrawn — and its **storage, its safety gates

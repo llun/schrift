@@ -1,0 +1,60 @@
+import Foundation
+
+/// The signed-in account's profile — email, names, server language — remembered across
+/// launches so Profile has something to show without a network round trip.
+///
+/// **This exists because `/users/me/` is the only source of those fields, and it is a network
+/// call.** `ProfileViewModel` fetched it on every visit and held it in memory only, so with no
+/// connection the user row rendered its "—" placeholder and the account detail was unreachable
+/// — on a screen whose other rows (appearance, language, server host, app version) all render
+/// fine offline. The document lists already read from disk when the network is gone
+/// (`DocumentCacheStore`); this is the same treatment for the one row that did not.
+///
+/// Distinct from [`SignedInUserStore`](x-source-tag://SignedInUserStore), deliberately, and the
+/// two must not be merged. That store answers *whose session is this* — a question the offline
+/// create/replay machinery gates on, where a wrong answer sends one user's documents into
+/// another's account — so it is written only from a live fetch and fails closed. This one
+/// answers *what do we show on the Profile screen*, where the cost of staleness is a name that
+/// is one rename out of date. `ProfileViewModel` therefore seeds its display from here but
+/// never lets a cached id stand in for a fetched one.
+///
+/// Not in the Keychain: this is display data, not a credential, and the same background-launch
+/// readability argument as `SignedInUserStore` applies. Cleared at sign-in *and* sign-out (see
+/// `SessionStore.signIn`) — unlike pending-create records, which survive a sign-out because
+/// they may be a document's only copy, this is re-fetchable server data whose only use is
+/// naming the current account. Keeping it past sign-in would put the previous user's email on
+/// the new user's screen, indefinitely if they are offline.
+///
+/// Read-through on every access, like `SignedInUserStore` and for the same reason: writers
+/// (any successful `/users/me/`) and readers are built at different times, and a cached
+/// `private(set) var` would let a reader constructed before the first write keep answering nil.
+struct CurrentUserCacheStore {
+    private static let key = "dev.llun.Schrift.currentUser"
+
+    private let userDefaults: UserDefaults
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    /// The last profile a successful fetch stored, or nil when there is none — including when
+    /// this build cannot decode what an earlier one wrote. Both readers already render "we have
+    /// nothing" for nil (the row's placeholder, the detail's unavailable state), so a schema
+    /// change degrades to exactly the pre-cache behavior rather than throwing.
+    var user: CurrentUser? {
+        guard let data = userDefaults.data(forKey: Self.key) else { return nil }
+        return try? JSONDecoder().decode(CurrentUser.self, from: data)
+    }
+
+    /// Write through from any successful `/users/me/`. A nil user is ignored rather than
+    /// clearing a good value — a failed fetch has told us nothing about the account, and
+    /// blanking the row on it is the bug this store exists to fix.
+    func remember(_ user: CurrentUser?) {
+        guard let user, let data = try? JSONEncoder().encode(user) else { return }
+        userDefaults.set(data, forKey: Self.key)
+    }
+
+    func clear() {
+        userDefaults.removeObject(forKey: Self.key)
+    }
+}
