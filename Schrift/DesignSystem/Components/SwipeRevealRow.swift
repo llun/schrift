@@ -362,6 +362,25 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
                     actionStrip
                 }
             }
+            // **A row paints nothing outside its own bounds** — neither the strip behind it
+            // nor the content sliding off it.
+            //
+            // Being a `background` is *not* the guarantee it looks like. A background is
+            // proposed the decorated view's size, but each action button's
+            // `.frame(maxHeight: .infinity)` clamps that proposal down only as far as its own
+            // label's ideal height, and a 22pt glyph over a caption is ~45.7pt at the Large
+            // content size. So a row at the 44pt tap-target floor — `SubpageRow`, every
+            // `PagesTreeDrawer` row — had ~0.8pt of the destructive fill painted above and
+            // below it: a hairline drawn between closed rows, and points of it at
+            // accessibility text sizes, where the glyph grows and the row need not.
+            // `DocRow` is ~58pt and swallowed the overflow, which is why the Home list
+            // looked fine while the editor's Subpages list did not.
+            //
+            // Clipping rather than sizing the strip to a measured row height: it needs no
+            // extra state, and it bounds the *sliding content* too — which otherwise draws
+            // over the list's gutter, and in the drawer over the disclosure chevron beside
+            // it. Pinned by `SwipeRevealRowGeometryTests`, with a negative control.
+            .clipped()
             .onGeometryChange(for: CGFloat.self) {
                 $0.size.width
             } action: {
