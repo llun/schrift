@@ -1139,7 +1139,7 @@ treatment the document lists already get from `DocumentCacheStore`:
   coordinator's three replay gates and RootView's awareness provider take only the
   id or the display name from the response, and none of them is a Profile refresh.
 - **The re-seed happens *before* the fetch, and nothing learned under a replaced
-  session may be written after it.** `load()`'s first line re-reads the store, so a
+  session may be written after it.** `load()`'s first line that touches `user` re-reads the store, so a
   session change blanks the row at once rather than after a round trip — or after a
   ~60s timeout, if connectivity died right after the re-login, all of it spent
   displaying an account that is gone with its detail screen one tap away. On an
