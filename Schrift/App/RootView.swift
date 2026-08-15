@@ -95,7 +95,11 @@ private struct AuthenticatedHomeContainer: View {
         // one), so iPad keeps the tab bar it used to have no way to show — and
         // with it Search, Shared, Profile and sign-out.
         MainTabView(
-            viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin, onSignOut: onSignOut
+            viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin,
+            // Answering the re-login sheet can change *which account* this is, and this
+            // container is not rebuilt when it does — so the tabs are told, and the ones
+            // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
+            signInGeneration: sessionStore.signInGeneration, onSignOut: onSignOut
         )
         .sheet(
             isPresented: Binding(
@@ -193,6 +197,10 @@ struct RootView: View {
                     // the record's own `ownerUserID` being compared against whoever signs in
                     // next, which requires this to answer nil until the server says otherwise.
                     SignedInUserStore().clear()
+                    // The Profile screen's offline copy of the account goes with it: it is
+                    // re-fetchable server data whose only use is naming the session that
+                    // just ended.
+                    CurrentUserCacheStore().clear()
                     try? sessionStore.signOut()
                 })
         } else {

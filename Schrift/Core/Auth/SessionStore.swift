@@ -17,6 +17,10 @@ final class SessionStore {
     private let cookieStorage: CookieStoring
     /// Cleared at sign-in and sign-out — see `signIn`. Deliberately *not* on a mere expiry.
     private let signedInUser: SignedInUserStore
+    /// The Profile screen's offline copy of the account, cleared at exactly the same two
+    /// moments and for the same reason: it is *displayed* before any fetch, so a kept entry
+    /// would name the previous account on the new one's screen.
+    private let cachedUser: CurrentUserCacheStore
 
     private(set) var serverURL: URL?
     private(set) var isAuthenticated: Bool
@@ -25,6 +29,16 @@ final class SessionStore {
     /// re-login sheet from it) but never persisted: a fresh launch re-derives
     /// it from the first failing request.
     private(set) var needsReauthentication = false
+    /// Bumped by `signIn`, so a screen already on display can tell that the session it was
+    /// showing has been replaced. Clearing the stores is only half of session-scoping the
+    /// account row: `ProfileViewModel` is `@State` in `MainTabView`, which is **not** rebuilt
+    /// across a re-login (the sheet is presented over it), so its in-memory user outlives the
+    /// account it belongs to and needs a reason to be re-read. `ProfileScreen` keys its `.task`
+    /// on this. Deliberately not bumped by an expiry or a cancel — that is a failure of a
+    /// session, not a change of one, and the dismissed-sheet contract is that cached data
+    /// keeps showing. Never persisted: what matters is only that it *changes* within a
+    /// process, and a fresh launch rebuilds every screen anyway.
+    private(set) var signInGeneration = 0
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -38,6 +52,7 @@ final class SessionStore {
         // Defaults to the same `userDefaults` this store was given, so a test that isolates
         // one isolates both.
         self.signedInUser = signedInUser ?? SignedInUserStore(userDefaults: userDefaults)
+        self.cachedUser = CurrentUserCacheStore(userDefaults: userDefaults)
         self.serverURL = userDefaults.url(forKey: Self.serverURLKey)
         self.isAuthenticated = (try? keychain.load(forKey: Self.authenticatedKeychainKey)) != nil
         // Synchronous, so the cookies are back in the shared storage before
@@ -76,12 +91,18 @@ final class SessionStore {
         // message and nothing to re-fetch it until a Profile visit. Same safety, strictly more
         // collateral, so it is done here.
         signedInUser.clear()
+        // The account's displayed profile goes with the id, and here rather than at expiry for
+        // the same reason: a dismissed re-login sheet must keep showing what it already showed.
+        cachedUser.clear()
+        // Tell screens that survived the sheet to re-read what they are showing.
+        signInGeneration += 1
     }
 
     func signOut() throws {
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         signedInUser.clear()
+        cachedUser.clear()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()

@@ -4,6 +4,12 @@ struct ProfileScreen: View {
     @Bindable var viewModel: ProfileViewModel
     let serverHost: String
     var isOffline: Bool = false
+    /// Changes whenever a sign-in replaces the session — including one made through the
+    /// re-login sheet, which this screen survives. See the `.task` below. **Required, not
+    /// defaulted**, for the same reason `serverOrigin` is at the image-render sites: a call
+    /// site that forgets it would silently reinstate a cross-account disclosure, and no test
+    /// covers SwiftUI plumbing. Make it a compile error instead.
+    let signInGeneration: Int
     var onSignOut: () -> Void
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
@@ -53,7 +59,12 @@ struct ProfileScreen: View {
         .frame(maxWidth: .infinity)
         .background(DocsColor.surfacePage)
         .navigationTitle(loc[.profile_title])
-        .task { await viewModel.load() }
+        // Keyed on the session, not just on appearing. The re-login sheet is presented
+        // *over* this screen, so a plain `.task` never re-runs after it is answered — and
+        // the view model is `@State` in `MainTabView`, which survives the sheet too. Left
+        // unkeyed, an account row loaded for the previous user stays on screen (and stays
+        // tappable through to their detail) until the user happens to switch tabs.
+        .task(id: signInGeneration) { await viewModel.load() }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
                 .presentationDetents([.height(appearanceSheetHeight)])
@@ -79,16 +90,20 @@ struct ProfileScreen: View {
     private var userSection: some View {
         ListSection(header: loc[.profile_user]) {
             NavigationLink(value: ProfileRoute.account) {
-                ProfileTrailingRow(icon: .account_circle, title: viewModel.user?.email ?? "—") {
+                ProfileTrailingRow(icon: .account_circle, title: accountRowEmail(viewModel.user) ?? "—") {
                     MaterialSymbol(.chevron_right, size: 18)
                         .foregroundStyle(DocsColor.gray300)
                 }
             }
             .buttonStyle(.plain)
-            // Nothing to push into until the user has loaded — offline, that is
-            // the permanent state, and the detail screen would have nothing to
-            // show but its own unavailable message.
-            .disabled(viewModel.user == nil)
+            // Enabled exactly when the detail screen has something to render, which is
+            // `accountDisplayName` — the predicate `AccountScreen` itself branches on.
+            // Asking `user == nil` instead lets an id-only response (no name, no email)
+            // enable a row that pushes straight into "we have nothing", and since that
+            // response is now *cached*, it would do so on every launch rather than once.
+            // Offline is no longer the userless state: a cached profile makes this row
+            // live with no network.
+            .disabled(accountDisplayName(viewModel.user) == nil)
         }
     }
 
@@ -179,6 +194,7 @@ struct ProfileScreen: View {
     ProfileScreen(
         viewModel: ProfileViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
+        signInGeneration: 0,
         onSignOut: {}
     )
     .environment(LocalizationStore())
