@@ -342,10 +342,12 @@ final class MockURLProtocolGateTests: XCTestCase {
     ///
     /// **This is the one test whose subject is the failsafe itself**, so it cannot lean on
     /// it. The rescue is narrower than it first looks: the failsafe releases a stall whose
-    /// cause is a *still-held* item, which covers the withholding tests but not the two
-    /// `AResetDuringTheHandler` ones (`register` refuses before anything is scheduled, so no
-    /// failsafe exists) and not a break in `open()`/`deliver()` (which empties `held`, so
-    /// `isHoldingAnything` deliberately keeps it silent). Here a dead failsafe would record
+    /// cause is a *still-held* item, which covers the withholding tests but nothing else in
+    /// this file. Not the two `AResetDuringTheHandler` ones (`register` refuses before
+    /// anything is scheduled, so no failsafe exists); not the two drain tests, whose
+    /// `reset()` cancels the failsafe along with the delivery, which is exactly why each
+    /// cancels its own request; and not a break in `open()`/`deliver()`, which empties
+    /// `held`, so `isHoldingAnything` deliberately keeps it silent. Here a dead failsafe would record
     /// the timeout and then leave `await request.value` waiting on URLSession's own 60s
     /// timeout — a stalled run stacked on a recorded failure. So this one cancels the
     /// request rather than waiting on a resumption it has just shown may not come.

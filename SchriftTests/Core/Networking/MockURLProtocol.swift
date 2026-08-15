@@ -115,8 +115,8 @@ final class MockURLProtocol: URLProtocol {
         }
 
         /// Fails the test that built this gate, naming it and the request it stranded,
-        /// then releases everything so the body fails on its own assertions instead of
-        /// hanging.
+        /// then releases everything so the body fails on its own assertions rather than
+        /// sitting out the rest of URLSession's 60s request timeout.
         fileprivate func failUnopened(holding description: String) {
             XCTFail(
                 "MockURLProtocol: a ResponseGate holding \(description) was never opened",
