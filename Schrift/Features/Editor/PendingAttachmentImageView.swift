@@ -10,6 +10,11 @@ import SwiftUI
 /// The `.missing` state is an affordance as much as a state. A placeholder whose record or bytes
 /// are gone still holds the document's saves, and removing the block is the only way to clear
 /// that hold — so the card has to say so and offer the button.
+///
+/// `.unattributable` is the exact converse and the reason the two are separate states: there the
+/// bytes are present and only this session's ignorance of its own account stops them rendering,
+/// so the card must claim nothing and offer **no** button — Remove would destroy the only copy
+/// of the photo over a condition that heals by itself. See `PendingAttachmentDisplay`.
 struct PendingAttachmentImageView: View {
     let alt: String
     let display: PendingAttachmentDisplay
@@ -42,6 +47,11 @@ struct PendingAttachmentImageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(DocsColor.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+            // Pre-existing gap, closed while adding the sibling below rather than left as the
+            // odd one out: this is the card whose button is destructive, so it is the last one
+            // that should announce its state without it.
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(label(loc[.editor_attachment_missing]))
         case .unattributable:
             // **No actions.** The bytes are on disk and only this session's ignorance of its own
             // account stops them rendering, so Remove here would destroy the one copy of a photo
@@ -140,6 +150,7 @@ struct PendingAttachmentImageView: View {
         PendingAttachmentImageView(
             alt: "", display: .failed(previewPNG), onRetry: {}, onRemove: {})
         PendingAttachmentImageView(alt: "", display: .missing, onRetry: {}, onRemove: {})
+        PendingAttachmentImageView(alt: "", display: .unattributable, onRetry: {}, onRemove: {})
     }
     .padding()
     .environment(LocalizationStore())
@@ -150,6 +161,7 @@ struct PendingAttachmentImageView: View {
         PendingAttachmentImageView(
             alt: "", display: .pending(previewPNG), onRetry: {}, onRemove: {})
         PendingAttachmentImageView(alt: "", display: .missing, onRetry: {}, onRemove: {})
+        PendingAttachmentImageView(alt: "", display: .unattributable, onRetry: {}, onRemove: {})
     }
     .padding()
     .environment(LocalizationStore())

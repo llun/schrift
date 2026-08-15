@@ -465,6 +465,14 @@ final class HomeViewModel {
     /// Accepted rather than fixed by asking anyway: the mode's whole promise is that a read
     /// path does not reach the network.
     ///
+    /// One consequence of that reaches further than the lists, and is worth naming because it is
+    /// not obvious: a **queued photo** in the same window renders
+    /// `PendingAttachmentDisplay.unattributable`, which deliberately offers no Remove — and
+    /// Remove is the only affordance that clears `markdownReferencesPendingAttachment`'s hold on
+    /// that document's saves. So the document parks until the identity is re-learned, by the
+    /// same three routes. Content is safe throughout: `enqueue` is write-ahead, so the edits are
+    /// on disk and the hold is what stops a placeholder reaching the server.
+    ///
     /// On `refresh()` this does serialize an extra round trip ahead of the list fetches, and
     /// the state it recovers from is reached by a flaky network in the first place — so a
     /// pull-to-refresh in that state can spend two timeouts before the offline banner appears
