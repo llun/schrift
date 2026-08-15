@@ -1077,7 +1077,7 @@ new code reads like the surrounding code.
   `ScrollView` + `VStack` + `ForEach`, which is what gives the app its flat, boxless rows;
   converting to `List` would restyle every screen and break `PagesTreeDrawer`'s
   `.frame(maxHeight: .infinity)` row trick, which is only safe because a `ScrollView`
-  proposes an *unspecified* height. Six rules travel with the component, each closing a
+  proposes an *unspecified* height. Seven rules travel with the component, each closing a
   real defect:
   - **Trailing edge only.** A leading swipe would fight the system's interactive-pop
     gesture on every `NavigationStack` screen.
@@ -1116,8 +1116,25 @@ new code reads like the surrounding code.
   - **The strip is a `background` of the content, not a `ZStack` sibling.** Its buttons are
     `maxHeight: .infinity` so they fill the row, and as a sibling that made the stack greedy —
     a document row measured 874pt instead of 58pt. A background is proposed the decorated
-    view's size, so the same `.infinity` clamps to the row. `SwipeRevealRowGeometryTests`
-    pins it, with a negative control.
+    view's size, so the same `.infinity` contributes nothing back to the row's *measured*
+    size. `SwipeRevealRowGeometryTests` pins it, with a negative control. What it does **not**
+    buy is the next rule.
+  - **Being a `background` bounds what the strip *measures*, never what it *paints* — so the
+    row clips.** A flexible frame clamps the proposal it is given only as far down as its own
+    child's ideal size, and an action button's label (a 22pt glyph over a caption) is ~45.7pt
+    at the Large content size. Proposed a 44pt row it therefore answers 45.7pt and paints
+    ~0.8pt of the destructive fill above and below the row — a hairline drawn between rows
+    that were all *closed*, and points of it at accessibility text sizes, where the glyph
+    grows and the row need not. It showed in the editor's Subpages list and the
+    `PagesTreeDrawer`, both of which sit at the 44pt tap-target floor, while Home looked
+    fine because `DocRow` is ~58pt and swallowed the overflow — so "it renders correctly on
+    Home" is no evidence here. `.clipped()` on the composed row is the fix, chosen over
+    sizing the strip to a measured row height because it needs no extra state and bounds the
+    **sliding content** too, which otherwise draws over the list's gutter and, in the drawer,
+    over the disclosure chevron beside it. `sizeThatFits` is blind to all of this (a
+    background contributes nothing to measure, however tall it draws) — it is pinned by
+    rendering the row over clear margins and scanning them, with a negative control that
+    paints a fill which really does escape.
   - **A `background` applied after `.offset` does *not* follow it** — verified by rendering,
     not assumed, and pinned by `testABackgroundDoesNotFollowAPriorOffset`. That is what keeps
     the strip pinned while the content slides; compensating for the offset would double the

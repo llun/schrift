@@ -60,6 +60,28 @@
 > The gesture's arbitration was previously called out as "verified by hand", and
 > that is what let this ship. It has a suite now (`SwipeRevealGestureTests`).
 
+> **Revised: 2026-08-15 (a hairline of the delete fill between sub-page rows).**
+> Every row in the editor's **Subpages** list — and in the **Pages drawer** — drew a
+> short coloured hairline at its top and bottom edge, on the trailing side, while
+> every row was *closed*. It was the destructive swipe action's own fill, painted
+> outside the row it belongs to.
+>
+> The strip is a `background` of the row, which bounds what it **measures** but not
+> what it **paints**: a flexible frame clamps the proposal it is handed only as far
+> down as its own child's ideal size, and an action button's 22pt glyph over a
+> caption is ~45.7pt at the Large content size. Proposed a 44pt row it answers
+> 45.7pt and overhangs ~0.8pt each side — points of it at accessibility text sizes,
+> where the glyph grows and the row need not. Only rows at the **44pt tap-target
+> floor** were affected, which is why the Home list looked fine throughout:
+> `DocRow` is ~58pt and swallowed the overflow.
+>
+> `SwipeRevealRow` now `.clipped()`s the composed row, so it paints nothing outside
+> its own bounds — the strip behind it *and* the content sliding off it, which
+> previously drew over the list's gutter and, in the drawer, over the disclosure
+> chevron beside it. `sizeThatFits` cannot see any of this (a background contributes
+> nothing to measure however tall it draws), so it is pinned by rendering the row
+> over clear margins and scanning them, with a negative control.
+
 > **Revised: 2026-08-08 (swipe actions on document rows).** Document rows now
 > offer **swipe-to-delete** — plus **pin/unpin on Home** — on three surfaces: the
 > Home list, the editor's Subpages section, and the Pages drawer. (Shared and
