@@ -1622,6 +1622,34 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.syncPendingDrafts()
 
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "documents/"), 0)
+        // …and it did ask. Without this the test cannot tell "asked, learned nothing, so did
+        // not load" from "the retry was deleted from this path entirely".
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 1)
+    }
+
+    /// **Work Offline is a strict no-network contract on every read path**, and this retry runs
+    /// *ahead* of `load()`, so `load()`'s own early return cannot cover it. Unguarded, a
+    /// pull-to-refresh in the mode parks the spinner on a 60s `/users/me/` — carrying session
+    /// cookies the user asked not to send — and pays it again on every pull, because the id can
+    /// never be learned while the network is refused.
+    func testWorkOfflineWithholdsTheIdentityRetry() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+        let suiteName = "HomeViewModelTests.workOfflineIdentity.\(UUID().uuidString)"
+        coordinatorSuiteNames.append(suiteName)
+        let preferences = UserDefaults(suiteName: suiteName)!
+        preferences.set(true, forKey: "schrift.workOffline")
+        let signedIn = makeSignedInUser(userID: nil)
+        let viewModel = makeViewModel(userDefaults: preferences, signedInUser: signedIn)
+
+        await viewModel.refresh()
+        await viewModel.syncPendingDrafts()
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 0)
+        XCTAssertNil(signedIn.userID, "and the identity stays unknown, which is the honest answer offline")
     }
 
     /// And only while the answer is missing — the retry is for a session whose identity was

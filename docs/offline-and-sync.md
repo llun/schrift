@@ -1253,6 +1253,13 @@ makes a plain transient blip enough to reach that state with the same account si
 and only while the answer is missing. Those three already mean "catch up", and the guard
 means a session that knows who it is pays nothing.
 
+It carries a **second** guard on `schrift.workOffline`. That one is not redundant with
+`load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and the
+mode is a strict no-network contract on every read path — the same reason `createDocument`
+withholds its POST. Unguarded it is worse than a one-off leak, because the identity can
+never be learned while the network is refused, so every pull-to-refresh in the mode would
+park the spinner on a 60s `/users/me/` carrying cookies the user asked not to send.
+
 **Re-learning the id is not enough on the passive path; it has to be followed by a load.**
 `SignedInUserStore` is deliberately neither `@Observable` nor cached, so reading it
 registers no SwiftUI dependency — learning the answer un-hides this device's local rows in

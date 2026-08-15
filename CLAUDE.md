@@ -3043,7 +3043,10 @@ markdown write endpoint**. Understand this before touching the save path:
   launch and after a *successful* re-auth only, so `HomeViewModel
   .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is
   missing, from `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect,
-  foreground: the three paths that already mean "catch up". Deliberately **not** from
+  foreground: the three paths that already mean "catch up". **It carries its own
+  `schrift.workOffline` guard**, because it runs *ahead* of `load()` and so is not covered
+  by `load()`'s early return — without it the mode's strict no-network contract breaks on
+  every pull, permanently, since the id can never be learned while the network is refused. Deliberately **not** from
   `load()`, which is wrong twice: a per-appearance `/users/me/` is more traffic than this
   rare case warrants, and several Home tests gate on *the first GET a load makes* while
   blocking `MockURLProtocol`'s single delivery thread, so a request inserted ahead of the

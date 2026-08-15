@@ -351,6 +351,12 @@ final class HomeViewModel {
         // comment below describes for a migrated row — the reconnect and foreground edges call
         // this and not `load()` — so it takes the same answer. Gated on having actually learned
         // something, which is rare, rather than on having asked.
+        //
+        // It can therefore double up with the `onDocumentMigrated` load below when a create
+        // pass migrates during the replay above and the identity was unknown — both are
+        // generation-guarded and latest-wins, so that costs one redundant list fetch, not a
+        // wrong list. Note `load()` also clears any undismissed error banner, which is new on
+        // the foreground path but identical to what the migrated-row load already does.
         if await refreshSignedInUserIfUnknown() {
             await load()
         }
@@ -439,13 +445,25 @@ final class HomeViewModel {
     /// of the list fetches stalls that thread and cascades into every test after it. The paths
     /// kept here are the ones that mean "catch up", which is exactly this.
     ///
+    /// **Work Offline is honoured here, and the guard has to live in this function.** It runs
+    /// ahead of `load()`, so `load()`'s own early return cannot cover it — a pull-to-refresh
+    /// would otherwise park the spinner on a 60s `/users/me/`, carrying session cookies the
+    /// user asked not to send, forever: the id can never be learned while the network is
+    /// refused, so every pull pays it again. Same reasoning `createDocument` states for the
+    /// POST it withholds; the mode is a strict no-network contract on every read path.
+    ///
     /// On `refresh()` this does serialize an extra round trip ahead of the list fetches, and
     /// the state it recovers from is reached by a flaky network in the first place — so a
     /// pull-to-refresh in that state can spend two timeouts before the offline banner appears
     /// where it used to spend one. Accepted: it happens only while the identity is missing.
+    /// For the same reason it is *not* coalesced against a concurrent call — foreground and
+    /// reconnect can fire together, and both will ask before either answer lands. Bounded at
+    /// two, self-limiting (the second finds the id known), and latest-wins on the loads that
+    /// follow, so the cost is redundant traffic rather than a wrong list.
     @discardableResult
     private func refreshSignedInUserIfUnknown() async -> Bool {
         guard signedInUser.userID == nil else { return false }
+        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return false }
         await refreshSignedInUser()
         return signedInUser.userID != nil
     }

@@ -146,8 +146,10 @@ final class SessionStore {
     /// later piece of account-scoped state has one place to be added rather than three.
     private func forgetSignedInIdentity() {
         signedInUser.clear()
-        // The account's displayed profile goes with the id, and here rather than at expiry for
-        // the same reason: a dismissed re-login sheet must keep showing what it already showed.
+        // The account's displayed profile goes with the id — it is *displayed* before any
+        // fetch, so a kept entry would name the previous account on the new one's screen.
+        // (Why none of this happens at a mere expiry is `signIn`'s comment above: a dismissed
+        // re-login sheet must keep showing what it already showed.)
         cachedUser.clear()
     }
 
