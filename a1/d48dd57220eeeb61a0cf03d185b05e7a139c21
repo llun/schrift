@@ -1,0 +1,33 @@
+SchriftTests/Core/Networking/MockURLProtocolGateTests.swift
+  s_012f1bb1c5dacc::t_a82b6135a424bc 22-26
+  s_012f1bb1c5dacc::t_526332016c56d9 246-249,252,261
+  s_012f1bb1c5dacc::t_3cc54b02c2babc 277,280,283-285,296-297,300,310
+  s_012f1bb1c5dacc::t_c33399b71afe0c 11-18,33-93,97,100-101,103,107,109-110,113-126,131-154,156-193,195-196,200-206,208-209,212-213,217-220,224,227,233,240-245,250-251,253-260,262-276,278-279,281-282,286-295,298-299,301-309,311
+  s_012f1bb1c5dacc::t_4e15f575523823 155
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_012f1bb1c5dacc::t_31ea02163ef9b6 511-518,524,528,538-540,542
+CLAUDE.md
+  s_012f1bb1c5dacc::t_43146d09f0ea10 3027-3035
+SchriftTests/Core/Networking/MockURLProtocol.swift
+  s_012f1bb1c5dacc::t_034b728b4d4018 64-86
+  s_012f1bb1c5dacc::t_7f12ae10ab29e6 287
+  s_012f1bb1c5dacc::t_1ec4c9d4af1d77 118,255-260,265,273,275-282,284-286,289-293
+  s_012f1bb1c5dacc::t_76991c3969d128 102-103,110-117
+  s_012f1bb1c5dacc::t_c9fa2c21cf24ef 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "a1d48dd57220eeeb61a0cf03d185b05e7a139c21",
+  "prompts": {},
+  "sessions": {
+    "s_012f1bb1c5dacc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cf7a461-530d-407e-986a-ef26181e29c3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
