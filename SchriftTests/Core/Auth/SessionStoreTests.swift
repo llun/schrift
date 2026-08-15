@@ -270,7 +270,8 @@ final class SessionStoreTests: XCTestCase {
         let cache = CurrentUserCacheStore(userDefaults: userDefaults)
         cache.remember(
             CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
-        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
 
         try store.signIn(serverURL: serverURL)
 
@@ -281,7 +282,8 @@ final class SessionStoreTests: XCTestCase {
     /// document — this is re-fetchable server data about the session that just ended.
     func testSignOutForgetsTheCachedProfile() throws {
         let cache = CurrentUserCacheStore(userDefaults: userDefaults)
-        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
         try store.signIn(serverURL: serverURL)
         cache.remember(
             CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
@@ -296,7 +298,8 @@ final class SessionStoreTests: XCTestCase {
     /// the account row.
     func testExpiringASessionKeepsTheCachedProfile() throws {
         let cache = CurrentUserCacheStore(userDefaults: userDefaults)
-        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
         try store.signIn(serverURL: serverURL)
         cache.remember(
             CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
@@ -312,7 +315,8 @@ final class SessionStoreTests: XCTestCase {
     /// it, so answering the sheet as a different account re-runs `load()` instead of leaving
     /// the previous account's email on screen until the user happens to switch tabs.
     func testSignInAdvancesTheSignInGenerationSoOpenScreensReload() throws {
-        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
         let before = store.signInGeneration
 
         try store.signIn(serverURL: serverURL)
@@ -323,7 +327,8 @@ final class SessionStoreTests: XCTestCase {
     /// It marks a *change of session*, not a failure of one — a dismissed sheet must not
     /// re-run every screen's load.
     func testExpiringASessionDoesNotAdvanceTheSignInGeneration() throws {
-        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
         try store.signIn(serverURL: serverURL)
         let afterSignIn = store.signInGeneration
 

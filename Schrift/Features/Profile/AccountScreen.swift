@@ -22,6 +22,17 @@ func accountDisplayName(_ user: CurrentUser?) -> String? {
     return nil
 }
 
+/// The email to show in Profile's account row, or `nil` when there is none to show.
+///
+/// The row shows the *address*, not `accountDisplayName` — that is what the handoff puts
+/// there. Blank is treated as absent so a server sending `""` renders the "—" placeholder
+/// rather than a visually empty row; `?? "—"` at the call site only covers nil.
+func accountRowEmail(_ user: CurrentUser?) -> String? {
+    guard let email = user?.email else { return nil }
+    let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+
 /// The account detail, pushed from Profile's user row.
 ///
 /// Scoped to what `GET /users/me/` actually returns — id, email, full name,

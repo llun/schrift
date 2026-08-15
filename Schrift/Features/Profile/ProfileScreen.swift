@@ -5,8 +5,11 @@ struct ProfileScreen: View {
     let serverHost: String
     var isOffline: Bool = false
     /// Changes whenever a sign-in replaces the session — including one made through the
-    /// re-login sheet, which this screen survives. See the `.task` below.
-    var signInGeneration: Int = 0
+    /// re-login sheet, which this screen survives. See the `.task` below. **Required, not
+    /// defaulted**, for the same reason `serverOrigin` is at the image-render sites: a call
+    /// site that forgets it would silently reinstate a cross-account disclosure, and no test
+    /// covers SwiftUI plumbing. Make it a compile error instead.
+    let signInGeneration: Int
     var onSignOut: () -> Void
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
@@ -87,7 +90,7 @@ struct ProfileScreen: View {
     private var userSection: some View {
         ListSection(header: loc[.profile_user]) {
             NavigationLink(value: ProfileRoute.account) {
-                ProfileTrailingRow(icon: .account_circle, title: viewModel.user?.email ?? "—") {
+                ProfileTrailingRow(icon: .account_circle, title: accountRowEmail(viewModel.user) ?? "—") {
                     MaterialSymbol(.chevron_right, size: 18)
                         .foregroundStyle(DocsColor.gray300)
                 }
@@ -191,6 +194,7 @@ struct ProfileScreen: View {
     ProfileScreen(
         viewModel: ProfileViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
+        signInGeneration: 0,
         onSignOut: {}
     )
     .environment(LocalizationStore())

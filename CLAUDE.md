@@ -2960,9 +2960,10 @@ markdown write endpoint**. Understand this before touching the save path:
   else); the full bodies in `DocumentContentCacheStore` are, and so is the account
   profile in `CurrentUserCacheStore` (next bullet — cleared, like the account id
   beside it, in `SessionStore` itself and not only in RootView, because it has to go
-  on sign-*in* too, which only `SessionStore` sees). That clearing lives in
-  RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
-  **not** inside `SessionStore.signOut()` — a new sign-out path must call it
+  on sign-*in* too, which only `SessionStore` sees). **The content caches are the
+  ones with the RootView-only rule**: `DocumentContentCacheStore().removeAll()` and
+  `AttachmentCacheStore().removeAll()` live in RootView's `onSignOut` closure and
+  **not** inside `SessionStore.signOut()`, so a new sign-out path must call them
   explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
 - **The account's displayed profile is cached too** (`CurrentUserCacheStore`,
   `dev.llun.Schrift.currentUser`), because `/users/me/` is the only source of the

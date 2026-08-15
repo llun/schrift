@@ -213,6 +213,30 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.user?.email, "ada@example.org")
     }
 
+    /// The row must stop naming the previous account the moment the session changes, not when
+    /// the reload settles — that is a whole round trip, or a ~60s timeout if connectivity died
+    /// right after the re-login, spent displaying an account that is gone (and offering its
+    /// detail screen). So `load()` re-seeds from the store *before* it fetches.
+    func testLoadDropsAForgottenAccountImmediatelyRatherThanWhenTheFetchSettles() async {
+        let defaults = makeIsolatedDefaults()
+        let cache = CurrentUserCacheStore(userDefaults: defaults)
+        cache.remember(CurrentUser(id: Self.adaID, email: "ada@example.org"))
+        let viewModel = makeViewModel(defaults: defaults)
+        XCTAssertNotNil(viewModel.user, "precondition")
+        // What `SessionStore.signIn` did while the sheet was up.
+        cache.clear()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Self.userFixture, error: nil, delay: 0.2)
+        }
+
+        let load = Task { await viewModel.load() }
+
+        // Before the response can arrive: the re-seed runs ahead of the first suspension.
+        await waitUntil { viewModel.user == nil }
+        await load.value
+        XCTAssertEqual(viewModel.user?.email, "ada@example.org", "and the reload then names the new session")
+    }
+
     /// A `200` whose body carries no account detail is as uninformative as a failed fetch —
     /// every field is `decodeIfPresent`, so `{}` is a valid `CurrentUser` — and must not
     /// replace a good profile on screen or on disk.

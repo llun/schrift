@@ -10,7 +10,7 @@ import Foundation
 /// fine offline. The document lists already read from disk when the network is gone
 /// (`DocumentCacheStore`); this is the same treatment for the one row that did not.
 ///
-/// Distinct from [`SignedInUserStore`](x-source-tag://SignedInUserStore), deliberately, and the
+/// Distinct from `SignedInUserStore`, deliberately, and the
 /// two must not be merged. That store answers *whose session is this* — a question the offline
 /// create/replay machinery gates on, where a wrong answer sends one user's documents into
 /// another's account — so it is written only from a live fetch and fails closed. This one
@@ -43,9 +43,13 @@ struct CurrentUserCacheStore {
     /// change degrades to exactly the pre-cache behavior rather than throwing.
     /// The **bare** coder pair is deliberate on both sides, and they have to stay a pair: this
     /// is our own on-disk record, not an API payload, so the keys are `CurrentUser`'s own
-    /// camelCase `CodingKeys`. Switching this to `JSONDecoder.docsAPI` (the rule for *responses*)
-    /// would look like a fix and fail silently — every field is `decodeIfPresent`, so a
-    /// snake_case decode of camelCase data yields an all-nil user rather than an error.
+    /// camelCase `CodingKeys` and the "never a bare `JSONDecoder`" rule (which is about
+    /// *responses*) does not apply. Reading it back with `JSONDecoder.docsAPI` would in fact
+    /// still work — `.convertFromSnakeCase` leaves an underscore-less key alone — but giving
+    /// the **encoder** a `.convertToSnakeCase` strategy would not: the keys become
+    /// `full_name`/`short_name` while the decode stays camelCase, and since every field is
+    /// `decodeIfPresent` those two would read back nil forever with no error anywhere.
+    /// `testRemembersEveryFieldAcrossLaunches` is what catches it.
     var user: CurrentUser? {
         guard let data = userDefaults.data(forKey: Self.key) else { return nil }
         return try? JSONDecoder().decode(CurrentUser.self, from: data)
