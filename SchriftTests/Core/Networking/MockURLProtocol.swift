@@ -154,6 +154,23 @@ final class MockURLProtocol: URLProtocol {
     /// the test *process* and blames whichever unrelated test was running.
     nonisolated(unsafe) private static var pendingDeliveries: [DispatchWorkItem] = []
 
+    nonisolated(unsafe) private static var _deferredDeliveryCount = 0
+
+    /// How many deferred deliveries — timed or gated — have been **registered** since the
+    /// last `reset()`.
+    ///
+    /// This, not `lastRequest`, is what a test polls to know a deferred response is really
+    /// in hand. `startLoading` sets `lastRequest` *before* the handler runs and before
+    /// anything is registered, so a test that polls it can proceed while the delivery is
+    /// still unregistered — and a `reset()` issued from inside that window would drain
+    /// nothing, which is precisely the case the drain tests exist to pin. Polling this
+    /// instead means the registration has provably happened.
+    static var deferredDeliveryCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _deferredDeliveryCount
+    }
+
     /// A per-session token, retired at `reset()`, that lets `startLoading` reject a
     /// leaked request without invalidating its session. A coordinator's unstructured
     /// save `Task` deliberately outlives its test; under load it can *initiate* its
@@ -239,10 +256,38 @@ final class MockURLProtocol: URLProtocol {
             guard !self.isCancelled else { return }
             self.deliver(stub)
         }
-        MockURLProtocol.lock.lock()
-        MockURLProtocol.pendingDeliveries.append(item)
-        MockURLProtocol.lock.unlock()
+        guard register([item]) else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + stub.delay, execute: item)
+    }
+
+    /// Puts deferred work items where `reset()` can cancel them, and answers whether this
+    /// request may still be served at all. Returns false — having scheduled nothing, and
+    /// having failed the request — when the session's token was retired while we were away.
+    ///
+    /// The window it closes is narrow but real, and shared by both deferred paths:
+    /// `startLoading` checks the token, then calls `handler(request)`, which is arbitrary
+    /// test code (lock-taking recorders, fixture building). A `reset()` landing in that gap
+    /// drains an empty list, and whatever is registered afterwards can never be cancelled —
+    /// a timer that fires into a torn-down session, or a gate failsafe that reports
+    /// `XCTFail` inside whatever unrelated test is running when it comes due. Re-checking
+    /// under the *same* lock as the append means `reset()` either precedes it (nothing is
+    /// scheduled) or follows it (everything is cancelled), with no third case.
+    private func register(_ items: [DispatchWorkItem]) -> Bool {
+        // No token means a session not from `makeSession()`, which `startLoading` leaves
+        // alone; keep leaving it alone rather than inventing a liveness answer for it.
+        let token = request.value(forHTTPHeaderField: MockURLProtocol.sessionTokenHeader)
+        MockURLProtocol.lock.lock()
+        let isLive = token.map { MockURLProtocol.liveSessionTokens.contains($0) } ?? true
+        if isLive {
+            MockURLProtocol.pendingDeliveries.append(contentsOf: items)
+            MockURLProtocol._deferredDeliveryCount += 1
+        }
+        MockURLProtocol.lock.unlock()
+        guard isLive else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return false
+        }
+        return true
     }
 
     /// Registers this delivery with the gate instead of with a timer.
@@ -272,24 +317,7 @@ final class MockURLProtocol: URLProtocol {
             guard let gate, gate.isHoldingAnything else { return }
             gate.failUnopened(holding: description)
         }
-        // Registered under the **same** lock that `reset()` retires session tokens with, and
-        // gated on this request's own token still being live. `startLoading` checked that
-        // token, but then called `handler(request)` — arbitrary test code — so a `reset()`
-        // landing in between would drain an empty list and leave these two items scheduled
-        // and uncancellable. The item would be harmless (its gate is dead), but the failsafe
-        // would fire `XCTFail` inside whatever test is running 30 s later: cross-test
-        // contamination, in the one file whose whole purpose is preventing it.
-        let token = request.value(forHTTPHeaderField: MockURLProtocol.sessionTokenHeader)
-        MockURLProtocol.lock.lock()
-        // No token means a session not from `makeSession()`, which `startLoading` leaves
-        // alone; keep leaving it alone rather than inventing a liveness answer for it.
-        let isLive = token.map { MockURLProtocol.liveSessionTokens.contains($0) } ?? true
-        if isLive { MockURLProtocol.pendingDeliveries.append(contentsOf: [item, failsafe]) }
-        MockURLProtocol.lock.unlock()
-        guard isLive else {
-            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
-            return
-        }
+        guard register([item, failsafe]) else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + gate.failsafeTimeout, execute: failsafe)
         gate.hold(item)
     }
@@ -311,6 +339,7 @@ final class MockURLProtocol: URLProtocol {
         lock.lock()
         let items = pendingDeliveries
         pendingDeliveries = []
+        _deferredDeliveryCount = 0
         liveSessionTokens.removeAll()
         lock.unlock()
         for item in items { item.cancel() }

@@ -3022,7 +3022,10 @@ markdown write endpoint**. Understand this before touching the save path:
   debounce window, a plausibly-slow server). Mechanics: a gate **latches** (a
   request arriving at an already-open gate is delivered rather than stranded);
   `reset()` drains gated deliveries exactly as it drains timed ones, so an
-  unopened gate can no more fire into the next test than an unexpired timer can;
+  unopened gate can no more fire into the next test than an unexpired timer can
+  — poll **`MockURLProtocol.deferredDeliveryCount`**, never `lastRequest`, to
+  know a deferred response is really in hand, because `lastRequest` is set
+  before the handler runs and before anything is registered;
   and because a gate nothing opens would suspend the test body past the
   `tearDown` that would have drained it, a 30 s failsafe
   (`ResponseGate.defaultFailsafeTimeout`) converts that hang into a named

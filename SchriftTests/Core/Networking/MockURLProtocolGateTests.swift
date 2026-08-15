@@ -10,12 +10,18 @@ import XCTest
 /// the bet, failing the test for a reason no one can act on. A gate says the ordering
 /// outright.
 ///
-/// **Every test here pins its request's arrival before asserting anything about
+/// **Every test here pins its response as registered before asserting anything about
 /// withholding.** Without that, a slow `Task` start makes the negative half trivially true,
 /// the gate latches open, the late request is delivered, and the test passes having
 /// exercised nothing — the same vacuity this whole change exists to remove, reintroduced in
-/// the tests that are supposed to guard against it. `startLoading` sets `lastRequest`
-/// *before* it consults the handler, so polling it pins arrival exactly.
+/// the tests that are supposed to guard against it.
+///
+/// The signal is `deferredDeliveryCount`, **not** `lastRequest`: `startLoading` sets
+/// `lastRequest` before the handler runs and before anything is registered, so a test
+/// polling it can proceed while the delivery is still unregistered. Harmless for the
+/// withholding tests, but fatal for the two drain tests, whose whole subject is what
+/// `reset()` can cancel — a `reset()` issued inside that window would drain nothing, and
+/// they would pass, or fail, for reasons unrelated to the drain.
 final class MockURLProtocolGateTests: XCTestCase {
     private let contentURL = URL(
         string: "https://docs.example.org/api/v1.0/documents/11111111-1111-4111-8111-111111111111/content/")!
@@ -98,7 +104,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let session = MockURLProtocol.makeSession()
 
         let (request, outcome) = issue(contentURL, on: session)
-        await waitUntil { MockURLProtocol.lastRequest != nil }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
 
         await waitAndConfirmNever { outcome.isFinished }
 
@@ -143,17 +149,12 @@ final class MockURLProtocolGateTests: XCTestCase {
     @MainActor
     func testOneGateHoldsEveryRequestAndReleasesThemTogether() async {
         let gate = MockURLProtocol.ResponseGate()
-        let log = RequestRecorder()
-        MockURLProtocol.stubHandler = { request in
-            log.record(request)
-            return MockURLProtocol.Stub(
-                statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: gate)
-        }
+        stub(gate)
         let session = MockURLProtocol.makeSession()
 
         let (firstRequest, firstOutcome) = issue(contentURL, on: session)
         let (secondRequest, secondOutcome) = issue(versionsURL, on: session)
-        await waitUntil { log.count(ofMethod: "GET") == 2 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 2 }
         await waitAndConfirmNever { firstOutcome.isFinished || secondOutcome.isFinished }
 
         gate.open()
@@ -175,7 +176,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let session = MockURLProtocol.makeSession()
 
         let (request, outcome) = issue(contentURL, on: session)
-        await waitUntil { MockURLProtocol.lastRequest != nil }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         await waitAndConfirmNever { outcome.isFinished }
 
         gate.open()
@@ -198,7 +199,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let session = MockURLProtocol.makeSession()
 
         let (request, outcome) = issue(contentURL, on: session)
-        await waitUntil { MockURLProtocol.lastRequest != nil }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
 
         // Far longer than the delay, which must not be what releases this.
         await waitAndConfirmNever { outcome.isFinished }
@@ -225,7 +226,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let session = MockURLProtocol.makeSession()
 
         let (request, outcome) = issue(contentURL, on: session)
-        await waitUntil { MockURLProtocol.lastRequest != nil }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
 
         MockURLProtocol.reset()  // the test's tearDown, with the gate still shut.
         gate.open()
@@ -254,7 +255,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let session = MockURLProtocol.makeSession()
 
         let (request, _) = issue(contentURL, on: session)
-        await waitUntil { MockURLProtocol.lastRequest != nil }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
 
         MockURLProtocol.reset()  // must retire the failsafe with the delivery.
 
@@ -262,6 +263,59 @@ final class MockURLProtocolGateTests: XCTestCase {
 
         request.cancel()
         await request.value
+    }
+
+    /// The window between the token check and registration, closed deterministically.
+    ///
+    /// `startLoading` checks the session token, then calls `handler(request)` — arbitrary
+    /// test code — and only then registers. A `reset()` landing in that gap used to drain an
+    /// empty list and leave the delivery *and its failsafe* scheduled with nothing able to
+    /// cancel them; the failsafe would then report `XCTFail` inside whatever unrelated test
+    /// was running when it came due. Calling `reset()` from inside the handler puts it in
+    /// exactly that gap, every run, instead of waiting for a race to show up on CI.
+    ///
+    /// The request must be refused outright, as `startLoading` refuses a retired token.
+    /// Non-inert in both directions: register unconditionally and the failsafe fires here,
+    /// failing this test with the message it would have carried into someone else's.
+    @MainActor
+    func testAResetDuringTheHandlerStrandsNothing() async {
+        let gate = MockURLProtocol.ResponseGate(failsafeTimeout: shortFailsafe)
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.reset()  // lands after the token check, before registration
+            return MockURLProtocol.Stub(
+                statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: gate)
+        }
+        let session = MockURLProtocol.makeSession()
+
+        let (request, outcome) = issue(contentURL, on: session)
+
+        await waitUntil { outcome.isFinished }
+        await request.value
+        XCTAssertEqual((outcome.error as? URLError)?.code, .cancelled, "refused, not left scheduled")
+        XCTAssertEqual(MockURLProtocol.deferredDeliveryCount, 0, "and nothing was registered")
+
+        // Past the failsafe's deadline: it must never have been scheduled at all.
+        try? await Task.sleep(for: .seconds(shortFailsafe * 5))
+    }
+
+    /// The same window on the **timed** path, which shares the one registration helper. Its
+    /// stranded item is a plain timer rather than a failsafe, but it fires into a torn-down
+    /// session, which is the hang this file's deferred deliveries were built to avoid.
+    @MainActor
+    func testAResetDuringTheHandlerStrandsNothingOnTheTimedPathEither() async {
+        MockURLProtocol.stubHandler = { _ in
+            MockURLProtocol.reset()
+            return MockURLProtocol.Stub(
+                statusCode: 204, headers: [:], body: Data(), error: nil, delay: 0.05)
+        }
+        let session = MockURLProtocol.makeSession()
+
+        let (request, outcome) = issue(contentURL, on: session)
+
+        await waitUntil { outcome.isFinished }
+        await request.value
+        XCTAssertEqual((outcome.error as? URLError)?.code, .cancelled)
+        XCTAssertEqual(MockURLProtocol.deferredDeliveryCount, 0)
     }
 
     // MARK: - The failsafe
@@ -275,6 +329,14 @@ final class MockURLProtocolGateTests: XCTestCase {
     /// silently carrying another test's regression coverage, and a backstop nothing exercises
     /// is one nobody knows is broken.
     /// `XCTExpectFailure` is strict, so this also fails if the failsafe *doesn't* fire.
+    ///
+    /// The generous wait is the one place in this file where a timeout is not about our own
+    /// code: the failsafe records its `XCTFail` and calls `open()` from the same main-queue
+    /// block, so the release is queued **behind XCTest's issue recording**, whose cost is
+    /// neither small nor bounded by anything here — measured at ~0.5s locally, and it
+    /// overran `waitUntil`'s 3s default on a cold CI runner (run 31889803157), which is how
+    /// this was found. It is a liveness bound, not an ordering: `waitUntil` still fails
+    /// loudly, so a failsafe that never releases is still caught.
     @MainActor
     func testAnUnopenedGateFailsTheTestAndThenReleasesTheRequest() async {
         let gate = MockURLProtocol.ResponseGate(failsafeTimeout: shortFailsafe)
@@ -286,7 +348,7 @@ final class MockURLProtocolGateTests: XCTestCase {
 
         let (request, outcome) = issue(contentURL, on: session)
 
-        await waitUntil { outcome.isFinished }
+        await waitUntil(timeout: 30) { outcome.isFinished }
         await request.value
         XCTAssertEqual(outcome.statusCode, 204, "released, so the body fails on its own assertions")
     }
@@ -302,7 +364,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let session = MockURLProtocol.makeSession()
 
         let (request, outcome) = issue(contentURL, on: session)
-        await waitUntil { MockURLProtocol.lastRequest != nil }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         gate.open()
         await waitUntil { outcome.isFinished }
         await request.value
