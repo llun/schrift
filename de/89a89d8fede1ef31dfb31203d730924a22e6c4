@@ -1,0 +1,19 @@
+SchriftTests/Core/Networking/MockURLProtocolGateTests.swift
+  s_012f1bb1c5dacc::t_758a77d0e6b6f4 338-346,359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "de89a89d8fede1ef31dfb31203d730924a22e6c4",
+  "prompts": {},
+  "sessions": {
+    "s_012f1bb1c5dacc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cf7a461-530d-407e-986a-ef26181e29c3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
