@@ -1202,18 +1202,39 @@ properly means comparing a captured `signInGeneration`, which would mean handing
 view model the session identity — not worth it for a window this narrow, which the
 restarted load then corrects anyway.
 
-**One pre-existing gap this store inherits, stated so the clearing guarantee above is
-not read as absolute.** `WebLoginView`'s coordinator syncs the web view's cookies into
-`HTTPCookieStorage.shared` *before* the confirming `GET users/me/` runs, and
-`ReauthenticationViewModel.handleLoginComplete` calls `signIn` only if that request
-succeeds. So a transport blip on the confirm leaves the new account's cookies live
-while nothing was cleared — and if the user then dismisses the sheet the state is
-stable, because the new session no longer 401s. Until the next successful `/users/me/`
-(app relaunch, or a Profile visit) the app runs with B's cookies, A's cached profile
-and A's `signedInUserID`. The display half is new here; the `SignedInUserStore` half
-predates it and is the worse one, since a document minted in that window is stamped
-with A and replays into B's account. Tracked separately — the fix belongs in the
-sign-in flow (clear on cookie capture, or confirm before syncing), not in this store.
+**The gap this store used to inherit, and how it was closed (2026-08-15).** The
+clearing guarantee above was not absolute, because it hung off `signIn`.
+`WebLoginView`'s coordinator syncs the web view's cookies into
+`HTTPCookieStorage.shared` *before* the confirming `GET users/me/` runs, and both
+`ReauthenticationViewModel.handleLoginComplete` and `ConnectViewModel
+.handleLoginComplete` called `signIn` only if that request succeeded. A transport blip
+or a 5xx on the confirm therefore left the new account's cookies live with nothing
+cleared — and, crucially, *stably*: the new session no longer 401s, so dismissing the
+sheet ended the flow for good and the app ran with B's cookies, A's cached profile and
+A's `signedInUserID` until the next successful `/users/me/`.
+
+The fix is `SessionStore.noteSessionCookiesReplaced()`, called by both view models
+**before** the confirmation rather than after it — the cookie handover is what
+invalidates the identity, and it is the half of the flow that always happens. It
+clears both stores (through the private `forgetSignedInIdentity()` that `signIn` and
+`signOut` also call, so a later piece of account-scoped state has one home) and bumps
+`signInGeneration`, without which `ProfileViewModel`'s in-memory copy would keep the
+previous account on screen behind a `MainTabView` the sheet never rebuilt. It is not
+fired by opening or cancelling the sheet: no cookies changed hands there, so the
+dismissed-sheet contract still holds, exactly as at `noteSessionExpired`.
+
+What that window actually cost is worth recording, because the obvious reading of it
+is wrong. A's unsynced documents were listed to B — the disclosure `belongsToSession`
+exists to prevent, and the worse half of it, since B could open and type into them.
+Anything B created or deleted was stamped `ownerUserID = A`; that did **not** replay
+into B's account, because `runCreatePass`, `runDeletePass` and `runAttachmentPass` each
+gate on a live `client.currentUser()` rather than on `SignedInUserStore` — so it was
+**stranded** instead: never sent, and once the id healed never listed either, with a
+queued deletion silently never made. The display half was the mildest of the three.
+The new failure mode is fail-closed and self-healing: when the *same* account
+re-authenticates and the confirm blips, their local-only documents drop out of the
+lists until the next successful `/users/me/`, while the records themselves stay
+protected unconditionally by `isPendingCreate`.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 

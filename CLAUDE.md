@@ -3010,6 +3010,36 @@ markdown write endpoint**. Understand this before touching the save path:
   already-resolved response would otherwise write the previous account back into both
   stores — re-arming `SignedInUserStore`, the one that gates replay. The one predicate that decides whether that row is *tappable* is
   `accountDisplayName`, the same one `AccountScreen` branches on.
+- **Both identity stores are forgotten when the *cookies* change hands, not when the
+  sign-in succeeds** — `SessionStore.noteSessionCookiesReplaced()`, called by
+  `ReauthenticationViewModel.handleLoginComplete` and `ConnectViewModel
+  .handleLoginComplete` **before** their confirming `GET users/me/`. `signIn` cannot
+  be the only clearing point, because it runs only when that confirmation succeeds,
+  while `WebLoginView.captureCookies` syncs the new session into
+  `HTTPCookieStorage.shared` unconditionally and *earlier*. So a 5xx or a dropped
+  connection on that one request left the app running **B's session under A's
+  identity** — and *stably*, since B's cookies are valid and nothing 401s again to
+  re-present the sheet, so it persisted until the next successful `/users/me/`. Three
+  things go wrong in that state, and the middle one is not what it looks like: A's
+  unsynced documents are listed to B (the disclosure `belongsToSession` exists to
+  prevent — their content on screen, and any edit landing in their document); anything
+  B creates or deletes is stamped `ownerUserID = A` and is then **stranded**, *not*
+  sent into A's account, because all three replay passes gate on a live
+  `client.currentUser()` rather than on this store — so it is never POSTed and, once
+  the id heals, never listed either, and a queued deletion is silently never made; and
+  Profile shows A's name and email inside B's session. Binding the clear to the
+  handover makes the failure fail closed (nil is what every reader already handles).
+  The cost, when the *same* account re-authenticates and the confirm blips, is that
+  their local-only documents drop out of the lists until the next successful
+  `/users/me/` — the records are protected unconditionally by `isPendingCreate`, so
+  nothing is lost and it heals on the next fetch. It bumps `signInGeneration` for the
+  same reason `signIn` does: clearing the value is only half the job while
+  `ProfileViewModel` holds an in-memory copy behind a sheet that never rebuilt it. It
+  is deliberately **not** fired by opening or cancelling the sheet — no cookies changed
+  hands there, so the dismissed-sheet contract (cached data keeps showing, the same
+  reason this is not done at `noteSessionExpired`) still holds. Add any future
+  account-scoped state to the private `forgetSignedInIdentity()` the three callers
+  share, not to one of them.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.
