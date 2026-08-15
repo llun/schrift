@@ -36,9 +36,19 @@ final class ProfileViewModel {
         async let fetchedUser = try? client.currentUser()
         async let fetchedVersion = try? client.serverConfig().version
         let freshUser = await fetchedUser
-        if let freshUser {
+        if let freshUser, freshUser.carriesAccountDetail {
             user = freshUser
             cachedUser.remember(freshUser)
+        } else {
+            // Re-read the store rather than keeping what is already on screen. This view model
+            // is `@State` in `MainTabView`, which is **not** rebuilt across a re-login — the
+            // sheet is presented over it while `isAuthenticated` stays true — so the in-memory
+            // copy can belong to the account that just went away, and keeping it would display
+            // one user's email inside another's session. The store is cleared by
+            // `SessionStore.signIn`, so it is the session-scoped answer. It is also the
+            // *fresher* one at launch: `MainTabView.init` builds this before RootView's task
+            // runs the `/users/me/` that first fills the cache.
+            user = cachedUser.user
         }
         // The version row hides itself when nil, so there is nothing to preserve and a stale
         // version number is worth less than an absent one — it describes the *server*, which

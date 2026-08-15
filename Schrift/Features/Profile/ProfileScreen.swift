@@ -85,9 +85,12 @@ struct ProfileScreen: View {
                 }
             }
             .buttonStyle(.plain)
-            // Nothing to push into until the user has loaded — offline, that is
-            // the permanent state, and the detail screen would have nothing to
-            // show but its own unavailable message.
+            // Nothing to push into until there is an account to describe, from the
+            // fetch or from `CurrentUserCacheStore` — the detail screen would have
+            // nothing to show but its own unavailable message. Offline is no longer
+            // that state: the cached profile makes this row live without a network,
+            // and it stays disabled only before the first successful fetch of a
+            // session (or after one that answered with nothing).
             .disabled(viewModel.user == nil)
         }
     }

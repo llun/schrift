@@ -37,6 +37,8 @@ final class ProfileViewModelTests: XCTestCase {
             cachedUser: CurrentUserCacheStore(userDefaults: defaults))
     }
 
+    private static let adaID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
     private nonisolated static let userFixture: Data = """
         {
             "id": "11111111-1111-4111-8111-111111111111",
@@ -108,7 +110,7 @@ final class ProfileViewModelTests: XCTestCase {
     func testShowsTheCachedUserBeforeAnyFetch() {
         let defaults = makeIsolatedDefaults()
         CurrentUserCacheStore(userDefaults: defaults).remember(
-            CurrentUser(id: UUID(), email: "ada@example.org", fullName: "Ada Lovelace"))
+            CurrentUser(id: Self.adaID, email: "ada@example.org", fullName: "Ada Lovelace"))
 
         let viewModel = makeViewModel(defaults: defaults)
 
@@ -122,7 +124,7 @@ final class ProfileViewModelTests: XCTestCase {
     func testAFailedFetchKeepsTheCachedUser() async {
         let defaults = makeIsolatedDefaults()
         CurrentUserCacheStore(userDefaults: defaults).remember(
-            CurrentUser(id: UUID(), email: "ada@example.org", fullName: "Ada Lovelace"))
+            CurrentUser(id: Self.adaID, email: "ada@example.org", fullName: "Ada Lovelace"))
         let viewModel = makeViewModel(defaults: defaults)
         MockURLProtocol.stubHandler = { _ in
             .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
@@ -149,6 +151,84 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(cached?.email, "ada@example.org")
         XCTAssertEqual(cached?.fullName, "Ada Lovelace")
         XCTAssertEqual(cached?.language, "en-us")
+    }
+
+    /// The direction the "keep the cached copy" rule must not swallow: a rename made on the web
+    /// still has to reach the screen *and* the disk. Without a stale starting value, an
+    /// over-correction like `if user == nil { user = freshUser }` passes every other test here.
+    func testASuccessfulFetchReplacesAStaleCachedProfile() async {
+        let defaults = makeIsolatedDefaults()
+        CurrentUserCacheStore(userDefaults: defaults).remember(
+            CurrentUser(id: Self.adaID, email: "ada@old.example.org", fullName: "Ada Byron"))
+        let viewModel = makeViewModel(defaults: defaults)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Self.userFixture, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.user?.fullName, "Ada Lovelace")
+        XCTAssertEqual(CurrentUserCacheStore(userDefaults: defaults).user?.fullName, "Ada Lovelace")
+    }
+
+    /// This view model is `@State` in `MainTabView`, which is **not** rebuilt across a
+    /// re-login — the sheet is presented over it while `isAuthenticated` stays true — so its
+    /// in-memory user can belong to the account that just went away. Re-reading the store
+    /// (which `SessionStore.signIn` clears) instead of keeping that copy is what stops one
+    /// account's email being displayed inside another's session when the fetch fails.
+    func testAFailedFetchDropsAProfileTheSessionHasForgotten() async {
+        let defaults = makeIsolatedDefaults()
+        let cache = CurrentUserCacheStore(userDefaults: defaults)
+        cache.remember(CurrentUser(id: Self.adaID, email: "ada@example.org"))
+        let viewModel = makeViewModel(defaults: defaults)
+        XCTAssertNotNil(viewModel.user, "precondition: the previous account is on screen")
+        // Re-authenticated as somebody else: `SessionStore.signIn` cleared the store, and the
+        // refresh that would name the new account has not landed (or failed).
+        cache.clear()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertNil(viewModel.user)
+    }
+
+    /// The launch order this has to survive: `MainTabView.init` builds this view model before
+    /// `RootView`'s task runs the `/users/me/` that first fills the cache. Seeding once in
+    /// `init` and never looking again would leave Profile empty for the whole session if the
+    /// network died in between — the original bug, reached by a different route.
+    func testAFailedFetchPicksUpAProfileCachedAfterTheViewModelWasBuilt() async {
+        let defaults = makeIsolatedDefaults()
+        let viewModel = makeViewModel(defaults: defaults)
+        XCTAssertNil(viewModel.user, "precondition: nothing cached when the screen was built")
+        CurrentUserCacheStore(userDefaults: defaults).remember(
+            CurrentUser(id: Self.adaID, email: "ada@example.org"))
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.user?.email, "ada@example.org")
+    }
+
+    /// A `200` whose body carries no account detail is as uninformative as a failed fetch —
+    /// every field is `decodeIfPresent`, so `{}` is a valid `CurrentUser` — and must not
+    /// replace a good profile on screen or on disk.
+    func testAnEmptyUserPayloadDoesNotReplaceAGoodProfile() async {
+        let defaults = makeIsolatedDefaults()
+        CurrentUserCacheStore(userDefaults: defaults).remember(
+            CurrentUser(id: Self.adaID, email: "ada@example.org"))
+        let viewModel = makeViewModel(defaults: defaults)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.user?.email, "ada@example.org")
+        XCTAssertEqual(CurrentUserCacheStore(userDefaults: defaults).user?.email, "ada@example.org")
     }
 
     /// `SignedInUserStore` gates what may be *listed and sent* for offline-created documents,

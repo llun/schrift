@@ -2957,7 +2957,9 @@ markdown write endpoint**. Understand this before touching the save path:
   for that has not happened yet, scoped the same way by `ownerUserID`) nor the
   queued photos in `PendingAttachmentStore` (records *and* JPEG bytes, backup-included
   and owner-scoped for exactly the same reason — an un-uploaded photo exists nowhere
-  else); only the full bodies in `DocumentContentCacheStore` are. That clearing lives in
+  else); the full bodies in `DocumentContentCacheStore` are, and so is the account
+  profile in `CurrentUserCacheStore` (next bullet — the one store cleared in
+  `SessionStore` itself rather than only in RootView). That clearing lives in
   RootView's `onSignOut` closure (`DocumentContentCacheStore().removeAll()`),
   **not** inside `SessionStore.signOut()` — a new sign-out path must call it
   explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
@@ -2968,8 +2970,19 @@ markdown write endpoint**. Understand this before touching the save path:
   was unreachable on a screen whose every other row works offline. It seeds the view
   model **synchronously in `init`** (the screen renders `user` in its `body` before
   `.task` runs, so a fetch is a frame too late to be the only source), and `load()`
-  replaces `user` **only on a successful fetch** — assigning the failed fetch's nil
-  is the bug itself, one frame later. Both `/users/me/` callers write through
+  replaces `user` from a successful fetch — assigning the failed fetch's nil is the
+  bug itself, one frame later. **A fetch that answers nothing re-reads the store; it
+  never keeps what is on screen.** Two reasons, and both bite: this view model is
+  `@State` in `MainTabView`, which is *not* rebuilt across a re-login (the sheet is
+  presented over it while `isAuthenticated` stays true), so the in-memory copy can
+  belong to the account that just went away — keeping it would show one user's email
+  inside another's session, and the store is the session-scoped answer because
+  `signIn` clears it. And at launch `MainTabView.init` runs *before* RootView's task
+  fills the cache, so a one-shot seed would leave Profile empty for the whole session
+  if the network died in between. A response carrying **no** account detail at all
+  (`{}` decodes to an all-nil `CurrentUser` — every field is `decodeIfPresent`) counts
+  as answering nothing, or it would sail past `if let` and destroy a good profile;
+  an id with no name still counts as an answer. Both `/users/me/` callers write through
   (`ProfileViewModel.load`, `HomeViewModel.refreshSignedInUser` — without the
   second, a user who never opens Profile while online still has nothing cached).
   Unlike the stores above it is **cleared at sign-in *and* sign-out**

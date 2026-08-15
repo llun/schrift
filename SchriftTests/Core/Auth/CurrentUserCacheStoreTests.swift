@@ -56,6 +56,44 @@ final class CurrentUserCacheStoreTests: XCTestCase {
         XCTAssertNil(CurrentUserCacheStore(userDefaults: defaults).user)
     }
 
+    /// The twin of `SignedInUserStoreTests.testANilIdDoesNotClearAGoodValue`, and load-bearing
+    /// for the same reason: a failed fetch has told us nothing about the account, so writing
+    /// its nil through would blank the row this store exists to keep filled.
+    func testANilUserDoesNotClearAGoodValue() {
+        let store = CurrentUserCacheStore(userDefaults: defaults)
+        store.remember(ada)
+
+        store.remember(nil)
+
+        XCTAssertEqual(store.user, ada)
+        XCTAssertEqual(CurrentUserCacheStore(userDefaults: defaults).user, ada, "and nothing was erased on disk")
+    }
+
+    /// Every field of `CurrentUser` decodes with `decodeIfPresent`, so a `200` carrying `{}` —
+    /// a proxy, a serializer change — decodes to a perfectly valid all-nil user. It is as
+    /// uninformative as a failed fetch, so it gets the same treatment: without this it would
+    /// pass a bare `if let` and destroy a good profile.
+    func testAUserCarryingNoAccountDetailIsIgnoredLikeANilOne() {
+        let store = CurrentUserCacheStore(userDefaults: defaults)
+        store.remember(ada)
+
+        store.remember(CurrentUser())
+        store.remember(CurrentUser(email: "   "))
+
+        XCTAssertEqual(store.user, ada)
+    }
+
+    /// The mirror of the rule above: an id with no name or email is still *this* account, and
+    /// the display falling back to "—" is honest where forgetting the account is not.
+    func testAUserWithOnlyAnIdIsStillRemembered() {
+        let idOnly = CurrentUser(id: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!)
+        let store = CurrentUserCacheStore(userDefaults: defaults)
+
+        store.remember(idOnly)
+
+        XCTAssertEqual(store.user, idOnly)
+    }
+
     /// Cleared at sign-in and sign-out, and this is what the next account's first offline
     /// launch depends on: the previous user's email must not still be on screen.
     func testClearForgetsTheUserOnDisk() {

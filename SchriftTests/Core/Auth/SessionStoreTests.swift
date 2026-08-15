@@ -268,7 +268,8 @@ final class SessionStoreTests: XCTestCase {
     /// email on the new user's Profile screen, indefinitely if they are offline.
     func testSignInForgetsThePreviousAccountsCachedProfile() throws {
         let cache = CurrentUserCacheStore(userDefaults: userDefaults)
-        cache.remember(CurrentUser(id: UUID(), email: "ada@example.org"))
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
         let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
 
         try store.signIn(serverURL: serverURL)
@@ -282,7 +283,8 @@ final class SessionStoreTests: XCTestCase {
         let cache = CurrentUserCacheStore(userDefaults: userDefaults)
         let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
         try store.signIn(serverURL: serverURL)
-        cache.remember(CurrentUser(id: UUID(), email: "ada@example.org"))
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
 
         try store.signOut()
 

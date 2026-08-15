@@ -49,12 +49,31 @@ struct CurrentUserCacheStore {
     /// Write through from any successful `/users/me/`. A nil user is ignored rather than
     /// clearing a good value — a failed fetch has told us nothing about the account, and
     /// blanking the row on it is the bug this store exists to fix.
+    ///
+    /// A user carrying **no** account detail is ignored for exactly the same reason. Every
+    /// field of `CurrentUser` is `decodeIfPresent`, so a `200` answering `{}` — a proxy, a
+    /// serializer change — is a perfectly valid all-nil user that would sail past a bare
+    /// `if let` and destroy a good profile. It is as uninformative as a failure, so it is
+    /// treated as one.
     func remember(_ user: CurrentUser?) {
-        guard let user, let data = try? JSONEncoder().encode(user) else { return }
+        guard let user, user.carriesAccountDetail, let data = try? JSONEncoder().encode(user) else { return }
         userDefaults.set(data, forKey: Self.key)
     }
 
     func clear() {
         userDefaults.removeObject(forKey: Self.key)
+    }
+}
+
+extension CurrentUser {
+    /// Whether this response says anything at all about an account, and so whether it is worth
+    /// showing or storing. An id with no name or email still counts — that is *this* account,
+    /// and a row falling back to "—" is honest where forgetting the account is not.
+    var carriesAccountDetail: Bool {
+        if id != nil { return true }
+        return [email, fullName, shortName, language].contains { field in
+            guard let field else { return false }
+            return !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 }

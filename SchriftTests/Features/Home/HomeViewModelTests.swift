@@ -1533,11 +1533,16 @@ final class HomeViewModelTests: XCTestCase {
                     """.utf8),
                 error: nil)
         }
-        let viewModel = makeViewModel(cachedUser: cachedUser)
+        let signedIn = makeSignedInUser(userID: nil)
+        let viewModel = makeViewModel(signedInUser: signedIn, cachedUser: cachedUser)
 
         await viewModel.refreshSignedInUser()
 
         XCTAssertEqual(cachedUser.user?.email, "ada@example.org")
         XCTAssertEqual(cachedUser.user?.fullName, "Ada Lovelace")
+        // The method's other write-through, otherwise untested anywhere: this is the only
+        // call to `refreshSignedInUser` in the suite, and the id is what gates whether an
+        // offline-created document may be listed or replayed at all.
+        XCTAssertEqual(signedIn.userID, UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
     }
 }
