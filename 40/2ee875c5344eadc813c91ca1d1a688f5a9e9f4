@@ -1,0 +1,24 @@
+CLAUDE.md
+  s_50339f085f130b::t_f6e80114f07995 3047-3055
+docs/offline-and-sync.md
+  s_50339f085f130b::t_f6e80114f07995 1257-1273
+Schrift/Features/Home/HomeViewModel.swift
+  s_50339f085f130b::t_a5ad56c2c2d779 345-348
+  s_50339f085f130b::t_3c9877c52878a4 452-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "402ee875c5344eadc813c91ca1d1a688f5a9e9f4",
+  "prompts": {},
+  "sessions": {
+    "s_50339f085f130b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2702dd8e-d1c1-4603-b216-554b89f4fad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
