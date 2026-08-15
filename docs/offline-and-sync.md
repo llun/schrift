@@ -1254,7 +1254,9 @@ and offered a Remove that really does delete them. That contradicted the rule
 no requests *and* no deletion"), and it is fixed here by giving the unknown-session case its
 own non-destructive state, `PendingAttachmentDisplay.unattributable`: no claim about the
 photo, and no actions. It may not simply render the photo either — an unknown session is not
-*proof* of the same account. A **queued deletion** shares the collapse in
+*proof* of the same account. **Queueing a new photo** refuses as well, with the generic "Couldn't add the photo" —
+fail-closed, nothing written and nothing lost, so it costs the attempt rather than any
+content. A **queued deletion** shares the collapse in
 `isListablePendingDelete` with a smaller consequence and is deliberately left: the row stops
 drawing struck through and its tap opens the document rather than offering the undo, but the
 tombstone is protected by the unscoped `isPendingDelete`, so the window costs the undo

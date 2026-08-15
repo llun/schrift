@@ -467,8 +467,9 @@ final class HomeViewModel {
     ///
     /// It does **not** reach the queued-photo save hold, which is worth stating because the
     /// obvious reading is that it does. A photo in the same window renders
-    /// `PendingAttachmentDisplay.unattributable`, which offers no Remove — so the *manual* way
-    /// out of `markdownReferencesPendingAttachment`'s hold is withheld. The automatic one is
+    /// `PendingAttachmentDisplay.unattributable`, which offers no Remove — so the *card's* way
+    /// out of `markdownReferencesPendingAttachment`'s hold is withheld (backspacing the block
+    /// away still clears it, at the cost of the photo). The automatic one is
     /// not: `runAttachmentPass` takes its account from a live `/users/me/` rather than from
     /// `SignedInUserStore`, and the coordinator reads no `workOffline` preference at all, so it
     /// uploads and rewrites the placeholder regardless of what this store knows. The hold

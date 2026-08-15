@@ -3046,8 +3046,10 @@ markdown write endpoint**. Understand this before touching the save path:
   and offered a Remove that deletes them, contradicting the rule `isAttachmentReplayable`
   states for the identical condition. Fixed here by giving that case its own non-destructive
   state, `PendingAttachmentDisplay.unattributable` (no claim, no actions; it may not render
-  the photo either — an unknown session is not *proof* of the same account). A **queued
-  deletion** shares the collapse in `isListablePendingDelete`, deliberately left: the row
+  the photo either — an unknown session is not *proof* of the same account). **Queueing a new photo** refuses too (`EditorViewModel`'s
+  `queuePendingPhoto`, with the generic "Couldn't add the photo") — fail-closed, nothing
+  written, nothing lost. A **queued deletion** shares the collapse in
+  `isListablePendingDelete`, deliberately left: the row
   stops drawing struck through and its tap opens the document instead of offering the undo,
   but the unscoped `isPendingDelete` still protects the tombstone, so it costs the undo
   affordance rather than the deletion and heals with the identity. **Fail-closed needs a way back open**, or a
