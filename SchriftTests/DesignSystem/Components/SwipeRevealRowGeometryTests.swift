@@ -135,13 +135,20 @@ final class SwipeRevealRowGeometryTests: XCTestCase {
 
     // MARK: - The strip may not paint outside the row
 
-    /// Renders a row with clear margins above and below it and reports whether anything was
-    /// painted into those margins in the **trailing** column — where the action strip sits.
+    /// Renders a row with clear margins above and below it, then reports whether the
+    /// **trailing** column — the one the action strip sits in — is anything other than the
+    /// page colour, anywhere.
     ///
-    /// `sizeThatFits` cannot see this: the strip is a `background`, so it contributes nothing
-    /// to the row's measured size no matter how tall it draws. Only a render can.
-    private func paintsOutsideTheRow<Row: View>(
-        margin: CGFloat = 20, rowHeight: CGFloat, typeSize: DynamicTypeSize = .large,
+    /// A whole column rather than the margins alone, and no row-height bookkeeping to get
+    /// wrong: a *closed* row draws its own opaque `surfacePage` over the strip, and the
+    /// margins are that same colour, so the honest expectation for the entire column is
+    /// "page colour" — whatever height the row turned out to be at this text size. A strip
+    /// that escapes the row is the only thing that can tint it.
+    ///
+    /// `sizeThatFits` cannot see any of this: the strip is a `background`, so it contributes
+    /// nothing to the row's measured size no matter how tall it draws. Only a render can.
+    private func paintsOverThePage<Row: View>(
+        margin: CGFloat = 20, typeSize: DynamicTypeSize = .large,
         @ViewBuilder row: () -> Row
     ) -> Bool {
         let view = VStack(spacing: 0) {
@@ -174,26 +181,23 @@ final class SwipeRevealRowGeometryTests: XCTestCase {
         context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
 
         // 5pt in from the trailing edge — inside the strip, whose narrowest button is the
-        // 44pt tap-target floor.
+        // 44pt tap-target floor, and far outside the reach of the row's own leading text.
         let x = cg.width - 5 * scale
-        // The margins, less one pixel at each row boundary: a row edge that lands mid-pixel
-        // blends legitimately, and what this guards against is a whole point of fill.
-        let rowTop = Int(margin) * scale
-        let rowBottom = rowTop + Int((rowHeight * CGFloat(scale)).rounded())
-        let outside = Array(0..<(rowTop - 1)) + Array((rowBottom + 1)..<cg.height)
-        return outside.contains { y in
+        return (0..<cg.height).contains { y in
             let i = (y * cg.width + x) * 4
-            // Anything at all that is not the page colour the margins are drawn on.
+            // Anything at all that is not the page colour this is all drawn on.
             return data[i] != 255 || data[i + 1] != 255 || data[i + 2] != 255
         }
     }
 
+    /// Deliberately a short title: the scan column must never be reached by the row's own
+    /// text, at any content size.
     private func wrappedRow(height: CGFloat) -> some View {
         SwipeRevealRow(
             id: "row", state: .constant(SwipeRevealState<String>()), actions: actions(),
-            accessibilityLabel: "Q3 Planning", onActivate: {}
+            accessibilityLabel: "Row", onActivate: {}
         ) {
-            Text("Q3 Planning")
+            Text("Row")
                 .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)
         }
     }
@@ -211,9 +215,7 @@ final class SwipeRevealRowGeometryTests: XCTestCase {
     /// swallowed the overflow, which is why the Home list never showed it.
     func testTheStripDoesNotPaintAboveOrBelowARowAtTheTapTargetFloor() {
         XCTAssertFalse(
-            paintsOutsideTheRow(rowHeight: DocsSpacing.rowMinHeight) {
-                wrappedRow(height: DocsSpacing.rowMinHeight)
-            },
+            paintsOverThePage { wrappedRow(height: DocsSpacing.rowMinHeight) },
             "the action strip is painting outside the row it decorates")
     }
 
@@ -222,7 +224,7 @@ final class SwipeRevealRowGeometryTests: XCTestCase {
     /// fill over the neighbouring rows.
     func testTheStripDoesNotPaintOutsideTheRowAtAnAccessibilityTextSize() {
         XCTAssertFalse(
-            paintsOutsideTheRow(rowHeight: DocsSpacing.rowMinHeight, typeSize: .accessibility3) {
+            paintsOverThePage(typeSize: .accessibility3) {
                 wrappedRow(height: DocsSpacing.rowMinHeight)
             },
             "the action strip is painting outside the row at an accessibility text size")
@@ -231,17 +233,17 @@ final class SwipeRevealRowGeometryTests: XCTestCase {
     /// A row taller than the strip never had the defect, and must not acquire one from the
     /// fix — this is the Home list's own geometry.
     func testATallRowStillPaintsNothingOutsideItself() {
-        XCTAssertFalse(paintsOutsideTheRow(rowHeight: 58) { wrappedRow(height: 58) })
+        XCTAssertFalse(paintsOverThePage { wrappedRow(height: 58) })
     }
 
     /// **The negative control.** Every assertion above is a claim that a scanner found
     /// *nothing*, which is exactly what a scanner pointed at the wrong column, or at an image
-    /// that never rendered, also reports. This paints the same fill deliberately over the
-    /// margins and requires the scanner to say so.
+    /// that never rendered, also reports. This paints the same fill deliberately past the row
+    /// and requires the scanner to say so.
     func testTheOverflowScannerSeesAFillThatDoesEscapeTheRow() {
         XCTAssertTrue(
-            paintsOutsideTheRow(rowHeight: DocsSpacing.rowMinHeight) {
-                Text("Q3 Planning")
+            paintsOverThePage {
+                Text("Row")
                     .frame(maxWidth: .infinity, minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
                     .background(alignment: .trailing) {
                         Color(lightHex: DocsColorHex.danger, darkHex: DocsColorHexDark.danger)
