@@ -154,6 +154,7 @@ enum Strings_th {
         .editor_attachment_pending_a11y: "รูปภาพรอการอัปโหลด",
         .editor_attachment_failed: "อัปโหลดรูปภาพนี้ไม่สำเร็จ",
         .editor_attachment_missing: "ไม่มีรูปภาพนี้ในอุปกรณ์นี้แล้ว",
+        .editor_attachment_unattributable: "รูปภาพนี้จะปรากฏขึ้นเมื่ออุปกรณ์นี้ทราบว่าคุณลงชื่อเข้าใช้ด้วยบัญชีใด",
         .editor_attachment_retry: "ลองอีกครั้ง",
         .editor_attachment_remove: "นำออก",
         .editor_uploading_photo_a11y: "กำลังอัปโหลดรูปภาพ",

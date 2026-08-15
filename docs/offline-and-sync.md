@@ -1241,8 +1241,24 @@ The new failure mode is fail-closed. When the *same* account re-authenticates an
 confirm blips, their local-only documents drop out of the lists and all three create
 affordances refuse to mint another — Home's `+`, `EditorViewModel.addSubpage` and
 `PagesTreeViewModel.addPage` — because every one of them keys off an owner nothing can
-name; the records themselves stay protected unconditionally by `isPendingCreate`, so
-nothing is lost. **Fail-closed
+name; create records themselves stay protected unconditionally by `isPendingCreate`, so no
+*document* is lost.
+
+**That last guarantee is about creates, and it does not generalise** — worth saying, because
+two neighbouring subsystems key off the same owner and neither is covered by it. A **queued
+photo** was the one that could genuinely lose data: `pendingAttachmentDisplay` collapsed
+"unknown session" into "another account's", so during the window the card declared the photo
+gone — over bytes sitting on disk, of which `PendingAttachmentStore` holds the only copy —
+and offered a Remove that really does delete them. That contradicted the rule
+`isAttachmentReplayable` states for the identical condition ("kept, silent, and untouched …
+no requests *and* no deletion"), and it is fixed here by giving the unknown-session case its
+own non-destructive state, `PendingAttachmentDisplay.unattributable`: no claim about the
+photo, and no actions. It may not simply render the photo either — an unknown session is not
+*proof* of the same account. A **queued deletion** shares the collapse in
+`isListablePendingDelete` with a smaller consequence and is deliberately left: the row stops
+drawing struck through and its tap opens the document rather than offering the undo, but the
+tombstone is protected by the unscoped `isPendingDelete`, so the window costs the undo
+affordance rather than the deletion, and it heals with the identity. **Fail-closed
 is only half of it, though — staying closed would be its own bug.** The other writers of
 `SignedInUserStore` run at launch and after a *successful* re-auth, so nothing would
 re-ask until the app was relaunched or Profile happened to be visited, and the sheet

@@ -156,6 +156,8 @@ enum Strings_fr {
         .editor_attachment_pending_a11y: "Photo en attente d'envoi",
         .editor_attachment_failed: "Impossible d'envoyer cette photo.",
         .editor_attachment_missing: "Cette photo n'est plus sur cet appareil.",
+        .editor_attachment_unattributable:
+            "Cette photo apparaîtra une fois que cet appareil saura à quel compte vous êtes connecté.",
         .editor_attachment_retry: "Réessayer",
         .editor_attachment_remove: "Supprimer",
         .editor_uploading_photo_a11y: "Envoi de la photo",

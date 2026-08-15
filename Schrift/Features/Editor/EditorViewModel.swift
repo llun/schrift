@@ -2154,11 +2154,20 @@ final class EditorViewModel {
         guard let localID = pendingAttachmentID(fromPlaceholderURL: url) else { return nil }
         // Reading the version is what makes this recompute when the replay advances a record.
         _ = saveCoordinator.pendingAttachmentsVersion
-        guard let record = saveCoordinator.pendingAttachment(localID: localID),
-            let owner = record.ownerUserID, owner == signedInUser.userID
-        else {
-            // No record, or another account's — nothing here can resolve it, and showing one
-            // user's photo inside another's session would be a disclosure.
+        guard let record = saveCoordinator.pendingAttachment(localID: localID) else { return .missing }
+        // **An unknown session is not another account's session**, and collapsing the two here
+        // is destructive: `.missing` says the photo is gone and offers Remove, which deletes the
+        // only copy of it in existence. `SessionStore.noteSessionCookiesReplaced` leaves the
+        // identity nil for as long as it takes to re-learn — a window this editor cannot end
+        // from its own UI — so with the two collapsed, a user whose re-login confirmation
+        // merely blipped is told their queued photo is gone, over bytes sitting on disk, and
+        // handed the button that really does destroy them. `isAttachmentReplayable` refuses to
+        // collect an unattributable record for precisely this reason; the UI must not
+        // contradict it.
+        guard let currentUserID = signedInUser.userID else { return .unattributable }
+        guard let owner = record.ownerUserID, owner == currentUserID else {
+            // Genuinely another account's — nothing here can resolve it, and showing one user's
+            // photo inside another's session would be a disclosure.
             return .missing
         }
         guard let data = cachedAttachmentData(localID: localID) else { return .missing }

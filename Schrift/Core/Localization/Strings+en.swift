@@ -152,6 +152,8 @@ enum Strings_en {
         .editor_attachment_pending_a11y: "Photo waiting to upload",
         .editor_attachment_failed: "Couldn't upload this photo.",
         .editor_attachment_missing: "This photo is no longer on this device.",
+        .editor_attachment_unattributable:
+            "This photo will appear once this device knows which account you're signed in to.",
         .editor_attachment_retry: "Retry",
         .editor_attachment_remove: "Remove",
         .editor_uploading_photo_a11y: "Uploading photo",

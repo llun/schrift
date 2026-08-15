@@ -156,6 +156,8 @@ enum Strings_nl {
         .editor_attachment_pending_a11y: "Foto wacht op uploaden",
         .editor_attachment_failed: "Deze foto kon niet worden geüpload.",
         .editor_attachment_missing: "Deze foto staat niet meer op dit apparaat.",
+        .editor_attachment_unattributable:
+            "Deze foto verschijnt zodra dit apparaat weet met welk account je bent ingelogd.",
         .editor_attachment_retry: "Opnieuw proberen",
         .editor_attachment_remove: "Verwijderen",
         .editor_uploading_photo_a11y: "Foto uploaden",

@@ -471,8 +471,9 @@ final class HomeViewModel {
     /// where it used to spend one. Accepted: it happens only while the identity is missing.
     /// For the same reason it is *not* coalesced against a concurrent call — foreground and
     /// reconnect can fire together, and both will ask before either answer lands. Bounded at
-    /// two, self-limiting (the second finds the id known), and latest-wins on the loads that
-    /// follow, so the cost is redundant traffic rather than a wrong list.
+    /// three (a pull-to-refresh can join them), self-limiting — the next caller finds the id
+    /// known — and latest-wins on the loads that follow, so the cost is redundant traffic
+    /// rather than a wrong list.
     @discardableResult
     private func refreshSignedInUserIfUnknown() async -> Bool {
         guard signedInUser.userID == nil else { return false }

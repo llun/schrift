@@ -42,6 +42,19 @@ struct PendingAttachmentImageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(DocsColor.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+        case .unattributable:
+            // **No actions.** The bytes are on disk and only this session's ignorance of its own
+            // account stops them rendering, so Remove here would destroy the one copy of a photo
+            // over a state that heals on the next launch, Profile visit or pull-to-refresh.
+            VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                message(loc[.editor_attachment_unattributable], icon: .image)
+            }
+            .padding(DocsSpacing.spaceSM)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DocsColor.surfaceMuted)
+            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(label(loc[.editor_attachment_unattributable]))
         }
     }
 

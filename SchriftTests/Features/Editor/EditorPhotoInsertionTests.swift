@@ -976,6 +976,46 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertNil(viewModel.pendingAttachmentDisplay(forPlaceholderURL: expectedMediaURL))
     }
 
+    /// **An unknown session is not another account's session, and collapsing the two destroys a
+    /// photo.** `SessionStore.noteSessionCookiesReplaced` leaves the identity nil whenever a
+    /// login hands over its cookies and the confirming `/users/me/` then fails — a window the
+    /// editor cannot end from its own UI. Answering `.missing` there tells the user their queued
+    /// photo is gone, over bytes that are on disk, and offers a Remove that deletes the only
+    /// copy in existence. `isAttachmentReplayable` refuses to collect an unattributable record
+    /// for exactly this reason ("no requests *and* no deletion"), and the card must agree.
+    func testAQueuedPhotoIsNotDeclaredMissingMerelyBecauseTheSessionIsUnnamed() async {
+        stubUploadPipeline()
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+        let placeholder = queuedPlaceholder(in: viewModel)!
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+
+        // The re-login sheet completed and its confirmation failed: cookies changed hands, so
+        // the identity was dropped and nothing has re-learned it yet.
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!).clear()
+
+        XCTAssertEqual(
+            viewModel.pendingAttachmentDisplay(forPlaceholderURL: placeholder), .unattributable,
+            "never .missing — that state offers the Remove that destroys the only copy")
+        XCTAssertNotNil(attachments.attachment(for: localID), "and the bytes are still there to be shown")
+    }
+
+    /// The disclosure half still holds: a record this session can positively attribute to
+    /// *somebody else* stays `.missing`, so one user's photo never renders inside another's.
+    func testAnotherAccountsQueuedPhotoIsStillWithheld() async {
+        stubUploadPipeline()
+        let (viewModel, _) = makeQueueingViewModel()
+        await viewModel.load()
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+        let placeholder = queuedPlaceholder(in: viewModel)!
+
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!)
+            .remember(UUID(uuidString: "99999999-9999-4999-8999-999999999999")!)
+
+        XCTAssertEqual(viewModel.pendingAttachmentDisplay(forPlaceholderURL: placeholder), .missing)
+    }
+
     /// Neither offline nor a locally-created document withholds the photo item any more. Both
     /// route to the queue instead: the bytes are stored on the device, and the replay uploads
     /// them once there is a network and (for a local document) a server id to upload against.

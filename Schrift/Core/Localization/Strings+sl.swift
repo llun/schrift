@@ -165,6 +165,8 @@ enum Strings_sl {
         .editor_attachment_pending_a11y: "Fotografija čaka na nalaganje",
         .editor_attachment_failed: "Te fotografije ni bilo mogoče naložiti.",
         .editor_attachment_missing: "Te fotografije ni več v tej napravi.",
+        .editor_attachment_unattributable:
+            "Ta fotografija se bo prikazala, ko bo ta naprava vedela, v kateri račun ste prijavljeni.",
         .editor_attachment_retry: "Poskusi znova",
         .editor_attachment_remove: "Odstrani",
         .editor_uploading_photo_a11y: "Nalaganje fotografije",

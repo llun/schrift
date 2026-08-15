@@ -3037,8 +3037,20 @@ markdown write endpoint**. Understand this before touching the save path:
   that their local-only documents drop out of the lists and **all three** create affordances
   refuse to mint another — Home's `+`, `EditorViewModel.addSubpage` and
   `PagesTreeViewModel.addPage`, the latter two mattering more because neither screen can
-  reach the retry from its own UI — until the identity is re-learned. The records are
-  protected unconditionally by `isPendingCreate`, so nothing is lost. **Fail-closed needs a way back open**, or a
+  reach the retry from its own UI — until the identity is re-learned. Create records are
+  protected unconditionally by `isPendingCreate`, so no *document* is lost — but that
+  guarantee is about creates and does not generalise, and two neighbours key off the same
+  owner. A **queued photo** was the one that could genuinely lose data:
+  `pendingAttachmentDisplay` collapsed "unknown session" into "another account's", so the
+  card declared the photo gone — over bytes `PendingAttachmentStore` holds the only copy of —
+  and offered a Remove that deletes them, contradicting the rule `isAttachmentReplayable`
+  states for the identical condition. Fixed here by giving that case its own non-destructive
+  state, `PendingAttachmentDisplay.unattributable` (no claim, no actions; it may not render
+  the photo either — an unknown session is not *proof* of the same account). A **queued
+  deletion** shares the collapse in `isListablePendingDelete`, deliberately left: the row
+  stops drawing struck through and its tap opens the document instead of offering the undo,
+  but the unscoped `isPendingDelete` still protects the tombstone, so it costs the undo
+  affordance rather than the deletion and heals with the identity. **Fail-closed needs a way back open**, or a
   transient blip strands the user until a relaunch: the store's other writers run at
   launch and after a *successful* re-auth only, so `HomeViewModel
   .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is
