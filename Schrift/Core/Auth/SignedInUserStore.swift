@@ -48,7 +48,11 @@ struct SignedInUserStore {
         userDefaults.set(id.uuidString, forKey: Self.key)
     }
 
-    /// Sign-in and sign-out. Records outlive a sign-out on purpose — for a document that exists
+    /// Called at three moments — when a web login hands over its cookies
+    /// (`noteSessionCookiesReplaced`), at sign-in, and at sign-out. The first two go through
+    /// `SessionStore.forgetSignedInIdentity`; sign-out reaches it that way *and* directly from
+    /// `RootView`'s own belt-and-braces clear.
+    /// Records outlive a sign-out on purpose — for a document that exists
     /// nowhere else, the record and its draft are the only copies — and what makes that safe is
     /// the record's *own* `ownerUserID`, which is compared against whoever signs in next. This
     /// store answering nil afterwards is exactly right: the next session must learn the id from

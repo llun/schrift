@@ -19,8 +19,9 @@ import Foundation
 /// never lets a cached id stand in for a fetched one.
 ///
 /// Not in the Keychain: this is display data, not a credential, and the same background-launch
-/// readability argument as `SignedInUserStore` applies. Cleared at sign-in *and* sign-out (see
-/// `SessionStore.signIn`) — unlike pending-create records, which survive a sign-out because
+/// readability argument as `SignedInUserStore` applies. Cleared at three moments — when a web login hands over its cookies
+/// (`noteSessionCookiesReplaced`), at sign-in, and at sign-out — unlike pending-create records,
+/// which survive a sign-out because
 /// they may be a document's only copy, this is re-fetchable server data whose only use is
 /// naming the current account. Keeping it past sign-in would put the previous user's email on
 /// the new user's screen, indefinitely if they are offline.

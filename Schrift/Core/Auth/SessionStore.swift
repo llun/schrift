@@ -15,9 +15,11 @@ final class SessionStore {
     private let userDefaults: UserDefaults
     private let keychain: KeychainStoring
     private let cookieStorage: CookieStoring
-    /// Cleared at sign-in and sign-out — see `signIn`. Deliberately *not* on a mere expiry.
+    /// Cleared when a login hands over its cookies, at sign-in and at sign-out — all three
+    /// through `forgetSignedInIdentity`. Deliberately *not* on a mere expiry, and deliberately
+    /// not left to `signIn` alone: see `noteSessionCookiesReplaced`.
     private let signedInUser: SignedInUserStore
-    /// The Profile screen's offline copy of the account, cleared at exactly the same two
+    /// The Profile screen's offline copy of the account, cleared at exactly the same three
     /// moments and for the same reason: it is *displayed* before any fetch, so a kept entry
     /// would name the previous account on the new one's screen.
     private let cachedUser: CurrentUserCacheStore
@@ -29,7 +31,9 @@ final class SessionStore {
     /// re-login sheet from it) but never persisted: a fresh launch re-derives
     /// it from the first failing request.
     private(set) var needsReauthentication = false
-    /// Bumped by `signIn`, so a screen already on display can tell that the session it was
+    /// Bumped by `signIn` and by `noteSessionCookiesReplaced` — the two moments the session
+    /// underneath a live screen can become a different account's — so a screen already on
+    /// display can tell that the session it was
     /// showing has been replaced. Clearing the stores is only half of session-scoping the
     /// account row: `ProfileViewModel` is `@State` in `MainTabView`, which is **not** rebuilt
     /// across a re-login (the sheet is presented over it), so its in-memory user outlives the
@@ -90,19 +94,69 @@ final class SessionStore {
         // sheet, whose documented contract is that cached data keeps showing — with no
         // message and nothing to re-fetch it until a Profile visit. Same safety, strictly more
         // collateral, so it is done here.
-        signedInUser.clear()
-        // The account's displayed profile goes with the id, and here rather than at expiry for
-        // the same reason: a dismissed re-login sheet must keep showing what it already showed.
-        cachedUser.clear()
+        forgetSignedInIdentity()
         // Tell screens that survived the sheet to re-read what they are showing.
         signInGeneration += 1
+    }
+
+    /// A web login has just handed its cookies to the shared storage — call it *before* the
+    /// confirming `/users/me/`, never after.
+    ///
+    /// `signIn` cannot be the only place the previous account is forgotten, because it runs
+    /// only if that confirmation succeeds, while `WebLoginView.captureCookies` syncs the new
+    /// session into `HTTPCookieStorage.shared` unconditionally and earlier. A 5xx or a dropped
+    /// connection on that single request therefore left the app running **B's session under A's
+    /// identity** — and stably so, since B's cookies are valid and nothing 401s again to
+    /// re-present the sheet. In that state A's unsynced documents are listed to B (the
+    /// disclosure `belongsToSession` exists to prevent), everything B creates or deletes is
+    /// stamped `ownerUserID = A`, and Profile shows A's name and email inside B's session.
+    ///
+    /// **A misattributed record is deferred, not defused.** Every replay pass compares it
+    /// against a live `/users/me/` rather than against this store, so nothing of B's is ever
+    /// sent into *B's* account — but the record matches `belongsToSession` again the moment
+    /// **A** signs in on this device, and is then sent under A: B's document POSTed into A's
+    /// account, B's queued deletion of A's document actually made. That is the outcome
+    /// `belongsToSession` already warns about — "the edit lands in *their* document when they
+    /// sign back in".
+    ///
+    /// Binding the clear to the cookie handover instead of to the confirmation makes the
+    /// failure mode fail closed: the identity is unknown until the server names it, which is
+    /// what every reader already handles (see `SignedInUserStore`). The cost when the *same*
+    /// account re-authenticates and the confirm blips is that their local-only documents drop
+    /// out of the lists, and `+` refuses to mint another, until the identity is re-learned —
+    /// the records themselves are protected unconditionally by `isPendingCreate`, so nothing
+    /// is lost, and `HomeViewModel.refreshSignedInUserIfUnknown` re-asks on the next
+    /// pull-to-refresh, reconnect or foreground rather than leaving it to a relaunch. That is
+    /// strictly the smaller harm.
+    ///
+    /// Deliberately *not* called when the sheet is opened, nor when it is cancelled before the
+    /// web view completes: no cookies changed hands in either case, so the "a dismissed sheet
+    /// keeps showing what it showed" contract — the same reason this is not done at
+    /// `noteSessionExpired` — still holds there. It deliberately does **not** hold for a sheet
+    /// that *completed* a login and then failed its confirmation: cookies did change hands, so
+    /// the cached profile goes with them, and that is the point rather than a side effect.
+    func noteSessionCookiesReplaced() {
+        forgetSignedInIdentity()
+        // The identity may have changed under screens that survived the sheet, exactly as at
+        // `signIn` — clearing the stores is only half of scoping the account row to the session.
+        signInGeneration += 1
+    }
+
+    /// Everything that answers *whose session is this*, forgotten together. One body, so a
+    /// later piece of account-scoped state has one place to be added rather than three.
+    private func forgetSignedInIdentity() {
+        signedInUser.clear()
+        // The account's displayed profile goes with the id — it is *displayed* before any
+        // fetch, so a kept entry would name the previous account on the new one's screen.
+        // (Why none of this happens at a mere expiry is `signIn`'s comment above: a dismissed
+        // re-login sheet must keep showing what it already showed.)
+        cachedUser.clear()
     }
 
     func signOut() throws {
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
-        signedInUser.clear()
-        cachedUser.clear()
+        forgetSignedInIdentity()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()

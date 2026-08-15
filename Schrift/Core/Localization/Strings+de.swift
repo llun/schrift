@@ -158,6 +158,8 @@ enum Strings_de {
         .editor_attachment_pending_a11y: "Foto wartet auf Upload",
         .editor_attachment_failed: "Dieses Foto konnte nicht hochgeladen werden.",
         .editor_attachment_missing: "Dieses Foto ist nicht mehr auf diesem Gerät.",
+        .editor_attachment_unattributable:
+            "Dieses Foto wird angezeigt, sobald dieses Gerät weiß, mit welchem Konto du angemeldet bist.",
         .editor_attachment_retry: "Erneut versuchen",
         .editor_attachment_remove: "Entfernen",
         .editor_uploading_photo_a11y: "Foto wird hochgeladen",

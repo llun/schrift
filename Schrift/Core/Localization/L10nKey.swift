@@ -180,6 +180,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_attachment_pending_a11y = "editor.attachment_pending_a11y"  // "Photo waiting to upload"
     case editor_attachment_failed = "editor.attachment_failed"  // "Couldn't upload this photo."
     case editor_attachment_missing = "editor.attachment_missing"  // "This photo is no longer on this device."
+    case editor_attachment_unattributable = "editor.attachment_unattributable"  // "This photo will appear once this device knows which account you're signed in to."
     case editor_attachment_retry = "editor.attachment_retry"  // "Retry"
     case editor_attachment_remove = "editor.attachment_remove"  // "Remove"
     case editor_uploading_photo_a11y = "editor.uploading_photo_a11y"  // "Uploading photo"

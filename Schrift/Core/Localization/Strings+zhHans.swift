@@ -152,6 +152,7 @@ enum Strings_zhHans {
         .editor_attachment_pending_a11y: "照片等待上传",
         .editor_attachment_failed: "无法上传这张照片。",
         .editor_attachment_missing: "这张照片已不在此设备上。",
+        .editor_attachment_unattributable: "当此设备知道你登录的是哪个账户后，这张照片就会显示。",
         .editor_attachment_retry: "重试",
         .editor_attachment_remove: "移除",
         .editor_uploading_photo_a11y: "正在上传照片",

@@ -1758,7 +1758,9 @@ markdown write endpoint**. Understand this before touching the save path:
   **That makes the signed-in user id a prerequisite for the whole feature**, and it is
   only ever learned from `client.currentUser()` — so `SignedInUserStore`
   (`dev.llun.Schrift.signedInUserID`) persists it, written through from the root task and
-  Profile and cleared at sign-in (the moment a possibly-different account takes over) and sign-out. Without it, launching offline (the entire point) yields
+  Profile and cleared at three moments — when a login hands over its cookies
+  (`noteSessionCookiesReplaced`, the moment a possibly-different account takes over), at
+  sign-in, and at sign-out — plus re-asked by Home whenever it is unknown. Without it, launching offline (the entire point) yields
   no user id, local documents are not listed, and none can be minted. It is a read-through
   struct rather than a caching `@Observable`, so a reader built before the first write
   cannot answer nil forever; not in the Keychain, because it is an identifier rather than a
@@ -3010,6 +3012,79 @@ markdown write endpoint**. Understand this before touching the save path:
   already-resolved response would otherwise write the previous account back into both
   stores — re-arming `SignedInUserStore`, the one that gates replay. The one predicate that decides whether that row is *tappable* is
   `accountDisplayName`, the same one `AccountScreen` branches on.
+- **Both identity stores are forgotten when the *cookies* change hands, not when the
+  sign-in succeeds** — `SessionStore.noteSessionCookiesReplaced()`, called by
+  `ReauthenticationViewModel.handleLoginComplete` and `ConnectViewModel
+  .handleLoginComplete` **before** their confirming `GET users/me/`. `signIn` cannot
+  be the only clearing point, because it runs only when that confirmation succeeds,
+  while `WebLoginView.captureCookies` syncs the new session into
+  `HTTPCookieStorage.shared` unconditionally and *earlier*. So a 5xx or a dropped
+  connection on that one request left the app running **B's session under A's
+  identity** — and *stably*, since B's cookies are valid and nothing 401s again to
+  re-present the sheet, so it persisted until the next successful `/users/me/`. Three
+  things go wrong in that state, and the middle one is not what it looks like: A's
+  unsynced documents are listed to B (the disclosure `belongsToSession` exists to
+  prevent — their content on screen, and any edit landing in their document); anything
+  B creates or deletes is stamped `ownerUserID = A`, which is **deferred
+  misattribution, not immunity** — all three replay passes gate on a live
+  `client.currentUser()` rather than on this store, so nothing of B's is ever sent into
+  *B's* account, but the record matches `belongsToSession` again the moment **A** signs
+  in on this device and is then sent under A (B's document POSTed into A's account, B's
+  queued deletion of A's document actually made), exactly as `belongsToSession`'s own
+  comment warns; and Profile shows A's name and email inside B's session. Binding the
+  clear to the handover makes the failure fail closed (nil is what every reader already
+  handles). The cost, when the *same* account re-authenticates and the confirm blips, is
+  that their local-only documents drop out of the lists and **all three** create affordances
+  refuse to mint another — Home's `+`, `EditorViewModel.addSubpage` and
+  `PagesTreeViewModel.addPage`, the latter two mattering more because neither screen can
+  reach the retry from its own UI — until the identity is re-learned. Create records are
+  protected unconditionally by `isPendingCreate`, so no *document* is lost — but that
+  guarantee is about creates and does not generalise, and two neighbours key off the same
+  owner. A **queued photo** was the one that could genuinely lose data:
+  `pendingAttachmentDisplay` collapsed "unknown session" into "another account's", so the
+  card declared the photo gone — over bytes `PendingAttachmentStore` holds the only copy of —
+  and offered a Remove that deletes them, contradicting the rule `isAttachmentReplayable`
+  states for the identical condition. Fixed here by giving that case its own non-destructive
+  state, `PendingAttachmentDisplay.unattributable` (no claim, no actions; it may not render
+  the photo either — an unknown session is not *proof* of the same account). **Queueing a new photo** refuses too (`EditorViewModel`'s
+  `queuePendingPhoto`, with the generic "Couldn't add the photo") — fail-closed, nothing
+  written, nothing lost. A **queued deletion** shares the collapse in
+  `isListablePendingDelete`, deliberately left: the row
+  stops drawing struck through and its tap opens the document instead of offering the undo,
+  but the unscoped `isPendingDelete` still protects the tombstone, so it costs the undo
+  affordance rather than the deletion and heals with the identity — and milder still, since
+  `EditorViewModel.isDocumentPendingDelete` and `undoPendingDeleteForThisDocument` are both
+  unscoped, the undo is reachable one tap deeper rather than lost. Starting a **new** deletion
+  in the window is a third case: `DocumentActions` needs a known owner to queue a tombstone, so
+  a retryable failure surfaces the error instead of queueing — fail-closed, nothing lost. **Fail-closed needs a way back open**, or a
+  transient blip strands the user until a relaunch: the store's other writers run at
+  launch, after a *successful* re-auth, and on any Profile visit — none of which a user
+  sitting on Home will hit — so `HomeViewModel
+  .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is
+  missing, from `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect,
+  foreground: the three paths that already mean "catch up". **It carries its own
+  `schrift.workOffline` guard**, because it runs *ahead* of `load()` and so is not covered by
+  `load()`'s early return — `HomeViewModel` is one of the three view models that honour the
+  preference, and without it a pull made while the identity is unknown reaches the network —
+  which in this mode is every such pull, since nothing arrives to make it known. Two things that
+  guard does **not** mean: the preference is not app-wide (`RootView`'s launch task and
+  `ProfileViewModel.load` both fetch `/users/me/` without reading it — pre-existing, and what
+  keeps the withheld retry from stranding anyone), and inside the mode a dropped identity now
+  has **no in-Home remedy**: rows stay hidden and `+` answers "Couldn't create a document"
+  until a relaunch, a Profile visit, or turning the preference off and pulling. Accepted — the
+  mode's promise is that a read path does not reach the network. Deliberately **not** from
+  `load()`, which is wrong twice: a per-appearance `/users/me/` is more traffic than this
+  rare case warrants, and several Home tests gate on *the first GET a load makes* while
+  blocking `MockURLProtocol`'s single delivery thread, so a request inserted ahead of the
+  list fetches stalls that thread and cascades into every test after it (36/64 failures,
+  2833s, when tried). It bumps `signInGeneration` for the
+  same reason `signIn` does: clearing the value is only half the job while
+  `ProfileViewModel` holds an in-memory copy behind a sheet that never rebuilt it. It
+  is deliberately **not** fired by opening or cancelling the sheet — no cookies changed
+  hands there, so the dismissed-sheet contract (cached data keeps showing, the same
+  reason this is not done at `noteSessionExpired`) still holds. Add any future
+  account-scoped state to the private `forgetSignedInIdentity()` the three callers
+  share, not to one of them.
 - User **preferences** use `@AppStorage` / `UserDefaults` with the `schrift.`
   prefix (distinct from the `dev.llun.Schrift.` data-key prefix).
 - Sensitive/auth state goes in the **Keychain**, never UserDefaults.

@@ -1202,18 +1202,119 @@ properly means comparing a captured `signInGeneration`, which would mean handing
 view model the session identity — not worth it for a window this narrow, which the
 restarted load then corrects anyway.
 
-**One pre-existing gap this store inherits, stated so the clearing guarantee above is
-not read as absolute.** `WebLoginView`'s coordinator syncs the web view's cookies into
-`HTTPCookieStorage.shared` *before* the confirming `GET users/me/` runs, and
-`ReauthenticationViewModel.handleLoginComplete` calls `signIn` only if that request
-succeeds. So a transport blip on the confirm leaves the new account's cookies live
-while nothing was cleared — and if the user then dismisses the sheet the state is
-stable, because the new session no longer 401s. Until the next successful `/users/me/`
-(app relaunch, or a Profile visit) the app runs with B's cookies, A's cached profile
-and A's `signedInUserID`. The display half is new here; the `SignedInUserStore` half
-predates it and is the worse one, since a document minted in that window is stamped
-with A and replays into B's account. Tracked separately — the fix belongs in the
-sign-in flow (clear on cookie capture, or confirm before syncing), not in this store.
+**The gap this store used to inherit, and how it was closed (2026-08-15).** The
+clearing guarantee above was not absolute, because it hung off `signIn`.
+`WebLoginView`'s coordinator syncs the web view's cookies into
+`HTTPCookieStorage.shared` *before* the confirming `GET users/me/` runs, and both
+`ReauthenticationViewModel.handleLoginComplete` and `ConnectViewModel
+.handleLoginComplete` called `signIn` only if that request succeeded. A transport blip
+or a 5xx on the confirm therefore left the new account's cookies live with nothing
+cleared — and, crucially, *stably*: the new session no longer 401s, so dismissing the
+sheet ended the flow for good and the app ran with B's cookies, A's cached profile and
+A's `signedInUserID` until the next successful `/users/me/`.
+
+The fix is `SessionStore.noteSessionCookiesReplaced()`, called by both view models
+**before** the confirmation rather than after it — the cookie handover is what
+invalidates the identity, and it is the half of the flow that always happens. It
+clears both stores (through the private `forgetSignedInIdentity()` that `signIn` and
+`signOut` also call, so a later piece of account-scoped state has one home) and bumps
+`signInGeneration`, without which `ProfileViewModel`'s in-memory copy would keep the
+previous account on screen behind a `MainTabView` the sheet never rebuilt. It is not
+fired by opening or cancelling the sheet: no cookies changed hands there, so the
+dismissed-sheet contract still holds, exactly as at `noteSessionExpired`.
+
+What that window actually cost is worth recording, because the obvious reading of it is
+wrong in one direction and an over-correction is wrong in the other. A's unsynced
+documents were listed to B — the disclosure `belongsToSession` exists to prevent, and
+the worse half of it, since B could open and type into them. Anything B created or
+deleted was stamped `ownerUserID = A`, and that did **not** replay into *B's* account:
+`runCreatePass`, `runDeletePass` and `runAttachmentPass` each gate on a live
+`client.currentUser()` rather than on `SignedInUserStore`, so while B held the session
+the record was inert. But inert is not defused. The record matches `belongsToSession`
+again the moment **A** signs in on this device, and is then sent under A — B's document
+POSTed into A's account, B's queued deletion of A's document actually made. That is
+exactly what `belongsToSession`'s own comment already warns about ("the edit lands in
+*their* document when they sign back in"); the misattribution was deferred, not
+avoided. The display half was the mildest of the three.
+
+The new failure mode is fail-closed. When the *same* account re-authenticates and the
+confirm blips, their local-only documents drop out of the lists and all three create
+affordances refuse to mint another — Home's `+`, `EditorViewModel.addSubpage` and
+`PagesTreeViewModel.addPage` — because every one of them keys off an owner nothing can
+name; create records themselves stay protected unconditionally by `isPendingCreate`, so no
+*document* is lost.
+
+**That last guarantee is about creates, and it does not generalise** — worth saying, because
+two neighbouring subsystems key off the same owner and neither is covered by it. A **queued
+photo** was the one that could genuinely lose data: `pendingAttachmentDisplay` collapsed
+"unknown session" into "another account's", so during the window the card declared the photo
+gone — over bytes sitting on disk, of which `PendingAttachmentStore` holds the only copy —
+and offered a Remove that really does delete them. That contradicted the rule
+`isAttachmentReplayable` states for the identical condition ("kept, silent, and untouched …
+no requests *and* no deletion"), and it is fixed here by giving the unknown-session case its
+own non-destructive state, `PendingAttachmentDisplay.unattributable`: no claim about the
+photo, and no actions. It may not simply render the photo either — an unknown session is not
+*proof* of the same account. **Queueing a new photo** refuses as well, with the generic "Couldn't add the photo" —
+fail-closed, nothing written and nothing lost, so it costs the attempt rather than any
+content. A **queued deletion** shares the collapse in
+`isListablePendingDelete` with a smaller consequence and is deliberately left: the row stops
+drawing struck through and its tap opens the document rather than offering the undo, but the
+tombstone is protected by the unscoped `isPendingDelete`, so the window costs the undo
+affordance rather than the deletion, and it heals with the identity. (Milder still than that
+reads: `EditorViewModel.isDocumentPendingDelete` uses the *unscoped* predicate, so opening
+the document lands on the gated screen, whose `undoPendingDeleteForThisDocument` is unscoped
+too — the undo is reachable one tap deeper, not lost.) A **new** deletion started during the
+window is a third case rather than part of that one: `DocumentActions` requires a known owner
+to queue a tombstone, so a retryable failure surfaces the caller's error instead of queueing —
+fail-closed, nothing written, nothing lost. **Fail-closed
+is only half of it, though — staying closed would be its own bug.** The other writers of
+`SignedInUserStore` run at launch, after a *successful* re-auth, and on a Profile visit —
+none of which a user sitting on Home will hit — so nothing would re-ask until the app was
+relaunched or Profile happened to be visited, and the sheet
+often completes unattended (`WKWebsiteDataStore` still holds the IdP's cookies), which
+makes a plain transient blip enough to reach that state with the same account signed in.
+`HomeViewModel.refreshSignedInUserIfUnknown` closes it: `refresh()` and
+`syncPendingDrafts()` — pull-to-refresh, reconnect, foreground — re-ask `/users/me/` while
+and only while the answer is missing. Those three already mean "catch up", and the guard
+means a session that knows who it is pays nothing.
+
+It carries a **second** guard on `schrift.workOffline`. That one is not redundant with
+`load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and
+`HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
+preference — the same reason `createDocument` withholds its POST. Unguarded, every
+pull-to-refresh in the mode would park the spinner on a `/users/me/` carrying cookies the
+user asked not to send.
+
+**Two things that guard does not mean, both worth stating so the next reader does not
+over-read it.** The preference is not app-wide and this does not make it so: `RootView`'s
+launch task and `ProfileViewModel.load` both fetch `/users/me/` without reading it, so the
+id is still learned on the next launch or Profile visit. That porousness is pre-existing,
+unwidened here, and is exactly what keeps the withheld retry from stranding anyone. And the
+guard has a real cost, recorded as an **accepted residual**: inside the mode a dropped
+identity has no in-Home remedy any more — local rows stay hidden and `+` answers "Couldn't
+create a document" every time, until a relaunch, a Profile visit, or turning the preference
+off and pulling again, none of which the error message suggests. It is accepted rather than
+fixed by asking anyway, because the mode's whole promise is that a read path does not reach
+the network; but it lands in the mode where offline-created documents matter most.
+
+**Re-learning the id is not enough on the passive path; it has to be followed by a load.**
+`SignedInUserStore` is deliberately neither `@Observable` nor cached, so reading it
+registers no SwiftUI dependency — learning the answer un-hides this device's local rows in
+`recentDocuments` without invalidating anything that would draw them, and
+`syncPendingDrafts` mutates no observable state of its own. This is the same trap that
+function's own comment already records for a migrated row ("the reconnect and foreground
+edges call this and not `load()`"), and it takes the same answer. The load is gated on
+having actually *learned* something rather than on having asked, so an ordinary reconnect
+costs nothing. `refresh()` needs no such gate: it calls `load()` next anyway.
+
+It is deliberately **not** hung off `load()`, and the reason is worth keeping. Passively,
+a `/users/me/` on every Home appearance is more traffic than a rare recovery warrants. But
+the decisive reason is mechanical: several `HomeViewModelTests` gate on *the first GET a
+load makes* while holding `MockURLProtocol`'s single delivery thread on a semaphore, so a
+request inserted ahead of the list fetches becomes that first GET, blocks the thread, and
+cascades — 36 of 64 tests failing in 2833s, most of them tests that never call `load()`.
+The same lesson as the `Thread.sleep`-in-a-stub rule: anything added to a request path
+that tests gate on is not a local change.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
@@ -1432,7 +1533,7 @@ or clears the key — its mere existence is what keeps the suppression on.
 
 **Four of these landed with the create UI** and are recorded here as done rather than
 deleted, because the reasoning is what the next change needs: the signed-in user id is
-persisted (`SignedInUserStore`, read-through, cleared on sign-*in* and sign-out — sign-in being the moment a possibly-different account takes over, and a mere expiry deliberately keeping it so a transient 401 does not silently empty the local section); `EditorView` retains
+persisted (`SignedInUserStore`, read-through, cleared when a login hands over its cookies, on sign-*in* and on sign-out — the handover being the moment a possibly-different account takes over, and a mere expiry deliberately keeping it so a transient 401 does not silently empty the local section; see §8); `EditorView` retains
 and releases the editor registry for *every* document; the editor's fetches are gated on
 `isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
 checkpointed record via `syncedServerID(forLocalID:)`. What remains:

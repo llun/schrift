@@ -155,6 +155,8 @@ enum Strings_it {
         .editor_attachment_pending_a11y: "Foto in attesa di caricamento",
         .editor_attachment_failed: "Impossibile caricare questa foto.",
         .editor_attachment_missing: "Questa foto non è più su questo dispositivo.",
+        .editor_attachment_unattributable:
+            "Questa foto apparirà quando questo dispositivo saprà con quale account hai effettuato l'accesso.",
         .editor_attachment_retry: "Riprova",
         .editor_attachment_remove: "Rimuovi",
         .editor_uploading_photo_a11y: "Caricamento foto",

@@ -422,4 +422,42 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertNil(signedIn.userID)
     }
 
+    // MARK: - A login handed over the cookies
+
+    /// The window `signIn` alone cannot close. `WebLoginView` syncs the freshly authenticated
+    /// cookies into the shared storage *before* anything confirms them, so by the time a login
+    /// sheet reports back the session may already belong to somebody else — while `signIn`, the
+    /// only thing that forgets the previous account, runs solely if the confirming `/users/me/`
+    /// succeeds. A blip on that one request therefore left B's cookies live under A's identity.
+    func testCookiesHandedOverByALoginForgetTheAccountTheyReplaced() throws {
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        let cache = CurrentUserCacheStore(userDefaults: userDefaults)
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        cache.remember(
+            CurrentUser(id: UUID(uuidString: "11111111-1111-4111-8111-111111111111")!, email: "ada@example.org"))
+
+        store.noteSessionCookiesReplaced()
+
+        XCTAssertNil(signedIn.userID, "fails closed until the server says whose session this is")
+        XCTAssertNil(cache.user, "the previous account's name and email must not outlive its cookies")
+    }
+
+    /// Forgetting the value is half of it — `ProfileViewModel` is `@State` in `MainTabView`,
+    /// which the sheet is presented *over*, so its in-memory copy needs a reason to re-read.
+    /// Without the bump the row keeps showing the previous account from memory even though the
+    /// store behind it is empty.
+    func testCookiesHandedOverByALoginAdvanceTheSignInGenerationSoOpenScreensReload() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        let afterSignIn = store.signInGeneration
+
+        store.noteSessionCookiesReplaced()
+
+        XCTAssertEqual(store.signInGeneration, afterSignIn + 1)
+    }
+
 }

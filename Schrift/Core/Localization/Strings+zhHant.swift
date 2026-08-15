@@ -152,6 +152,7 @@ enum Strings_zhHant {
         .editor_attachment_pending_a11y: "照片等待上傳",
         .editor_attachment_failed: "無法上傳這張照片。",
         .editor_attachment_missing: "這張照片已不在此裝置上。",
+        .editor_attachment_unattributable: "當此裝置知道你登入的是哪個帳戶後，這張照片就會顯示。",
         .editor_attachment_retry: "重試",
         .editor_attachment_remove: "移除",
         .editor_uploading_photo_a11y: "正在上傳照片",

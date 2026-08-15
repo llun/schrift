@@ -329,4 +329,17 @@ enum PendingAttachmentDisplay: Equatable {
     case pending(Data)
     case failed(Data)
     case missing
+    /// The record is fine and its bytes are on disk — this session just cannot say **whose**
+    /// they are, because `SessionStore.noteSessionCookiesReplaced` left the identity unknown
+    /// and nothing has re-learned it yet.
+    ///
+    /// Distinct from `.missing` because the two differ in the only way that matters here:
+    /// `.missing` states the photo is gone and offers **Remove**, which deletes the only copy
+    /// of it that exists. Saying that over bytes that are present is both false and
+    /// destructive, and it contradicts the rule `isAttachmentReplayable` states for exactly
+    /// this condition — "kept, silent, and untouched … Dormant means no requests *and* no
+    /// deletion". Nor may the photo simply be shown: an unknown session is not *proof* of the
+    /// same account, and a co-author's queued photo must not appear in somebody else's.
+    /// So: say nothing about it, offer nothing, and wait to be told who we are.
+    case unattributable
 }
