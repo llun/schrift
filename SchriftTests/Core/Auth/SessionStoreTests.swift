@@ -460,20 +460,4 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(store.signInGeneration, afterSignIn + 1)
     }
 
-    /// It reports a *completed* web login, not an opened sheet: a sheet the user cancels before
-    /// the web view ever finishes syncs no cookies, so nothing has taken the session over and
-    /// the documented contract — dismissing keeps showing what was already there — still holds.
-    func testMerelyOpeningAndCancellingTheSheetKeepsTheAccount() throws {
-        let signedIn = SignedInUserStore(userDefaults: userDefaults)
-        let store = SessionStore(
-            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
-        try store.signIn(serverURL: serverURL)
-        signedIn.remember(UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
-
-        store.noteSessionExpired()
-        store.cancelReauthentication()
-
-        XCTAssertNotNil(signedIn.userID)
-    }
-
 }

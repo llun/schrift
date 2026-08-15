@@ -1223,18 +1223,42 @@ previous account on screen behind a `MainTabView` the sheet never rebuilt. It is
 fired by opening or cancelling the sheet: no cookies changed hands there, so the
 dismissed-sheet contract still holds, exactly as at `noteSessionExpired`.
 
-What that window actually cost is worth recording, because the obvious reading of it
-is wrong. A's unsynced documents were listed to B — the disclosure `belongsToSession`
-exists to prevent, and the worse half of it, since B could open and type into them.
-Anything B created or deleted was stamped `ownerUserID = A`; that did **not** replay
-into B's account, because `runCreatePass`, `runDeletePass` and `runAttachmentPass` each
-gate on a live `client.currentUser()` rather than on `SignedInUserStore` — so it was
-**stranded** instead: never sent, and once the id healed never listed either, with a
-queued deletion silently never made. The display half was the mildest of the three.
-The new failure mode is fail-closed and self-healing: when the *same* account
-re-authenticates and the confirm blips, their local-only documents drop out of the
-lists until the next successful `/users/me/`, while the records themselves stay
-protected unconditionally by `isPendingCreate`.
+What that window actually cost is worth recording, because the obvious reading of it is
+wrong in one direction and an over-correction is wrong in the other. A's unsynced
+documents were listed to B — the disclosure `belongsToSession` exists to prevent, and
+the worse half of it, since B could open and type into them. Anything B created or
+deleted was stamped `ownerUserID = A`, and that did **not** replay into *B's* account:
+`runCreatePass`, `runDeletePass` and `runAttachmentPass` each gate on a live
+`client.currentUser()` rather than on `SignedInUserStore`, so while B held the session
+the record was inert. But inert is not defused. The record matches `belongsToSession`
+again the moment **A** signs in on this device, and is then sent under A — B's document
+POSTed into A's account, B's queued deletion of A's document actually made. That is
+exactly what `belongsToSession`'s own comment already warns about ("the edit lands in
+*their* document when they sign back in"); the misattribution was deferred, not
+avoided. The display half was the mildest of the three.
+
+The new failure mode is fail-closed. When the *same* account re-authenticates and the
+confirm blips, their local-only documents drop out of the lists and Home's `+` refuses
+to mint another, because both key off an owner nothing can name; the records themselves
+stay protected unconditionally by `isPendingCreate`, so nothing is lost. **Fail-closed
+is only half of it, though — staying closed would be its own bug.** The other writers of
+`SignedInUserStore` run at launch and after a *successful* re-auth, so nothing would
+re-ask until the app was relaunched or Profile happened to be visited, and the sheet
+often completes unattended (`WKWebsiteDataStore` still holds the IdP's cookies), which
+makes a plain transient blip enough to reach that state with the same account signed in.
+`HomeViewModel.refreshSignedInUserIfUnknown` closes it: `refresh()` and
+`syncPendingDrafts()` — pull-to-refresh, reconnect, foreground — re-ask `/users/me/` while
+and only while the answer is missing. Those three already mean "catch up", and the guard
+means a session that knows who it is pays nothing.
+
+It is deliberately **not** hung off `load()`, and the reason is worth keeping. Passively,
+a `/users/me/` on every Home appearance is more traffic than a rare recovery warrants. But
+the decisive reason is mechanical: several `HomeViewModelTests` gate on *the first GET a
+load makes* while holding `MockURLProtocol`'s single delivery thread on a semaphore, so a
+request inserted ahead of the list fetches becomes that first GET, blocks the thread, and
+cascades — 36 of 64 tests failing in 2833s, most of them tests that never call `load()`.
+The same lesson as the `Thread.sleep`-in-a-stub rule: anything added to a request path
+that tests gate on is not a local change.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
@@ -1453,7 +1477,7 @@ or clears the key — its mere existence is what keeps the suppression on.
 
 **Four of these landed with the create UI** and are recorded here as done rather than
 deleted, because the reasoning is what the next change needs: the signed-in user id is
-persisted (`SignedInUserStore`, read-through, cleared on sign-*in* and sign-out — sign-in being the moment a possibly-different account takes over, and a mere expiry deliberately keeping it so a transient 401 does not silently empty the local section); `EditorView` retains
+persisted (`SignedInUserStore`, read-through, cleared when a login hands over its cookies, on sign-*in* and on sign-out — the handover being the moment a possibly-different account takes over, and a mere expiry deliberately keeping it so a transient 401 does not silently empty the local section; see §8); `EditorView` retains
 and releases the editor registry for *every* document; the editor's fetches are gated on
 `isLocalDocument`; and Delete handles all three states, issuing the server `DELETE` for a
 checkpointed record via `syncedServerID(forLocalID:)`. What remains:

@@ -109,21 +109,32 @@ final class SessionStore {
     /// identity** — and stably so, since B's cookies are valid and nothing 401s again to
     /// re-present the sheet. In that state A's unsynced documents are listed to B (the
     /// disclosure `belongsToSession` exists to prevent), everything B creates or deletes is
-    /// stamped `ownerUserID = A` and is then stranded — the replay compares it against a live
-    /// `/users/me/`, so it is never sent and, once the id heals, never listed either — and
-    /// Profile shows A's name and email inside B's session.
+    /// stamped `ownerUserID = A`, and Profile shows A's name and email inside B's session.
+    ///
+    /// **A misattributed record is deferred, not defused.** Every replay pass compares it
+    /// against a live `/users/me/` rather than against this store, so nothing of B's is ever
+    /// sent into *B's* account — but the record matches `belongsToSession` again the moment
+    /// **A** signs in on this device, and is then sent under A: B's document POSTed into A's
+    /// account, B's queued deletion of A's document actually made. That is the outcome
+    /// `belongsToSession` already warns about — "the edit lands in *their* document when they
+    /// sign back in".
     ///
     /// Binding the clear to the cookie handover instead of to the confirmation makes the
     /// failure mode fail closed: the identity is unknown until the server names it, which is
     /// what every reader already handles (see `SignedInUserStore`). The cost when the *same*
     /// account re-authenticates and the confirm blips is that their local-only documents drop
-    /// out of the lists until the next successful `/users/me/`; the records themselves are
-    /// protected unconditionally by `isPendingCreate`, so nothing is lost, and it heals on the
-    /// next fetch. That is strictly the smaller harm.
+    /// out of the lists, and `+` refuses to mint another, until the identity is re-learned —
+    /// the records themselves are protected unconditionally by `isPendingCreate`, so nothing
+    /// is lost, and `HomeViewModel.refreshSignedInUserIfUnknown` re-asks on the next
+    /// pull-to-refresh, reconnect or foreground rather than leaving it to a relaunch. That is
+    /// strictly the smaller harm.
     ///
-    /// Deliberately *not* called when the sheet is merely opened or cancelled: no cookies
-    /// changed hands there, so the "a dismissed sheet keeps showing what it showed" contract —
-    /// the same reason this is not done at `noteSessionExpired` — still holds.
+    /// Deliberately *not* called when the sheet is opened, nor when it is cancelled before the
+    /// web view completes: no cookies changed hands in either case, so the "a dismissed sheet
+    /// keeps showing what it showed" contract — the same reason this is not done at
+    /// `noteSessionExpired` — still holds there. It deliberately does **not** hold for a sheet
+    /// that *completed* a login and then failed its confirmation: cookies did change hands, so
+    /// the cached profile goes with them, and that is the point rather than a side effect.
     func noteSessionCookiesReplaced() {
         forgetSignedInIdentity()
         // The identity may have changed under screens that survived the sheet, exactly as at

@@ -1758,7 +1758,9 @@ markdown write endpoint**. Understand this before touching the save path:
   **That makes the signed-in user id a prerequisite for the whole feature**, and it is
   only ever learned from `client.currentUser()` — so `SignedInUserStore`
   (`dev.llun.Schrift.signedInUserID`) persists it, written through from the root task and
-  Profile and cleared at sign-in (the moment a possibly-different account takes over) and sign-out. Without it, launching offline (the entire point) yields
+  Profile and cleared at three moments — when a login hands over its cookies
+  (`noteSessionCookiesReplaced`, the moment a possibly-different account takes over), at
+  sign-in, and at sign-out — plus re-asked by Home whenever it is unknown. Without it, launching offline (the entire point) yields
   no user id, local documents are not listed, and none can be minted. It is a read-through
   struct rather than a caching `@Observable`, so a reader built before the first write
   cannot answer nil forever; not in the Keychain, because it is an identifier rather than a
@@ -3023,16 +3025,28 @@ markdown write endpoint**. Understand this before touching the save path:
   things go wrong in that state, and the middle one is not what it looks like: A's
   unsynced documents are listed to B (the disclosure `belongsToSession` exists to
   prevent — their content on screen, and any edit landing in their document); anything
-  B creates or deletes is stamped `ownerUserID = A` and is then **stranded**, *not*
-  sent into A's account, because all three replay passes gate on a live
-  `client.currentUser()` rather than on this store — so it is never POSTed and, once
-  the id heals, never listed either, and a queued deletion is silently never made; and
-  Profile shows A's name and email inside B's session. Binding the clear to the
-  handover makes the failure fail closed (nil is what every reader already handles).
-  The cost, when the *same* account re-authenticates and the confirm blips, is that
-  their local-only documents drop out of the lists until the next successful
-  `/users/me/` — the records are protected unconditionally by `isPendingCreate`, so
-  nothing is lost and it heals on the next fetch. It bumps `signInGeneration` for the
+  B creates or deletes is stamped `ownerUserID = A`, which is **deferred
+  misattribution, not immunity** — all three replay passes gate on a live
+  `client.currentUser()` rather than on this store, so nothing of B's is ever sent into
+  *B's* account, but the record matches `belongsToSession` again the moment **A** signs
+  in on this device and is then sent under A (B's document POSTed into A's account, B's
+  queued deletion of A's document actually made), exactly as `belongsToSession`'s own
+  comment warns; and Profile shows A's name and email inside B's session. Binding the
+  clear to the handover makes the failure fail closed (nil is what every reader already
+  handles). The cost, when the *same* account re-authenticates and the confirm blips, is
+  that their local-only documents drop out of the lists and Home's `+` refuses to mint
+  another until the identity is re-learned — the records are protected unconditionally by
+  `isPendingCreate`, so nothing is lost. **Fail-closed needs a way back open**, or a
+  transient blip strands the user until a relaunch: the store's other writers run at
+  launch and after a *successful* re-auth only, so `HomeViewModel
+  .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is
+  missing, from `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect,
+  foreground: the three paths that already mean "catch up". Deliberately **not** from
+  `load()`, which is wrong twice: a per-appearance `/users/me/` is more traffic than this
+  rare case warrants, and several Home tests gate on *the first GET a load makes* while
+  blocking `MockURLProtocol`'s single delivery thread, so a request inserted ahead of the
+  list fetches stalls that thread and cascades into every test after it (36/64 failures,
+  2833s, when tried). It bumps `signInGeneration` for the
   same reason `signIn` does: clearing the value is only half the job while
   `ProfileViewModel` holds an in-memory copy behind a sheet that never rebuilt it. It
   is deliberately **not** fired by opening or cancelling the sheet — no cookies changed

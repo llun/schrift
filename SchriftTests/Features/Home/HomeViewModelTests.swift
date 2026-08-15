@@ -1545,4 +1545,78 @@ final class HomeViewModelTests: XCTestCase {
         // offline-created document may be listed or replayed at all.
         XCTAssertEqual(signedIn.userID, UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
     }
+
+    /// Failing closed is right; staying closed is not. `SessionStore.noteSessionCookiesReplaced`
+    /// leaves the identity unknown when a login's confirming `/users/me/` fails — and that sheet
+    /// often completes unattended, so an ordinary blip reaches it with the *same* account signed
+    /// in. The store's only other writers run at launch and after a **successful** re-auth, so
+    /// without this the user's own offline-created documents stay listed to nobody, and `+`
+    /// keeps refusing to mint another, until they relaunch or happen to open Profile.
+    func testAPullToRefreshReAsksWhoIsSignedInWhenNothingKnows() async {
+        let log = RequestRecorder()
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            // `contains`, not `hasSuffix`: `URL.path` drops the trailing slash, so matching the
+            // endpoint's own `users/me/` spelling never fires.
+            let path = request.url?.path ?? ""
+            if path.contains("users/me") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org"}"#.utf8),
+                    error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
+        }
+        let signedIn = makeSignedInUser(userID: nil)
+        let viewModel = makeViewModel(signedInUser: signedIn)
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(signedIn.userID, UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 1)
+    }
+
+    /// The passive half: reconnect and foreground both land here, so a session left without an
+    /// identity recovers without the user having to know to pull.
+    func testAReconnectSyncReAsksWhoIsSignedInWhenNothingKnows() async {
+        let log = RequestRecorder()
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.path ?? ""
+            if path.contains("users/me") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org"}"#.utf8),
+                    error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
+        }
+        let signedIn = makeSignedInUser(userID: nil)
+        let viewModel = makeViewModel(signedInUser: signedIn)
+
+        await viewModel.syncPendingDrafts()
+
+        XCTAssertEqual(signedIn.userID, UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+    }
+
+    /// And only while the answer is missing — the retry is for a session whose identity was
+    /// dropped, not a `/users/me/` on every pull-to-refresh.
+    func testAPullToRefreshDoesNotReAskWhoIsSignedInWhenItAlreadyKnows() async {
+        let log = RequestRecorder()
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
+        }
+        let known = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let signedIn = makeSignedInUser(userID: known)
+        let viewModel = makeViewModel(signedInUser: signedIn)
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 0)
+        XCTAssertEqual(signedIn.userID, known, "and it must not be disturbed")
+    }
 }

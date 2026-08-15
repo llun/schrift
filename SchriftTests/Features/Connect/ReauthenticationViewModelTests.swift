@@ -102,8 +102,11 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertNil(cache.user, "and the previous account's profile must not be displayed inside the new session")
     }
 
-    /// A transport failure is the case the fix is really about — it leaves a *valid* session
-    /// behind, so unlike a 401 nothing will ever re-present the sheet and correct the identity.
+    /// The same `catch` as the 500 above — `handleLoginComplete` does not branch on the error
+    /// kind, so this buys no mutation-resistance the previous test lacks and is kept only
+    /// because it is the shape the fix is really about: a dropped connection leaves a *valid*
+    /// session behind, so unlike a 401 nothing will ever re-present the sheet to correct the
+    /// identity. Read it as documentation of the motivating case, not as extra coverage.
     func testATransportFailureOnTheConfirmationAlsoForgetsTheAccount() async throws {
         let viewModel = try makeViewModel { _ in
             .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.networkConnectionLost))
