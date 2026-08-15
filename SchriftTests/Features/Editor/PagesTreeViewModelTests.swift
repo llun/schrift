@@ -228,10 +228,23 @@ final class PagesTreeViewModelTests: XCTestCase {
 
     /// A list fetch that started before the create carries a pre-create
     /// snapshot; letting it land would drop the page the user just made.
+    ///
+    /// The two orderings this needs are stated, not timed. The GET must be **in flight**
+    /// before the create runs — that is what `waitUntil` pins, and it is also what proves
+    /// the fetch captured its `mutations` stamp, since `load` reads that stamp on the main
+    /// actor before it suspends. The snapshot must then land **after** the create resolved,
+    /// which is the gate; `Stub(delay:)` could only bet an interval against the machine.
+    ///
+    /// Worth knowing what losing that bet costs *here*, because it is not a failure: with
+    /// the GET delivered first the level is already known, the create appends to it, and
+    /// the assertion still reads `[childID, createdID]` — so the test goes **vacuous**,
+    /// passing green while guarding nothing. The visible half of the same slip is its
+    /// sibling below, which is what actually went red on CI.
     func testAnInFlightFetchCannotDropAJustCreatedPage() async {
         let (viewModel, cache) = makeViewModel()
         cache.save([document(childID, title: "Existing")], for: rootID)
         let log = RequestRecorder()
+        let staleSnapshot = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [childID, createdID] request in
             log.record(request)
             if request.httpMethod == "POST" {
@@ -239,15 +252,16 @@ final class PagesTreeViewModelTests: XCTestCase {
                     statusCode: 201, headers: [:],
                     body: Data(Self.documentFixture(id: createdID, title: "Untitled subpage").utf8), error: nil)
             }
-            // The pre-create snapshot, held open so the create resolves first.
+            // The pre-create snapshot, held until the create has resolved.
             return .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(childID, "Existing")]), error: nil,
-                delay: 0.3)
+                releasedBy: staleSnapshot)
         }
 
         async let slowLoad: Void = viewModel.loadRoot()
         await waitUntil { log.count(ofMethod: "GET") == 1 }
         _ = await viewModel.addPage(under: rootID)
+        staleSnapshot.open()
         await slowLoad
 
         XCTAssertEqual(
@@ -259,9 +273,16 @@ final class PagesTreeViewModelTests: XCTestCase {
     /// create that *declined* to append (unknown level) would block the in-flight
     /// fetch too — and then neither writer fills the level, so a document that
     /// just got its first child reads as "No subpages yet".
+    ///
+    /// Gated for the same reason as its sibling above: the create must resolve into an
+    /// **unknown** level, which is only true while the fetch is still held. Timed, a
+    /// runner that delivered the GET first made the level known, the create appended to
+    /// it, and the assertion saw `[childID, createdID]` — a failure with nothing behind
+    /// it but load.
     func testACreateIntoAnUnknownLevelStillLetsTheFetchLand() async {
         let (viewModel, cache) = makeViewModel()
         let log = RequestRecorder()
+        let coldSnapshot = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [childID, createdID] request in
             log.record(request)
             if request.httpMethod == "POST" {
@@ -271,13 +292,14 @@ final class PagesTreeViewModelTests: XCTestCase {
             }
             return .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(childID, "From the server")]), error: nil,
-                delay: 0.3)
+                releasedBy: coldSnapshot)
         }
 
         // Nothing cached: this fetch is the only thing that can populate the level.
         async let coldLoad: Void = viewModel.loadRoot()
         await waitUntil { log.count(ofMethod: "GET") == 1 }
         _ = await viewModel.addPage(under: rootID)
+        coldSnapshot.open()
         await coldLoad
 
         XCTAssertEqual(
@@ -309,19 +331,26 @@ final class PagesTreeViewModelTests: XCTestCase {
 
     // MARK: - Duplicate work
 
+    /// Gated like the three above, and the last `delay:`-as-ordering in this file — which
+    /// matters because CLAUDE.md now holds this file up as the worked example of the rule.
+    /// Its bet was much safer than theirs (the `waitUntil` on `loading` already pins the
+    /// second call inside the first's flight, leaving only an actor hop before the response
+    /// could land), but "safer" is not the standard the rule states.
     func testASecondExpandWhileOneIsInFlightDoesNotRefetch() async {
         let (viewModel, _) = makeViewModel()
         let log = RequestRecorder()
+        let firstFetch = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [childID] request in
             log.record(request)
             return .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(childID, "Child")]), error: nil,
-                delay: 0.2)
+                releasedBy: firstFetch)
         }
 
         async let first: Void = viewModel.loadRoot()
         await waitUntil { viewModel.loading.contains(self.rootID) }
         await viewModel.loadRoot()
+        firstFetch.open()
         await first
 
         XCTAssertEqual(log.methods.count, 1, "the in-flight guard collapses the second call")
@@ -486,15 +515,24 @@ final class PagesTreeViewModelTests: XCTestCase {
     ///
     /// The negative control is the second half: with the level *already* loaded and no fetch in
     /// flight, nothing is discarded and the fetched rows still apply.
+    ///
+    /// Gated for the same reason as the two create-vs-fetch tests above — the announcement must
+    /// land **while** the first fetch is in flight, and this was the more fragile of the three:
+    /// a 60 ms sleep against a 200 ms delay, with the announcement also depending on an
+    /// unstructured `Task` having started. Lost, `load` writes `children[syncedParent]` and
+    /// calls `cache.save`, so the cache assertion goes red — the visible-failure shape, like
+    /// the sibling that went red on CI. The sleep also broke the rule this file's `waitUntil`
+    /// helper exists to enforce: never sleep to wait for expected state.
     func testALandedDeletionSurvivesAFirstTimeLevelFetch() async {
         let env = makeLocalRootViewModel()
         let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
         let syncedParent = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
         let doomed = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        let firstFetch = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [doomed] _ in
             .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil,
-                delay: 0.2)
+                releasedBy: firstFetch)
         }
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let signedIn = SignedInUserStore(userDefaults: defaults)
@@ -504,8 +542,11 @@ final class PagesTreeViewModelTests: XCTestCase {
             saveCoordinator: env.coordinator, signedInUser: signedIn)
 
         let fetching = Task { await viewModel.loadRoot() }
-        try? await Task.sleep(for: .milliseconds(60))
+        // `loading` is inserted on the main actor immediately before the await, so this pins
+        // the fetch as genuinely in flight — and with it the `mutations` stamp it captured.
+        await waitUntil { viewModel.loading.contains(syncedParent) }
         env.coordinator.announceDocumentDeletedForTesting(doomed)
+        firstFetch.open()
         await fetching.value
 
         XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the stale first fetch is not applied")
