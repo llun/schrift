@@ -508,15 +508,24 @@ final class PagesTreeViewModelTests: XCTestCase {
     ///
     /// The negative control is the second half: with the level *already* loaded and no fetch in
     /// flight, nothing is discarded and the fetched rows still apply.
+    ///
+    /// Gated for the same reason as the two create-vs-fetch tests above — the announcement must
+    /// land **while** the first fetch is in flight, and this was the more fragile of the three:
+    /// a 60 ms sleep against a 200 ms delay, with the announcement also depending on an
+    /// unstructured `Task` having started. Lost, `load` writes `children[syncedParent]` and
+    /// calls `cache.save`, so the cache assertion goes red — the visible-failure shape, like
+    /// the sibling that went red on CI. The sleep also broke the rule this file's `waitUntil`
+    /// helper exists to enforce: never sleep to wait for expected state.
     func testALandedDeletionSurvivesAFirstTimeLevelFetch() async {
         let env = makeLocalRootViewModel()
         let owner = env.coordinator.pendingCreateForTesting(localID: env.root.id)!.ownerUserID!
         let syncedParent = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
         let doomed = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        let firstFetch = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { [doomed] _ in
             .init(
                 statusCode: 200, headers: [:], body: Self.listFixture([(doomed, "Doomed")]), error: nil,
-                delay: 0.2)
+                releasedBy: firstFetch)
         }
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let signedIn = SignedInUserStore(userDefaults: defaults)
@@ -526,8 +535,11 @@ final class PagesTreeViewModelTests: XCTestCase {
             saveCoordinator: env.coordinator, signedInUser: signedIn)
 
         let fetching = Task { await viewModel.loadRoot() }
-        try? await Task.sleep(for: .milliseconds(60))
+        // `loading` is inserted on the main actor immediately before the await, so this pins
+        // the fetch as genuinely in flight — and with it the `mutations` stamp it captured.
+        await waitUntil { viewModel.loading.contains(syncedParent) }
         env.coordinator.announceDocumentDeletedForTesting(doomed)
+        firstFetch.open()
         await fetching.value
 
         XCTAssertEqual(viewModel.rows.map(\.document.id), [], "the stale first fetch is not applied")

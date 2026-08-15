@@ -3024,9 +3024,15 @@ markdown write endpoint**. Understand this before touching the save path:
   `reset()` drains gated deliveries exactly as it drains timed ones, so an
   unopened gate can no more fire into the next test than an unexpired timer can;
   and because a gate nothing opens would suspend the test body past the
-  `tearDown` that would have drained it, a 30 s failsafe (`ResponseGate
-  .failsafeTimeout`) converts that hang into a named failure quoting the held
-  request. The failsafe is a hang detector, never part of an ordering.
+  `tearDown` that would have drained it, a 30 s failsafe
+  (`ResponseGate.defaultFailsafeTimeout`) converts that hang into a named
+  failure quoting the held request, attributed to the line the gate was built
+  on. The failsafe is a hang detector, **never** part of an ordering:
+  `ResponseGate(failsafeTimeout:)` exists so the failsafe itself can be tested
+  (a backstop nothing exercises is one nobody knows is broken — the latch test
+  found it silently carrying another test's whole regression coverage), not so
+  a test can tune a deadline into an ordering, which is the bet the type exists
+  to stop taking.
 - Isolate UserDefaults per test (`UserDefaults(suiteName:)` +
   `removePersistentDomain` in setUp/tearDown); inject `FakeKeychainStore`, and
   for cookie-dependent subjects the shared in-memory `FakeCookieStorage`

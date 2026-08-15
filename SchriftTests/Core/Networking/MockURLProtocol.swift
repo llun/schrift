@@ -61,7 +61,29 @@ final class MockURLProtocol: URLProtocol {
         /// It exists because a gate that is never opened suspends the test body forever,
         /// and a hung body never reaches the `tearDown` whose `reset()` would drain it:
         /// the run dies with no failure in it, naming nothing.
-        static let failsafeTimeout: TimeInterval = 30
+        static let defaultFailsafeTimeout: TimeInterval = 30
+
+        /// Injectable **only** so the failsafe itself can be tested — 30 s is otherwise
+        /// impractical to pin, and a backstop nothing exercises is a backstop nobody
+        /// knows is broken. Never shorten it to express an ordering; that is the bet
+        /// this whole type exists to stop taking.
+        let failsafeTimeout: TimeInterval
+        /// Where the gate was built. The failsafe fires from a queue, so without this it
+        /// blames `MockURLProtocol.swift` rather than the test that miswired the gate —
+        /// and a gate is constructed once per test, on the line beside the ordering it
+        /// expresses, which is exactly where a reader needs to be sent.
+        private let file: StaticString
+        private let line: UInt
+
+        init(
+            failsafeTimeout: TimeInterval = ResponseGate.defaultFailsafeTimeout,
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) {
+            self.failsafeTimeout = failsafeTimeout
+            self.file = file
+            self.line = line
+        }
 
         private let lock = NSLock()
         private var isOpen = false
@@ -77,11 +99,22 @@ final class MockURLProtocol: URLProtocol {
             for item in items { DispatchQueue.main.async(execute: item) }
         }
 
-        /// The failsafe's "this gate was never opened" test.
+        /// The failsafe's "this gate was never opened" test. Sound because `isOpen`
+        /// latches permanently, so a non-empty `held` can only mean never-opened.
         fileprivate var isHoldingAnything: Bool {
             lock.lock()
             defer { lock.unlock() }
             return !held.isEmpty
+        }
+
+        /// Fails the test that built this gate, naming it and the request it stranded,
+        /// then releases everything so the body fails on its own assertions instead of
+        /// hanging.
+        fileprivate func failUnopened(holding description: String) {
+            XCTFail(
+                "MockURLProtocol: a ResponseGate holding \(description) was never opened",
+                file: file, line: line)
+            open()
         }
 
         fileprivate func hold(_ item: DispatchWorkItem) {
@@ -219,11 +252,17 @@ final class MockURLProtocol: URLProtocol {
     /// response exactly as it cancels a delayed one — an unopened gate must be no more able
     /// to fire into the next test's session than an unexpired timer is.
     private func hold(_ stub: Stub, until gate: ResponseGate) {
+        // The delivery captures a **gate-free** copy. `deliver` reads only the status,
+        // headers, body and error, and carrying the gate would close a retain cycle
+        // (`gate → held → item → stub → gate`) that `cancel()` does not break — so a gate
+        // nothing ever opens would leak itself, the work item, this `URLProtocol` instance
+        // and the body `Data`, for as long as the process lives.
+        let payload = Stub(statusCode: stub.statusCode, headers: stub.headers, body: stub.body, error: stub.error)
         // `self` is captured strongly on purpose, as on the delayed path: a dropped delivery
         // would leave the awaiting `session.data(for:)` suspended forever.
         let item = DispatchWorkItem {
             guard !self.isCancelled else { return }
-            self.deliver(stub)
+            self.deliver(payload)
         }
         // A gate nothing ever opens suspends the test body indefinitely, and `reset()` cannot
         // help — the hung body never reaches its `tearDown`. Bound it, so a miswired gate
@@ -231,15 +270,27 @@ final class MockURLProtocol: URLProtocol {
         let description = "\(request.httpMethod ?? "?") \(request.url?.absoluteString ?? "?")"
         let failsafe = DispatchWorkItem { [weak gate] in
             guard let gate, gate.isHoldingAnything else { return }
-            XCTFail("MockURLProtocol: a ResponseGate holding \(description) was never opened")
-            // Release it anyway, so the test fails on its own assertions instead of hanging.
-            gate.open()
+            gate.failUnopened(holding: description)
         }
+        // Registered under the **same** lock that `reset()` retires session tokens with, and
+        // gated on this request's own token still being live. `startLoading` checked that
+        // token, but then called `handler(request)` — arbitrary test code — so a `reset()`
+        // landing in between would drain an empty list and leave these two items scheduled
+        // and uncancellable. The item would be harmless (its gate is dead), but the failsafe
+        // would fire `XCTFail` inside whatever test is running 30 s later: cross-test
+        // contamination, in the one file whose whole purpose is preventing it.
+        let token = request.value(forHTTPHeaderField: MockURLProtocol.sessionTokenHeader)
         MockURLProtocol.lock.lock()
-        MockURLProtocol.pendingDeliveries.append(contentsOf: [item, failsafe])
+        // No token means a session not from `makeSession()`, which `startLoading` leaves
+        // alone; keep leaving it alone rather than inventing a liveness answer for it.
+        let isLive = token.map { MockURLProtocol.liveSessionTokens.contains($0) } ?? true
+        if isLive { MockURLProtocol.pendingDeliveries.append(contentsOf: [item, failsafe]) }
         MockURLProtocol.lock.unlock()
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + ResponseGate.failsafeTimeout, execute: failsafe)
+        guard isLive else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + gate.failsafeTimeout, execute: failsafe)
         gate.hold(item)
     }
 
