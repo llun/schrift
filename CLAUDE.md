@@ -3007,6 +3007,26 @@ markdown write endpoint**. Understand this before touching the save path:
   test overlaps two requests, **pin their order explicitly** — gate the second on
   a `RequestRecorder` count. "Which request reached the stub first" and "which
   caller ran first" are different questions, and `async let` answers neither.
+- **A delay expresses a duration; when the test means an *ordering*, say so with
+  `Stub(..., releasedBy:)` instead.** `MockURLProtocol.ResponseGate` holds a
+  response until the test calls `open()`, so "this stale snapshot may only land
+  once the create has resolved" stops being a bet that the interval outlasts the
+  machine — a bet a loaded runner wins. `PagesTreeViewModelTests` is the worked
+  example, and the reason the rule exists: its two create-vs-in-flight-fetch
+  tests held a 0.3 s GET and required the create to resolve first, which went red
+  once on CI on a PR touching neither the view model nor its tests. Note what the
+  slip costs is **not** uniform — one of the pair *failed*, the other kept passing
+  while quietly exercising nothing, which is the worse half and invisible in a
+  green run. Reach for a gate whenever the delay is standing in for a
+  happens-before, and keep `delay:` for the case it really is a duration (a
+  debounce window, a plausibly-slow server). Mechanics: a gate **latches** (a
+  request arriving at an already-open gate is delivered rather than stranded);
+  `reset()` drains gated deliveries exactly as it drains timed ones, so an
+  unopened gate can no more fire into the next test than an unexpired timer can;
+  and because a gate nothing opens would suspend the test body past the
+  `tearDown` that would have drained it, a 30 s failsafe (`ResponseGate
+  .failsafeTimeout`) converts that hang into a named failure quoting the held
+  request. The failsafe is a hang detector, never part of an ordering.
 - Isolate UserDefaults per test (`UserDefaults(suiteName:)` +
   `removePersistentDomain` in setUp/tearDown); inject `FakeKeychainStore`, and
   for cookie-dependent subjects the shared in-memory `FakeCookieStorage`

@@ -1,4 +1,5 @@
 import Foundation
+import XCTest
 
 final class MockURLProtocol: URLProtocol {
     struct Stub: @unchecked Sendable {
@@ -13,14 +14,85 @@ final class MockURLProtocol: URLProtocol {
         /// is deferred to the main queue instead, so overlapping requests stay
         /// genuinely overlapping. Tests must `await` every delayed request they
         /// start; `MockURLProtocol.reset()` cancels any that are left.
+        ///
+        /// A delay expresses a **duration**. When what the test means is an
+        /// **ordering** — "this response may only land once that other request has
+        /// resolved" — use `releasedBy:` instead; see `ResponseGate`.
         let delay: TimeInterval
+        /// Holds this response until the test opens the gate. Takes precedence over
+        /// `delay`, which a gated stub ignores.
+        let gate: ResponseGate?
 
-        init(statusCode: Int, headers: [String: String], body: Data, error: Error?, delay: TimeInterval = 0) {
+        init(
+            statusCode: Int,
+            headers: [String: String],
+            body: Data,
+            error: Error?,
+            delay: TimeInterval = 0,
+            releasedBy gate: ResponseGate? = nil
+        ) {
             self.statusCode = statusCode
             self.headers = headers
             self.body = body
             self.error = error
             self.delay = delay
+            self.gate = gate
+        }
+    }
+
+    /// Holds a response until the test says the thing it was waiting for has happened.
+    ///
+    /// `Stub.delay` can only defer delivery by a fixed interval, so a test whose subject
+    /// is an *ordering* — "the stale list snapshot may only land once the create has
+    /// resolved" — has to approximate it by betting that interval against the machine.
+    /// On a loaded runner the bet loses: the held response delivers first, the test sees
+    /// a state it never meant to exercise, and it fails for a reason no one can act on.
+    /// It happened (`PagesTreeViewModelTests`, CI run 31885836238, on a PR touching
+    /// neither the view model nor its tests). A gate states the ordering instead — the
+    /// response is delivered when `open()` is called, however long that takes — so the
+    /// only thing the test still waits on is the event it actually cares about.
+    ///
+    /// It **latches**: a request reaching an already-open gate is delivered straight
+    /// away rather than waiting for an `open()` that has already been and gone.
+    final class ResponseGate: @unchecked Sendable {
+        /// How long a still-shut gate is given before it is treated as a wiring bug
+        /// rather than a slow machine. It is **not** part of any ordering — a correctly
+        /// written test opens its gate as soon as the request it was gating on returns.
+        /// It exists because a gate that is never opened suspends the test body forever,
+        /// and a hung body never reaches the `tearDown` whose `reset()` would drain it:
+        /// the run dies with no failure in it, naming nothing.
+        static let failsafeTimeout: TimeInterval = 30
+
+        private let lock = NSLock()
+        private var isOpen = false
+        private var held: [DispatchWorkItem] = []
+
+        /// Deliver every response this gate holds — and any that arrive afterwards.
+        func open() {
+            lock.lock()
+            isOpen = true
+            let items = held
+            held = []
+            lock.unlock()
+            for item in items { DispatchQueue.main.async(execute: item) }
+        }
+
+        /// The failsafe's "this gate was never opened" test.
+        fileprivate var isHoldingAnything: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return !held.isEmpty
+        }
+
+        fileprivate func hold(_ item: DispatchWorkItem) {
+            lock.lock()
+            guard !isOpen else {
+                lock.unlock()
+                DispatchQueue.main.async(execute: item)
+                return
+            }
+            held.append(item)
+            lock.unlock()
         }
     }
 
@@ -112,6 +184,10 @@ final class MockURLProtocol: URLProtocol {
             return
         }
         let stub = handler(request)
+        if let gate = stub.gate {
+            hold(stub, until: gate)
+            return
+        }
         // Zero delay keeps the original synchronous path exactly as it was.
         guard stub.delay > 0 else {
             deliver(stub)
@@ -136,11 +212,43 @@ final class MockURLProtocol: URLProtocol {
         DispatchQueue.main.asyncAfter(deadline: .now() + stub.delay, execute: item)
     }
 
+    /// Registers this delivery with the gate instead of with a timer.
+    ///
+    /// Delivery still runs on the **main queue**, for the reason the delayed path above
+    /// documents, and is still tracked in `pendingDeliveries`, so `reset()` cancels a gated
+    /// response exactly as it cancels a delayed one — an unopened gate must be no more able
+    /// to fire into the next test's session than an unexpired timer is.
+    private func hold(_ stub: Stub, until gate: ResponseGate) {
+        // `self` is captured strongly on purpose, as on the delayed path: a dropped delivery
+        // would leave the awaiting `session.data(for:)` suspended forever.
+        let item = DispatchWorkItem {
+            guard !self.isCancelled else { return }
+            self.deliver(stub)
+        }
+        // A gate nothing ever opens suspends the test body indefinitely, and `reset()` cannot
+        // help — the hung body never reaches its `tearDown`. Bound it, so a miswired gate
+        // arrives as a named failure rather than as a run that stops saying anything.
+        let description = "\(request.httpMethod ?? "?") \(request.url?.absoluteString ?? "?")"
+        let failsafe = DispatchWorkItem { [weak gate] in
+            guard let gate, gate.isHoldingAnything else { return }
+            XCTFail("MockURLProtocol: a ResponseGate holding \(description) was never opened")
+            // Release it anyway, so the test fails on its own assertions instead of hanging.
+            gate.open()
+        }
+        MockURLProtocol.lock.lock()
+        MockURLProtocol.pendingDeliveries.append(contentsOf: [item, failsafe])
+        MockURLProtocol.lock.unlock()
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + ResponseGate.failsafeTimeout, execute: failsafe)
+        gate.hold(item)
+    }
+
     override func stopLoading() {
         isCancelled = true
     }
 
-    /// Call from every `tearDown`. Cancels deliveries still scheduled so none can
+    /// Call from every `tearDown`. Cancels deliveries still scheduled — timed and
+    /// gated alike, plus the gates' failsafes — so none can
     /// fire into the next test's session, and retires every session token
     /// `makeSession()` handed out so a save `Task` that outlived its test has its
     /// leaked request rejected by `startLoading` instead of recording into the next
