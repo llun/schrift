@@ -1254,11 +1254,23 @@ and only while the answer is missing. Those three already mean "catch up", and t
 means a session that knows who it is pays nothing.
 
 It carries a **second** guard on `schrift.workOffline`. That one is not redundant with
-`load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and the
-mode is a strict no-network contract on every read path — the same reason `createDocument`
-withholds its POST. Unguarded it is worse than a one-off leak, because the identity can
-never be learned while the network is refused, so every pull-to-refresh in the mode would
-park the spinner on a 60s `/users/me/` carrying cookies the user asked not to send.
+`load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and
+`HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
+preference — the same reason `createDocument` withholds its POST. Unguarded, every
+pull-to-refresh in the mode would park the spinner on a `/users/me/` carrying cookies the
+user asked not to send.
+
+**Two things that guard does not mean, both worth stating so the next reader does not
+over-read it.** The preference is not app-wide and this does not make it so: `RootView`'s
+launch task and `ProfileViewModel.load` both fetch `/users/me/` without reading it, so the
+id is still learned on the next launch or Profile visit. That porousness is pre-existing,
+unwidened here, and is exactly what keeps the withheld retry from stranding anyone. And the
+guard has a real cost, recorded as an **accepted residual**: inside the mode a dropped
+identity has no in-Home remedy any more — local rows stay hidden and `+` answers "Couldn't
+create a document" every time, until a relaunch, a Profile visit, or turning the preference
+off and pulling again, none of which the error message suggests. It is accepted rather than
+fixed by asking anyway, because the mode's whole promise is that a read path does not reach
+the network; but it lands in the mode where offline-created documents matter most.
 
 **Re-learning the id is not enough on the passive path; it has to be followed by a load.**
 `SignedInUserStore` is deliberately neither `@Observable` nor cached, so reading it

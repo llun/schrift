@@ -342,7 +342,10 @@ final class HomeViewModel {
         // left without an identity should re-ask. Ordering against the replay above is free —
         // the three passes take their account from a live `/users/me/` of their own and never
         // read `SignedInUserStore` — so it goes after, leaving the replay the first thing this
-        // path does.
+        // path does. Free for *correctness*, not for traffic: each of those passes fetches the
+        // very answer this is about to ask for and discards it, so a reconnect with pending
+        // work can send four identical requests. The fix would be a write-through in the
+        // coordinator rather than a reordering here.
         //
         // **And a re-learn has to be followed by a load.** `SignedInUserStore` is deliberately
         // neither `@Observable` nor cached, so reading it registers no SwiftUI dependency:
@@ -446,11 +449,21 @@ final class HomeViewModel {
     /// kept here are the ones that mean "catch up", which is exactly this.
     ///
     /// **Work Offline is honoured here, and the guard has to live in this function.** It runs
-    /// ahead of `load()`, so `load()`'s own early return cannot cover it — a pull-to-refresh
-    /// would otherwise park the spinner on a 60s `/users/me/`, carrying session cookies the
-    /// user asked not to send, forever: the id can never be learned while the network is
-    /// refused, so every pull pays it again. Same reasoning `createDocument` states for the
-    /// POST it withholds; the mode is a strict no-network contract on every read path.
+    /// ahead of `load()`, so `load()`'s own early return cannot cover it, and every pull would
+    /// otherwise park the spinner on a `/users/me/` carrying cookies the user asked not to
+    /// send. `HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
+    /// preference, and `createDocument` withholds its POST for the same reason.
+    ///
+    /// Scope it accurately, though: the preference is **not** app-wide, and this guard does not
+    /// make it so. `RootView`'s launch task and `ProfileViewModel.load` both fetch `/users/me/`
+    /// without reading it, so the id is still learned on the next launch or Profile visit — a
+    /// pre-existing porousness this does not widen, and the thing that keeps the withheld retry
+    /// from stranding anyone. What it *does* cost is real and worth knowing: inside the mode a
+    /// dropped identity has no in-Home remedy any more. Local rows stay hidden and `+` answers
+    /// "Couldn't create a document" every time, until a relaunch, a Profile visit, or turning
+    /// the preference off and pulling again — and none of that is discoverable from the error.
+    /// Accepted rather than fixed by asking anyway: the mode's whole promise is that a read
+    /// path does not reach the network.
     ///
     /// On `refresh()` this does serialize an extra round trip ahead of the list fetches, and
     /// the state it recovers from is reached by a flaky network in the first place — so a

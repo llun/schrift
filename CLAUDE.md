@@ -3044,9 +3044,15 @@ markdown write endpoint**. Understand this before touching the save path:
   .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is
   missing, from `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect,
   foreground: the three paths that already mean "catch up". **It carries its own
-  `schrift.workOffline` guard**, because it runs *ahead* of `load()` and so is not covered
-  by `load()`'s early return — without it the mode's strict no-network contract breaks on
-  every pull, permanently, since the id can never be learned while the network is refused. Deliberately **not** from
+  `schrift.workOffline` guard**, because it runs *ahead* of `load()` and so is not covered by
+  `load()`'s early return — `HomeViewModel` is one of the three view models that honour the
+  preference, and without it every pull in the mode reaches the network. Two things that
+  guard does **not** mean: the preference is not app-wide (`RootView`'s launch task and
+  `ProfileViewModel.load` both fetch `/users/me/` without reading it — pre-existing, and what
+  keeps the withheld retry from stranding anyone), and inside the mode a dropped identity now
+  has **no in-Home remedy**: rows stay hidden and `+` answers "Couldn't create a document"
+  until a relaunch, a Profile visit, or turning the preference off and pulling. Accepted — the
+  mode's promise is that a read path does not reach the network. Deliberately **not** from
   `load()`, which is wrong twice: a per-appearance `/users/me/` is more traffic than this
   rare case warrants, and several Home tests gate on *the first GET a load makes* while
   blocking `MockURLProtocol`'s single delivery thread, so a request inserted ahead of the
