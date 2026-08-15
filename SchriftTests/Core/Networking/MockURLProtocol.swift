@@ -58,9 +58,16 @@ final class MockURLProtocol: URLProtocol {
         /// How long a still-shut gate is given before it is treated as a wiring bug
         /// rather than a slow machine. It is **not** part of any ordering — a correctly
         /// written test opens its gate as soon as the request it was gating on returns.
-        /// It exists because a gate that is never opened suspends the test body forever,
-        /// and a hung body never reaches the `tearDown` whose `reset()` would drain it:
-        /// the run dies with no failure in it, naming nothing.
+        ///
+        /// What it buys, stated exactly, because the obvious claim is wrong: a gate that
+        /// is never opened does **not** stall forever. `makeSession()` builds an ephemeral
+        /// configuration, whose `timeoutIntervalForRequest` defaults to 60 s (measured), so
+        /// the request is eventually released with `URLError(.timedOut)`. The failsafe
+        /// halves that wait, releases the request immediately so the body fails on its own
+        /// assertions, and — the part that actually matters — names the gate *and the line
+        /// it was built on*, where the bare timeout surfaces as an opaque `-1001`
+        /// attributed to nothing. 30 s is under the timeout it pre-empts, and the failsafe
+        /// is worthless if it is not.
         static let defaultFailsafeTimeout: TimeInterval = 30
 
         /// Injectable **only** so the failsafe itself can be tested — 30 s is otherwise
@@ -250,8 +257,8 @@ final class MockURLProtocol: URLProtocol {
         // by the time `reset()` cancels a work item, no delivery is half-done — no
         // lock, no drain, and nothing can outlive its test.
         //
-        // `self` is captured strongly on purpose: a dropped delivery would leave the
-        // awaiting `session.data(for:)` suspended forever.
+        // `self` is captured strongly on purpose: a dropped delivery would strand the
+        // awaiting `session.data(for:)` until URLSession's own 60s request timeout.
         let item = DispatchWorkItem {
             guard !self.isCancelled else { return }
             self.deliver(stub)
@@ -304,14 +311,16 @@ final class MockURLProtocol: URLProtocol {
         // and the body `Data`, for as long as the process lives.
         let payload = Stub(statusCode: stub.statusCode, headers: stub.headers, body: stub.body, error: stub.error)
         // `self` is captured strongly on purpose, as on the delayed path: a dropped delivery
-        // would leave the awaiting `session.data(for:)` suspended forever.
+        // would strand the awaiting `session.data(for:)` until URLSession's own 60s request
+        // timeout releases it as an opaque `-1001`.
         let item = DispatchWorkItem {
             guard !self.isCancelled else { return }
             self.deliver(payload)
         }
-        // A gate nothing ever opens suspends the test body indefinitely, and `reset()` cannot
-        // help — the hung body never reaches its `tearDown`. Bound it, so a miswired gate
-        // arrives as a named failure rather than as a run that stops saying anything.
+        // A gate nothing ever opens stalls the test body until that same 60s timeout, and
+        // `reset()` cannot help — the stalled body has not reached its `tearDown` yet. Bound
+        // it sooner, so a miswired gate arrives as a failure that names the gate rather than
+        // as a minute of silence ending in `-1001`.
         let description = "\(request.httpMethod ?? "?") \(request.url?.absoluteString ?? "?")"
         let failsafe = DispatchWorkItem { [weak gate] in
             guard let gate, gate.isHoldingAnything else { return }

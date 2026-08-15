@@ -320,10 +320,12 @@ final class MockURLProtocolGateTests: XCTestCase {
 
     // MARK: - The failsafe
 
-    /// A gate nothing opens would suspend the test body past the `tearDown` whose `reset()`
-    /// would have drained it, so the hang is unbounded and the run dies naming nothing. The
-    /// failsafe converts that into a named failure — and then releases the gate, so the body
-    /// goes on to fail on its own assertions rather than hanging anyway.
+    /// A gate nothing opens stalls the test body past the `tearDown` whose `reset()` would
+    /// have drained it. Not forever — `makeSession()`'s ephemeral configuration times the
+    /// request out after 60s (measured) — but a minute of silence ending in an opaque
+    /// `-1001` attributed to nothing. The failsafe converts that into a failure that names
+    /// the gate and the line it was built on, and releases the gate, so the body goes on to
+    /// fail on its own assertions.
     ///
     /// Worth pinning rather than trusting: the latch test above shows the failsafe can end up
     /// silently carrying another test's regression coverage, and a backstop nothing exercises
@@ -338,12 +340,15 @@ final class MockURLProtocolGateTests: XCTestCase {
     /// this was found. It is a liveness bound, not an ordering, and it costs nothing on a
     /// healthy run — the test measures ~0.6s.
     ///
-    /// **This is the one test the failsafe cannot rescue**, being its own subject: every
-    /// other test here that hangs is released by it 30s later, so `await request.value` is
-    /// safe. Here a broken failsafe would record the timeout and then suspend that `await`
-    /// forever — a hung run on top of a recorded failure, which is the exact outcome the
-    /// failsafe exists to prevent. So this one cancels the request itself rather than
-    /// awaiting a resumption that may never come.
+    /// **This is the one test whose subject is the failsafe itself**, so it cannot lean on
+    /// it. The rescue is narrower than it first looks: the failsafe releases a stall whose
+    /// cause is a *still-held* item, which covers the withholding tests but not the two
+    /// `AResetDuringTheHandler` ones (`register` refuses before anything is scheduled, so no
+    /// failsafe exists) and not a break in `open()`/`deliver()` (which empties `held`, so
+    /// `isHoldingAnything` deliberately keeps it silent). Here a dead failsafe would record
+    /// the timeout and then leave `await request.value` waiting on URLSession's own 60s
+    /// timeout — a stalled run stacked on a recorded failure. So this one cancels the
+    /// request rather than waiting on a resumption it has just shown may not come.
     @MainActor
     func testAnUnopenedGateFailsTheTestAndThenReleasesTheRequest() async {
         let gate = MockURLProtocol.ResponseGate(failsafeTimeout: shortFailsafe)

@@ -3026,11 +3026,12 @@ markdown write endpoint**. Understand this before touching the save path:
   — poll **`MockURLProtocol.deferredDeliveryCount`**, never `lastRequest`, to
   know a deferred response is really in hand, because `lastRequest` is set
   before the handler runs and before anything is registered;
-  and because a gate nothing opens would suspend the test body past the
-  `tearDown` that would have drained it, a 30 s failsafe
-  (`ResponseGate.defaultFailsafeTimeout`) converts that hang into a named
-  failure quoting the held request, attributed to the line the gate was built
-  on. The failsafe is a hang detector, **never** part of an ordering:
+  and because a gate nothing opens stalls the test body past the `tearDown`
+  that would have drained it — for a full minute, until URLSession's own
+  request timeout releases it as an opaque `-1001` attributed to nothing — a
+  30 s failsafe (`ResponseGate.defaultFailsafeTimeout`) pre-empts that with a
+  failure naming the held request and the line the gate was built on. The
+  failsafe is a stall detector, **never** part of an ordering:
   `ResponseGate(failsafeTimeout:)` exists so the failsafe itself can be tested
   (a backstop nothing exercises is one nobody knows is broken — the latch test
   found it silently carrying another test's whole regression coverage), not so
