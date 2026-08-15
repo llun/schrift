@@ -1,0 +1,22 @@
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_012f1bb1c5dacc::t_2d9dd5d3731792 236-242
+  s_012f1bb1c5dacc::t_56ce0e1357e079 231-235,247,255,258,264
+  s_012f1bb1c5dacc::t_c76afbb73fa93d 276-281,285,295
+  s_012f1bb1c5dacc::t_cbd07ca23002e8 302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "b883e9408c792e49a09845d29268b4abb70c5956",
+  "prompts": {},
+  "sessions": {
+    "s_012f1bb1c5dacc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cf7a461-530d-407e-986a-ef26181e29c3",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
