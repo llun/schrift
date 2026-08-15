@@ -339,9 +339,21 @@ final class HomeViewModel {
     func syncPendingDrafts() async {
         await saveCoordinator.syncPendingDrafts()
         // The passive half of the same recovery: reconnect and foreground are when a session
-        // left without an identity should re-ask. After the replay rather than before it, so
-        // the coordinator's own `/users/me/` stays the first request this path makes.
-        await refreshSignedInUserIfUnknown()
+        // left without an identity should re-ask. Ordering against the replay above is free —
+        // the three passes take their account from a live `/users/me/` of their own and never
+        // read `SignedInUserStore` — so it goes after, leaving the replay the first thing this
+        // path does.
+        //
+        // **And a re-learn has to be followed by a load.** `SignedInUserStore` is deliberately
+        // neither `@Observable` nor cached, so reading it registers no SwiftUI dependency:
+        // learning the id un-hides this device's local rows in `recentDocuments` without
+        // invalidating anything that would draw them. That is the same trap this function's own
+        // comment below describes for a migrated row — the reconnect and foreground edges call
+        // this and not `load()` — so it takes the same answer. Gated on having actually learned
+        // something, which is rare, rather than on having asked.
+        if await refreshSignedInUserIfUnknown() {
+            await load()
+        }
         // **A migrated document must not vanish from a live Home.** The replay drops the
         // record, so the local row is correctly withheld the instant it migrates — but the
         // *real* row only exists in `fetchedRecentDocuments`, which still holds the fetch from
@@ -393,30 +405,6 @@ final class HomeViewModel {
     ///
     /// Best-effort: a failure leaves whatever the last successful fetch stored, which is the
     /// conservative direction — the *send* half re-checks against a live `/users/me/` anyway.
-    /// Ask who this session belongs to, but only when nothing on the device knows.
-    ///
-    /// Failing closed is right; *staying* closed is not. `SessionStore.noteSessionCookiesReplaced`
-    /// deliberately leaves the identity unknown when a login hands its cookies over and the
-    /// confirming `/users/me/` then fails — and the sheet often completes unattended, so an
-    /// ordinary transient blip reaches that state with the *same* account signed in. The only
-    /// other writers run at launch and after a **successful** re-auth, so without a retry the
-    /// state would persist until the app was relaunched or Profile happened to be visited:
-    /// meanwhile every document created offline on this device is listed to nobody
-    /// (`pendingLocalDocuments` filters on a nil owner) and `+` refuses to mint another. The
-    /// guard means it costs a request only while the answer is actually missing.
-    ///
-    /// Hung off `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect, foreground
-    /// — and deliberately **not** off `load()`, which is the wrong place twice over. It is the
-    /// passive on-appear path, so a per-appearance `/users/me/` is more traffic than the rare
-    /// case warrants; and it is instrumented by tests that gate on *the first GET a load makes*
-    /// while blocking `MockURLProtocol`'s single delivery thread, so inserting a request ahead
-    /// of the list fetches stalls that thread and cascades into every test after it. The three
-    /// paths kept here are the ones that mean "catch up", which is exactly this.
-    private func refreshSignedInUserIfUnknown() async {
-        guard signedInUser.userID == nil else { return }
-        await refreshSignedInUser()
-    }
-
     func refreshSignedInUser() async {
         guard let user = try? await client.currentUser() else { return }
         signedInUser.remember(user.id)
@@ -425,6 +413,41 @@ final class HomeViewModel {
         // nothing cached to show. `ProfileViewModel` also write-throughs on its own fetch;
         // both are idempotent.
         cachedUser.remember(user)
+    }
+
+    /// Ask who this session belongs to, but only when nothing on the device knows. Returns
+    /// whether the answer was actually learned, so a caller that renders local rows can decide
+    /// whether it now has something new to show.
+    ///
+    /// Failing closed is right; *staying* closed is not. `SessionStore.noteSessionCookiesReplaced`
+    /// deliberately leaves the identity unknown when a login hands its cookies over and the
+    /// confirming `/users/me/` then fails — and the sheet often completes unattended, so an
+    /// ordinary transient blip reaches that state with the *same* account signed in. The only
+    /// other writers run at launch and after a **successful** re-auth, so without a retry the
+    /// state would persist until the app was relaunched or Profile happened to be visited:
+    /// meanwhile every document created offline on this device is listed to nobody
+    /// (`pendingLocalDocuments` filters on a nil owner) and all three create affordances refuse
+    /// to mint another — Home's `+`, `EditorViewModel.addSubpage` and `PagesTreeViewModel
+    /// .addPage`, which matters because neither of the latter two screens can reach this from
+    /// its own UI. The guard means it costs a request only while the answer is missing.
+    ///
+    /// Hung off `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect, foreground
+    /// — and deliberately **not** off `load()`, which is the wrong place twice over. It is the
+    /// passive on-appear path, so a per-appearance `/users/me/` is more traffic than the rare
+    /// case warrants; and it is instrumented by tests that gate on *the first GET a load makes*
+    /// while blocking `MockURLProtocol`'s single delivery thread, so inserting a request ahead
+    /// of the list fetches stalls that thread and cascades into every test after it. The paths
+    /// kept here are the ones that mean "catch up", which is exactly this.
+    ///
+    /// On `refresh()` this does serialize an extra round trip ahead of the list fetches, and
+    /// the state it recovers from is reached by a flaky network in the first place — so a
+    /// pull-to-refresh in that state can spend two timeouts before the offline banner appears
+    /// where it used to spend one. Accepted: it happens only while the identity is missing.
+    @discardableResult
+    private func refreshSignedInUserIfUnknown() async -> Bool {
+        guard signedInUser.userID == nil else { return false }
+        await refreshSignedInUser()
+        return signedInUser.userID != nil
     }
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through

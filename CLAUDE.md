@@ -3034,9 +3034,11 @@ markdown write endpoint**. Understand this before touching the save path:
   comment warns; and Profile shows A's name and email inside B's session. Binding the
   clear to the handover makes the failure fail closed (nil is what every reader already
   handles). The cost, when the *same* account re-authenticates and the confirm blips, is
-  that their local-only documents drop out of the lists and Home's `+` refuses to mint
-  another until the identity is re-learned — the records are protected unconditionally by
-  `isPendingCreate`, so nothing is lost. **Fail-closed needs a way back open**, or a
+  that their local-only documents drop out of the lists and **all three** create affordances
+  refuse to mint another — Home's `+`, `EditorViewModel.addSubpage` and
+  `PagesTreeViewModel.addPage`, the latter two mattering more because neither screen can
+  reach the retry from its own UI — until the identity is re-learned. The records are
+  protected unconditionally by `isPendingCreate`, so nothing is lost. **Fail-closed needs a way back open**, or a
   transient blip strands the user until a relaunch: the store's other writers run at
   launch and after a *successful* re-auth only, so `HomeViewModel
   .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is

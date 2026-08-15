@@ -1238,9 +1238,11 @@ exactly what `belongsToSession`'s own comment already warns about ("the edit lan
 avoided. The display half was the mildest of the three.
 
 The new failure mode is fail-closed. When the *same* account re-authenticates and the
-confirm blips, their local-only documents drop out of the lists and Home's `+` refuses
-to mint another, because both key off an owner nothing can name; the records themselves
-stay protected unconditionally by `isPendingCreate`, so nothing is lost. **Fail-closed
+confirm blips, their local-only documents drop out of the lists and all three create
+affordances refuse to mint another — Home's `+`, `EditorViewModel.addSubpage` and
+`PagesTreeViewModel.addPage` — because every one of them keys off an owner nothing can
+name; the records themselves stay protected unconditionally by `isPendingCreate`, so
+nothing is lost. **Fail-closed
 is only half of it, though — staying closed would be its own bug.** The other writers of
 `SignedInUserStore` run at launch and after a *successful* re-auth, so nothing would
 re-ask until the app was relaunched or Profile happened to be visited, and the sheet
@@ -1250,6 +1252,16 @@ makes a plain transient blip enough to reach that state with the same account si
 `syncPendingDrafts()` — pull-to-refresh, reconnect, foreground — re-ask `/users/me/` while
 and only while the answer is missing. Those three already mean "catch up", and the guard
 means a session that knows who it is pays nothing.
+
+**Re-learning the id is not enough on the passive path; it has to be followed by a load.**
+`SignedInUserStore` is deliberately neither `@Observable` nor cached, so reading it
+registers no SwiftUI dependency — learning the answer un-hides this device's local rows in
+`recentDocuments` without invalidating anything that would draw them, and
+`syncPendingDrafts` mutates no observable state of its own. This is the same trap that
+function's own comment already records for a migrated row ("the reconnect and foreground
+edges call this and not `load()`"), and it takes the same answer. The load is gated on
+having actually *learned* something rather than on having asked, so an ordinary reconnect
+costs nothing. `refresh()` needs no such gate: it calls `load()` next anyway.
 
 It is deliberately **not** hung off `load()`, and the reason is worth keeping. Passively,
 a `/users/me/` on every Home appearance is more traffic than a rare recovery warrants. But

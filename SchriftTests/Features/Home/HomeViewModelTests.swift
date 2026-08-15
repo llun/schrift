@@ -1599,6 +1599,29 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.syncPendingDrafts()
 
         XCTAssertEqual(signedIn.userID, UUID(uuidString: "11111111-1111-4111-8111-111111111111")!)
+        XCTAssertEqual(
+            log.count(ofMethod: "GET", urlContaining: "users/me/"), 1,
+            "asked once — the guard has to hold on this path too, not just on pull-to-refresh")
+        // Learning the id un-hides this device's local rows, and `SignedInUserStore` is neither
+        // `@Observable` nor cached — so without a load nothing would redraw them.
+        XCTAssertGreaterThan(
+            log.count(ofMethod: "GET", urlContaining: "documents/"), 0,
+            "a re-learn must be followed by a load, or the rows stay hidden until something else invalidates")
+    }
+
+    /// …and only when it actually learned something. A sync that asks and gets nothing back
+    /// must not turn every reconnect into a list fetch.
+    func testAReconnectSyncThatLearnsNothingDoesNotLoad() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser(userID: nil))
+
+        await viewModel.syncPendingDrafts()
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "documents/"), 0)
     }
 
     /// And only while the answer is missing — the retry is for a session whose identity was
