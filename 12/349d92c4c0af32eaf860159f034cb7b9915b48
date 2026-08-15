@@ -1,0 +1,32 @@
+Schrift/Features/Connect/ConnectViewModel.swift
+  s_50339f085f130b::t_45765a79a6e1d0 46-51
+SchriftTests/Features/Connect/ConnectViewModelTests.swift
+  s_50339f085f130b::t_b662ad1eb6520b 89-110
+Schrift/Features/Connect/ReauthenticationViewModel.swift
+  s_50339f085f130b::t_fa35bbd43fde88 38-42
+  s_50339f085f130b::t_7fd3580f4ee91f 5-11
+Schrift/Core/Auth/SessionStore.swift
+  s_50339f085f130b::t_fe0d609499ed6a 142
+  s_50339f085f130b::t_8516af62821186 124,127
+  s_50339f085f130b::t_d62177697ee791 93-123,125-126,128-132
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_50339f085f130b::t_9a45b64697367e 425-478
+SchriftTests/Features/Connect/ReauthenticationViewModelTests.swift
+  s_50339f085f130b::t_20b3434be57700 82-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "12349d92c4c0af32eaf860159f034cb7b9915b48",
+  "prompts": {},
+  "sessions": {
+    "s_50339f085f130b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2702dd8e-d1c1-4603-b216-554b89f4fad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
