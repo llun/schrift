@@ -335,8 +335,15 @@ final class MockURLProtocolGateTests: XCTestCase {
     /// block, so the release is queued **behind XCTest's issue recording**, whose cost is
     /// neither small nor bounded by anything here — measured at ~0.5s locally, and it
     /// overran `waitUntil`'s 3s default on a cold CI runner (run 31889803157), which is how
-    /// this was found. It is a liveness bound, not an ordering: `waitUntil` still fails
-    /// loudly, so a failsafe that never releases is still caught.
+    /// this was found. It is a liveness bound, not an ordering, and it costs nothing on a
+    /// healthy run — the test measures ~0.6s.
+    ///
+    /// **This is the one test the failsafe cannot rescue**, being its own subject: every
+    /// other test here that hangs is released by it 30s later, so `await request.value` is
+    /// safe. Here a broken failsafe would record the timeout and then suspend that `await`
+    /// forever — a hung run on top of a recorded failure, which is the exact outcome the
+    /// failsafe exists to prevent. So this one cancels the request itself rather than
+    /// awaiting a resumption that may never come.
     @MainActor
     func testAnUnopenedGateFailsTheTestAndThenReleasesTheRequest() async {
         let gate = MockURLProtocol.ResponseGate(failsafeTimeout: shortFailsafe)
@@ -349,6 +356,7 @@ final class MockURLProtocolGateTests: XCTestCase {
         let (request, outcome) = issue(contentURL, on: session)
 
         await waitUntil(timeout: 30) { outcome.isFinished }
+        if !outcome.isFinished { request.cancel() }
         await request.value
         XCTAssertEqual(outcome.statusCode, 204, "released, so the body fails on its own assertions")
     }
