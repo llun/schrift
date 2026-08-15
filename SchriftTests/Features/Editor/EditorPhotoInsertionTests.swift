@@ -1001,6 +1001,37 @@ final class EditorPhotoInsertionTests: XCTestCase {
         XCTAssertNotNil(attachments.attachment(for: localID), "and the bytes are still there to be shown")
     }
 
+    /// `.unattributable` *claims* the bytes are on disk — that claim is the whole reason it
+    /// withholds Remove. So it may only be answered when they really are: a record whose file is
+    /// gone is `.missing` whatever the session knows, and there Remove is the correct affordance
+    /// rather than a destructive one, since nothing is left to lose and the orphaned placeholder
+    /// still holds this document's saves.
+    func testAnUnnamedSessionStillReportsMissingWhenTheBytesAreActuallyGone() async {
+        stubUploadPipeline()
+        let (viewModel, attachments) = makeQueueingViewModel()
+        await viewModel.load()
+        await viewModel.insertPhoto(isOffline: true, loadingData: { testPNGData(width: 8, height: 8) })
+        let placeholder = queuedPlaceholder(in: viewModel)!
+        let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
+
+        // The bytes vanish while the record survives — an eviction-free store, so in practice a
+        // restore or a manual purge. Removing the files directly is the only way to reach it:
+        // every API that drops the data drops the record with it.
+        for file
+            in (try? FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil))
+            ?? []
+        {
+            try? FileManager.default.removeItem(at: file)
+        }
+        XCTAssertNotNil(
+            attachments.attachment(for: localID), "the record must outlive its bytes for this case to exist")
+        SignedInUserStore(userDefaults: UserDefaults(suiteName: draftSuiteName)!).clear()
+
+        XCTAssertEqual(
+            viewModel.pendingAttachmentDisplay(forPlaceholderURL: placeholder), .missing,
+            "there is nothing to protect, and Remove is the only way to clear the hold")
+    }
+
     /// The disclosure half still holds: a record this session can positively attribute to
     /// *somebody else* stays `.missing`, so one user's photo never renders inside another's.
     func testAnotherAccountsQueuedPhotoIsStillWithheld() async {

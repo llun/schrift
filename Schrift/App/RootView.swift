@@ -131,8 +131,9 @@ private struct AuthenticatedHomeContainer: View {
         // against overlapping runs, so a foreground that coincides with a reconnect
         // is harmless. That coalescing covers the coordinator's half only: the identity
         // retry beside it is guarded on the answer being missing, which two simultaneous
-        // triggers both see, so they can both ask. Bounded at two and latest-wins on the
-        // loads that follow — see `refreshSignedInUserIfUnknown`.
+        // triggers both see, so they can both ask — two from here, three if a pull-to-refresh
+        // joins them, and latest-wins on the loads that follow. See
+        // `refreshSignedInUserIfUnknown`.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
             guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
             collaboration.reconnect()

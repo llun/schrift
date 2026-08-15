@@ -2164,7 +2164,16 @@ final class EditorViewModel {
         // handed the button that really does destroy them. `isAttachmentReplayable` refuses to
         // collect an unattributable record for precisely this reason; the UI must not
         // contradict it.
-        guard let currentUserID = signedInUser.userID else { return .unattributable }
+        //
+        // The bytes are re-checked here rather than after the owner test, because `.unattributable`
+        // *claims* they are on disk — it is the whole reason it withholds Remove. A record whose
+        // file is genuinely gone is `.missing` whatever the session knows: there is nothing left
+        // to lose, and Remove is then the correct affordance rather than a destructive one, since
+        // it is the only way to clear the hold the orphaned placeholder still has on this
+        // document's saves.
+        guard let currentUserID = signedInUser.userID else {
+            return cachedAttachmentData(localID: localID) == nil ? .missing : .unattributable
+        }
         guard let owner = record.ownerUserID, owner == currentUserID else {
             // Genuinely another account's — nothing here can resolve it, and showing one user's
             // photo inside another's session would be a disclosure.

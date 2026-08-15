@@ -1260,10 +1260,17 @@ content. A **queued deletion** shares the collapse in
 `isListablePendingDelete` with a smaller consequence and is deliberately left: the row stops
 drawing struck through and its tap opens the document rather than offering the undo, but the
 tombstone is protected by the unscoped `isPendingDelete`, so the window costs the undo
-affordance rather than the deletion, and it heals with the identity. **Fail-closed
+affordance rather than the deletion, and it heals with the identity. (Milder still than that
+reads: `EditorViewModel.isDocumentPendingDelete` uses the *unscoped* predicate, so opening
+the document lands on the gated screen, whose `undoPendingDeleteForThisDocument` is unscoped
+too — the undo is reachable one tap deeper, not lost.) A **new** deletion started during the
+window is a third case rather than part of that one: `DocumentActions` requires a known owner
+to queue a tombstone, so a retryable failure surfaces the caller's error instead of queueing —
+fail-closed, nothing written, nothing lost. **Fail-closed
 is only half of it, though — staying closed would be its own bug.** The other writers of
-`SignedInUserStore` run at launch and after a *successful* re-auth, so nothing would
-re-ask until the app was relaunched or Profile happened to be visited, and the sheet
+`SignedInUserStore` run at launch, after a *successful* re-auth, and on a Profile visit —
+none of which a user sitting on Home will hit — so nothing would re-ask until the app was
+relaunched or Profile happened to be visited, and the sheet
 often completes unattended (`WKWebsiteDataStore` still holds the IdP's cookies), which
 makes a plain transient blip enough to reach that state with the same account signed in.
 `HomeViewModel.refreshSignedInUserIfUnknown` closes it: `refresh()` and

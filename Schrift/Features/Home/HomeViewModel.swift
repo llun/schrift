@@ -432,8 +432,9 @@ final class HomeViewModel {
     /// deliberately leaves the identity unknown when a login hands its cookies over and the
     /// confirming `/users/me/` then fails — and the sheet often completes unattended, so an
     /// ordinary transient blip reaches that state with the *same* account signed in. The only
-    /// other writers run at launch and after a **successful** re-auth, so without a retry the
-    /// state would persist until the app was relaunched or Profile happened to be visited:
+    /// other writers run at launch, after a **successful** re-auth, and on a Profile visit — none
+    /// of which a user sitting on Home will hit — so without a retry the state would persist
+    /// until the app was relaunched or Profile happened to be visited:
     /// meanwhile every document created offline on this device is listed to nobody
     /// (`pendingLocalDocuments` filters on a nil owner) and all three create affordances refuse
     /// to mint another — Home's `+`, `EditorViewModel.addSubpage` and `PagesTreeViewModel
@@ -449,9 +450,10 @@ final class HomeViewModel {
     /// kept here are the ones that mean "catch up", which is exactly this.
     ///
     /// **Work Offline is honoured here, and the guard has to live in this function.** It runs
-    /// ahead of `load()`, so `load()`'s own early return cannot cover it, and every pull would
-    /// otherwise park the spinner on a `/users/me/` carrying cookies the user asked not to
-    /// send. `HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
+    /// ahead of `load()`, so `load()`'s own early return cannot cover it. The identity guard above
+    /// runs first, so this withholds only a pull made while the answer is *unknown* — which in
+    /// this mode is every such pull, since nothing arrives to make it known, each one parking
+    /// the spinner on a `/users/me/` carrying cookies the user asked not to send. `HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
     /// preference, and `createDocument` withholds its POST for the same reason.
     ///
     /// Scope it accurately, though: the preference is **not** app-wide, and this guard does not

@@ -3052,15 +3052,21 @@ markdown write endpoint**. Understand this before touching the save path:
   `isListablePendingDelete`, deliberately left: the row
   stops drawing struck through and its tap opens the document instead of offering the undo,
   but the unscoped `isPendingDelete` still protects the tombstone, so it costs the undo
-  affordance rather than the deletion and heals with the identity. **Fail-closed needs a way back open**, or a
+  affordance rather than the deletion and heals with the identity — and milder still, since
+  `EditorViewModel.isDocumentPendingDelete` and `undoPendingDeleteForThisDocument` are both
+  unscoped, the undo is reachable one tap deeper rather than lost. Starting a **new** deletion
+  in the window is a third case: `DocumentActions` needs a known owner to queue a tombstone, so
+  a retryable failure surfaces the error instead of queueing — fail-closed, nothing lost. **Fail-closed needs a way back open**, or a
   transient blip strands the user until a relaunch: the store's other writers run at
-  launch and after a *successful* re-auth only, so `HomeViewModel
+  launch, after a *successful* re-auth, and on any Profile visit — none of which a user
+  sitting on Home will hit — so `HomeViewModel
   .refreshSignedInUserIfUnknown` re-asks `/users/me/` while and only while the answer is
   missing, from `refresh()` and `syncPendingDrafts()` — pull-to-refresh, reconnect,
   foreground: the three paths that already mean "catch up". **It carries its own
   `schrift.workOffline` guard**, because it runs *ahead* of `load()` and so is not covered by
   `load()`'s early return — `HomeViewModel` is one of the three view models that honour the
-  preference, and without it every pull in the mode reaches the network. Two things that
+  preference, and without it a pull made while the identity is unknown reaches the network —
+  which in this mode is every such pull, since nothing arrives to make it known. Two things that
   guard does **not** mean: the preference is not app-wide (`RootView`'s launch task and
   `ProfileViewModel.load` both fetch `/users/me/` without reading it — pre-existing, and what
   keeps the withheld retry from stranding anyone), and inside the mode a dropped identity now
