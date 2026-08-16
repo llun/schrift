@@ -515,7 +515,10 @@ final class DocumentActionsTests: XCTestCase {
 
         XCTAssertEqual(outcome, .failed)
         XCTAssertTrue(recorder.seen.isEmpty, "nothing landed, so nothing may be announced")
-        XCTAssertFalse(env.coordinator.isPendingDelete(documentID: documentID))
+        // "Queues nothing" means exactly this: unlike a failed delete, a failed move leaves no
+        // record for any later pass to act on.
+        XCTAssertNil(env.creates.create(for: documentID))
+        XCTAssertNil(env.drafts.draft(for: documentID))
     }
 
     func testALandedMoveAnnouncesTheEventEveryListReactsTo() async {
@@ -614,6 +617,41 @@ final class DocumentActionsTests: XCTestCase {
         let outcome = await env.actions.move(
             documentID: documentID, row: serverDocument(id: documentID),
             to: .under(parentID: localParent.id))
+
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+    }
+
+    /// **The headline offline case**: create at the top level with no network, then file the
+    /// result under an existing server document. The destination is a real server id the
+    /// pending record simply points at; the replay creates the document in the right place.
+    func testALocalDocumentCanBeFiledUnderAServerRootWithNoRequest() async {
+        let log = RequestRecorder()
+        stubMoveOK(log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Created offline", parentID: nil, ownerUserID: ownerID)
+        let serverRootID = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+
+        let outcome = await env.actions.move(
+            documentID: local.id, row: local, to: .under(parentID: serverRootID))
+
+        XCTAssertEqual(outcome, .moved)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+        XCTAssertEqual(env.creates.create(for: local.id)?.parentID, serverRootID)
+    }
+
+    /// The ladder's `? .moved : .failed` false arm — a refusal must travel back to the caller
+    /// as a failure it can report, not be swallowed into an apparent success.
+    func testALocalMoveTheCoordinatorRefusesIsReportedAsAFailure() async {
+        let log = RequestRecorder()
+        stubMoveOK(log)
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: nil, ownerUserID: ownerID)
+
+        let outcome = await env.actions.move(
+            documentID: local.id, row: local, to: .under(parentID: local.id))
 
         XCTAssertEqual(outcome, .failed)
         XCTAssertEqual(log.count(ofMethod: "POST"), 0)

@@ -2169,7 +2169,16 @@ markdown write endpoint**. Understand this before touching the save path:
   still `isPendingCreate`, but the document the user means is the server one, so the move
   addresses `syncedServerID` — and `completeDocumentMove` is keyed on that id
   (`Document.identified(as:)` re-keys the row), because every cache entry and list row for
-  such a document is written under it.
+  such a document is written under it. **Its record's `parentID` is re-pointed with it**: the
+  POST has landed so nothing re-files from it, but the pending *migration* still reads it twice
+  — `insertIntoListCaches` would write the document back into the recents cache as a root, and
+  `runCreatePass`'s parent gate would hold the migration whenever the *old* parent is
+  tombstoned. A document already **queued for deletion** is refused outright: the tombstone
+  outlives the move, so the only thing a successful one buys is a document deleted from
+  somewhere else. And the picker must use the ladder's own local test (`isPendingCreate`
+  **and** no `syncedServerID`), never `isPendingCreate` alone — the looser one makes the sheet
+  call a checkpointed document local while the ladder moves it as a server one, after which
+  every row in the picker fails.
 - **A landed move's local settlement is `completeDocumentMove`, the twin of
   `completeImmediateDelete` and deliberately much narrower.** A move is not a deletion: the
   document still exists, so the **content cache and the document's own children level must
@@ -2202,12 +2211,24 @@ markdown write endpoint**. Understand this before touching the save path:
   `mutations` for *every* loading level and the editor bumps `childrenGeneration`
   unconditionally, because the old parent is not in the announcement and a straddling fetch
   can carry the row either way.
-- **Home's move override retires; `deletedSinceLoad` never does, and that asymmetry is the
-  point.** `applyMoveOverrides` (`Features/Home/MoveOverlay.swift`) folds a move into a recents
-  fetch that predates it, exactly as `applyFavoriteOverrides` folds a pin — filter, never bump
-  `loadGeneration`. A deleted id may be remembered forever because server ids are never reused;
-  a *placement* can change back, from here or from the web, so an override kept past the point
-  the server agrees would veto the document's return for the life of the process.
+- **Home's move override retires on *fetch ordering*, not on what the fetch says — and that is
+  the one place `applyFavoriteOverrides`' shape must not be copied.** `applyMoveOverrides`
+  (`Features/Home/MoveOverlay.swift`) folds a move into a recents fetch that predates it, by the
+  usual rule (filter, never bump `loadGeneration`). But a pin is *directly observable* in
+  `favorite_list/`, so the pin overlay can retire on agreement, whereas **placement is not
+  observable here**: `Document` carries no parent id, and Home's feed is fetched without a
+  parent filter, so whether it lists sub-pages is the server's answer to give. Retiring on
+  content therefore reads an ambiguous signal as proof and wedges both ways — a filed document
+  on a server whose feed *does* list sub-pages would be stripped from the array **and the
+  persisted cache** on every load for ever (vetoing a later move back made from the web), and a
+  promoted document that is then **deleted** looks exactly like "the fetch hasn't caught up", so
+  the promotion branch would re-insert its own stored row indefinitely — resurrecting a deleted
+  document into Home *and* the recents cache, past `deletedSinceLoad`, which filters the fetch
+  and not the override. So each override records the `loadGeneration` current when the move
+  landed: a fetch issued **after** that has asked the server since, so it is believed whatever
+  it says and the override is spent. It exists only to protect fetches already in flight.
+  The deletion observer additionally drops the override outright, for the window in which one
+  is still live.
 - **A pin made on a list row is folded into fetches that predate it, and the override is
   *retired* — unlike `deletedSinceLoad`, which never is.** `load()` assigns both arrays
   wholesale, so a fetch issued before a pin resolves after it and visibly reverts it (the

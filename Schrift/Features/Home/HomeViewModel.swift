@@ -221,6 +221,13 @@ final class HomeViewModel {
             // list stale, `isOffline` unset, and `isLoading` stuck true, because the guarded
             // early return skips the line that clears it. Filter instead.
             self.deletedSinceLoad.insert(documentID)
+            // **And drop any move override for it.** A promotion override carries its own
+            // stored row, so it re-inserts from itself rather than from the fetch — which
+            // means `deletedSinceLoad`, which filters the fetch, cannot stop it putting a
+            // deleted document back on Home and into the recents cache. The generation now
+            // bounds how long that could last, but a deletion landing inside that window is
+            // exactly the case worth closing outright.
+            self.moveOverrides[documentID] = nil
         }
         // A landed move: this screen lists the *top level*, so what matters is the direction.
         // The caches were already updated by `completeDocumentMove`; these arrays are its own.
@@ -244,7 +251,7 @@ final class HomeViewModel {
             // Same invariant 0b as the deletion above, same answer: a fetch issued before the
             // move is folded through the override rather than cancelled.
             self.moveOverrides[event.documentID] = MoveOverride(
-                newParentID: event.newParentID, row: event.row)
+                newParentID: event.newParentID, row: event.row, generation: self.loadGeneration)
         }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
@@ -317,7 +324,8 @@ final class HomeViewModel {
             for documentID in overlaid.confirmed { favoriteOverrides[documentID] = nil }
             // …and so is a move, on the same terms. Applied to the recents feed only: a move
             // changes placement, and neither the pinned list nor the shared one is about that.
-            let moved = applyMoveOverrides(recent: overlaid.recent, overrides: moveOverrides)
+            let moved = applyMoveOverrides(
+                recent: overlaid.recent, overrides: moveOverrides, generation: generation)
             for documentID in moved.confirmed { moveOverrides[documentID] = nil }
             pinnedDocuments = overlaid.pinned
             fetchedRecentDocuments = moved.recent

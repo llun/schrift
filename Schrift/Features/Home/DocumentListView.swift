@@ -92,13 +92,13 @@ struct DocumentListView: View {
         ) { document in
             Task { await viewModel.deleteDocument(document) }
         }
-        // `.sheet(item:)`, so the picker is built fresh per document and its view model can
-        // never be the previous row's.
+        // `.sheet(item:)` keys the picker to the row it was opened from; `MoveDocumentSheet`
+        // owns the view model in `@State` so a re-render of this list cannot swap it out from
+        // under an open sheet.
         .sheet(item: $documentPendingMove) { document in
-            MoveDocumentSheetView(
-                viewModel: MoveDocumentViewModel(
-                    client: viewModel.client, documentID: document.id, row: document,
-                    saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser)
+            MoveDocumentSheet(
+                client: viewModel.client, document: document,
+                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)

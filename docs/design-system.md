@@ -95,10 +95,18 @@
 > reversible in the same two taps. Errors render inside the picker so the user
 > can pick somewhere else without losing the sheet.
 >
-> Two notes for whoever touches it next. The strip is now at its **width
-> budget**: three actions × 72pt is ~58% of a 370pt row against the 60% cap, and
-> the 44pt tap-target floor beats that cap, so a *fourth* action would overflow
-> rather than shrink (`swipeActionButtonWidth`). And the glyph is
+> Two notes for whoever touches it next. The strip is now **at its width
+> budget**, in the sense that matters: `swipeActionButtonWidth` is
+> `max(44, min(72, rowWidth × 0.6 / count))`, so three actions on the narrowest
+> supported row (343pt — an iPhone SE less the 16pt gutter each side) come to
+> 68.6pt each, still under the 72pt base and comfortably over the 44pt floor, and
+> the strip lands on exactly the 60% cap. An *open* strip therefore went from
+> ~39% of the row to the full 60%. A fourth action does **not** overflow — the
+> cap simply shrinks each button (55.5pt at 343pt wide) — so what a further
+> addition costs is target size, not layout: the 44pt floor only starts winning
+> below ~293pt of row width, which is not a device. `SwipeRevealRowTests` pins
+> the three-action case at that narrowest width so the next addition has to look
+> at this deliberately. And the glyph is
 > **`account_tree`, not Material's own `drive_file_move`** — the bundled font is
 > a subset of the glyphs the app uses, so a new icon means re-subsetting and
 > committing the binary; that is a follow-up rather than a blocker, and the tree

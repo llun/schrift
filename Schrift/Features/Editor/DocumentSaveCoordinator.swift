@@ -2727,6 +2727,17 @@ final class DocumentSaveCoordinator {
     /// and the server already holds the truth, so a death part-way through is healed by the
     /// next ordinary fetch.
     func completeDocumentMove(documentID: UUID, row: Document?, newParentID: UUID?) {
+        // **A checkpointed record's `parentID` is not quite inert after all.** The POST has
+        // landed, so nothing re-files the document from it — but the pending *migration* still
+        // reads it twice: `insertIntoListCaches` would write this document back into the
+        // recents cache as a root, undoing the removal below, and `runCreatePass`'s parent gate
+        // would hold the migration whenever the *old* parent happens to be tombstoned. Both
+        // are stale readings of a placement the server has since changed, so move the record
+        // with the document.
+        if var checkpointed = checkpointedRecord(forServerID: documentID), checkpointed.parentID != newParentID {
+            checkpointed.parentID = newParentID
+            updatePendingCreate(checkpointed)
+        }
         // The old parent is generally unknown — Home rows carry no parent id, and `Document`
         // models none — so the row is swept from *every* cached level rather than from one we
         // would have to guess. That also clears the stale ghost levels a re-parented document
@@ -2734,6 +2745,9 @@ final class DocumentSaveCoordinator {
         // that was just filed under the new parent.
         childrenCache.removeDocument(documentID)
         if let newParentID, let row, var siblings = childrenCache.children(for: newParentID),
+            // Unreachable as the two lines stand — the sweep above strips this id from *every*
+            // level, this one included — and kept only so that narrowing that sweep later
+            // cannot silently start duplicating rows.
             !siblings.contains(where: { $0.id == documentID })
         {
             // Only into a level that has actually been fetched — `insertIntoListCaches`' rule,

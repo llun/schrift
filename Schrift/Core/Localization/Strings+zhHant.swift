@@ -108,7 +108,7 @@ enum Strings_zhHant {
         .options_error_delete: "無法刪除文件。請再試一次。",
         .options_move: "移動",
         .move_title: "移動到",
-        .move_home: "首頁（最上層）",
+        .move_home: "最上層",
         .move_destinations: "文件",
         .move_empty: "沒有可用的目標位置。",
         .move_error: "無法移動文件。請再試一次。",

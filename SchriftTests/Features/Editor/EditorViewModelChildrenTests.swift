@@ -515,6 +515,19 @@ final class EditorViewModelChildrenTests: XCTestCase {
         XCTAssertEqual(viewModel.subpages, [])
     }
 
+    /// Home's feed is unfiltered, so a document promoted while its row is already on a list is
+    /// an ordinary case — and a duplicate id in a `ForEach` is undefined row identity.
+    func testADocumentAlreadyInSubpagesMovedInAgainIsNotDuplicated() {
+        let viewModel = makeViewModel()
+        let arriving = subpage(id: UUID(), title: "Arriving")
+        viewModel.subpages = [arriving]
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: arriving.id, row: arriving, newParentID: documentID))
+
+        XCTAssertEqual(viewModel.subpages?.filter { $0.id == arriving.id }.count, 1)
+    }
+
     func testADocumentMovedIntoThisOneJoinsTheSubpagesList() {
         let viewModel = makeViewModel()
         viewModel.subpages = []
@@ -539,22 +552,40 @@ final class EditorViewModelChildrenTests: XCTestCase {
         XCTAssertNil(viewModel.subpages)
     }
 
-    /// **Moving the document this editor is showing changes nothing here.** Its content,
-    /// its drafts and its saves are all keyed by an id that has not moved, and the screen
-    /// models no parent — so unlike a deletion, there is nothing to tear down.
-    func testMovingTheOpenDocumentTearsNothingDown() {
+    /// **Moving the document this editor is showing changes nothing here.** Its content, its
+    /// drafts and its saves are all keyed by an id that has not moved, and the screen models
+    /// no parent — so unlike a deletion, there is nothing to tear down.
+    ///
+    /// The teardown flags are checked, but they are not what makes this test bite: no branch
+    /// of `noteDocumentMoved` can set them, so they pass with the early return deleted. What
+    /// pins the guard is the **children fetch**, which the guard is what spares — without it
+    /// the generation bump discards a perfectly good in-flight fetch of this document's own
+    /// sub-pages, which is the mirror image of the sibling test below.
+    func testMovingTheOpenDocumentSparesItsOwnChildrenFetch() async {
+        let childID = UUID(uuidString: "9C2C2C2C-2C2C-4C2C-8C2C-2C2C2C2C2C2C")!
+        let gate = MockURLProtocol.ResponseGate()
+        let body = Self.childrenFixture(id: childID.uuidString.lowercased(), title: "Sub-page")
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
         let viewModel = makeViewModel()
-        let child = subpage(id: UUID())
-        viewModel.subpages = [child]
 
+        async let load: Void = viewModel.loadChildren()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+        // This document moves — not one of its sub-pages.
         viewModel.saveCoordinator.announceDocumentMovedForTesting(
             DocumentMoveEvent(
                 documentID: documentID, row: subpage(id: documentID), newParentID: UUID()))
+        gate.open()
+        await load
 
+        XCTAssertEqual(
+            viewModel.subpages?.map(\.id), [childID],
+            "the fetch is about this document's children, which a move of the document does not disturb")
+        XCTAssertEqual(childrenCache.children(for: documentID)?.map(\.id), [childID])
         XCTAssertFalse(viewModel.isDocumentDiscarded)
         XCTAssertFalse(viewModel.isUnavailable)
         XCTAssertNil(viewModel.errorKey)
-        XCTAssertEqual(viewModel.subpages?.map(\.id), [child.id], "and its own list is untouched")
     }
 
     /// **Invariant 0b.** A children fetch issued before the move lands after it and still

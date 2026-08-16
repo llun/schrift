@@ -110,7 +110,7 @@ enum Strings_th {
         .options_error_delete: "ลบเอกสารไม่ได้ โปรดลองอีกครั้ง",
         .options_move: "ย้าย",
         .move_title: "ย้ายไปที่",
-        .move_home: "หน้าแรก (ระดับบนสุด)",
+        .move_home: "ระดับบนสุด",
         .move_destinations: "เอกสาร",
         .move_empty: "ไม่มีปลายทางให้เลือก",
         .move_error: "ย้ายเอกสารไม่ได้ โปรดลองอีกครั้ง",

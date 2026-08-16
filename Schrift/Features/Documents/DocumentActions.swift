@@ -251,6 +251,13 @@ struct DocumentActions {
     func move(
         documentID: UUID, row: Document?, to destination: DocumentMoveDestination
     ) async -> DocumentMoveOutcome {
+        // A document already queued for deletion is not somewhere to file work: the tombstone
+        // outlives the move, so the only thing a successful one buys is a document that is
+        // deleted from a different place. The row surfaces withhold Move for a struck-through
+        // row anyway (they offer only "Keep this document"); this is the rule stated once, for
+        // every surface, rather than per-caller — the same reason `moveLocalDocument` refuses a
+        // tombstoned *destination*.
+        if saveCoordinator?.isPendingDelete(documentID: documentID) == true { return .failed }
         if let coordinator = saveCoordinator, coordinator.isPendingCreate(documentID: documentID),
             coordinator.syncedServerID(forLocalID: documentID) == nil
         {
@@ -300,22 +307,5 @@ struct DocumentActions {
         saveCoordinator?.completeDocumentMove(
             documentID: serverID, row: row?.identified(as: serverID), newParentID: newParentID)
         return .moved
-    }
-}
-
-extension Document {
-    /// The same document under another id.
-    ///
-    /// `id` is a `let` — identity is not something a value should be able to drift on — so
-    /// this rebuilds through the memberwise initializer rather than mutating. The one caller
-    /// is the move ladder, re-keying a checkpointed record's row onto the server id its caches
-    /// actually use.
-    func identified(as documentID: UUID) -> Document {
-        guard documentID != id else { return self }
-        return Document(
-            id: documentID, title: title, excerpt: excerpt, abilities: abilities, linkReach: linkReach,
-            linkRole: linkRole, computedLinkReach: computedLinkReach, computedLinkRole: computedLinkRole,
-            isFavorite: isFavorite, depth: depth, numchild: numchild, path: path, createdAt: createdAt,
-            updatedAt: updatedAt, userRole: userRole, creator: creator)
     }
 }

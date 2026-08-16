@@ -1,6 +1,36 @@
 import SwiftUI
 
-/// Pick where a document should live: "Home", or any top-level document to file it under.
+/// The picker with its view model owned in `@State`, for the two surfaces that present it from
+/// a `.sheet(item:)`.
+///
+/// The view model may **not** be built inline in that closure. `MoveDocumentSheetView.viewModel`
+/// is a stored property, so SwiftUI re-running the sheet's content builder — which a parent
+/// re-render does, and both presenters re-render constantly — would swap in a fresh model with
+/// no destinations, while the presented view's identity is unchanged so its `.task` never runs
+/// again: an open picker would empty itself and stay empty. Owning it here keeps
+/// `.sheet(item:)`'s per-document identity *and* survives the re-render, which is the same rule
+/// the editor's Options and Share models follow.
+struct MoveDocumentSheet: View {
+    @State private var viewModel: MoveDocumentViewModel
+
+    init(
+        client: DocsAPIClient,
+        document: Document,
+        saveCoordinator: DocumentSaveCoordinator?,
+        signedInUser: SignedInUserStore
+    ) {
+        _viewModel = State(
+            initialValue: MoveDocumentViewModel(
+                client: client, documentID: document.id, row: document,
+                saveCoordinator: saveCoordinator, signedInUser: signedInUser))
+    }
+
+    var body: some View {
+        MoveDocumentSheetView(viewModel: viewModel)
+    }
+}
+
+/// Pick where a document should live: the top level, or any top-level document to file it under.
 ///
 /// A flat, boxless list under the shared `SheetHeader`, like every other list-bearing sheet
 /// here — no card, no dividers, structure from an eyebrow label and spacing.
@@ -32,6 +62,16 @@ struct MoveDocumentSheetView: View {
 
             ScrollView {
                 VStack(spacing: 0) {
+                    // A spinner while the first load is in flight or a move is being sent —
+                    // the body renders before `.task` runs, so without it the empty state
+                    // flashes on every open, and an in-flight move would otherwise read as a
+                    // frozen sheet.
+                    if !viewModel.hasLoaded || viewModel.isMoving {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, DocsSpacing.spaceMD)
+                    }
+
                     if viewModel.offersHome {
                         ListRow(
                             icon: .description, title: loc[.move_home],
@@ -59,10 +99,12 @@ struct MoveDocumentSheetView: View {
                     }
                 }
                 .padding(.bottom, DocsSpacing.spaceSM)
+                // The list alone, never the header: disabling the whole sheet would take the
+                // close button with it and leave an in-flight move looking unclosable.
+                .disabled(viewModel.isMoving)
             }
         }
         .background(DocsColor.surfacePage)
-        .disabled(viewModel.isMoving)
         .task { await viewModel.loadDestinations() }
     }
 

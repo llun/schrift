@@ -172,19 +172,100 @@ final class MoveDocumentViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.offersHome)
     }
 
-    func testASubPageIsOfferedAMoveToTheTopLevel() {
+    func testASubPageIsOfferedAMoveToTheTopLevelOnceARootHasBeenFetched() async {
+        stubList([Self.entry(id: rootID, title: "Root", depth: 1)])
         let env = makeEnvironment()
-        let viewModel = makeViewModel(
-            env, row: document(id: documentID, title: "Sub-page", depth: 2))
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Sub-page", depth: 2))
+
+        await viewModel.loadDestinations()
 
         XCTAssertTrue(viewModel.offersHome)
     }
 
-    /// A caller with an id but no row — the editor's Options sheet — gets the affordance, and
-    /// a root filed beside another root is a harmless no-op if it turns out not to be needed.
-    func testACallerWithNoRowIsStillOfferedTheTopLevel() {
+    /// A caller with an id but no row — the editor's Options sheet — gets the affordance once
+    /// there is a root to name: a root filed beside another root is a harmless no-op if it
+    /// turns out not to have been needed.
+    func testACallerWithNoRowIsOfferedTheTopLevelOnceARootHasBeenFetched() async {
+        stubList([Self.entry(id: rootID, title: "Root", depth: 1)])
         let env = makeEnvironment()
-        XCTAssertTrue(makeViewModel(env).offersHome)
+        let viewModel = makeViewModel(env)
+
+        await viewModel.loadDestinations()
+
+        XCTAssertTrue(viewModel.offersHome)
+    }
+
+    /// The Options sheet holds an id, not a row, so its depth can only come from the fetch —
+    /// without which it would go on offering a root document a move to where it already is.
+    func testAnOptionsSheetCallerLearnsFromTheFetchThatItIsAlreadyAtTheTopLevel() async {
+        stubList([
+            Self.entry(id: documentID, title: "Itself", depth: 1),
+            Self.entry(id: rootID, title: "Root", depth: 1),
+        ])
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env)
+
+        await viewModel.loadDestinations()
+
+        XCTAssertFalse(viewModel.offersHome)
+    }
+
+    func testAnOptionsSheetCallerOnASubPageIsStillOfferedTheTopLevel() async {
+        stubList([
+            Self.entry(id: documentID, title: "Itself", depth: 2),
+            Self.entry(id: rootID, title: "Root", depth: 1),
+        ])
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env)
+
+        await viewModel.loadDestinations()
+
+        XCTAssertTrue(viewModel.offersHome)
+    }
+
+    /// **A server document is promoted by being filed beside a root**, so with none fetched
+    /// the row could only ever produce the generic move error. Reachable through Work Offline,
+    /// a failed load, or a first page that happens to hold no roots.
+    func testTheTopLevelIsWithheldFromAServerDocumentWhenNoRootWasFetched() async {
+        stubList([])
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Moving", depth: 2))
+
+        await viewModel.loadDestinations()
+
+        XCTAssertFalse(viewModel.offersHome)
+    }
+
+    /// A local document needs no target, so Work Offline still offers it the top level.
+    func testALocalDocumentIsStillOfferedTheTopLevelWithNoNetwork() async {
+        let env = makeEnvironment()
+        env.defaults.set(true, forKey: "schrift.workOffline")
+        let parent = env.coordinator.createLocalDocument(
+            title: "Parent", parentID: nil, ownerUserID: ownerID)
+        let moving = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: parent.id, ownerUserID: ownerID)
+        let viewModel = makeViewModel(env, documentID: moving.id, row: moving)
+
+        await viewModel.loadDestinations()
+
+        XCTAssertTrue(viewModel.offersHome)
+    }
+
+    /// The body renders before `.task` runs, so an `isLoading`-only gate would flash the empty
+    /// state on every open; and a failed load already says why, so saying "no destinations"
+    /// underneath it would state a second, contradictory reason.
+    func testTheEmptyStateWaitsForALoadAndDefersToAnError() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Root", depth: 1))
+        XCTAssertFalse(viewModel.isEmpty, "nothing has loaded yet")
+
+        await viewModel.loadDestinations()
+
+        XCTAssertEqual(viewModel.errorKey, .move_error_load)
+        XCTAssertFalse(viewModel.isEmpty, "the error is the reason; two would contradict")
     }
 
     func testALocalDocumentAtTheTopLevelIsNotOfferedAMoveThere() {

@@ -279,13 +279,13 @@ struct EditorView: View {
             ) { document in
                 Task { await pagesTreeViewModel.deletePage(document) }
             }
-            // Built fresh per presentation, so the picker can never be showing the previous
-            // row's destinations.
+            // Keyed to the row it was opened from, with the view model owned in `@State` by
+            // `MoveDocumentSheet` — this screen re-renders on nearly every editor state
+            // change, and an inline model would be swapped out from under an open picker.
             .sheet(item: $documentPendingMove) { document in
-                MoveDocumentSheetView(
-                    viewModel: MoveDocumentViewModel(
-                        client: viewModel.client, documentID: document.id, row: document,
-                        saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser)
+                MoveDocumentSheet(
+                    client: viewModel.client, document: document,
+                    saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)

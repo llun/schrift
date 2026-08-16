@@ -1773,22 +1773,18 @@ final class HomeViewModelTests: XCTestCase {
             "and it must not be written to the cache either")
     }
 
-    /// The override retires once the server agrees, so the document can come home again — the
-    /// property that separates this from `deletedSinceLoad`.
-    func testAMoveOverrideIsRetiredSoTheDocumentCanBeListedAgain() async {
+    /// The override protects fetches that were in flight when the move landed, and no others —
+    /// so a later load is believed whatever it says, and a document moved back to the top
+    /// level (from here or from the web) can be listed again.
+    func testALaterLoadSupersedesTheMoveOverrideSoTheDocumentCanBeListedAgain() async {
         let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let withDocument = Self.paginatedFixture(id: id.uuidString, title: "Q3 Planning", isFavorite: false)
         let empty = Self.emptyFixture
-        // First fetch agrees the document has left the top level; the second lists it again,
-        // as it would after a move back.
-        nonisolated(unsafe) var listCalls = 0
         MockURLProtocol.stubHandler = { request in
-            guard request.url?.path.contains("favorite_list") == false else {
-                return .init(statusCode: 200, headers: [:], body: empty, error: nil)
-            }
-            listCalls += 1
+            let path = request.url?.path ?? ""
             return .init(
-                statusCode: 200, headers: [:], body: listCalls == 1 ? empty : withDocument, error: nil)
+                statusCode: 200, headers: [:],
+                body: path.contains("favorite_list") ? empty : withDocument, error: nil)
         }
         let viewModel = makeViewModel()
 
@@ -1796,12 +1792,44 @@ final class HomeViewModelTests: XCTestCase {
             DocumentMoveEvent(
                 documentID: id, row: Self.movedDocument(id: id), newParentID: UUID()))
         await viewModel.load()
-        XCTAssertFalse(viewModel.recentDocuments.contains { $0.id == id }, "the server agrees")
-
-        await viewModel.load()
 
         XCTAssertTrue(
             viewModel.recentDocuments.contains { $0.id == id },
-            "a retired override must not veto the document's return")
+            "this fetch was issued after the move, so its answer is the truth")
+    }
+
+    /// **A promotion override carries its own stored row**, so it re-inserts from itself rather
+    /// than from the fetch — which means `deletedSinceLoad`, which filters the *fetch*, cannot
+    /// stop it putting a deleted document back on Home and into the recents cache.
+    ///
+    /// The generation bounds how long an override lives, so this needs the one window where it
+    /// is still live: a fetch issued **before** the move, landing after both the move and the
+    /// deletion. Dropping the override on the deletion is what closes it.
+    func testADocumentDeletedAfterBeingPromotedIsNotResurrectedByItsMoveOverride() async {
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let empty = Self.emptyFixture
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: empty, error: nil, releasedBy: gate)
+        }
+        let cache = makeCache()
+        let viewModel = makeViewModel(cache: cache)
+
+        // This fetch predates both announcements, so the override below really does apply to it.
+        async let load: Void = viewModel.load()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: id, row: Self.movedDocument(id: id), newParentID: nil))
+        XCTAssertTrue(viewModel.recentDocuments.contains { $0.id == id }, "precondition: on screen")
+        viewModel.saveCoordinator.announceDocumentDeletedForTesting(id)
+        gate.open()
+        await load
+
+        XCTAssertFalse(
+            viewModel.recentDocuments.contains { $0.id == id },
+            "the override must not re-insert a document that has since been deleted")
+        XCTAssertFalse(
+            (cache.loadRecentDocuments() ?? []).contains { $0.id == id },
+            "and it must not be written back to the cache either")
     }
 }

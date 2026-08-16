@@ -114,7 +114,7 @@ enum Strings_es {
         .options_error_delete: "No se pudo eliminar el documento. Inténtalo de nuevo.",
         .options_move: "Mover",
         .move_title: "Mover a",
-        .move_home: "Inicio (nivel superior)",
+        .move_home: "Nivel superior",
         .move_destinations: "Documentos",
         .move_empty: "No hay destinos disponibles.",
         .move_error: "No se pudo mover el documento. Inténtalo de nuevo.",

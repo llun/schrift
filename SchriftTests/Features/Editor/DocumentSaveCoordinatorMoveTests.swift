@@ -166,6 +166,51 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             "the alias must not hide the cycle")
     }
 
+    /// **The one guard whose failure is silent.** `replayCreate` copies the record before its
+    /// await and writes that copy back after, so a move made while the POST is on the wire
+    /// would be reverted *after* the server had already filed the document under the old
+    /// parent — the picker would close, the row would appear to have moved, and nothing would
+    /// ever say otherwise.
+    func testAMoveIsRefusedWhileTheDocumentsCreatePostIsOnTheWire() async {
+        let env = makeEnvironment()
+        // A **server** destination, deliberately: a second local document would have its own
+        // record, and `runCreatePass` replays oldest-first, so the POST held open would be
+        // that one's rather than the moving document's.
+        let targetID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        let moving = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: nil, ownerUserID: ownerID, seedMarkdown: "# Body")
+        // Only the create POST is held: `runDeletePass` and the replay both ask `/users/me/`
+        // first, and gating those would stall the pass before it ever reaches the POST.
+        let gate = MockURLProtocol.ResponseGate()
+        let userBody = #"{"id": "22222222-2222-4222-8222-222222222222"}"#.data(using: .utf8)!
+        let createdBody = """
+            {"id": "77777777-7777-4777-8777-777777777777", "title": "Moving", "abilities": {}, \
+            "link_reach": "restricted", "link_role": "reader", "depth": 1, "numchild": 0, \
+            "path": "0002", "created_at": "2026-08-01T10:00:00Z", "updated_at": "2026-08-01T10:00:00Z"}
+            """.data(using: .utf8)!
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.absoluteString.contains("users/me") == true {
+                return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
+            }
+            if request.httpMethod == "POST" {
+                return .init(statusCode: 201, headers: [:], body: createdBody, error: nil, releasedBy: gate)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data(), error: nil)
+        }
+
+        let coordinator = env.coordinator
+        async let pass: Void = coordinator.syncPendingDrafts()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+
+        XCTAssertFalse(
+            coordinator.moveLocalDocument(documentID: moving.id, newParentID: targetID),
+            "the POST already named the old parent; accepting here would silently revert")
+        XCTAssertNil(env.creates.create(for: moving.id)?.parentID, "and nothing was written")
+
+        gate.open()
+        await pass
+    }
+
     func testMovingALocalDocumentUnderATombstonedParentIsRefused() {
         let env = makeEnvironment()
         let child = env.coordinator.createLocalDocument(title: "C", parentID: nil, ownerUserID: ownerID)
@@ -275,6 +320,18 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
         env.coordinator.completeDocumentMove(documentID: documentID, row: row, newParentID: nil)
 
         XCTAssertEqual(env.listCache.loadRecentDocuments()?.map(\.id), [documentID, existing.id])
+    }
+
+    /// Home's feed is unfiltered, so promoting a document it already lists is ordinary — and a
+    /// duplicate id in a cached list becomes a duplicate row.
+    func testAPromotionDoesNotDuplicateARowTheRecentsCacheAlreadyHolds() {
+        let env = makeEnvironment()
+        let row = document(id: documentID)
+        env.listCache.saveRecentDocuments([row])
+
+        env.coordinator.completeDocumentMove(documentID: documentID, row: row, newParentID: nil)
+
+        XCTAssertEqual(env.listCache.loadRecentDocuments()?.filter { $0.id == documentID }.count, 1)
     }
 
     func testAPromotionNeverFabricatesARecentsListThatWasNeverCached() {

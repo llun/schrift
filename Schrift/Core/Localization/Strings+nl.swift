@@ -112,7 +112,7 @@ enum Strings_nl {
         .options_error_delete: "Kan document niet verwijderen. Probeer het opnieuw.",
         .options_move: "Verplaatsen",
         .move_title: "Verplaatsen naar",
-        .move_home: "Start (hoogste niveau)",
+        .move_home: "Hoogste niveau",
         .move_destinations: "Documenten",
         .move_empty: "Geen bestemmingen beschikbaar.",
         .move_error: "Kan document niet verplaatsen. Probeer het opnieuw.",

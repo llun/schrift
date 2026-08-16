@@ -111,7 +111,7 @@ enum Strings_it {
         .options_error_delete: "Impossibile eliminare il documento. Riprova.",
         .options_move: "Sposta",
         .move_title: "Sposta in",
-        .move_home: "Home (primo livello)",
+        .move_home: "Primo livello",
         .move_destinations: "Documenti",
         .move_empty: "Nessuna destinazione disponibile.",
         .move_error: "Impossibile spostare il documento. Riprova.",

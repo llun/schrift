@@ -18,6 +18,10 @@ final class MoveDocumentViewModel {
     /// so a server document filed under one could never be sent.
     private(set) var localDestinations: [Document] = []
     private(set) var isLoading = false
+    /// Whether a load has finished. Distinct from `!isLoading`, which is also true *before*
+    /// the first one: the view renders before its `.task` runs, so without this the sheet
+    /// shows its empty state for a frame on every open.
+    private(set) var hasLoaded = false
     private(set) var isMoving = false
     var errorKey: L10nKey?
     /// Set once the move has landed, so the view can dismiss and tell its presenter.
@@ -53,24 +57,43 @@ final class MoveDocumentViewModel {
             client: client, saveCoordinator: saveCoordinator, signedInUser: signedInUser)
     }
 
-    var isLocalDocument: Bool { actions.isLocalDocument(documentID) }
-
-    /// Whether to offer "Home".
+    /// Whether this document exists **only** on the device — the ladder's own test, not
+    /// `isPendingCreate` alone.
     ///
-    /// For a local document the record's own `parentID` answers it exactly. For a server one
-    /// the depth does: a root is already home. When the depth is unknown (the Options sheet,
-    /// which has an id rather than a row) the row is offered — a root filed beside another
-    /// root is a harmless no-op, whereas withholding it would strand a sub-page opened
-    /// straight from a link with no way back to the top level.
+    /// The two differ for a *checkpointed* record, which is still `isPendingCreate` while a
+    /// real server document exists under `syncedServerID`. Using the looser predicate here made
+    /// the sheet describe such a document as local while the ladder moved it as a server one,
+    /// so every row in the picker failed: "Home" sent no sibling root and the ladder refused
+    /// it, and each local destination was refused as a client-minted parent.
+    var isLocalDocument: Bool {
+        actions.isLocalDocument(documentID) && saveCoordinator?.syncedServerID(forLocalID: documentID) == nil
+    }
+
+    /// Whether to offer the top level as a destination.
+    ///
+    /// For a local document the record's own `parentID` answers it exactly, and no target is
+    /// needed — it is re-parented here.
+    ///
+    /// A **server** document is promoted by being filed *beside* an existing root, so the
+    /// affordance is only real once there is a root to name: offering it with none fetched —
+    /// Work Offline, a failed load, or a first page that happens to hold no roots — draws a row
+    /// whose only possible outcome is the generic move error. So it is withheld until a load
+    /// has produced one. Past that, the depth decides: a root is already there. When the depth
+    /// is unknown (the Options sheet, which has an id rather than a row) the row is offered —
+    /// a root filed beside another root is a harmless no-op, whereas withholding it would
+    /// strand a sub-page opened straight from a link with no way back to the top level.
     var offersHome: Bool {
         if isLocalDocument { return saveCoordinator?.pendingCreateParentID(forLocalID: documentID) != nil }
+        guard hasLoaded, !destinations.isEmpty else { return false }
         guard let depth = row?.depth ?? resolvedDepth else { return true }
         return depth > 1
     }
 
-    /// True once a load has finished and found nowhere to put the document.
+    /// True once a load has finished and found nowhere to put the document. Gated on
+    /// `errorKey` too: a failed load already says so, and drawing "no destinations" underneath
+    /// it would state a second, contradictory reason.
     var isEmpty: Bool {
-        !isLoading && !offersHome && destinations.isEmpty && localDestinations.isEmpty
+        hasLoaded && errorKey == nil && !offersHome && destinations.isEmpty && localDestinations.isEmpty
     }
 
     /// The depth learned from the destinations fetch, for a caller that had no row to read it
@@ -80,7 +103,10 @@ final class MoveDocumentViewModel {
     func loadDestinations() async {
         errorKey = nil
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
 
         // A local document can be filed under another local one — the replay orders the two
         // creates — so those are worth offering even with no network at all.
@@ -116,14 +142,12 @@ final class MoveDocumentViewModel {
     }
 
     func moveToHome() async {
-        // A server document is promoted by being filed beside an existing root, so one has to
-        // be named. `offersHome` is what keeps this reachable only when there is one.
-        let sibling = isLocalDocument ? nil : destinations.first?.id
-        if !isLocalDocument && sibling == nil {
-            errorKey = .move_error
-            return
-        }
-        await perform(.root(siblingRootID: sibling))
+        // A **local** document is re-parented here and needs no target, so nil is the right
+        // answer for one. A server document is promoted by being filed beside an existing
+        // root: `offersHome` withholds the affordance when there is none to name, and the
+        // ladder refuses a nil target for a server document with the same `move_error` — so
+        // there is deliberately no third check here saying the same thing a third time.
+        await perform(.root(siblingRootID: isLocalDocument ? nil : destinations.first?.id))
     }
 
     func move(under parent: Document) async {

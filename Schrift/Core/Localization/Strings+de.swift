@@ -114,7 +114,7 @@ enum Strings_de {
         .options_error_delete: "Dokument konnte nicht gelöscht werden. Bitte versuche es erneut.",
         .options_move: "Verschieben",
         .move_title: "Verschieben nach",
-        .move_home: "Start (oberste Ebene)",
+        .move_home: "Oberste Ebene",
         .move_destinations: "Dokumente",
         .move_empty: "Keine Ziele verfügbar.",
         .move_error: "Dokument konnte nicht verschoben werden. Bitte versuche es erneut.",

@@ -112,7 +112,7 @@ enum Strings_fr {
         .options_error_delete: "Impossible de supprimer le document. Veuillez réessayer.",
         .options_move: "Déplacer",
         .move_title: "Déplacer vers",
-        .move_home: "Accueil (niveau supérieur)",
+        .move_home: "Niveau supérieur",
         .move_destinations: "Documents",
         .move_empty: "Aucune destination disponible.",
         .move_error: "Impossible de déplacer le document. Veuillez réessayer.",

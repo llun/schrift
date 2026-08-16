@@ -108,7 +108,7 @@ enum Strings_zhHans {
         .options_error_delete: "无法删除文档。请重试。",
         .options_move: "移动",
         .move_title: "移动到",
-        .move_home: "主页（顶层）",
+        .move_home: "顶层",
         .move_destinations: "文档",
         .move_empty: "没有可用的目标位置。",
         .move_error: "无法移动文档。请重试。",

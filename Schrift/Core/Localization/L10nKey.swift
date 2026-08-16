@@ -136,7 +136,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     // same verb read identically — the rule the delete copy already follows.
     case options_move = "options.move"  // "Move"
     case move_title = "move.title"  // "Move to"
-    case move_home = "move.home"  // "Home (top level)"
+    // "Top level", not "Home": the first tab is labelled with the app's own name
+    // (`home_title` is "Schrift"), so "Home" would name a destination the user never sees.
+    case move_home = "move.home"  // "Top level"
     case move_destinations = "move.destinations"  // "Documents" (eyebrow over the candidate list)
     case move_empty = "move.empty"  // "No destinations available."
     case move_error = "move.error"  // "Couldn't move document. Please try again."
