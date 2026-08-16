@@ -56,13 +56,18 @@ enum EditorBlockMetrics {
     /// `MaterialSymbol` scales by default.
     static let checkboxSize: CGFloat = 24
 
-    /// Padding that grows the *editing* checkbox's hit rect to
-    /// `DocsSpacing.rowMinHeight` and is then given back to the layout with
-    /// matching negative padding, so the glyph does not move.
+    /// Padding that grows the *editing* checkbox's hit rect past
+    /// `DocsSpacing.rowMinHeight`, and is then given back to the layout with
+    /// matching negative padding so the glyph does not move.
     ///
-    /// `(44 - 24) / 2`. Expressed as the arithmetic rather than as `10` so it
-    /// stays true if `checkboxSize` changes.
-    static var checkboxHitPadding: CGFloat { (DocsSpacing.rowMinHeight - checkboxSize) / 2 }
+    /// **Not** `(rowMinHeight - checkboxSize) / 2`. That arithmetic looks right
+    /// and lands at 43pt: a `MaterialSymbol` is a `Text`, so what it occupies is
+    /// its glyph's typographic box (23pt for a 24pt symbol), not its point size.
+    /// The derived value was also untestable — substituting the definition into
+    /// `checkboxSize + 2 * padding == rowMinHeight` gives an identity that holds
+    /// for any pair of values. A token with headroom is both correct and
+    /// checkable; `EditorSurfaceParityTests` measures the padded box.
+    static let checkboxHitPadding = DocsSpacing.spaceSM
 
     /// The quote's leading accent bar.
     static let quoteBarWidth: CGFloat = 4
@@ -267,7 +272,11 @@ private struct EditorBlockDecorationModifier: ViewModifier {
             .padding(.trailing, trailingPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            // The bar is overlaid *before* the clip, so the panel's rounded
+            // corners cut it exactly as they did when the reading surface drew
+            // the bar as a sibling inside its clipped `HStack`. Clipping first
+            // and overlaying after leaves a square-cornered bar sitting proud of
+            // a rounded panel.
             .overlay(alignment: .leading) {
                 if decoration == .quote {
                     RoundedRectangle(cornerRadius: DocsRadius.xs)
@@ -275,6 +284,7 @@ private struct EditorBlockDecorationModifier: ViewModifier {
                         .frame(width: EditorBlockMetrics.quoteBarWidth)
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 
     private var verticalPadding: CGFloat {

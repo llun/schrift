@@ -278,6 +278,11 @@
 >   (`presenceBadgeCount`, suppressed offline since peer state is only as fresh
 >   as the last socket message). Reading mode keeps the `PresenceBar` avatar
 >   stack, which has room for one.
+>   *(Superseded 2026-08-16: the document header is shared by both surfaces now
+>   and draws `PresenceBar` in either mode, so the badge became a second copy of
+>   the same fact one row above it and was removed. `presenceBadgeCount` and its
+>   tests remain as the freshness rule, applied on both surfaces — see the
+>   revision at the end of this file.)*
 > - **Back is the system's**, in both modes. Leaving mid-edit is safe because
 >   `onDisappear` already flushes; the old `onBack` closure existed only to
 >   drive a drawn button and is deleted.
@@ -1220,3 +1225,11 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > panel padding, ~20pt on one 17pt line; a verbatim panel around every
 > `.unknown`, ~15pt the other way). Closing it would mean reverse-engineering
 > SwiftUI's internal line metrics into the text container's insets.
+>
+> **Presence has one home.** The Options button's editing-only count badge
+> existed because the editing surface had no `PresenceBar`; the shared header
+> gives it one in both modes, so the badge became a second copy of the same fact
+> one row above it and is gone. `presenceBadgeCount` — and its tests — survive as
+> the one rule for whether peer state is fresh enough to show at all, now applied
+> on **both** surfaces: before, only the badge honoured it and the reading
+> surface drew its avatars offline, where they are whatever the socket last said.

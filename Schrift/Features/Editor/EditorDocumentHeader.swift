@@ -12,10 +12,17 @@ import SwiftUI
 /// An enum rather than a bare `UUID?`, so the header and the trailing tap
 /// target are expressible without minting sentinel ids that could be mistaken
 /// for a block's.
+/// **Both canvases must name the same set of cases**, or the anchor stops
+/// round-tripping: a surface handed an id it does not contain scrolls nowhere,
+/// and the handoff silently degrades to "open at the top" — precisely on the
+/// long documents where that is the thing the user notices. So `.trailer` is the
+/// editing canvas's tap-to-append space *and* the reading canvas's Subpages
+/// section: the space after the last block, whatever each surface puts there.
 enum EditorScrollTarget: Hashable {
     case header
     case block(UUID)
-    /// The editing canvas's tap-to-append space below the last block.
+    /// The space after the last block: the editing canvas's tap-to-append area,
+    /// the reading canvas's Subpages section.
     case trailer
 }
 

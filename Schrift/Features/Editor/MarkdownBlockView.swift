@@ -144,23 +144,6 @@ struct MarkdownBlockView: View {
                     .foregroundStyle(DocsColor.textPrimary)
             }
 
-        case .checklistItem(let checked):
-            // The one row that carries state the eye can see and VoiceOver
-            // cannot: the glyph is a Private-Use-Area character and so is
-            // `accessibilityHidden`, and a strikethrough is not spoken — so a
-            // checklist read aloud used to give no clue which items were done.
-            // Combined into one element with a *state* value, not the editing
-            // checkbox's action label ("Mark as done"): nothing here toggles it,
-            // the row's tap enters the editor.
-            //
-            // Scoped to this arm deliberately. Every other row is a lone `Text`,
-            // and combining one would flatten its links out of the rotor for no
-            // gain.
-            textRow
-                .accessibilityElement(children: .combine)
-                .accessibilityValue(
-                    checked ? loc[.editor_checklist_state_done_a11y] : loc[.editor_checklist_state_not_done_a11y])
-
         default:
             textRow
         }
@@ -193,6 +176,30 @@ struct MarkdownBlockView: View {
             .font(appearance.font)
             .foregroundStyle(appearance.color)
             .strikethrough(appearance.isStruckThrough)
+            .accessibilityValue(checklistStateDescription ?? "")
+    }
+
+    /// A completed to-do's state, spoken.
+    ///
+    /// The eye reads it from the checkbox glyph and the strikethrough, and
+    /// VoiceOver gets neither: `MaterialSymbol` is `accessibilityHidden` (its
+    /// glyph is a Private-Use-Area character with no spoken text) and a
+    /// strikethrough is not announced — so a checklist read aloud gave no clue
+    /// which items were done. A *state*, not the editing checkbox's action label
+    /// ("Mark as done"): nothing here toggles it, the row's tap enters the
+    /// editor.
+    ///
+    /// Set on the `Text` itself rather than by collapsing the row with
+    /// `.accessibilityElement(children: .combine)`. Combining would be the
+    /// conventional way to give a row a value, but it flattens the element tree,
+    /// and this `Text` can hold inline links that VoiceOver reaches through the
+    /// Links rotor. Whether combining really would drop them is not something
+    /// this repo can assert — it runs no VoiceOver tests — and between two
+    /// options that both add the announcement, the one that cannot take anything
+    /// away is the right bet.
+    private var checklistStateDescription: String? {
+        guard case .checklistItem(let checked) = block.kind else { return nil }
+        return checked ? loc[.editor_checklist_state_done_a11y] : loc[.editor_checklist_state_not_done_a11y]
     }
 }
 

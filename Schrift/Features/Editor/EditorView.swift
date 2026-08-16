@@ -144,13 +144,18 @@ func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorTool
     return actions
 }
 
-/// The count shown on the options button while others are in the document, or
-/// `nil` when the badge should be hidden.
+/// How many peers to present, or `nil` when presence should not be shown at all.
 ///
-/// Presence is an avatar stack on the reading surface, where there is room for
-/// one; while editing, the toolbar carries a count instead. Offline suppresses
-/// it: peer state is whatever the socket last said, and presenting a stale count
-/// as live would be a small lie.
+/// Offline suppresses it: peer state is whatever the socket last said, and
+/// presenting a stale count as live would be a small lie.
+///
+/// It was named for the count badge the Options button carried while editing,
+/// which existed only because the reading surface's avatar stack had no editing
+/// counterpart. The document header is shared now and draws `PresenceBar` in
+/// both modes, so the badge is gone and this is the one rule deciding whether
+/// that bar has anything fresh enough to say — on **both** surfaces, where
+/// before the reading one showed its avatars offline and only the badge was
+/// suppressed.
 func presenceBadgeCount(peerCount: Int, isOffline: Bool) -> Int? {
     guard !isOffline, peerCount > 0 else { return nil }
     return peerCount
@@ -667,7 +672,7 @@ struct EditorView: View {
             // and its height never changes under the user mid-keystroke.
             EditorDocumentHeader(
                 title: viewModel.title, onEditTitle: { viewModel.updateTitle($0) }, reach: reach,
-                peers: collaborationPeers
+                peers: headerPeers
             ) {
                 editingStatus
             }
@@ -901,6 +906,15 @@ struct EditorView: View {
 
                 subpagesSection
                     .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+                    // `.trailer` — the same name the editing canvas gives the
+                    // space below its last block. The two layouts have to offer
+                    // the *same* set of scroll targets or the anchor stops
+                    // round-tripping: a reader parked past the last block would
+                    // hand the editor an id it cannot find (and vice versa), and
+                    // the handoff would silently degrade to "open at the top"
+                    // exactly where the document is long enough for that to be
+                    // the thing the user notices.
+                    .id(EditorScrollTarget.trailer)
             }
             .scrollTargetLayout()
             .padding(.horizontal, EditorBlockMetrics.gutter)
@@ -1024,7 +1038,7 @@ struct EditorView: View {
     /// two surfaces moves nothing.
     private var readingHeader: some View {
         EditorDocumentHeader(
-            title: viewModel.title, onEditTitle: nil, reach: reach, peers: collaborationPeers
+            title: viewModel.title, onEditTitle: nil, reach: reach, peers: headerPeers
         ) {
             syncCaptionLabel
         }
@@ -1222,48 +1236,26 @@ struct EditorView: View {
                 isPresentingOptionsSheet = true
             } label: {
                 MaterialSymbol(.more_horiz, size: 22)
-                    .overlay(alignment: .topTrailing) { presenceBadge }
             }
-            .accessibilityLabel(optionsAccessibilityLabel)
+            .accessibilityLabel(loc[.editor_action_options])
         }
     }
 
-    /// While editing there is no room for the reading surface's avatar stack, so
-    /// presence becomes a count on the options button — the same information, in
-    /// the space a toolbar has.
+    /// The peers the shared header's `PresenceBar` draws.
     ///
-    /// Brand-filled rather than the handoff's green presence hue: the app has no
-    /// presence palette in `DocsColor` (avatars derive their colours from the
-    /// accent ramp instead), and importing one token of five for a single badge
-    /// would leave a half-ported palette behind. Brand already reads as "active"
-    /// here — it is what marks the selected tab.
-    @ViewBuilder
-    private var presenceBadge: some View {
-        if let count = editingPresenceCount {
-            Text("\(count)")
-                .docsScaledFont(size: 10, weight: .bold, relativeTo: .caption2)
-                .foregroundStyle(DocsColor.textOnBrand)
-                .padding(.horizontal, 4)
-                .frame(minWidth: 16, minHeight: 16)
-                .background(Capsule().fill(DocsColor.brandFill))
-                .offset(x: 8, y: -6)
-        }
-    }
-
-    private var editingPresenceCount: Int? {
-        guard viewModel.isEditing else { return nil }
-        return presenceBadgeCount(peerCount: collaborationPeers.count, isOffline: isOffline)
-    }
-
-    /// The glyph and the badge are both decorative, so the peer count has to
-    /// reach VoiceOver through the button's own label — phrased exactly as
-    /// `PresenceBar` phrases it on the reading surface.
-    private var optionsAccessibilityLabel: String {
-        guard let count = editingPresenceCount else { return loc[.editor_action_options] }
-        let presence = loc.plural(
-            count, one: .editor_presence_count_one, other: .editor_presence_count_other,
-            two: .editor_presence_count_two, few: .editor_presence_count_few)
-        return "\(loc[.editor_action_options]), \(presence)"
+    /// The Options button used to carry a presence *count badge* while editing,
+    /// because the reading surface's avatar stack had no editing counterpart —
+    /// "the same information, in the space a toolbar has". The document header is
+    /// shared now and draws `PresenceBar` in both modes, so that badge became a
+    /// second copy of the same fact one row above it, and it is gone. Presence
+    /// has one home again, and `presenceBadgeCount` — with its tests — becomes
+    /// the one rule for whether peer state is fresh enough to show at all,
+    /// applied on **both** surfaces. Before, only the badge honoured it: the
+    /// reading surface drew its avatars offline, where they are whatever the
+    /// socket last said.
+    private var headerPeers: [CollaborationPeer] {
+        presenceBadgeCount(peerCount: collaborationPeers.count, isOffline: isOffline) == nil
+            ? [] : collaborationPeers
     }
 }
 

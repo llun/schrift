@@ -236,12 +236,32 @@ final class EditorSurfaceParityTests: XCTestCase {
         XCTAssertGreaterThan(EditorBlockMetrics.checkboxSize, 20)
     }
 
-    /// Its hit rect reaches the 44pt floor exactly, and gives every point of the
-    /// growth back to the layout so the glyph does not move.
+    /// The padded box the `contentShape` is taken from reaches the 44pt floor.
+    ///
+    /// **Measured, not computed.** Asserting
+    /// `checkboxSize + 2 * checkboxHitPadding == rowMinHeight` looks like this
+    /// test but is an algebraic identity — `checkboxHitPadding` is *defined* as
+    /// `(rowMinHeight - checkboxSize) / 2`, so substituting it gives
+    /// `rowMinHeight == rowMinHeight` for every value of both symbols, and the
+    /// assertion cannot fail for any change to either. Hosting the padded glyph
+    /// asks the question that can: a `MaterialSymbol` is a `Text` whose box is
+    /// its glyph's typographic box, not its point size, so this reads what the
+    /// finger actually gets.
     func testTheCheckboxHitRectReachesTheRowMinimum() {
-        XCTAssertEqual(
-            EditorBlockMetrics.checkboxSize + 2 * EditorBlockMetrics.checkboxHitPadding,
-            DocsSpacing.rowMinHeight, accuracy: 0.01)
+        let padded = UIHostingController(
+            rootView: MaterialSymbol(.check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
+                .padding(EditorBlockMetrics.checkboxHitPadding)
+        ).sizeThatFits(in: CGSize(width: 300, height: 300))
+
+        XCTAssertGreaterThanOrEqual(padded.height, DocsSpacing.rowMinHeight)
+        XCTAssertGreaterThanOrEqual(padded.width, DocsSpacing.rowMinHeight)
+
+        // Negative control: the padding is doing the work — the bare glyph is
+        // short of the floor on its own, which is why it needs growing at all.
+        let bare = UIHostingController(
+            rootView: MaterialSymbol(.check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
+        ).sizeThatFits(in: CGSize(width: 300, height: 300))
+        XCTAssertLessThan(bare.height, DocsSpacing.rowMinHeight)
     }
 
     /// Wrapping the glyph in the editing surface's toggle button adds nothing to
@@ -337,6 +357,93 @@ final class EditorSurfaceParityTests: XCTestCase {
         XCTAssertGreaterThan(table, prose, "a verbatim `.unknown` must sit in a panel and a prose one must not")
     }
 
+    // MARK: - The document header
+
+    /// The header is the PR's largest single claim — it is where the body used
+    /// to lurch ~38pt up on tap — so it is measured rather than argued.
+    ///
+    /// The two differ in exactly two ways by construction: the title is a
+    /// `TextField` while editing and a `Text` while reading, and the status slot
+    /// holds a `SaveStatusIndicator` rather than the sync caption. Neither may
+    /// change the header's height.
+    ///
+    /// The tolerance is the same line-box artefact the row test bounds — a
+    /// `TextField` reserves ~1.7pt more than a `Text` for the same title-sized
+    /// font. Unlike the per-block residual this one is paid *once*, at the top of
+    /// the document, so it shifts everything by under 2pt rather than
+    /// accumulating.
+    func testTheReadingAndEditingHeadersAreTheSameHeight() {
+        let reading = headerHeight(title: "Weekend plan", editable: false)
+        let editing = headerHeight(title: "Weekend plan", editable: true)
+        XCTAssertEqual(reading, editing, accuracy: Self.headerLineBoxResidual)
+    }
+
+    /// One title line's worth of the same leading residual measured on the rows.
+    /// Small enough to be paid once; a regression that dropped the metadata row
+    /// or the placeholder would be tens of points and fail loudly.
+    private static let headerLineBoxResidual: CGFloat = 2
+
+    /// An **untitled** document is the case that used to differ most: reading
+    /// rendered an empty `Text` and editing a full-height placeholder, so the
+    /// whole body moved by a title's height on the swap. Both show the same
+    /// placeholder now.
+    func testAnUntitledDocumentsHeaderIsTheSameHeightOnBothSurfaces() {
+        let reading = headerHeight(title: "", editable: false)
+        let editing = headerHeight(title: "", editable: true)
+        XCTAssertEqual(reading, editing, accuracy: Self.headerLineBoxResidual)
+
+        // …and it is a real title line on both, not a collapsed one: an untitled
+        // header is as tall as a titled one.
+        XCTAssertEqual(reading, headerHeight(title: "Weekend plan", editable: false), accuracy: 1)
+    }
+
+    /// The status slot is floored at the row minimum on both surfaces, so
+    /// swapping the sync caption (a footnote, ~16pt on its own) for the
+    /// `SaveStatusIndicator` cannot move anything below it — which is the jump
+    /// that used to land on the *first keystroke*, when the old strip appeared
+    /// out of nothing above the canvas.
+    func testTheStatusSlotIsFlooredSoSwappingItMovesNothing() {
+        let caption = headerHeight(title: "T", editable: false)
+        let indicator = headerHeight(title: "T", editable: true, status: .save)
+        let passive = headerHeight(title: "T", editable: true, status: .savedOnDevice)
+
+        XCTAssertEqual(caption, indicator, accuracy: Self.headerLineBoxResidual)
+        XCTAssertEqual(caption, passive, accuracy: Self.headerLineBoxResidual)
+
+        // Negative control: the floor is what makes those equal — a bare
+        // footnote is far shorter than the row minimum, so without it the
+        // caption row would be the short one.
+        let bareCaption = UIHostingController(
+            rootView: Text("Synced just now").font(DocsFont.footnote)
+        ).sizeThatFits(in: headerProposal).height
+        XCTAssertLessThan(bareCaption, DocsSpacing.rowMinHeight)
+    }
+
+    private var headerProposal: CGSize {
+        CGSize(width: 402 - 2 * EditorBlockMetrics.gutter, height: 4000)
+    }
+
+    /// Hosts the real `EditorDocumentHeader`. `status` picks which slot content
+    /// to measure: `nil` stands in for the reading surface's sync caption (a
+    /// plain footnote `Text`, which is what `syncCaptionLabel` renders in every
+    /// non-retry state), any case for the editing surface's indicator.
+    private func headerHeight(
+        title: String, editable: Bool, status: SaveStatusDisplay? = nil
+    ) -> CGFloat {
+        let host = UIHostingController(
+            rootView: EditorDocumentHeader(
+                title: title, onEditTitle: editable ? { _ in } : nil, reach: .restricted, peers: []
+            ) {
+                if let status {
+                    SaveStatusIndicator(display: status, onTap: {})
+                } else {
+                    Text("Synced just now").font(DocsFont.footnote).foregroundStyle(DocsColor.textTertiary)
+                }
+            }
+            .environment(english()))
+        return host.sizeThatFits(in: headerProposal).height
+    }
+
     // MARK: - Metrics
 
     /// Both surfaces top the inter-block gap up to the header-to-body gap with
@@ -393,6 +500,13 @@ final class EditorSurfaceParityTests: XCTestCase {
             (EditorBlock(kind: .checklistItem(checked: true), text: "Done"), 1),
             (EditorBlock(kind: .quote, text: "Quoted"), 1),
             (EditorBlock(kind: .codeBlock(language: "swift"), text: "let x = 1"), 1),
+            // Deliberately free of inline markdown: an `.unknown` block shows
+            // its syntax while editing and hides it while reading (it is the one
+            // kind `rendersInlineMarkdown` refuses, and that refusal is
+            // pre-existing and untouched), so `**bold**` here would wrap
+            // differently on the two surfaces and could make the editing row the
+            // taller one — a character-width difference, not the chrome
+            // difference `delta >= 0` is written to catch.
             (EditorBlock(kind: .unknown, text: "one\ntwo"), 2),
             (EditorBlock(kind: .unknown, text: "| a | b |"), 1),
         ]
@@ -491,9 +605,17 @@ final class EditorSurfaceParityTests: XCTestCase {
         return host.sizeThatFits(in: rowProposal).height
     }
 
-    /// Fully isolated, stores included. A coordinator with any default store can
-    /// find a replayable record left by another suite and block on a real
-    /// `/users/me/` until it times out, which reads as the whole suite hanging.
+    /// Isolated down to **every** store, and the file-backed ones into a
+    /// throwaway directory.
+    ///
+    /// Not belt-and-braces: a coordinator holding any default store can find a
+    /// replayable record another suite left on the simulator and block on a real
+    /// `/users/me/` until it times out, which reads as the whole suite hanging
+    /// rather than as a failure. Injecting only three of them leaves four
+    /// pointing at `.standard`, so the doc comment has to be true, not
+    /// aspirational — and `EditorViewModel` carries three of its own
+    /// (`signedInUser`, `contentCache`, `childrenCache`) that the coordinator's
+    /// parameters do not cover.
     ///
     /// `blocks` is not decoration: `BlockEditorRow` resolves a numbered item's
     /// position against the view model's own array, so hosting a row at index
@@ -502,15 +624,25 @@ final class EditorSurfaceParityTests: XCTestCase {
         let suite = "EditorSurfaceParityTests.viewModel"
         let store = UserDefaults(suiteName: suite)!
         store.removePersistentDomain(forName: suite)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EditorSurfaceParityTests-\(UUID().uuidString)", isDirectory: true)
+        let contentCache = DocumentContentCacheStore(directory: directory)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: store)
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
         let coordinator = DocumentSaveCoordinator(
             client: client,
             draftStore: PendingDraftStore(userDefaults: store),
+            contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: store),
             deleteStore: PendingDocumentDeleteStore(userDefaults: store),
+            attachmentStore: PendingAttachmentStore(userDefaults: store, directory: directory),
+            listCache: DocumentCacheStore(userDefaults: store),
+            childrenCache: childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let viewModel = EditorViewModel(
-            client: client, documentID: UUID(), title: "Parity", saveCoordinator: coordinator)
+            client: client, documentID: UUID(), title: "Parity", saveCoordinator: coordinator,
+            signedInUser: SignedInUserStore(userDefaults: store),
+            contentCache: contentCache, childrenCache: childrenCache)
         viewModel.blocks = blocks
         return viewModel
     }

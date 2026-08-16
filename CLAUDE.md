@@ -1525,6 +1525,21 @@ that are easy to violate and expensive to discover:
   `typingAttributes` — is wiped a character later. That function takes the whole
   `BlockTextStyling` rather than the two or three fields it happens to need, so a
   new appearance field cannot be silently dropped at that call site.
+- **Presence is drawn once, in the shared header, on both surfaces.** The
+  Options button used to carry a count badge while editing because the editing
+  canvas had no `PresenceBar`; it has one now, so the badge was a duplicate and
+  is gone. `presenceBadgeCount` stays as the freshness rule (peer state is only
+  as fresh as the last socket message, so offline suppresses it) and now gates
+  the header's bar on **both** surfaces — the reading one previously drew its
+  avatars offline. Don't re-add a second presence affordance to one mode only:
+  that asymmetry is what the shared header exists to prevent.
+- **The scroll anchor degrades, it never corrupts.** `install(...)` re-mints
+  every `EditorBlock.id`, so an anchor naming a block can go stale after a
+  remote change; an unresolvable id simply scrolls nowhere and the surface opens
+  where it is. `.header` and `.trailer` are stable across that, and the
+  reading surface's own `.refreshable` is only reachable from the top, where the
+  anchor is `.header`. Worth knowing before "fixing" a report of the editor
+  opening at the top after a co-author's edit.
 - **Known, accepted residual — the two frameworks' line boxes.** A SwiftUI
   `Text` carries slightly more leading than the same font in a `UITextView` with
   `lineFragmentPadding` and `textContainerInset` zeroed: measured at the Large
