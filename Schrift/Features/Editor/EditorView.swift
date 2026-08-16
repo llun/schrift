@@ -190,6 +190,10 @@ struct EditorView: View {
     /// actually looking at — a drawer deletion reporting through `EditorViewModel` would put
     /// the message on a screen the drawer is covering.
     @State private var drawerPendingDeleteConfirmation: Document?
+    /// The row whose Move swipe action was tapped, in the Subpages list or the drawer.
+    /// **One** state for both, unlike the two delete confirmations above: the picker reports
+    /// its own failures inside itself, so there is no per-surface message to route.
+    @State private var documentPendingMove: Document?
     /// Which Subpages row's swipe strip is open. The drawer keeps its **own** state rather
     /// than sharing this one: it floats over this list, and a single value would let either
     /// close the other's strip.
@@ -274,6 +278,17 @@ struct EditorView: View {
                 hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
             ) { document in
                 Task { await pagesTreeViewModel.deletePage(document) }
+            }
+            // Keyed to the row it was opened from, with the view model owned in `@State` by
+            // `MoveDocumentSheet` — this screen re-renders on nearly every editor state
+            // change, and an inline model would be swapped out from under an open picker.
+            .sheet(item: $documentPendingMove) { document in
+                MoveDocumentSheet(
+                    client: viewModel.client, document: document,
+                    saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .background(DocsColor.surfacePage)
             // While editing, clear the formatting bar the canvas floats at the
@@ -428,6 +443,8 @@ struct EditorView: View {
             documentID: viewModel.documentID,
             serverHost: serverHost,
             shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+            saveCoordinator: viewModel.saveCoordinator,
+            signedInUser: viewModel.signedInUser,
             onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
             onShare: { pendingShareAfterOptions = true },
             onDeleted: { queued in
@@ -488,6 +505,12 @@ struct EditorView: View {
                     onRequestDelete: { document in
                         dismissPagesTree()
                         drawerPendingDeleteConfirmation = document
+                    },
+                    // Same handover as Delete, and for the same reason: the drawer closes and
+                    // the editor beneath it presents the picker.
+                    onRequestMove: { document in
+                        dismissPagesTree()
+                        documentPendingMove = document
                     },
                     onUndoPendingDelete: { document in
                         dismissPagesTree()
@@ -1006,9 +1029,11 @@ struct EditorView: View {
                 keepLabel: loc[.pending_delete_undo],
                 pinLabel: loc[.options_pin],
                 unpinLabel: loc[.options_unpin],
+                moveLabel: loc[.options_move],
                 deleteLabel: loc[.options_delete],
                 onKeep: { viewModel.undoPendingDelete(child) },
                 onTogglePin: {},
+                onMove: { documentPendingMove = child },
                 onDelete: { subpagePendingDeleteConfirmation = child }),
             accessibilityLabel: subpageRowAccessibilityLabel(
                 title: childTitle,

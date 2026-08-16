@@ -105,7 +105,10 @@ final class HomeViewModel {
     /// out) withholds every record — `belongsToSession` gates listing and sending on the same
     /// test, because showing user B another user's unsynced document is the worse half of the
     /// same disclosure: B's edits would land in A's document when A signs back in.
-    private let signedInUser: SignedInUserStore
+    /// Not private: the Move picker this screen presents is built per row in the view, and must
+    /// be given the same account this list was scoped by — a test-isolated store here and the
+    /// process-wide default there would disagree about which local documents exist.
+    let signedInUser: SignedInUserStore
     /// The Profile screen's offline copy of the account, write-through only — this view model
     /// never reads it. See `refreshSignedInUser`.
     private let cachedUser: CurrentUserCacheStore
@@ -136,6 +139,14 @@ final class HomeViewModel {
     /// them — see `applyFavoriteOverrides` for why keeping them would veto the next change
     /// made from the web.
     private var favoriteOverrides: [UUID: Bool] = [:]
+
+    /// Moves made on this device that a list fetch in flight does not yet know about.
+    ///
+    /// Retired by **fetch ordering**, not by agreement — the one place `favoriteOverrides`'
+    /// shape must not be copied. Each override records the `loadGeneration` current when the
+    /// move landed, and any fetch issued after that supersedes it, whatever it says. See
+    /// `applyMoveOverrides` for why placement, unlike a pin, cannot be retired on content.
+    private var moveOverrides: [UUID: MoveOverride] = [:]
 
     /// Documents with a delete or pin in flight from a swipe, so a second swipe on the same
     /// row cannot double-send. Not a spinner: the row keeps drawing normally.
@@ -213,6 +224,37 @@ final class HomeViewModel {
             // list stale, `isOffline` unset, and `isLoading` stuck true, because the guarded
             // early return skips the line that clears it. Filter instead.
             self.deletedSinceLoad.insert(documentID)
+            // **And drop any move override for it.** A promotion override carries its own
+            // stored row, so it re-inserts from itself rather than from the fetch — which
+            // means `deletedSinceLoad`, which filters the fetch, cannot stop it putting a
+            // deleted document back on Home and into the recents cache. The generation now
+            // bounds how long that could last, but a deletion landing inside that window is
+            // exactly the case worth closing outright.
+            self.moveOverrides[documentID] = nil
+        }
+        // A landed move: this screen lists the *top level*, so what matters is the direction.
+        // The caches were already updated by `completeDocumentMove`; these arrays are its own.
+        self.saveCoordinator.observeDocumentMoved(self) { [weak self] event in
+            guard let self else { return }
+            if event.newParentID == nil {
+                // Promoted. Insert the row if the mover had one — `fetchedRecentDocuments` is
+                // a conjunct of `recentDocuments`' memo key, so both branches invalidate it.
+                if let row = event.row, !self.fetchedRecentDocuments.contains(where: { $0.id == row.id }) {
+                    self.fetchedRecentDocuments.insert(row, at: 0)
+                }
+            } else {
+                self.fetchedRecentDocuments.removeAll { $0.id == event.documentID }
+            }
+            // **Pinned and search results are deliberately left alone.** A favorite is a
+            // per-user annotation the server keeps across a move, so dropping the row would
+            // hide a document the next `favorite_list/` fetch puts straight back — and hiding
+            // is the harmful direction, where leaving it merely means a pinned row whose
+            // `depth` is stale in a field nothing reads. Search is reachability, not placement.
+            //
+            // Same invariant 0b as the deletion above, same answer: a fetch issued before the
+            // move is folded through the override rather than cancelled.
+            self.moveOverrides[event.documentID] = MoveOverride(
+                newParentID: event.newParentID, row: event.row, generation: self.loadGeneration)
         }
         pinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
@@ -283,10 +325,17 @@ final class HomeViewModel {
             // overrides happens inside this guard, so only the winning fetch may retire one.
             let overlaid = applyFavoriteOverrides(pinned: pinned, recent: recent, overrides: favoriteOverrides)
             for documentID in overlaid.confirmed { favoriteOverrides[documentID] = nil }
+            // …and so is a move — but retired on *ordering* rather than on agreement, which is
+            // where its terms differ from the pin overlay's. Applied to the recents feed only:
+            // a move changes placement, and neither the pinned list nor the shared one is
+            // about that.
+            let moved = applyMoveOverrides(
+                recent: overlaid.recent, overrides: moveOverrides, generation: generation)
+            for documentID in moved.confirmed { moveOverrides[documentID] = nil }
             pinnedDocuments = overlaid.pinned
-            fetchedRecentDocuments = overlaid.recent
+            fetchedRecentDocuments = moved.recent
             cache.savePinnedDocuments(overlaid.pinned)
-            cache.saveRecentDocuments(overlaid.recent)
+            cache.saveRecentDocuments(moved.recent)
             hasKnownFetchedList = true
             isOffline = false
         } catch {

@@ -129,6 +129,32 @@ final class SwipeRevealRowTests: XCTestCase {
             DocsSpacing.rowMinHeight)
     }
 
+    /// **The three-action strip, at the narrowest width a device actually offers.** Home rows
+    /// gained Move between Pin and Delete, and CLAUDE.md's rule for a row of fixed-minimum
+    /// controls is to measure it against the narrowest device before adding to it — so that
+    /// the *next* addition fails a test rather than a screen.
+    ///
+    /// 343pt is an iPhone SE's 375pt less the 16pt gutter each side. The cap (0.6 × 343 ÷ 3 =
+    /// 68.6pt) is what binds: under the 72pt base, comfortably over the 44pt floor, and the
+    /// strip lands exactly on the 60% budget.
+    func testADocumentRowsStripFitsTheNarrowestRowWithoutHittingTheTapTargetFloor() {
+        // **Derived from the real resolver, not a literal.** A hard-coded 3 would keep passing
+        // when a fourth action is added, which is the whole thing this is here to catch.
+        let actionCount = documentRowSwipeActions(
+            isPendingDelete: false, isLocalDocument: false, isFavorite: false, offersPin: true,
+            keepLabel: "Keep", pinLabel: "Pin", unpinLabel: "Unpin", moveLabel: "Move",
+            deleteLabel: "Delete", onKeep: {}, onTogglePin: {}, onMove: {}, onDelete: {}
+        ).count
+        let width = swipeActionButtonWidth(actionCount: actionCount, scaledBase: 72, rowWidth: 343)
+
+        XCTAssertGreaterThan(
+            width, DocsSpacing.rowMinHeight,
+            "the floor must not be engaged, or the strip would exceed its share of the row")
+        XCTAssertLessThanOrEqual(
+            swipeActionStripWidth(actionCount: actionCount, buttonWidth: width), 343 * 0.6,
+            "every action a document row offers must still fit the 60% budget")
+    }
+
     /// Before the first geometry callback the row's width is still zero. Falling through to
     /// a zero-width strip there would render the actions invisible on the very first swipe.
     func testAnUnmeasuredRowFallsBackToTheScaledBase() {

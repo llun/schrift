@@ -16,6 +16,10 @@ struct DocumentListView: View {
     @State private var documentPendingUndo: Document?
     /// The row whose Delete swipe action was tapped, awaiting confirmation.
     @State private var documentPendingDeleteConfirmation: Document?
+    /// The row whose Move swipe action was tapped, presenting the destination picker. No
+    /// confirmation alert accompanies it: picking a destination is itself the deliberate step,
+    /// and a move is reversible in a way a deletion is not.
+    @State private var documentPendingMove: Document?
     /// Which row's swipe strip is open. List-wide, so opening one closes the rest.
     @State private var swipe = SwipeRevealState<UUID>()
 
@@ -87,6 +91,17 @@ struct DocumentListView: View {
             hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
         ) { document in
             Task { await viewModel.deleteDocument(document) }
+        }
+        // `.sheet(item:)` keys the picker to the row it was opened from; `MoveDocumentSheet`
+        // owns the view model in `@State` so a re-render of this list cannot swap it out from
+        // under an open sheet.
+        .sheet(item: $documentPendingMove) { document in
+            MoveDocumentSheet(
+                client: viewModel.client, document: document,
+                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         // System chrome, not a drawn bar: the large title collapses on scroll,
         // the server host rides along as the subtitle, and on iOS 26 the bar
@@ -239,9 +254,11 @@ struct DocumentListView: View {
                             keepLabel: loc[.pending_delete_undo],
                             pinLabel: loc[.options_pin],
                             unpinLabel: loc[.options_unpin],
+                            moveLabel: loc[.options_move],
                             deleteLabel: loc[.options_delete],
                             onKeep: { viewModel.undoPendingDelete(document) },
                             onTogglePin: { Task { await viewModel.toggleFavorite(document) } },
+                            onMove: { documentPendingMove = document },
                             onDelete: { documentPendingDeleteConfirmation = document }),
                         accessibilityLabel: label,
                         onActivate: open

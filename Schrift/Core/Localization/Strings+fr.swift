@@ -110,6 +110,13 @@ enum Strings_fr {
         .options_delete: "Supprimer",
         .options_error_toggle_favorite: "Impossible de mettre à jour le favori. Veuillez réessayer.",
         .options_error_delete: "Impossible de supprimer le document. Veuillez réessayer.",
+        .options_move: "Déplacer",
+        .move_title: "Déplacer vers",
+        .move_home: "Niveau supérieur",
+        .move_destinations: "Documents",
+        .move_empty: "Aucune destination disponible.",
+        .move_error: "Impossible de déplacer le document. Veuillez réessayer.",
+        .move_error_load: "Impossible de charger les destinations. Veuillez réessayer.",
 
         // Share sheet
         .share_title: "Partager",

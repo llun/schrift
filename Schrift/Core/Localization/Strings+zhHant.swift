@@ -106,6 +106,13 @@ enum Strings_zhHant {
         .options_delete: "刪除",
         .options_error_toggle_favorite: "無法更新最愛。請再試一次。",
         .options_error_delete: "無法刪除文件。請再試一次。",
+        .options_move: "移動",
+        .move_title: "移動到",
+        .move_home: "最上層",
+        .move_destinations: "文件",
+        .move_empty: "沒有可用的目標位置。",
+        .move_error: "無法移動文件。請再試一次。",
+        .move_error_load: "無法載入目標位置。請再試一次。",
 
         // Share sheet
         .share_title: "分享",

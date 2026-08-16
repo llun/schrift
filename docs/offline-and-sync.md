@@ -2034,8 +2034,9 @@ and its answer decides. Every outcome has exactly one end state. Root and sub-pa
 rows the probe exists for — `.forbidden` and `.notFound`, where a root has no parent to
 ask about — and nowhere else:
 
-- **gone (404) ⇒ promote.** The one answer that justifies re-parenting, which is
-  irreversible — the old parent is stored nowhere and there is no move feature. Never a
+- **gone (404) ⇒ promote.** The one answer that justifies re-parenting, which this pass
+  cannot undo — the old parent is stored nowhere. (Since the Move feature landed the *user*
+  can re-file the document afterwards; nothing automatic knows where it belonged.) Never a
   bare 403: an ancestor-access recompute 403s transiently and would 403 the create too,
   so the pair is one transient seen twice rather than corroboration — the same rule the
   resume path states for the same evidence.

@@ -241,6 +241,9 @@ final class EditorViewModel {
         saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
             self?.noteDocumentDeleted(documentID)
         }
+        saveCoordinator.observeDocumentMoved(self) { [weak self] event in
+            self?.noteDocumentMoved(event)
+        }
     }
 
     var isEditing: Bool { mode != .reading }
@@ -1351,6 +1354,37 @@ final class EditorViewModel {
         // DELETE landed still names this sub-page, and on resolving would write it back into
         // `subpages` *and* re-create the children-cache entry the coordinator just purged: a
         // tappable row for a deleted document, restored durably on disk and surviving relaunch.
+        childrenGeneration += 1
+    }
+
+    /// A landed move, as it concerns this screen's Subpages list.
+    ///
+    /// **Moving the document this editor is showing is a no-op here, deliberately.** A move
+    /// changes nothing about the document itself — its content, its drafts, its saves and its
+    /// collaboration session are all keyed by an id that has not changed — and this screen
+    /// models no parent to update, so there is nothing to tear down and nothing to redraw. The
+    /// early return says so rather than leaving it to be inferred from the absence of a branch;
+    /// the deletion twin above does the opposite for its own document, and the two must not be
+    /// read as parallel.
+    private func noteDocumentMoved(_ event: DocumentMoveEvent) {
+        guard event.documentID != documentID else { return }
+        if event.newParentID == documentID {
+            // Filed under the document on screen. Only into a level that has been loaded —
+            // nil means "not fetched yet" and must not be fabricated into an answer.
+            if let row = event.row, var updated = subpages,
+                !updated.contains(where: { $0.id == row.id })
+            {
+                updated.append(row)
+                subpages = updated
+            }
+        } else {
+            subpages?.removeAll { $0.id == event.documentID }
+        }
+        // **Unconditional**, and here it is required rather than merely conventional: the old
+        // parent is not in the announcement, so any `listChildren` in flight for this document
+        // may be carrying the moved row either way — a pre-move fetch would restore a row that
+        // has left, or install a level that predates one that has arrived, writing the
+        // children cache in both cases. Invariant 0b.
         childrenGeneration += 1
     }
 

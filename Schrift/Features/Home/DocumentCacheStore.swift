@@ -68,6 +68,34 @@ final class DocumentCacheStore {
         }
     }
 
+    /// Strip a document from the **recents** list alone — what a document that has just been
+    /// filed under a parent owes Home's top-level feed.
+    ///
+    /// Deliberately not `removeDocument`, which would take the pinned and shared entries with
+    /// it. Neither is a fact about placement: a favorite is a per-user annotation the server
+    /// keeps across a move, and shared-with-me membership is decided by access, which a move
+    /// does not change. Removing either would hide a document the next fetch puts straight
+    /// back, and an offline relaunch would show neither.
+    ///
+    /// **Never fabricates**, for the same reason as its neighbours.
+    func removeRecentDocument(_ documentID: UUID) {
+        guard let documents = load(forKey: Self.recentKey), documents.contains(where: { $0.id == documentID })
+        else { return }
+        save(documents.filter { $0.id != documentID }, forKey: Self.recentKey)
+    }
+
+    /// Put a document at the top of the cached recents list — what a promotion to the top level
+    /// owes a Home that may not fetch again before the next launch.
+    ///
+    /// **Never fabricates**, so a device whose recents were never cached stays never-cached and
+    /// keeps its first-run placeholder, exactly as `insertIntoListCaches` refuses to.
+    func insertRecentDocument(_ document: Document) {
+        guard var recents = load(forKey: Self.recentKey), !recents.contains(where: { $0.id == document.id })
+        else { return }
+        recents.insert(document, at: 0)
+        save(recents, forKey: Self.recentKey)
+    }
+
     /// Reflect a pin/unpin in every cached list, so a relaunch — or an offline launch, which
     /// has nothing else to go on — does not show the pre-pin answer until the next successful
     /// fetch.

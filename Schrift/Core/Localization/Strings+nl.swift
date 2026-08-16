@@ -110,6 +110,13 @@ enum Strings_nl {
         .options_delete: "Verwijderen",
         .options_error_toggle_favorite: "Kan favoriet niet bijwerken. Probeer het opnieuw.",
         .options_error_delete: "Kan document niet verwijderen. Probeer het opnieuw.",
+        .options_move: "Verplaatsen",
+        .move_title: "Verplaatsen naar",
+        .move_home: "Hoogste niveau",
+        .move_destinations: "Documenten",
+        .move_empty: "Geen bestemmingen beschikbaar.",
+        .move_error: "Kan document niet verplaatsen. Probeer het opnieuw.",
+        .move_error_load: "Kan bestemmingen niet laden. Probeer het opnieuw.",
 
         // Share sheet
         .share_title: "Delen",

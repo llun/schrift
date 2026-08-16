@@ -265,6 +265,44 @@ final class DocumentSaveCoordinator {
         let observers = documentDeletedObservers.values
         for observer in observers { observer.handler(documentID) }
     }
+
+    /// Fired when a move has actually landed, so every screen holding the row can put it where
+    /// it now belongs.
+    ///
+    /// A fan-out on the same terms as the deletion one, and for the same reason: several
+    /// screens keep their own arrays of the same documents, and a single closure would let one
+    /// subscriber silently overwrite another.
+    ///
+    /// It carries a `DocumentMoveEvent` rather than a bare id, because unlike a deletion a move
+    /// gives some surface a row to *insert* — the new parent's children list, or Home when the
+    /// document is promoted. `onDocumentMigrated` carries one for the same reason.
+    @ObservationIgnored
+    private var documentMovedObservers: [ObjectIdentifier: DocumentMovedObserver] = [:]
+
+    /// Subscribe to landed moves. Owners are held weakly and pruned, exactly as
+    /// `observeDocumentDeleted` does and for the same reason.
+    func observeDocumentMoved(
+        _ owner: AnyObject, _ handler: @escaping @MainActor (DocumentMoveEvent) -> Void
+    ) {
+        documentMovedObservers = documentMovedObservers.filter { $0.value.owner != nil }
+        documentMovedObservers[ObjectIdentifier(owner)] = DocumentMovedObserver(
+            owner: owner, handler: handler)
+    }
+
+    /// Test seam: drive the announcement directly, for subscribers whose own reaction is the
+    /// thing under test rather than the move that triggers it.
+    func announceDocumentMovedForTesting(_ event: DocumentMoveEvent) {
+        announceDocumentMoved(event)
+    }
+
+    /// Test seam: that the pruning really prunes.
+    var documentMovedObserverCountForTesting: Int { documentMovedObservers.count }
+
+    private func announceDocumentMoved(_ event: DocumentMoveEvent) {
+        documentMovedObservers = documentMovedObservers.filter { $0.value.owner != nil }
+        let observers = documentMovedObservers.values
+        for observer in observers { observer.handler(event) }
+    }
     /// Documents whose editor is on screen, reference-counted. The create replay **defers**
     /// for these: migration re-keys the draft, the coordinator's maps and the caches onto the
     /// server id, and `EditorViewModel.documentID` is a `let` captured by four sibling view
@@ -286,6 +324,13 @@ final class DocumentSaveCoordinator {
     /// tabs flow leaves it unreplayed while the indicator reads "syncs when online". Bounded
     /// by user action rather than by connectivity, and popping back kicks the funnel.
     private var openEditors: [UUID: Int] = [:]
+    /// Local documents whose create POST is on the wire right now.
+    ///
+    /// `replayCreate` copies its record before the await and writes that copy back after, so
+    /// any rewrite made in between is lost — and `moveLocalDocument` is the one rewrite a user
+    /// can trigger at an arbitrary moment. Refusing the move for the width of the POST keeps
+    /// the record and the request that is already acting on it from disagreeing.
+    private var createPostsInFlight: Set<UUID> = []
     /// True when the create store held data that would not decode. The records are then
     /// unknown, so *any* draft might belong to a local document — and `runSyncPass`'s
     /// 404 branch deletes drafts. Suppresses that branch entirely rather than deleting on
@@ -959,6 +1004,16 @@ final class DocumentSaveCoordinator {
         pendingCreates[localID]?.syncedServerID
     }
 
+    /// Where a locally-created document currently sits — nil for one at the top level, and nil
+    /// too when there is no record, which is the same answer every caller wants for a document
+    /// this store knows nothing about.
+    ///
+    /// The move picker asks so it can tell "already at the top level" (nothing to promote)
+    /// from "filed under something" without needing a `depth` the server has never assigned.
+    func pendingCreateParentID(forLocalID localID: UUID) -> UUID? {
+        pendingCreates[localID]?.parentID
+    }
+
     /// The one way to rewrite a mirrored record. Both the disk copy and the in-memory mirror
     /// move together, because `isPendingCreate` — the predicate every gate keys off — reads
     /// the mirror while the replay's resume path reads the disk. Letting them drift means a
@@ -1282,6 +1337,13 @@ final class DocumentSaveCoordinator {
             // The draft carries any rename made since the document was minted, so it wins.
             let title = draftStore.draft(for: record.localID)?.title ?? record.title
             let created: Document
+            // The POST is about to file this document under `record.parentID`, and the copy
+            // held here is written back below — so a local move made during the await would be
+            // silently reverted *after* the server had already acted on the old parent.
+            // `moveLocalDocument` refuses while this is set, which turns "unlikely" into
+            // "unrepresentable" for the price of a set insert.
+            createPostsInFlight.insert(record.localID)
+            defer { createPostsInFlight.remove(record.localID) }
             do {
                 if let parentID = record.parentID {
                     created = try await client.createChild(documentID: parentID, title: title)
@@ -1524,14 +1586,23 @@ final class DocumentSaveCoordinator {
             // moot by construction — there is no work left for them to protect.
             queued[serverID] = nil
             clearResolvedConflict(documentID: serverID)
-            record.syncedServerID = nil
+            // **Edit the live record, never the captured copy.** `record` was snapshotted
+            // before this branch's two network round trips, and a move landing inside that
+            // window re-points the stored one — so writing the copy back would restore the
+            // *pre-move* `parentID` along with clearing the checkpoint, silently undoing a move
+            // the user was told had landed, and re-POSTing the document at its old location.
+            // Where the old parent is since tombstoned it is worse than cosmetic: the record
+            // wedges on `runCreatePass`'s parent gate. Same window `migrateCreatedDocument`
+            // reads the mirror for.
+            guard var live = pendingCreates[record.localID] else { return }
+            live.syncedServerID = nil
             // Cleared with the checkpoint it was stamped beside, or a persisted record would
             // carry a `postedTitle` with no `syncedServerID` — which is what its own doc
             // comment says cannot happen.
-            record.postedTitle = nil
-            record.replayBlockedAt = nil
-            record.replayBlockedBuild = nil
-            if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
+            live.postedTitle = nil
+            live.replayBlockedAt = nil
+            live.replayBlockedBuild = nil
+            updatePendingCreate(live)
             return
         } catch {
             // Transient — leave it for the next pass.
@@ -1836,7 +1907,23 @@ final class DocumentSaveCoordinator {
         // re-enters the same branch.
         let willAdoptServer = canonicalBody.isEmpty && !canonicalServer.isEmpty
         if willAdoptServer { draftStore.remove(documentID: serverID) }
-        if let document { insertIntoListCaches(document, parentID: record.parentID) }
+        // **The parent is read from the mirror, not from `record`.** The resume path captures
+        // its copy before two network round trips, and a move landing inside that window
+        // re-points the stored record — so the captured `parentID` is the *pre-move* placement.
+        // Trusting it undoes what `completeDocumentMove` just did: a promoted document is
+        // appended back into its old parent's cached level, and one filed under a parent is
+        // written back into the persisted recents cache as a root, where a later failed fetch
+        // re-seeds Home from it. Same class as the `createPostsInFlight` window, on the branch
+        // that flag does not cover; `finishMigration` already re-reads the mirror one guard
+        // above for the same reason.
+        if let document {
+            // `.map` rather than `?.parentID ??`: a **nil parent is the legitimate root
+            // value**, so the optional-chained form falls through to the stale copy for
+            // exactly the case this exists to fix — a document promoted to the top level
+            // during the migration would be filed back under its old parent.
+            let liveParentID = pendingCreates[localID].map(\.parentID) ?? record.parentID
+            insertIntoListCaches(document, parentID: liveParentID)
+        }
 
         // **Re-key the sub-pages created under this document before the record goes.** They
         // carry its *local* id in their own `parentID` — an id the server has never seen —
@@ -2116,9 +2203,10 @@ final class DocumentSaveCoordinator {
             do {
                 _ = try await client.document(documentID: parentID)
             } catch let probe as DocsAPIError where probe == .notFound {
-                // The parent is **gone** — the one answer that justifies re-parenting, which is
-                // irreversible (the old parent is stored nowhere, and there is no move
-                // feature). Never a bare 403: an ancestor-access recompute 403s transiently and
+                // The parent is **gone** — the one answer that justifies re-parenting, which
+                // this pass cannot undo (the old parent is stored nowhere; the user can now
+                // re-file the document with Move, but nothing here knows where it belonged).
+                // Never a bare 403: an ancestor-access recompute 403s transiently and
                 // would 403 the create too, so the pair is one transient seen twice, not
                 // corroboration. Same rule the resume path states for the same evidence.
                 //
@@ -2644,6 +2732,117 @@ final class DocumentSaveCoordinator {
     func completeImmediateDelete(documentID: UUID) {
         purgeLocalTraces(documentID: documentID)
         announceDocumentDeleted(documentID)
+    }
+
+    /// Everything a landed **move** owes the device — the twin of `completeImmediateDelete`,
+    /// and deliberately much narrower than it.
+    ///
+    /// A move is not a deletion: the document still exists, its body is untouched, and its own
+    /// children moved with it in the server's single atomic transaction. So the content cache
+    /// and the document's *own* children level (`childrenCache.remove(parentID:)`) must both
+    /// stay — purging them would throw away a cached body and a cached subtree that are still
+    /// exactly right, and offline the document would go blank for no reason.
+    ///
+    /// What does change is where the row belongs, and the ordering below is what keeps the two
+    /// halves of that from fighting: the sweep runs **before** the insert, so it can never
+    /// strip the row that was just filed under the new parent.
+    ///
+    /// Announced **last**, like both its siblings, so a subscriber sees fully settled caches.
+    /// Unlike them there is no crash-recovery sequencing to respect — every step is idempotent
+    /// and the server already holds the truth, so a death part-way through is healed by the
+    /// next ordinary fetch.
+    func completeDocumentMove(documentID: UUID, row: Document?, newParentID: UUID?) {
+        // **A checkpointed record's `parentID` is not quite inert after all.** The POST has
+        // landed, so nothing re-files the document from it — but the pending *migration* still
+        // reads it twice: `insertIntoListCaches` would write this document back into the
+        // recents cache as a root, undoing the removal below, and `runCreatePass`'s parent gate
+        // would hold the migration whenever the *old* parent happens to be tombstoned. Both
+        // are stale readings of a placement the server has since changed, so move the record
+        // with the document.
+        if var checkpointed = checkpointedRecord(forServerID: documentID), checkpointed.parentID != newParentID {
+            checkpointed.parentID = newParentID
+            updatePendingCreate(checkpointed)
+        }
+        // The old parent is generally unknown — Home rows carry no parent id, and `Document`
+        // models none — so the row is swept from *every* cached level rather than from one we
+        // would have to guess. That also clears the stale ghost levels a re-parented document
+        // can sit in, and it runs **before** the insert below so it can never strip the row
+        // that was just filed under the new parent.
+        childrenCache.removeDocument(documentID)
+        if let newParentID, let row, var siblings = childrenCache.children(for: newParentID),
+            // Unreachable as the two lines stand — the sweep above strips this id from *every*
+            // level, this one included — and kept only so that narrowing that sweep later
+            // cannot silently start duplicating rows.
+            !siblings.contains(where: { $0.id == documentID })
+        {
+            // Only into a level that has actually been fetched — `insertIntoListCaches`' rule,
+            // and for its reason: nil (never fetched) and `[]` (fetched, empty) are read as
+            // different everywhere. The row's `depth`/`path` are stale from this moment;
+            // neither is read anywhere, and `numchild` is still right because the subtree
+            // travelled with it. The next `listChildren` replaces the level wholesale.
+            siblings.append(row)
+            childrenCache.save(siblings, for: newParentID)
+        }
+        // Home's feed is fetched without a parent filter, so whether a sub-page appears there
+        // is the server's answer to give. What is certain is the direction: a document filed
+        // under a parent has left the top level, and one promoted to root has joined it.
+        if newParentID == nil {
+            if let row { listCache.insertRecentDocument(row) }
+        } else {
+            listCache.removeRecentDocument(documentID)
+        }
+        announceDocumentMoved(
+            DocumentMoveEvent(documentID: documentID, row: row, newParentID: newParentID))
+    }
+
+    /// Re-parent a document the server has never seen.
+    ///
+    /// Purely local, and that is the whole implementation: rewriting the record's `parentID`
+    /// and bumping `pendingCreatesVersion` is enough, because every surface that lists a local
+    /// document merges it in at **read** time — `HomeViewModel.recentDocuments` asks for
+    /// `parentID: nil`, `EditorViewModel.mergedSubpages` and `PagesTreeViewModel.mergedChildren`
+    /// ask for their own level. No fetch, no cache write, no announcement: a synthetic row
+    /// exists in no fetched array and in no persisted cache anywhere (`appendChild` filters
+    /// them out of the children cache, and `insertIntoListCaches` only ever sees real
+    /// documents). Records naming this one as their parent follow it automatically.
+    ///
+    /// Returns false — changing nothing — when the move must not happen. Each guard is a real
+    /// failure, not defensive noise:
+    ///
+    ///  - **checkpointed** (`syncedServerID != nil`): the POST has landed, so the document the
+    ///    user means is the *server* one and the ladder moves that instead. The record's own
+    ///    `parentID` is inert from that moment, and rewriting it would be undone by the
+    ///    migration anyway;
+    ///  - **create POST in flight**: `replayCreate` copies the record before its await and
+    ///    writes that copy back afterwards, so a rewrite landing in between is silently lost —
+    ///    and lost *after* the POST already filed the document under the old parent;
+    ///  - **a local descendant, or itself**: two records naming each other deadlock
+    ///    `runCreatePass`'s parent gate for good — each skips because the other is still
+    ///    pending — and `pagesTreeRows` would quietly drop one of them to break the cycle. The
+    ///    walk resolves a checkpointed server id back to its record, so a cycle cannot hide
+    ///    behind that alias;
+    ///  - **a tombstoned destination**: filing new work under a document that is on its way to
+    ///    being deleted, which is `addPage`'s gate for the same reason.
+    @discardableResult
+    func moveLocalDocument(documentID: UUID, newParentID: UUID?) -> Bool {
+        guard var record = pendingCreates[documentID], record.syncedServerID == nil else { return false }
+        guard !createPostsInFlight.contains(documentID) else { return false }
+        if let newParentID {
+            guard newParentID != documentID, !isPendingDelete(documentID: newParentID) else { return false }
+            // Walk up from the destination: if this document is anywhere above it, the move
+            // would make a cycle. Iterative and `visited`-guarded like `localDescendantsToDiscard`
+            // — this reads decoded data, where the shape is a tree only by construction, and a
+            // blob that already holds a cycle must refuse rather than spin.
+            var visited: Set<UUID> = []
+            var cursor: UUID? = newParentID
+            while let current = cursor {
+                guard current != documentID, visited.insert(current).inserted else { return false }
+                cursor = (pendingCreates[current] ?? checkpointedRecord(forServerID: current))?.parentID
+            }
+        }
+        record.parentID = newParentID
+        updatePendingCreate(record)
+        return true
     }
 
     /// Re-mint a document whose deletion the user undid **after** the DELETE had already
@@ -3655,4 +3854,25 @@ final class DocumentSaveCoordinator {
 private struct DocumentDeletedObserver {
     weak var owner: AnyObject?
     let handler: @MainActor (UUID) -> Void
+}
+
+/// A landed move, as the surfaces holding the document hear about it.
+struct DocumentMoveEvent: Equatable, Sendable {
+    /// The id every cache and list entry for this document is keyed by — the server's, even
+    /// when the move was made from a checkpointed record's local id.
+    let documentID: UUID
+    /// The row to file where the document has landed, when the mover had one. Nil from a
+    /// surface that holds an id rather than a row (the editor's Options sheet): the
+    /// destination then picks the document up on its next fetch rather than being handed an
+    /// invented row.
+    let row: Document?
+    /// Nil when the document was promoted to the top level.
+    let newParentID: UUID?
+}
+
+/// A weakly-held subscriber to landed moves — see
+/// `DocumentSaveCoordinator.observeDocumentMoved`.
+private struct DocumentMovedObserver {
+    weak var owner: AnyObject?
+    let handler: @MainActor (DocumentMoveEvent) -> Void
 }

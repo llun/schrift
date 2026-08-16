@@ -32,6 +32,10 @@ struct PagesTreeDrawer: View {
     /// the drawer: an alert presented from inside a view that is itself a transitioning
     /// overlay is fragile, and the editor already hosts the sibling undo alert.
     var onRequestDelete: (Document) -> Void = { _ in }
+    /// A row's Move swipe action was tapped. The editor owns the picker sheet for the same
+    /// reason it owns the delete alert: presenting one from inside a transitioning overlay is
+    /// fragile, and the drawer would take the sheet down with itself as it closes.
+    var onRequestMove: (Document) -> Void = { _ in }
     /// A struck-through row's "Keep this document".
     var onUndoPendingDelete: (Document) -> Void = { _ in }
 
@@ -169,9 +173,11 @@ struct PagesTreeDrawer: View {
                     keepLabel: loc[.pending_delete_undo],
                     pinLabel: loc[.options_pin],
                     unpinLabel: loc[.options_unpin],
+                    moveLabel: loc[.options_move],
                     deleteLabel: loc[.options_delete],
                     onKeep: { onUndoPendingDelete(row.document) },
                     onTogglePin: {},
+                    onMove: { onRequestMove(row.document) },
                     onDelete: { onRequestDelete(row.document) }),
                 accessibilityLabel: label,
                 onActivate: { onOpen(row.document) }

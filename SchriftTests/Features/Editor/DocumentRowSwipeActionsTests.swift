@@ -20,12 +20,13 @@ final class DocumentRowSwipeActionsTests: XCTestCase {
             keepLabel: "Keep this document",
             pinLabel: "Pin",
             unpinLabel: "Unpin",
+            moveLabel: "Move",
             deleteLabel: "Delete",
-            onKeep: {}, onTogglePin: {}, onDelete: {})
+            onKeep: {}, onTogglePin: {}, onMove: {}, onDelete: {})
     }
 
-    func testAnOrdinaryHomeRowOffersPinThenDelete() {
-        XCTAssertEqual(actions().map(\.id), ["pin", "delete"])
+    func testAnOrdinaryHomeRowOffersPinThenMoveThenDelete() {
+        XCTAssertEqual(actions().map(\.id), ["pin", "move", "delete"])
     }
 
     func testTheDeleteActionIsDestructive() {
@@ -56,14 +57,14 @@ final class DocumentRowSwipeActionsTests: XCTestCase {
     /// `retryableSaveFailure` rightly refuses to retry it — the same gate the Options sheet
     /// applies. Delete stays: dropping the local record *is* the deletion, and it is the only
     /// way to throw such a document away.
-    func testALocalRowOffersDeleteButNoPin() {
-        XCTAssertEqual(actions(isLocalDocument: true).map(\.id), ["delete"])
+    func testALocalRowOffersMoveAndDeleteButNoPin() {
+        XCTAssertEqual(actions(isLocalDocument: true).map(\.id), ["move", "delete"])
     }
 
     /// The Subpages list and the Pages drawer render no pinned state, so offering the action
     /// there would succeed with nothing on the row to show for it.
-    func testASurfaceThatDoesNotShowPinnedStateOffersOnlyDelete() {
-        XCTAssertEqual(actions(offersPin: false).map(\.id), ["delete"])
+    func testASurfaceThatDoesNotShowPinnedStateStillOffersMoveAndDelete() {
+        XCTAssertEqual(actions(offersPin: false).map(\.id), ["move", "delete"])
     }
 
     func testEveryActionCarriesANonEmptyLabelForVoiceOver() {
@@ -96,9 +97,11 @@ final class DocumentRowSwipeActionsTests: XCTestCase {
             keepLabel: "Keep this document",
             pinLabel: "Pin",
             unpinLabel: "Unpin",
+            moveLabel: "Move",
             deleteLabel: "Delete",
             onKeep: { fired = "keep" },
             onTogglePin: { fired = "pin" },
+            onMove: { fired = "move" },
             onDelete: { fired = "delete" })
         resolved.first { $0.id == wanted }?.handler()
         return fired
@@ -110,6 +113,16 @@ final class DocumentRowSwipeActionsTests: XCTestCase {
 
     func testThePinActionRunsTheToggleHandler() {
         XCTAssertEqual(firedAction(id: "pin"), "pin")
+    }
+
+    func testTheMoveActionRunsTheMoveHandler() {
+        XCTAssertEqual(firedAction(id: "move"), "move")
+    }
+
+    /// A locally-created document is movable — unlike Pin, its move is a re-parenting of the
+    /// pending record on this device rather than a request the server would 404.
+    func testALocalRowsMoveRunsTheMoveHandler() {
+        XCTAssertEqual(firedAction(id: "move", isLocalDocument: true), "move")
     }
 
     func testTheDeleteActionRunsTheDeleteHandler() {

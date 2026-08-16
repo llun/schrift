@@ -112,6 +112,13 @@ enum Strings_de {
         .options_delete: "Löschen",
         .options_error_toggle_favorite: "Favorit konnte nicht aktualisiert werden. Bitte versuche es erneut.",
         .options_error_delete: "Dokument konnte nicht gelöscht werden. Bitte versuche es erneut.",
+        .options_move: "Verschieben",
+        .move_title: "Verschieben nach",
+        .move_home: "Oberste Ebene",
+        .move_destinations: "Dokumente",
+        .move_empty: "Keine Ziele verfügbar.",
+        .move_error: "Dokument konnte nicht verschoben werden. Bitte versuche es erneut.",
+        .move_error_load: "Ziele konnten nicht geladen werden. Bitte versuche es erneut.",
 
         // Share sheet
         .share_title: "Teilen",

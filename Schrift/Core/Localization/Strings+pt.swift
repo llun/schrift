@@ -109,6 +109,13 @@ enum Strings_pt {
         .options_delete: "Eliminar",
         .options_error_toggle_favorite: "Não foi possível atualizar o favorito. Tente novamente.",
         .options_error_delete: "Não foi possível eliminar o documento. Tente novamente.",
+        .options_move: "Mover",
+        .move_title: "Mover para",
+        .move_home: "Nível superior",
+        .move_destinations: "Documentos",
+        .move_empty: "Nenhum destino disponível.",
+        .move_error: "Não foi possível mover o documento. Tente novamente.",
+        .move_error_load: "Não foi possível carregar os destinos. Tente novamente.",
 
         // Share sheet
         .share_title: "Partilhar",
