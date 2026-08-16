@@ -591,8 +591,16 @@ final class EditorSurfaceParityTests: XCTestCase {
         for (index, block) in leaves.enumerated() {
             let reading = rowHeight(of: block)
             let editing = editingRowHeight(of: block, index: index, viewModel: viewModel)
+            // 0.5pt, as `testListRowsAgreeExactly` uses — **not** the text-row
+            // band. That band exists for a SwiftUI-`Text`-vs-`UITextView`
+            // artefact, and no leaf hosts a text view on either surface: these
+            // are structurally identical SwiftUI trees, so the true delta is
+            // zero. Allowing 5.95pt here would let a one-token font drift in a
+            // single surface's leaf arm (body 17 → callout 16, code 15 →
+            // footnote 13) pass green — the exact divergence the fixture exists
+            // to catch.
             XCTAssertEqual(
-                reading, editing, accuracy: Self.leadingResidualRatio * DocsTypographySpec.body.size,
+                reading, editing, accuracy: 0.5,
                 "\(block.kind) is \(reading)pt while reading and \(editing)pt while editing")
         }
 

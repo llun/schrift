@@ -102,8 +102,15 @@ func unknownRendersAsProse(_ text: String) -> Bool {
 /// being smuggled in: `BlockEditorRow` names the *same* tokens in its own leaf
 /// arms, so there is one value in two places rather than two values — and
 /// `EditorSurfaceParityTests.testLeafRowsOccupyTheSameHeightOnBothSurfaces`
-/// measures those rows on both surfaces, so a token that drifts in one of them
-/// fails rather than ships.
+/// measures those three rows on both surfaces, to 0.5pt.
+///
+/// That catches a token that changes what a leaf row *occupies* — a font, a
+/// padding — and nothing else. A **colour** is invisible to a height
+/// measurement, so `DocsColor.borderDefault` on the divider (the only token that
+/// arm names directly) and `DocsColor.textPrimary` on the two text fallbacks are
+/// held by inspection alone. Said plainly because the previous version of this
+/// sentence claimed a drifting token "fails rather than ships", which a height
+/// comparison cannot deliver.
 struct MarkdownBlockView: View {
     let block: EditorBlock
     /// Origin the embedded image gate compares against (`imageLoadPolicy`), and
