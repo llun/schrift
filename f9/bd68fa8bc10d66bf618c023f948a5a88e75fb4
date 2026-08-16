@@ -1,0 +1,56 @@
+Schrift/Core/Localization/Strings+fr.swift
+  s_ba013086e201ce::t_2d6cd19b22a38a 113-119
+Schrift/Core/Localization/Strings+es.swift
+  s_ba013086e201ce::t_d4dd6365531324 115-121
+Schrift/Features/Documents/MoveDocumentSheetView.swift
+  s_ba013086e201ce::t_75ddf292bf326b 1-71,73-107,111
+  s_ba013086e201ce::t_8357334a9142d5 108-110
+  s_ba013086e201ce::t_31d8b29e7d63bc 72
+SchriftTests/Features/Documents/MoveDocumentViewModelTests.swift
+  s_ba013086e201ce::t_efff434ace296d 1-86,88-209,211-216,218-272,277,281-282,284-288,290-341
+  s_ba013086e201ce::t_6a11ecf1b6439d 87,278-280
+  s_ba013086e201ce::t_21e5dffbc9a79e 210,217,273-276,283,289
+Schrift/Core/Localization/Strings+th.swift
+  s_ba013086e201ce::t_849301c893c29b 111-117
+Schrift/Core/Localization/Strings+de.swift
+  s_ba013086e201ce::t_f22c07a0b92b09 115-121
+Schrift/Core/Localization/Strings+pt.swift
+  s_ba013086e201ce::t_af2d06fec453d9 112-118
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_ba013086e201ce::t_e1db80d1602d32 109-115
+Schrift/Core/Localization/Strings+sl.swift
+  s_ba013086e201ce::t_f220c57cde2c8d 120-126
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_ba013086e201ce::t_310c0f842c8c08 109-115
+Schrift/Core/Localization/L10nKey.swift
+  s_ba013086e201ce::t_07c8ce0ac6961e 135-144
+Schrift/Core/Localization/Strings+it.swift
+  s_ba013086e201ce::t_b3f59936f9cb56 112-118
+Schrift/Core/Localization/Strings+en.swift
+  s_ba013086e201ce::t_61c986fdc0e223 109-115
+Schrift/Core/Localization/Strings+nl.swift
+  s_ba013086e201ce::t_6a097bfe6724e7 113-119
+Schrift/Features/Documents/MoveDocumentViewModel.swift
+  s_ba013086e201ce::t_ee65367ddee1c2 100,106
+  s_ba013086e201ce::t_fa5d8e3ad3446d 26-31,40-41,47-48,56
+  s_ba013086e201ce::t_2f94bc609b370d 90
+  s_ba013086e201ce::t_783c68b824c21c 66-67
+  s_ba013086e201ce::t_c5be8026b68ae8 138
+  s_ba013086e201ce::t_859307cf524730 1-25,32-39,42-46,49-55,57-65,68-89,91-99,101-105,107-137,139-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "f9bd68fa8bc10d66bf618c023f948a5a88e75fb4",
+  "prompts": {},
+  "sessions": {
+    "s_ba013086e201ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94bbce44-9a01-4eed-b2ac-fb32081de459",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
