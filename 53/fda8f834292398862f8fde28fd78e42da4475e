@@ -1,0 +1,45 @@
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_ba013086e201ce::t_6a9717fc9b962e 176,180
+  s_ba013086e201ce::t_b4863d4181d7dc 35-38
+Schrift/Features/Editor/EditorView.swift
+  s_ba013086e201ce::t_38aef985bf4e5e 1032,1036
+  s_ba013086e201ce::t_12048c5052cc9c 509-513
+  s_ba013086e201ce::t_2e0cab387f523f 282-286,288-292
+  s_ba013086e201ce::t_42c23c7713de27 193-196
+  s_ba013086e201ce::t_0a3387616671e2 287
+  s_ba013086e201ce::t_fe87596a44496f 446-447
+  s_ba013086e201ce::t_9a7a20e2c736aa 514
+SchriftTests/Features/Editor/DocumentRowSwipeActionsTests.swift
+  s_ba013086e201ce::t_8a14ed65e68f6e 23,25,28-29,60-61,66-67,100,104,118-126
+  s_ba013086e201ce::t_c77d7417b89e4b 127
+Schrift/Features/Home/DocumentListView.swift
+  s_ba013086e201ce::t_3823d4b0a3e0f6 100
+  s_ba013086e201ce::t_84d0c2b2d35c9b 101
+  s_ba013086e201ce::t_027e560227011c 95-99,102-105
+  s_ba013086e201ce::t_9f534b2a65dbfe 19-22
+  s_ba013086e201ce::t_e20da7102e70a2 257,261
+Schrift/Features/Editor/DeleteConfirmationAlert.swift
+  s_ba013086e201ce::t_d9ac222b959d84 73-78,90,94,115-116
+  s_ba013086e201ce::t_92e4a55a3dbc55 109-114,117
+Schrift/Features/Options/OptionsSheetView.swift
+  s_ba013086e201ce::t_cd9e0168363e3e 106-112
+  s_ba013086e201ce::t_634356981ae252 21-22,31-32,45-51
+  s_ba013086e201ce::t_7af7dc54de7e2c 146-149
+  s_ba013086e201ce::t_16e8668b060b7f 150-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "53fda8f834292398862f8fde28fd78e42da4475e",
+  "prompts": {},
+  "sessions": {
+    "s_ba013086e201ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94bbce44-9a01-4eed-b2ac-fb32081de459",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
