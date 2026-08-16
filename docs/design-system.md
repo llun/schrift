@@ -82,6 +82,29 @@
 > nothing to measure however tall it draws), so it is pinned by rendering the row
 > over clear margins and scanning them, with a negative control.
 
+> **Revised: 2026-08-16 (Move on document rows and in the Options sheet).** Every
+> document row's swipe strip gained a third action, **Move**, between Pin and
+> Delete — Home, the editor's Subpages section and the Pages drawer, since the
+> point of the feature is moving a document *between* those places — and the
+> editor's Options sheet gained a matching row. Both open the same flat picker
+> sheet: **"Home (top level)"** (withheld for a document already there) over the
+> top-level documents it can be filed under, under the shared `SheetHeader`, with
+> a `ListRow` per destination and no card or divider, like every other
+> list-bearing sheet here. **No confirmation alert**, deliberately: choosing a
+> destination *is* the deliberate step, and unlike a deletion a move is
+> reversible in the same two taps. Errors render inside the picker so the user
+> can pick somewhere else without losing the sheet.
+>
+> Two notes for whoever touches it next. The strip is now at its **width
+> budget**: three actions × 72pt is ~58% of a 370pt row against the 60% cap, and
+> the 44pt tap-target floor beats that cap, so a *fourth* action would overflow
+> rather than shrink (`swipeActionButtonWidth`). And the glyph is
+> **`account_tree`, not Material's own `drive_file_move`** — the bundled font is
+> a subset of the glyphs the app uses, so a new icon means re-subsetting and
+> committing the binary; that is a follow-up rather than a blocker, and the tree
+> glyph reads correctly here since what a move changes is the document's place in
+> the page tree. It always appears beside the localized "Move" label.
+
 > **Revised: 2026-08-08 (swipe actions on document rows).** Document rows now
 > offer **swipe-to-delete** — plus **pin/unpin on Home** — on three surfaces: the
 > Home list, the editor's Subpages section, and the Pages drawer. (Shared and

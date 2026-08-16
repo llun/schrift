@@ -915,6 +915,7 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 | Update document metadata | `PATCH /documents/{id}/` |
 | Soft delete | `DELETE /documents/{id}/` |
 | Children (sub-pages) | `GET/POST /documents/{id}/children/` |
+| Move in the tree | `POST /documents/{id}/move/` — `{target_document_id, position}`; `last-child` files it under the target, a sibling position against a **root** promotes it to the top level. Moves the whole subtree in one atomic transaction; every rejection is a 400 |
 | Favorite toggle | `POST`/`DELETE /documents/{id}/favorite/` |
 | Favorites list | `GET /documents/favorite_list/` |
 | Search | `GET /documents/search/?q=` |

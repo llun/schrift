@@ -407,11 +407,13 @@ Schrift/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry
 │   │                    re-login sheet (ReauthenticationSheetView +
 │   │                    ReauthenticationViewModel), RecentServersStore
-│   ├── Documents/       DocumentActions — the one delete/pin ladder, shared by the
-│   │                    Options sheet and every swipe-to-delete surface
+│   ├── Documents/       DocumentActions — the one delete/pin/move ladder, shared by the
+│   │                    Options sheet and every swipe surface — plus the move destination
+│   │                    picker (MoveDocumentViewModel + MoveDocumentSheetView)
 │   ├── Home/            document list (pinned + recent, each document in exactly one),
 │   │                    offline metadata cache, FavoriteOverlay (pins vs. a list fetch that
-│   │                    predates them; and the Pinned/Recent split)
+│   │                    predates them; and the Pinned/Recent split), MoveOverlay (moves vs.
+│   │                    the same race)
 │   ├── Search/ Shared/  the other tabs; Profile also hosts the Appearance/Language
 │   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet)
 │   │                    and the server-version row (ServerConfig)
@@ -2149,6 +2151,63 @@ markdown write endpoint**. Understand this before touching the save path:
   `noteDocumentDeleted` → `handleDeletionLanded`, which does that *and* goes terminal, so
   the teardown is identical however the deletion was made. The queued branch keeps
   `handleDidQueueDelete()`; a queued deletion announces nothing.
+- **Moving a document is `DocumentActions.move`, and it is the `setFavorite` posture, not the
+  delete one: awaited, never optimistic, and with no offline queue.** `POST
+  documents/{id}/move/` (`Core/Networking/DocumentMove.swift`) takes
+  `{target_document_id, position}` and relocates the **whole subtree in one atomic server
+  transaction**, so nothing here walks children. `DocumentMoveDestination` is deliberately
+  asymmetric — the endpoint has no "no parent" target, so promoting a document to the top
+  level is expressed as filing it *beside* an existing root (`.root(siblingRootID:)`,
+  `last-sibling`), while `.under(parentID:)` is `last-child`. A **local** document needs no
+  target: `.root(siblingRootID: nil)` re-parents its pending record on the device. Every
+  rejection — no permission on the target, unknown target, a move into the document's own
+  descendant — is a **400**, so it arrives as `.server(statusCode: 400)` and surfaces as
+  `move_error`; there is no branch to write against it. A `.notFound` is a plain failure,
+  deliberately unlike `delete`'s: "already deleted" is a coherent reading of a 404, but no
+  state of the world makes an unmade move already done. The ladder's three states mirror
+  `delete`'s, and the middle one matters for the same reason: a **checkpointed** record is
+  still `isPendingCreate`, but the document the user means is the server one, so the move
+  addresses `syncedServerID` — and `completeDocumentMove` is keyed on that id
+  (`Document.identified(as:)` re-keys the row), because every cache entry and list row for
+  such a document is written under it.
+- **A landed move's local settlement is `completeDocumentMove`, the twin of
+  `completeImmediateDelete` and deliberately much narrower.** A move is not a deletion: the
+  document still exists, so the **content cache and the document's own children level must
+  stay** — purging them throws away a cached body and a cached subtree that are still exactly
+  right, and blanks the document offline for nothing. What changes is placement:
+  `childrenCache.removeDocument` sweeps the row from **every** cached level (the old parent is
+  generally unknown — `Document` models no parent), then the row is appended to the new
+  parent's level **only if that level was actually fetched** (nil ≠ `[]`, the
+  `insertIntoListCaches` rule). **The sweep must run before the insert** or it strips the row
+  it just filed. On the root lists, only the **recents** key moves (`removeRecentDocument` /
+  `insertRecentDocument`) — never `removeDocument`, which would take the pinned and shared
+  entries with it: a favorite is a per-user annotation the server keeps across a move, and
+  shared-with-me membership is decided by access. Announce **last**, as both siblings do.
+- **The move fan-out (`observeDocumentMoved` / `DocumentMoveEvent`) mirrors the deletion one,
+  and its event carries the `Document`** — unlike a deletion, a move gives some surface a row
+  to *insert*. The row is **Optional**: a caller holding an id rather than a row (the editor's
+  Options sheet) passes nil, and the destination picks the document up on its next fetch
+  rather than being handed a row with an invented `depth`/`path`. Four subscribers, and what
+  each must do is not interchangeable: **Home** drops the row from `fetchedRecentDocuments` on
+  a filing and inserts it on a promotion (both mutate a memo-key conjunct, so no memo trap),
+  and **keeps the pinned and search rows** for the reason above; **the drawer** drops the row
+  from every level and appends to a loaded destination, but unlike `dropDeletedPage` **keeps
+  `children[movedID]`, `expanded` and `failedLoads`** — the subtree moved with the document
+  and is as valid as it was; **the editor** adds or removes one Subpages row and otherwise
+  **does nothing when the moved document is the one on screen** (its content, drafts, saves
+  and collaboration session are all keyed by an id that has not changed, and the screen models
+  no parent — the early return states that rather than leaving it to be inferred);
+  **Shared and Search do not subscribe at all**, because a move changes placement, not access.
+  Every subscriber bumps its own in-flight-fetch guard (invariant 0b) — the drawer blanket-bumps
+  `mutations` for *every* loading level and the editor bumps `childrenGeneration`
+  unconditionally, because the old parent is not in the announcement and a straddling fetch
+  can carry the row either way.
+- **Home's move override retires; `deletedSinceLoad` never does, and that asymmetry is the
+  point.** `applyMoveOverrides` (`Features/Home/MoveOverlay.swift`) folds a move into a recents
+  fetch that predates it, exactly as `applyFavoriteOverrides` folds a pin — filter, never bump
+  `loadGeneration`. A deleted id may be remembered forever because server ids are never reused;
+  a *placement* can change back, from here or from the web, so an override kept past the point
+  the server agrees would veto the document's return for the life of the process.
 - **A pin made on a list row is folded into fetches that predate it, and the override is
   *retired* — unlike `deletedSinceLoad`, which never is.** `load()` assigns both arrays
   wholesale, so a fetch issued before a pin resolves after it and visibly reverts it (the
