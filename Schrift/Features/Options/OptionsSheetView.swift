@@ -18,6 +18,8 @@ struct OptionsSheetView: View {
     @State private var isConfirmingDelete = false
     @State private var isPresentingVersionHistory = false
     @State private var versionHistoryViewModel: VersionHistoryViewModel
+    @State private var isPresentingMove = false
+    @State private var moveViewModel: MoveDocumentViewModel
     private let restoreURL: URL?
 
     init(
@@ -26,6 +28,8 @@ struct OptionsSheetView: View {
         documentID: UUID,
         serverHost: String,
         shareURL: URL?,
+        saveCoordinator: DocumentSaveCoordinator? = nil,
+        signedInUser: SignedInUserStore = SignedInUserStore(),
         onLinkCopied: (() -> Void)? = nil,
         onShare: (() -> Void)? = nil,
         onDeleted: ((_ queued: Bool) -> Void)? = nil
@@ -38,6 +42,13 @@ struct OptionsSheetView: View {
         self.restoreURL = documentShareURL(serverHost: serverHost, documentID: documentID)
         _versionHistoryViewModel = State(
             initialValue: VersionHistoryViewModel(client: client, documentID: documentID))
+        // No `row:` — this screen holds an id and a title, not the `Document` a list draws. The
+        // move still lands; the destination simply picks the document up on its next fetch
+        // rather than being handed a row with an invented `depth`/`path`.
+        _moveViewModel = State(
+            initialValue: MoveDocumentViewModel(
+                client: client, documentID: documentID, saveCoordinator: saveCoordinator,
+                signedInUser: signedInUser))
     }
 
     var body: some View {
@@ -92,6 +103,13 @@ struct OptionsSheetView: View {
                             action: { isPresentingVersionHistory = true })
                     }
 
+                    // **Outside** the block above, like Delete: a locally-created document can
+                    // be moved, because its move is a re-parenting of the pending record on
+                    // this device rather than a request the server would 404.
+                    ListRow(
+                        icon: .account_tree, title: loc[.options_move], showsChevron: true,
+                        action: { isPresentingMove = true })
+
                     ListRow(
                         icon: .delete, title: loc[.options_delete_document], isDestructive: true,
                         action: { isConfirmingDelete = true })
@@ -122,6 +140,13 @@ struct OptionsSheetView: View {
         }
         .sheet(isPresented: $isPresentingVersionHistory) {
             VersionHistorySheetView(viewModel: versionHistoryViewModel, restoreURL: restoreURL)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isPresentingMove) {
+            // Both sheets close on success: this one is about a document that is no longer
+            // where the user opened it from.
+            MoveDocumentSheetView(viewModel: moveViewModel, onMoved: { dismiss() })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }

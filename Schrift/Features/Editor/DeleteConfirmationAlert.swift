@@ -70,6 +70,12 @@ extension View {
 ///    `retryableSaveFailure` rightly refuses to retry it — the same gate `OptionsSheetView`
 ///    applies. Delete stays: dropping the local record *is* the deletion.
 ///
+/// **Move is offered on every row that is not already waiting to be deleted**, including a
+/// locally-created one — unlike Pin, a local document has somewhere for the move to go: its
+/// pending record is simply re-parented on this device and the replay creates it in the right
+/// place. Every surface offers it, because the whole point is to move a document *between*
+/// them.
+///
 /// Labels are the caller's already-localized strings, matching `docRowAccessibilityLabel`'s
 /// contract, and they reuse the Options sheet's own keys so the two routes to the same verb
 /// read identically.
@@ -81,9 +87,11 @@ func documentRowSwipeActions(
     keepLabel: String,
     pinLabel: String,
     unpinLabel: String,
+    moveLabel: String,
     deleteLabel: String,
     onKeep: @escaping () -> Void,
     onTogglePin: @escaping () -> Void,
+    onMove: @escaping () -> Void,
     onDelete: @escaping () -> Void
 ) -> [SwipeRevealAction] {
     if isPendingDelete {
@@ -98,6 +106,15 @@ func documentRowSwipeActions(
                 id: "pin", icon: .push_pin, label: isFavorite ? unpinLabel : pinLabel,
                 role: .neutral, handler: onTogglePin))
     }
+    // `account_tree` rather than Material's own `drive_file_move`: the bundled font is a
+    // subset of the glyphs the app uses, so a new icon means re-subsetting and committing the
+    // binary — deliberately left as a follow-up rather than blocking the feature on it. The
+    // tree glyph is the closest thing already bundled and reads correctly here, since what a
+    // move changes is the document's place in the page tree. It always appears with the
+    // localized "Move" label beside it, in the strip and in the Options sheet alike.
+    actions.append(
+        SwipeRevealAction(
+            id: "move", icon: .account_tree, label: moveLabel, role: .neutral, handler: onMove))
     actions.append(
         SwipeRevealAction(
             id: "delete", icon: .delete, label: deleteLabel, role: .destructive, handler: onDelete))
