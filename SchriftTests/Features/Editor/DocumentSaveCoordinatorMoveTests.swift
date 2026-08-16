@@ -445,6 +445,77 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
         XCTAssertEqual(
             env.childrenCache.children(for: oldParentID), [],
             "the migration must not file the row back under the parent the move took it out of")
+        XCTAssertEqual(
+            env.listCache.loadRecentDocuments()?.map(\.id), [documentID],
+            "and the promotion stands — the migration files it where the move put it")
+    }
+
+    /// **The start-over branch must not write its captured copy back either.** Same window as
+    /// the test above and the same hazard from the other side: the resume finds the document
+    /// gone, clears the checkpoint, and — writing the snapshot — would restore the *pre-move*
+    /// `parentID` with it, silently undoing a move the user was told had landed and re-POSTing
+    /// the document at its old location. Where that old parent is since tombstoned, the record
+    /// then wedges on `runCreatePass`'s parent gate.
+    ///
+    /// The seed draft under the local id is what steers past the take-back into the start-over.
+    func testAMoveLandingDuringAResumeSurvivesTheStartOver() async {
+        let env = makeEnvironment()
+        let oldParentID = UUID(uuidString: "66666666-6666-4666-8666-666666666666")!
+        let local = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: oldParentID, ownerUserID: ownerID, seedMarkdown: "# Body")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = documentID
+        record.postedTitle = "Moving"
+        env.creates.save(record)
+
+        let serverDocument = """
+            {"id": "\(documentID.uuidString.lowercased())", "title": "Moving", "abilities": {}, \
+            "link_reach": "restricted", "link_role": "reader", "depth": 1, "numchild": 0, \
+            "path": "0002", "created_at": "2026-08-01T10:00:00Z", "updated_at": "2026-08-01T10:00:00Z"}
+            """.data(using: .utf8)!
+        let userBody = #"{"id": "22222222-2222-4222-8222-222222222222"}"#.data(using: .utf8)!
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("users/me") {
+                return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
+            }
+            if url.contains("content") {
+                // The document is gone by the time the body is asked for — the start-over.
+                return .init(
+                    statusCode: 404, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"detail": "Not found."}"#.utf8), error: nil, releasedBy: gate)
+            }
+            return .init(statusCode: 200, headers: [:], body: serverDocument, error: nil)
+        }
+
+        let coordinator = DocumentSaveCoordinator(
+            client: DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+            draftStore: PendingDraftStore(userDefaults: env.defaults),
+            contentCache: env.contentCache, createStore: env.creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: env.defaults,
+                directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            listCache: env.listCache, childrenCache: env.childrenCache,
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+
+        async let pass: Void = coordinator.syncPendingDrafts()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+
+        coordinator.completeDocumentMove(
+            documentID: documentID, row: document(id: documentID), newParentID: nil)
+        XCTAssertNil(env.creates.create(for: local.id)?.parentID, "precondition: record re-pointed")
+
+        gate.open()
+        await pass
+
+        XCTAssertNil(
+            env.creates.create(for: local.id)?.syncedServerID,
+            "precondition: the start-over really ran")
+        XCTAssertNil(
+            env.creates.create(for: local.id)?.parentID,
+            "and the move that landed during the resume must stand")
     }
 
     // MARK: - The fan-out
