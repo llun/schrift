@@ -373,6 +373,35 @@ final class MoveDocumentViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .move_error)
     }
 
+    /// **The destination list is a snapshot.** While the sheet is up, a sync pass can POST a
+    /// local destination, migrate it and remove its record — after which its id names nothing
+    /// anywhere. Accepting it would file the document under a dead id, and the replay would
+    /// then 404, probe, 404 again, and silently re-root it while the user had been told the
+    /// move landed.
+    func testALocalDestinationThatHasSinceSyncedIsRefusedRatherThanFiledUnderADeadID() async {
+        stubList([])
+        let env = makeEnvironment()
+        let target = env.coordinator.createLocalDocument(
+            title: "Target", parentID: nil, ownerUserID: ownerID)
+        let moving = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: nil, ownerUserID: ownerID)
+        let viewModel = makeViewModel(env, documentID: moving.id, row: moving)
+        await viewModel.loadDestinations()
+        XCTAssertEqual(viewModel.localDestinations.map(\.id), [target.id], "precondition")
+
+        // The destination migrates while the sheet is open: its record goes with it.
+        env.coordinator.discardPendingWork(documentID: target.id)
+
+        await viewModel.move(under: target)
+
+        XCTAssertFalse(viewModel.didMove)
+        XCTAssertEqual(viewModel.errorKey, .move_error)
+        XCTAssertNil(
+            env.coordinator.pendingCreateParentID(forLocalID: moving.id),
+            "and nothing was filed under the dead id")
+        XCTAssertTrue(viewModel.localDestinations.isEmpty, "the list is refreshed with what is left")
+    }
+
     // MARK: - Loading
 
     func testAFailedFetchWithNothingElseToOfferReportsTheLoadError() async {

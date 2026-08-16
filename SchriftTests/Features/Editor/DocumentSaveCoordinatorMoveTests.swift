@@ -361,6 +361,52 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
         XCTAssertNil(recorder.seen.first?.row)
     }
 
+    /// **The migration must not undo the move it raced.** `replayCreate`'s resume branch
+    /// captures its record before two network round trips, so a move landing inside that
+    /// window leaves the captured `parentID` describing the *old* placement — and
+    /// `insertIntoListCaches` would then write the document back where it no longer belongs.
+    ///
+    /// Driven through `completeDocumentMove` + `finishMigrationForTesting` rather than a live
+    /// pass, because the window being tested is precisely the one between the resume's awaits.
+    func testAMigrationInFlightDoesNotUndoAMoveThatLandedDuringIt() {
+        let env = makeEnvironment()
+        let oldParentID = UUID(uuidString: "66666666-6666-4666-8666-666666666666")!
+        let local = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: oldParentID, ownerUserID: ownerID)
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = documentID
+        env.creates.save(record)
+        // The stale copy the resume is holding — captured before the move lands.
+        let capturedRecord = record
+        env.listCache.saveRecentDocuments([])
+        env.childrenCache.save([], for: oldParentID)
+
+        let coordinator = DocumentSaveCoordinator(
+            client: DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
+            draftStore: PendingDraftStore(userDefaults: env.defaults),
+            contentCache: env.contentCache, createStore: env.creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+            listCache: env.listCache, childrenCache: env.childrenCache,
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let row = document(id: documentID)
+
+        // The move lands while the resume is between its awaits: it re-points the record…
+        coordinator.completeDocumentMove(documentID: documentID, row: row, newParentID: nil)
+        XCTAssertNil(env.creates.create(for: local.id)?.parentID, "precondition: record re-pointed")
+
+        // …and then the migration resolves, still holding the pre-move copy.
+        coordinator.finishMigrationForTesting(
+            capturedRecord, serverID: documentID, serverTitle: "Moving", serverUpdatedAt: Date(),
+            serverMarkdown: "", document: row)
+
+        XCTAssertEqual(
+            env.childrenCache.children(for: oldParentID), [],
+            "the old parent's cached level must not get the row back")
+        XCTAssertEqual(
+            env.listCache.loadRecentDocuments()?.map(\.id), [documentID],
+            "and the promotion stands — the migration files it where the move put it")
+    }
+
     // MARK: - The fan-out
 
     func testTheMoveAnnouncementReachesEverySubscriber() {

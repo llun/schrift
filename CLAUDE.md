@@ -2169,16 +2169,32 @@ markdown write endpoint**. Understand this before touching the save path:
   still `isPendingCreate`, but the document the user means is the server one, so the move
   addresses `syncedServerID` — and `completeDocumentMove` is keyed on that id
   (`Document.identified(as:)` re-keys the row), because every cache entry and list row for
-  such a document is written under it. **Its record's `parentID` is re-pointed with it**: the
-  POST has landed so nothing re-files from it, but the pending *migration* still reads it twice
-  — `insertIntoListCaches` would write the document back into the recents cache as a root, and
-  `runCreatePass`'s parent gate would hold the migration whenever the *old* parent is
-  tombstoned. A document already **queued for deletion** is refused outright: the tombstone
+  such a document is written under it. **A synthetic row is dropped rather than re-keyed**:
+  every surface that offers Move merges `localDocument(from:)` rows in at read time, and
+  `identified(as:)` is precisely the operation that would make a leaked one undetectable — a
+  client-minted id 404s on every fetch, a re-keyed one is indistinguishable from a real row.
+  **Its record's `parentID` is re-pointed with it**: the POST has landed so nothing re-files
+  from it, but the pending *migration* still reads it twice — `insertIntoListCaches` would
+  write the document back into the recents cache as a root, and `runCreatePass`'s parent gate
+  would hold the migration whenever the *old* parent is tombstoned. That re-point is only half
+  the fix, because **`replayCreate`'s resume branch captures its record before two awaits**:
+  `migrateCreatedDocument` therefore reads the parent from the **mirror**, not from its copy,
+  or a move landing in that window is undone by the migration that raced it. Read it with
+  `.map(\.parentID)`, never `?.parentID ??` — a nil parent is the legitimate *root* value, so
+  the optional-chained form falls through to the stale copy for exactly the promotion case the
+  read exists to fix. (`createPostsInFlight` covers the sibling window on the fresh-POST
+  branch; this is the same class of bug on the branch that flag cannot reach.) A document already **queued for deletion** is refused outright: the tombstone
   outlives the move, so the only thing a successful one buys is a document deleted from
   somewhere else. And the picker must use the ladder's own local test (`isPendingCreate`
   **and** no `syncedServerID`), never `isPendingCreate` alone — the looser one makes the sheet
   call a checkpointed document local while the ladder moves it as a server one, after which
-  every row in the picker fails.
+  every row in the picker fails. **And the picker re-checks a *local* destination at tap time**,
+  because its list is a snapshot: a sync pass can POST, migrate and `removePendingCreate` a
+  local destination while the sheet is open, after which its id names nothing anywhere. Nothing
+  below that layer can catch it — a dead local id is indistinguishable from a server id, so
+  `moveLocalDocument`'s cycle walk simply terminates and accepts — and the document would then
+  be filed under an id that does not exist, take the 404, take the probe's 404, and be
+  **silently re-rooted** while the user had been told the move landed.
 - **A landed move's local settlement is `completeDocumentMove`, the twin of
   `completeImmediateDelete` and deliberately much narrower.** A move is not a deletion: the
   document still exists, so the **content cache and the document's own children level must

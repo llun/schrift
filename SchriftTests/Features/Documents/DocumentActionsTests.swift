@@ -602,7 +602,12 @@ final class DocumentActionsTests: XCTestCase {
         // The caches and every list row for this document are keyed by the server id, so the
         // announcement must be too — under the local one it would sweep and re-file nothing.
         XCTAssertEqual(recorder.seen.first?.documentID, serverID)
-        XCTAssertEqual(recorder.seen.first?.row?.id, serverID)
+        // …and the row is **dropped**, because the one the caller had here is synthetic. A
+        // `localDocument(from:)` row must never reach a persisted cache, and re-keying it onto
+        // the server id is exactly what would make a leak undetectable — a client-minted id
+        // 404s on every fetch, a re-keyed one is indistinguishable from a real row. The cost is
+        // only that the destination picks the document up on its next fetch.
+        XCTAssertNil(recorder.seen.first?.row)
     }
 
     /// A server document cannot be filed under a client-minted id: the POST would 404, and

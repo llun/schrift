@@ -140,9 +140,12 @@ final class HomeViewModel {
     /// made from the web.
     private var favoriteOverrides: [UUID: Bool] = [:]
 
-    /// Moves made on this device that a list fetch in flight does not yet know about. Retired
-    /// on agreement for the same reason pins are — a document's placement, unlike its
-    /// deletion, can change back — see `applyMoveOverrides`.
+    /// Moves made on this device that a list fetch in flight does not yet know about.
+    ///
+    /// Retired by **fetch ordering**, not by agreement — the one place `favoriteOverrides`'
+    /// shape must not be copied. Each override records the `loadGeneration` current when the
+    /// move landed, and any fetch issued after that supersedes it, whatever it says. See
+    /// `applyMoveOverrides` for why placement, unlike a pin, cannot be retired on content.
     private var moveOverrides: [UUID: MoveOverride] = [:]
 
     /// Documents with a delete or pin in flight from a swipe, so a second swipe on the same
@@ -322,8 +325,10 @@ final class HomeViewModel {
             // overrides happens inside this guard, so only the winning fetch may retire one.
             let overlaid = applyFavoriteOverrides(pinned: pinned, recent: recent, overrides: favoriteOverrides)
             for documentID in overlaid.confirmed { favoriteOverrides[documentID] = nil }
-            // …and so is a move, on the same terms. Applied to the recents feed only: a move
-            // changes placement, and neither the pinned list nor the shared one is about that.
+            // …and so is a move — but retired on *ordering* rather than on agreement, which is
+            // where its terms differ from the pin overlay's. Applied to the recents feed only:
+            // a move changes placement, and neither the pinned list nor the shared one is
+            // about that.
             let moved = applyMoveOverrides(
                 recent: overlaid.recent, overrides: moveOverrides, generation: generation)
             for documentID in moved.confirmed { moveOverrides[documentID] = nil }

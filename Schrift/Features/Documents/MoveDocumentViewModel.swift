@@ -151,12 +151,35 @@ final class MoveDocumentViewModel {
     }
 
     func move(under parent: Document) async {
+        // **A local destination is re-checked at tap time, because the list is a snapshot.**
+        // While this sheet is up, a sync pass can POST the destination, migrate it, and
+        // `removePendingCreate` its record — after which its `localID` names nothing anywhere.
+        // `moveLocalDocument` cannot catch that: a dead local id is indistinguishable from a
+        // server id to everything below this line, so its cycle walk simply terminates and the
+        // move is accepted. The document is then filed under an id that does not exist, the
+        // replay POSTs `documents/{dead-uuid}/children/`, takes a 404, probes, takes another,
+        // and **silently re-roots** it — the outcome the whole create-ordering machinery exists
+        // to make unreachable, reported to the user as a successful move. Only this layer knows
+        // the row came from `localDestinations`, so only this layer can refuse it.
+        if localDestinations.contains(where: { $0.id == parent.id }),
+            saveCoordinator?.isPendingCreate(documentID: parent.id) != true
+        {
+            // Refresh first — `loadDestinations` clears `errorKey` on entry — so the sheet ends
+            // up showing the destinations that still exist, with the failure explained.
+            await loadDestinations()
+            errorKey = .move_error
+            return
+        }
         await perform(.under(parentID: parent.id))
     }
 
     private func perform(_ destination: DocumentMoveDestination) async {
         guard !isMoving else { return }
         errorKey = nil
+        // Reset alongside the error: the view reads `didMove` as "*this* attempt landed", and
+        // this model outlives its sheet on the Options route (that screen owns it in its own
+        // `@State`), so a stale true would let a later failed attempt report success.
+        didMove = false
         isMoving = true
         defer { isMoving = false }
         switch await actions.move(documentID: documentID, row: row, to: destination) {

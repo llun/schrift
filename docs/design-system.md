@@ -87,7 +87,8 @@
 > Delete — Home, the editor's Subpages section and the Pages drawer, since the
 > point of the feature is moving a document *between* those places — and the
 > editor's Options sheet gained a matching row. Both open the same flat picker
-> sheet: **"Home (top level)"** (withheld for a document already there) over the
+> sheet: **"Top level"** (withheld for a document already there, and for a server
+> document until a root has been fetched to file it beside) over the
 > top-level documents it can be filed under, under the shared `SheetHeader`, with
 > a `ListRow` per destination and no card or divider, like every other
 > list-bearing sheet here. **No confirmation alert**, deliberately: choosing a
@@ -101,8 +102,8 @@
 > supported row (343pt — an iPhone SE less the 16pt gutter each side) come to
 > 68.6pt each, still under the 72pt base and comfortably over the 44pt floor, and
 > the strip lands on exactly the 60% cap. An *open* strip therefore went from
-> ~39% of the row to the full 60%. A fourth action does **not** overflow — the
-> cap simply shrinks each button (55.5pt at 343pt wide) — so what a further
+> ~42% of the row to the full 60%. A fourth action does **not** overflow — the
+> cap simply shrinks each button (51.4pt at that width) — so what a further
 > addition costs is target size, not layout: the 44pt floor only starts winning
 > below ~293pt of row width, which is not a device. `SwipeRevealRowTests` pins
 > the three-action case at that narrowest width so the next addition has to look

@@ -280,6 +280,11 @@ struct DocumentActions {
             // does not offer local destinations for a server document; this refuses the state
             // rather than sending a request that cannot succeed.
             guard saveCoordinator?.isPendingCreate(documentID: parentID) != true else { return .failed }
+            // …and a destination on its way out is no place to file work — the local twin
+            // refuses one, as does `PagesTreeViewModel.addPage`, and on the **unscoped**
+            // predicate deliberately: the scoped one answers false for an unattributable or
+            // foreign-account tombstone, which is protection this must not skip.
+            guard saveCoordinator?.isPendingDelete(documentID: parentID) != true else { return .failed }
             targetID = parentID
             position = .lastChild
         case .root(let siblingRootID):
@@ -304,8 +309,16 @@ struct DocumentActions {
         // the id the caller passed: every cache entry and every list row for such a document is
         // written under the id the POST returned, so completing under the local one would sweep
         // nothing and announce a row no screen holds.
+        //
+        // **A synthetic row is dropped rather than re-keyed.** Every surface that offers Move
+        // merges `localDocument(from:)` rows in at read time, and those must never enter a
+        // persisted cache — but `identified(as:)` is exactly the operation that would remove
+        // the property making a leak obvious, since a client-minted id 404s on every fetch
+        // while a re-keyed one is indistinguishable from a real row. Passing nil costs only
+        // that the destination picks the document up on its next fetch.
+        let cacheableRow = row.flatMap { isLocalDocument($0.id) ? nil : $0.identified(as: serverID) }
         saveCoordinator?.completeDocumentMove(
-            documentID: serverID, row: row?.identified(as: serverID), newParentID: newParentID)
+            documentID: serverID, row: cacheableRow, newParentID: newParentID)
         return .moved
     }
 }

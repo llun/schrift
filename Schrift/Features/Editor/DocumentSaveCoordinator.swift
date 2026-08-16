@@ -1612,6 +1612,18 @@ final class DocumentSaveCoordinator {
     /// GET was in flight: an editor opening on either id, the record being deleted, a save
     /// starting or being parked for the server id, and the both-drafts window. Five guards —
     /// the first two keyed on `localID`, the next two on `serverID`, and the last on both.
+    /// Test seam: drive the migration with a deliberately **stale** record copy, which is what
+    /// the resume path holds across its two awaits. The window that copy opens cannot be
+    /// reached through a live pass, because it is the interval *between* those awaits.
+    func finishMigrationForTesting(
+        _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
+        serverMarkdown: String, document: Document?
+    ) {
+        finishMigration(
+            record, serverID: serverID, serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt,
+            serverMarkdown: serverMarkdown, document: document)
+    }
+
     private func finishMigration(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?
@@ -1898,7 +1910,23 @@ final class DocumentSaveCoordinator {
         // re-enters the same branch.
         let willAdoptServer = canonicalBody.isEmpty && !canonicalServer.isEmpty
         if willAdoptServer { draftStore.remove(documentID: serverID) }
-        if let document { insertIntoListCaches(document, parentID: record.parentID) }
+        // **The parent is read from the mirror, not from `record`.** The resume path captures
+        // its copy before two network round trips, and a move landing inside that window
+        // re-points the stored record — so the captured `parentID` is the *pre-move* placement.
+        // Trusting it undoes what `completeDocumentMove` just did: a promoted document is
+        // appended back into its old parent's cached level, and one filed under a parent is
+        // written back into the persisted recents cache as a root, where a later failed fetch
+        // re-seeds Home from it. Same class as the `createPostsInFlight` window, on the branch
+        // that flag does not cover; `finishMigration` already re-reads the mirror one guard
+        // above for the same reason.
+        if let document {
+            // `.map` rather than `?.parentID ??`: a **nil parent is the legitimate root
+            // value**, so the optional-chained form falls through to the stale copy for
+            // exactly the case this exists to fix — a document promoted to the top level
+            // during the migration would be filed back under its old parent.
+            let liveParentID = pendingCreates[localID].map(\.parentID) ?? record.parentID
+            insertIntoListCaches(document, parentID: liveParentID)
+        }
 
         // **Re-key the sub-pages created under this document before the record goes.** They
         // carry its *local* id in their own `parentID` — an id the server has never seen —
