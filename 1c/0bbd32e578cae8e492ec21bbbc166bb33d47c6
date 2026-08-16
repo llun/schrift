@@ -1,0 +1,94 @@
+Schrift/Features/Documents/MoveDocumentSheetView.swift
+  s_ba013086e201ce::t_dc7190ed42f14b 3-33
+  s_ba013086e201ce::t_1be60e60d040db 65-74,102-104
+Schrift/Core/Localization/Strings+th.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 113
+Schrift/Core/Localization/Strings+pt.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 114
+CLAUDE.md
+  s_ba013086e201ce::t_4a34527f31768b 2172-2181
+  s_ba013086e201ce::t_4a02ace63cca14 2214-2231
+Schrift/Features/Home/HomeViewModel.swift
+  s_ba013086e201ce::t_58905d4bef9cae 224-230
+  s_ba013086e201ce::t_ee4100c25bd212 254
+  s_ba013086e201ce::t_0aee987c8b6e63 327-328
+SchriftTests/Features/Documents/MoveDocumentViewModelTests.swift
+  s_ba013086e201ce::t_d884032332dbab 196,198-217,219-268
+  s_ba013086e201ce::t_03140962d8f734 175-176,178-180,185-195
+  s_ba013086e201ce::t_5276af63b30827 197
+Schrift/Core/Networking/Document.swift
+  s_ba013086e201ce::t_0304519dc23661 81-98
+Schrift/Core/Localization/Strings+nl.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 115
+SchriftTests/DesignSystem/Components/SwipeRevealRowTests.swift
+  s_ba013086e201ce::t_32dc8f8324f827 132-150
+Schrift/Features/Editor/EditorView.swift
+  s_ba013086e201ce::t_c0a0e8e17cc9db 282-284,286-288
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_ba013086e201ce::t_5e6983b1f3432f 2730-2740
+  s_ba013086e201ce::t_4c9b6cc2dc248e 2748-2750
+Schrift/Features/Home/DocumentListView.swift
+  s_ba013086e201ce::t_1c62cd847bcf20 95-97,99-101
+SchriftTests/Features/Documents/DocumentActionsTests.swift
+  s_ba013086e201ce::t_e21e023aa2a170 518-521,625-654,657-658
+  s_ba013086e201ce::t_fdac1573979922 655-656,659
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_ba013086e201ce::t_6edb12a55ae55b 1802-1807,1811,1813,1818-1820,1822,1825-1826,1828-1833
+  s_ba013086e201ce::t_0c59fc8ff5fa7b 1776-1779,1784,1786-1787,1798-1801,1808-1810,1812,1814-1817,1821,1823-1824,1827
+Schrift/Core/Localization/Strings+fr.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 115
+Schrift/Features/Documents/DocumentActions.swift
+  s_ba013086e201ce::t_de09ca23545c5c 254-260
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 111
+Schrift/Core/Localization/Strings+sl.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 122
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 111
+Schrift/Core/Localization/Strings+en.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 111
+Schrift/Core/Localization/Strings+es.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 117
+SchriftTests/Features/Editor/EditorViewModelChildrenTests.swift
+  s_ba013086e201ce::t_aabd8638da0811 555-570,573-575,579-580,582-585
+  s_ba013086e201ce::t_9a9ed82cdde268 518-530
+Schrift/Core/Localization/Strings+de.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 117
+Schrift/Core/Localization/L10nKey.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 139-141
+Schrift/Core/Localization/Strings+it.swift
+  s_ba013086e201ce::t_88c1c4e0abb02d 114
+Schrift/Features/Home/MoveOverlay.swift
+  s_ba013086e201ce::t_436375681203a5 3,10-13,19,24,31-37,39-54,61-65,67-69,73
+SchriftTests/Features/Home/MoveOverlayTests.swift
+  s_ba013086e201ce::t_e91d26d03a692d 5-6,21,26-27,32-33,36,39-40,43-44,46-47,50-53,55-71,74-79,81,83-87,90-92,94-96,98,106-108,113-121
+  s_ba013086e201ce::t_15c501e272d4cd 122
+docs/design-system.md
+  s_ba013086e201ce::t_16e84c62cf8964 98-109
+Schrift/Features/Documents/MoveDocumentViewModel.swift
+  s_ba013086e201ce::t_bcb22109fcd137 72-75,77-84,87,92-94,96
+  s_ba013086e201ce::t_996792e82e3c7d 60-70
+  s_ba013086e201ce::t_2fcd2d6602e8ca 21-24
+  s_ba013086e201ce::t_61dc256698a3b5 106-109
+  s_ba013086e201ce::t_5576b1d7d957c2 145-150
+SchriftTests/Features/Editor/DocumentSaveCoordinatorMoveTests.swift
+  s_ba013086e201ce::t_a42928be2e44e3 169-175,180-205,207-213,325-335
+  s_ba013086e201ce::t_03140962d8f734 176-179,206
+  s_ba013086e201ce::t_f78c960193fedb 336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "1c0bbd32e578cae8e492ec21bbbc166bb33d47c6",
+  "prompts": {},
+  "sessions": {
+    "s_ba013086e201ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94bbce44-9a01-4eed-b2ac-fb32081de459",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
