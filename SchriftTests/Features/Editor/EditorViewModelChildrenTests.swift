@@ -493,4 +493,90 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
         XCTAssertEqual(log.count(ofMethod: "DELETE"), 0)
     }
+
+    // MARK: - Landed moves
+
+    private func subpage(id: UUID, title: String = "Sub-page") -> Document {
+        Document(
+            id: id, title: title, excerpt: nil, abilities: DocumentAbilities(), linkReach: .restricted,
+            linkRole: .reader, computedLinkReach: nil, computedLinkRole: nil, isFavorite: false,
+            depth: 2, numchild: 0, path: "00010001", createdAt: Date(), updatedAt: Date(),
+            userRole: .owner, creator: nil)
+    }
+
+    func testASubpageMovedAwayLeavesTheSubpagesList() {
+        let viewModel = makeViewModel()
+        let child = subpage(id: UUID())
+        viewModel.subpages = [child]
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: child.id, row: child, newParentID: UUID()))
+
+        XCTAssertEqual(viewModel.subpages, [])
+    }
+
+    func testADocumentMovedIntoThisOneJoinsTheSubpagesList() {
+        let viewModel = makeViewModel()
+        viewModel.subpages = []
+        let arriving = subpage(id: UUID(), title: "Arriving")
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: arriving.id, row: arriving, newParentID: documentID))
+
+        XCTAssertEqual(viewModel.subpages?.map(\.id), [arriving.id])
+    }
+
+    /// nil means the level was never fetched, which is not the same as "fetched and empty" —
+    /// the Subpages section reads exactly that difference.
+    func testADocumentMovedInDoesNotFabricateANeverFetchedSubpagesList() {
+        let viewModel = makeViewModel()
+        XCTAssertNil(viewModel.subpages, "precondition")
+        let arriving = subpage(id: UUID(), title: "Arriving")
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: arriving.id, row: arriving, newParentID: documentID))
+
+        XCTAssertNil(viewModel.subpages)
+    }
+
+    /// **Moving the document this editor is showing changes nothing here.** Its content,
+    /// its drafts and its saves are all keyed by an id that has not moved, and the screen
+    /// models no parent — so unlike a deletion, there is nothing to tear down.
+    func testMovingTheOpenDocumentTearsNothingDown() {
+        let viewModel = makeViewModel()
+        let child = subpage(id: UUID())
+        viewModel.subpages = [child]
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: documentID, row: subpage(id: documentID), newParentID: UUID()))
+
+        XCTAssertFalse(viewModel.isDocumentDiscarded)
+        XCTAssertFalse(viewModel.isUnavailable)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(viewModel.subpages?.map(\.id), [child.id], "and its own list is untouched")
+    }
+
+    /// **Invariant 0b.** A children fetch issued before the move lands after it and still
+    /// names the row; it must write neither `subpages` nor the shared children cache.
+    func testAChildrenFetchInFlightWhenAMoveLandsCannotRestoreTheRow() async {
+        let childID = UUID(uuidString: "9C1C1C1C-1C1C-4C1C-8C1C-1C1C1C1C1C1C")!
+        let gate = MockURLProtocol.ResponseGate()
+        let body = Self.childrenFixture(id: childID.uuidString.lowercased(), title: "Sub-page")
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        let viewModel = makeViewModel()
+
+        async let load: Void = viewModel.loadChildren()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: childID, row: subpage(id: childID), newParentID: UUID()))
+        gate.open()
+        await load
+
+        XCTAssertNil(viewModel.subpages, "the fetch predates the move, so its answer is discarded")
+        XCTAssertNil(childrenCache.children(for: documentID), "and it must not reach the cache")
+    }
 }

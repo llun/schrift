@@ -710,4 +710,127 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertTrue(env.viewModel.isDeletePending(child))
         XCTAssertNil(env.viewModel.errorKey)
     }
+
+    // MARK: - Landed moves
+
+    /// A drawer rooted at an ordinary **server** document, with the coordinator wired so
+    /// announcements reach it. `makeLocalRootViewModel`'s root is gated from fetching — a
+    /// client-minted id would 404 — so no level ever loads under it.
+    private func makeServerRootViewModel() -> (
+        viewModel: PagesTreeViewModel, coordinator: DocumentSaveCoordinator,
+        cache: DocumentChildrenCacheStore
+    ) {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let cache = DocumentChildrenCacheStore(userDefaults: defaults)
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults),
+            contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
+            serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        signedIn.remember(UUID())
+        let viewModel = PagesTreeViewModel(
+            rootID: rootID, client: client, cache: cache, userDefaults: defaults,
+            saveCoordinator: coordinator, signedInUser: signedIn)
+        return (viewModel, coordinator, cache)
+    }
+
+    /// Seed the root level through the real loading path — `children` is `private(set)`, and
+    /// going through the fetch is what the drawer actually does anyway.
+    private func loadedRootLevel(
+        _ viewModel: PagesTreeViewModel, children: [(UUID, String)]
+    ) async {
+        let body = Self.listFixture(children)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+        await viewModel.loadRoot()
+    }
+
+    func testAMovedPageLeavesTheLevelItWasIn() async {
+        let env = makeServerRootViewModel()
+        await loadedRootLevel(env.viewModel, children: [(childID, "Child")])
+        XCTAssertEqual(env.viewModel.children[rootID]?.map(\.id), [childID], "precondition")
+
+        env.coordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: childID, row: document(childID, title: "Child"), newParentID: UUID()))
+
+        XCTAssertEqual(env.viewModel.children[rootID], [])
+    }
+
+    func testAPageMovedIntoALoadedLevelJoinsIt() async {
+        let env = makeServerRootViewModel()
+        await loadedRootLevel(env.viewModel, children: [])
+        XCTAssertEqual(env.viewModel.children[rootID], [], "precondition: fetched and empty")
+
+        env.coordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: childID, row: document(childID, title: "Child"), newParentID: rootID))
+
+        XCTAssertEqual(env.viewModel.children[rootID]?.map(\.id), [childID])
+    }
+
+    /// nil means "never fetched" and must stay that way — the coordinator has already written
+    /// the shared cache, which is what the first expand seeds from.
+    func testAPageMovedIntoAnUnloadedLevelDoesNotFabricateIt() async {
+        let env = makeServerRootViewModel()
+        let target = UUID()
+
+        env.coordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: childID, row: document(childID, title: "Child"), newParentID: target))
+
+        XCTAssertNil(env.viewModel.children[target])
+    }
+
+    /// A move is not a deletion: the document still exists, so its own subtree and its
+    /// expanded state are as valid as they were.
+    func testAMovedPageKeepsItsOwnChildrenAndExpandedState() async {
+        let env = makeServerRootViewModel()
+        await loadedRootLevel(env.viewModel, children: [(childID, "Child")])
+        let child = document(childID, title: "Child")
+        let grandchildren = Self.listFixture([(createdID, "Grandchild")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: grandchildren, error: nil)
+        }
+        await env.viewModel.toggle(child)
+        XCTAssertEqual(env.viewModel.children[childID]?.map(\.id), [createdID], "precondition")
+
+        env.coordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: childID, row: child, newParentID: UUID()))
+
+        XCTAssertEqual(
+            env.viewModel.children[childID]?.map(\.id), [createdID], "its subtree moved with it")
+        XCTAssertTrue(env.viewModel.expanded.contains(childID))
+    }
+
+    /// **Invariant 0b.** A level fetch issued before the move lands after it and still names
+    /// the page; it must write neither the level nor the shared cache.
+    func testALevelFetchInFlightWhenAMoveLandsCannotRestoreTheRow() async {
+        let env = makeServerRootViewModel()
+        let parent = document(UUID(uuidString: "3C3C3C3C-3C3C-4C3C-8C3C-3C3C3C3C3C3C")!, title: "Parent")
+        let parentID = parent.id
+        let childIDCopy = childID
+        let gate = MockURLProtocol.ResponseGate()
+        let body = Self.listFixture([(childID, "Child")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+
+        let viewModel = env.viewModel
+        async let load: Void = viewModel.toggle(parent)
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+        env.coordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: childIDCopy, row: document(childIDCopy, title: "Child"),
+                newParentID: UUID()))
+        gate.open()
+        await load
+
+        XCTAssertNil(
+            viewModel.children[parentID],
+            "the fetch predates the move, so its answer is discarded rather than installed")
+        XCTAssertNil(env.cache.children(for: parentID), "and it must not reach the shared cache")
+    }
 }

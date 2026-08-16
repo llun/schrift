@@ -1670,4 +1670,138 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 0)
         XCTAssertEqual(signedIn.userID, known, "and it must not be disturbed")
     }
+
+    // MARK: - Landed moves
+
+    private static func movedDocument(id: UUID, title: String = "Moved", depth: Int = 1) -> Document {
+        Document(
+            id: id, title: title, excerpt: nil, abilities: DocumentAbilities(), linkReach: .restricted,
+            linkRole: .reader, computedLinkReach: nil, computedLinkRole: nil, isFavorite: false,
+            depth: depth, numchild: 0, path: String(repeating: "0", count: 4 * depth),
+            createdAt: Date(), updatedAt: Date(), userRole: .owner, creator: nil)
+    }
+
+    /// A document filed under a parent has left the top level this screen lists.
+    func testADocumentMovedUnderAParentLeavesTheRecentList() async {
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let fixture = Self.paginatedFixture(id: id.uuidString, title: "Q3 Planning", isFavorite: false)
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            return .init(
+                statusCode: 200, headers: [:],
+                body: path.contains("favorite_list") ? empty : fixture, error: nil)
+        }
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        XCTAssertTrue(viewModel.recentDocuments.contains { $0.id == id }, "precondition")
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: id, row: Self.movedDocument(id: id), newParentID: UUID()))
+
+        XCTAssertFalse(viewModel.recentDocuments.contains { $0.id == id })
+    }
+
+    /// **The pinned row stays.** A favorite is a per-user annotation the server keeps across a
+    /// move, so dropping it here would hide a document the next `favorite_list/` fetch returns
+    /// — and hiding is the harmful direction.
+    func testADocumentMovedUnderAParentKeepsItsPinnedRow() async {
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let fixture = Self.paginatedFixture(id: id.uuidString, title: "Q3 Planning", isFavorite: true)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: fixture, error: nil) }
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        XCTAssertTrue(viewModel.pinnedDocuments.contains { $0.id == id }, "precondition")
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: id, row: Self.movedDocument(id: id), newParentID: UUID()))
+
+        XCTAssertTrue(viewModel.pinnedDocuments.contains { $0.id == id })
+    }
+
+    /// A promotion puts the row on screen without waiting for a fetch — the same hand-back a
+    /// migration makes, and it must survive `recentDocuments`' memo.
+    func testAPromotedDocumentAppearsInRecentWithoutAFetch() async {
+        MockURLProtocol.stubHandler = { [empty = Self.emptyFixture] _ in
+            .init(statusCode: 200, headers: [:], body: empty, error: nil)
+        }
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty, "precondition")
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: id, row: Self.movedDocument(id: id), newParentID: nil))
+
+        XCTAssertEqual(viewModel.recentDocuments.map(\.id), [id])
+    }
+
+    /// **Invariant 0b.** A list fetch issued before the move lands after it and still names the
+    /// document at the top level; it must not put the row back — into the array or the cache.
+    func testAListFetchInFlightWhenAMoveLandsCannotPutTheRowBack() async {
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let fixture = Self.paginatedFixture(id: id.uuidString, title: "Q3 Planning", isFavorite: false)
+        let empty = Self.emptyFixture
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            return .init(
+                statusCode: 200, headers: [:],
+                body: path.contains("favorite_list") ? empty : fixture, error: nil, releasedBy: gate)
+        }
+        let cache = makeCache()
+        let viewModel = makeViewModel(cache: cache)
+
+        async let load: Void = viewModel.load()
+        // The fetch is in the stub's hands but has not been answered yet — that is the window
+        // the move has to land in for this to be the race at all.
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: id, row: Self.movedDocument(id: id), newParentID: UUID()))
+        gate.open()
+        await load
+
+        XCTAssertFalse(
+            viewModel.recentDocuments.contains { $0.id == id },
+            "the fetch predates the move and cannot know")
+        XCTAssertFalse(
+            (cache.loadRecentDocuments() ?? []).contains { $0.id == id },
+            "and it must not be written to the cache either")
+    }
+
+    /// The override retires once the server agrees, so the document can come home again — the
+    /// property that separates this from `deletedSinceLoad`.
+    func testAMoveOverrideIsRetiredSoTheDocumentCanBeListedAgain() async {
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let withDocument = Self.paginatedFixture(id: id.uuidString, title: "Q3 Planning", isFavorite: false)
+        let empty = Self.emptyFixture
+        // First fetch agrees the document has left the top level; the second lists it again,
+        // as it would after a move back.
+        nonisolated(unsafe) var listCalls = 0
+        MockURLProtocol.stubHandler = { request in
+            guard request.url?.path.contains("favorite_list") == false else {
+                return .init(statusCode: 200, headers: [:], body: empty, error: nil)
+            }
+            listCalls += 1
+            return .init(
+                statusCode: 200, headers: [:], body: listCalls == 1 ? empty : withDocument, error: nil)
+        }
+        let viewModel = makeViewModel()
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(
+                documentID: id, row: Self.movedDocument(id: id), newParentID: UUID()))
+        await viewModel.load()
+        XCTAssertFalse(viewModel.recentDocuments.contains { $0.id == id }, "the server agrees")
+
+        await viewModel.load()
+
+        XCTAssertTrue(
+            viewModel.recentDocuments.contains { $0.id == id },
+            "a retired override must not veto the document's return")
+    }
 }

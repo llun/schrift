@@ -138,6 +138,13 @@ final class PagesTreeViewModel {
         saveCoordinator?.observeDocumentDeleted(self) { [weak self] documentID in
             self?.dropDeletedPage(documentID)
         }
+        // A move rearranges exactly what this drawer draws, so it owes the same reaction —
+        // and the same hazard applies with more force: a level here is refetched only when its
+        // node is toggled, so a row left in its old level survives for as long as the drawer
+        // is open.
+        saveCoordinator?.observeDocumentMoved(self) { [weak self] event in
+            self?.movePage(event)
+        }
     }
 
     /// Delete a page from the drawer.
@@ -182,6 +189,33 @@ final class PagesTreeViewModel {
         // children re-creates the cache entry `childrenCache.remove(parentID:)` just dropped.
         for parentID in loading { mutations[parentID, default: 0] += 1 }
         mutations[documentID, default: 0] += 1
+    }
+
+    /// A page whose move has landed leaves the level it was in and joins the one it went to.
+    ///
+    /// Deliberately much narrower than `dropDeletedPage`: the document still exists, so
+    /// `children[documentID]`, `expanded` and `failedLoads` all stay — its own subtree moved
+    /// with it and is exactly as valid as it was.
+    private func movePage(_ event: DocumentMoveEvent) {
+        for (parentID, documents) in children where documents.contains(where: { $0.id == event.documentID }) {
+            children[parentID] = documents.filter { $0.id != event.documentID }
+        }
+        if let newParentID = event.newParentID, let row = event.row, var level = children[newParentID],
+            !level.contains(where: { $0.id == event.documentID })
+        {
+            level.append(row)
+            children[newParentID] = level
+            mutations[newParentID, default: 0] += 1
+        }
+        // A level that was never loaded stays nil — never fabricated. The coordinator has
+        // already written the shared cache, which is what `load(parentID:)` seeds from when
+        // the node is first expanded.
+        //
+        // **Invariant 0b, for every level being fetched right now**, not just the two this
+        // move names: a `listChildren` issued before the move completes after it and would
+        // write both the array and the cache entry — restoring the row to the old parent, or
+        // installing a new-parent level that predates the arrival.
+        for parentID in loading { mutations[parentID, default: 0] += 1 }
     }
 
     var rows: [PagesTreeRow] {
