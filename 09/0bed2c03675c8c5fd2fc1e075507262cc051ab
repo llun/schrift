@@ -1,0 +1,19 @@
+SchriftTests/Features/Editor/EditorSurfaceParityTests.swift
+  s_e7f1f74b80c4ad::t_8e78ae2c2d3917 611-617
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "090bed2c03675c8c5fd2fc1e075507262cc051ab",
+  "prompts": {},
+  "sessions": {
+    "s_e7f1f74b80c4ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e75283f-9d8f-401b-97d2-472feb511829",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
