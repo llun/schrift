@@ -38,7 +38,13 @@ enum EditorScrollTarget: Hashable {
 /// anything; the value is only ever *read* at the moment a surface appears,
 /// which is exactly when it is needed.
 @MainActor final class EditorScrollAnchorStore {
-    var target: EditorScrollTarget? = .header
+    /// `nil`, deliberately: it is `.scrollPosition(id:)`'s "no programmatic
+    /// scroll requested". Seeding `.header` instead asks both canvases to align
+    /// the header's top with the scroll view's top *content* edge on their very
+    /// first appearance — a scroll of the canvas's own top padding, before the
+    /// user has scrolled anywhere and with nothing to restore. There is no
+    /// anchor until a surface reports one.
+    var target: EditorScrollTarget?
 }
 
 /// The document's title and its metadata row — one view, drawn by **both**

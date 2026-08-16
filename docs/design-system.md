@@ -327,6 +327,9 @@
 >   count cannot, and live collaboration is still being built out — trading that
 >   away for mock fidelity would remove information from a feature that is not
 >   finished yet.
+>   *(Superseded 2026-08-16: the badge is gone entirely. The document header is
+>   shared by both surfaces now, so the avatar stack is what presence looks like
+>   in either mode — the same conclusion, reached without the badge.)*
 
 > **Revised: 2026-07-31 (Account screen, flat Shared list, and the feedback
 > registers).** The last of the screen-level handoff work.
@@ -1088,10 +1091,12 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > down a concrete height. Both halves matter here: in the height axis the drawer's
 > label and the old save label were identically bounded (no min, infinite max), so
 > only the proposal separates them.
-> That is the real test, not "is an ancestor bounded". `editingSurface` is a
+> That is the real test, not "is an ancestor bounded". `editingSurface` **was** a
 > `VStack(spacing: 0)` of the row and the canvas in a height-bounded container,
 > so the Save/retry label answered 874pt to an 874pt proposal, the stack saw two
-> greedy children and split the free height between them. `PagesTreeDrawer`
+> greedy children and split the free height between them. (That structure is gone
+> — the editing canvas is a bare `BlockEditorView` and the status sits inside its
+> `ScrollView` — but the lesson is about the container shape, not that call site.) `PagesTreeDrawer`
 > keeps the same technique and is *not* greedy, because a scroll view proposes an
 > unspecified height along its scroll axis, so its rows are ideal-sized — the
 > distinction that tells the two call sites apart.
@@ -1179,9 +1184,10 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   shape clears 44pt **in isolation**; in a checklist, consecutive rows sit
 >   `blockSpacing` apart, so neighbouring shapes overlap and the unambiguous
 >   per-checkbox target is bounded by the row pitch (glyph + gap ≈ 35pt). That is
->   the honest claim — it roughly doubles what you can hit, up from a ~22pt pitch,
->   and 44pt on a dense list would need a taller row than the reading surface
->   shares.
+>   the honest claim — about half again as much as the ~22pt pitch these rows had
+>   before ("roughly doubles" was the old *shape* comparison and does not survive
+>   restating this as a pitch), and 44pt on a dense list would need a taller row
+>   than the reading surface shares.
 >   That padding is a **token with headroom, not an arithmetic fit**: sizing it
 >   as `(rowMinHeight - checkboxSize) / 2` lands at 43pt, because a
 >   `MaterialSymbol` is a `Text` and occupies its glyph's typographic box (23pt

@@ -53,9 +53,10 @@ private func autolinkBareURLs(in attributed: inout AttributedString) {
 /// Note what this does **not** buy: the editing surface has no bare-URL
 /// autolinker at all (that would mean teaching `InlineMarkdown` — the scanner
 /// the full-overwrite save re-parses — a construct it does not model), so a
-/// bare `https://…` is still brand-coloured while reading and plain while
-/// editing. It is a colour difference on one run with no reflow, and closing it
-/// is not worth touching that scanner.
+/// bare `https://…` is still brand-coloured *and underlined* while reading and
+/// plain while editing — this runs after the autolinker, so it paints those runs
+/// too. Neither difference moves a glyph, and closing it is not worth touching
+/// that scanner.
 ///
 /// The ranges are collected **before** anything is written. Setting an attribute
 /// splits and merges runs, so mutating inside `for run in attributed.runs` would
@@ -165,18 +166,28 @@ struct MarkdownBlockView: View {
         }
     }
 
-    private var blockText: some View {
+    @ViewBuilder private var blockText: some View {
         let appearance = blockTextAppearance(for: block.kind, text: block.text)
         // A verbatim block's text is literal — running it through the markdown
         // parser would promise formatting its own panel says is not applied.
         let content =
             blockRendersVerbatim(block.kind, text: block.text)
             ? AttributedString(block.text) : markdownInlineText(block.text)
-        return Text(content)
+        let text =
+            Text(content)
             .font(appearance.font)
             .foregroundStyle(appearance.color)
             .strikethrough(appearance.isStruckThrough)
-            .accessibilityValue(checklistStateDescription ?? "")
+
+        // Branched rather than handing every kind an empty value: VoiceOver
+        // skips an empty one, so it misbehaves either way, but stating an
+        // accessibility attribute on eleven kinds in order to state it for one
+        // reads as though they all have a value to give.
+        if let checklistStateDescription {
+            text.accessibilityValue(checklistStateDescription)
+        } else {
+            text
+        }
     }
 
     /// A completed to-do's state, spoken.

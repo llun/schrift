@@ -181,8 +181,17 @@ final class EditorViewTests: XCTestCase {
     ///
     /// The row it sits in floors at `rowMinHeight`, and that is exactly the trap
     /// CLAUDE.md names — "a 44pt frame is not a 44pt tap target" — so the floor
-    /// has to be on the label. Measured, because a hit shape is invisible in a
-    /// screenshot and the row's own height reports 44pt either way.
+    /// has to be on the label.
+    ///
+    /// **What this measures, and what it does not.** Hosting the component reads
+    /// its outer size, which is ≥44pt whether the floor is on the label or on
+    /// something wrapping it — so this proves the floor *exists* and would catch
+    /// its removal, but it cannot see *where* it sits. That placement is the
+    /// whole point and is verified by reading the source, not by this test:
+    /// CLAUDE.md is explicit that a hit shape is "invisible in a screenshot and
+    /// uncatchable by the suite". Kept because the necessary condition is worth
+    /// pinning and the negative control makes it falsifiable; do not read it as
+    /// more than that.
     @MainActor
     func testTheRetryCaptionFloorsItsOwnLabelToTheTapTarget() {
         let retry = captionSize(offersRetry: true)

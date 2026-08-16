@@ -49,6 +49,20 @@ struct BlockTextStyling: Equatable {
 /// `.unknown` block's text is still literal and multi-line whatever it looks
 /// like, so autocorrect and smart punctuation must stay off and Return must
 /// still insert a newline. Only the *appearance* follows the text.
+///
+/// **Accepted residual, and it is a trade rather than a win.** Because the
+/// appearance follows the text, an `.unknown` block can flip between prose and
+/// verbatim *while the user types* — `unknownRendersAsProse` is per-line and
+/// refuses a line starting with a space, a tab, `|`, `<` or `![`, so indenting
+/// the first line of a prose `.unknown` changes its typeface and size and drops
+/// a panel around it under the caret. On `main` that could not happen, because
+/// the editing surface styled every `.unknown` as code unconditionally — and
+/// that is precisely why tapping *any* prose `.unknown` used to reflow it, which
+/// is the defect this file exists to fix. The flip is now confined to typing a
+/// structural character at the start of a line in a kind that is itself the
+/// parser's fallback; the reflow it replaced happened on every tap, on every
+/// such block. Neither is free; this one is rarer and it is the one the reading
+/// surface has always had.
 func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large) -> BlockTextStyling {
     let appearance = blockTextAppearance(for: block.kind, text: block.text)
     let isLiteral: Bool

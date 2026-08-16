@@ -1054,10 +1054,13 @@ new code reads like the surrounding code.
   mid-screen whenever the keyboard was up. **In the second case, floor the label itself** —
   `.frame(minHeight: DocsSpacing.rowMinHeight)` never claims a proposal and still
   grows with Dynamic Type, which the rule above *requires* (a fixed `height:`
-  clips). Note the floor is also the *larger* target: the row applies
+  clips). Note the floor was also the *larger* target: that strip applied
   `.padding(.bottom, 8)` before its own `.frame(minHeight: 44)`, so a
-  fill-the-row label only ever got 36pt at the row's floor — it reached 44 only
-  while inflating the row. Give every sibling state the same floor
+  fill-the-row label only ever got 36pt at the strip's floor — it reached 44 only
+  while inflating it. (The strip is gone; the indicator sits in
+  `EditorDocumentHeader`'s status slot. The arithmetic is kept because it is the
+  worked example of why a floor on the *container* is not a floor on the label —
+  the same mistake this PR then made with the retry caption.) Give every sibling state the same floor
   (`SaveStatusIndicator`'s three passive states do) or the content below resizes
   as the state changes. That levelling is a **default-size** property: a floor
   only equalises states whose own text fits inside it, so once a phrase grows past
@@ -1503,10 +1506,11 @@ that are easy to violate and expensive to discover:
     every editable kind shares one structural shape).
   - `EditorBlockAdornment` — bullet, number, checkbox. The checkbox is a
     `Button` only where a toggle closure is supplied (editing); the symmetric
-    ±`checkboxHitPadding` pair takes the target to `rowMinHeight` and gives every
-    point back, so the plain reading glyph occupies identical space. It is 24pt —
-    larger than either surface used to draw it, since it is the document's one
-    touchable adornment.
+    ±`checkboxHitPadding` pair grows the target and gives every point back, so the
+    plain reading glyph occupies identical space. It is 24pt — larger than either
+    surface used to draw it, since it is the document's one touchable adornment.
+    The shape clears `rowMinHeight` **in isolation only**; in a checklist the
+    real target is the row pitch (~35pt) — see the pitch rule above.
   - `EditorDocumentHeader` — the title plus the reach/status/presence row, drawn
     by **both** surfaces (`readingHeader` and the header `BlockEditorView` is
     handed). An untitled document shows the same "Untitled" placeholder on both;
@@ -1557,6 +1561,14 @@ that are easy to violate and expensive to discover:
   reading surface's own `.refreshable` is only reachable from the top, where the
   anchor is `.header`. Worth knowing before "fixing" a report of the editor
   opening at the top after a co-author's edit.
+- **Known, accepted residual — an `.unknown` block can restyle mid-keystroke.**
+  Its appearance follows its *text* (`unknownRendersAsProse`, per-line), so
+  indenting the first line of a prose `.unknown`, or starting one with `|`/`<`,
+  flips it to monospace in a panel under the caret. The alternative is what
+  `main` did — style every `.unknown` as code unconditionally — which is what
+  made tapping *any* prose `.unknown` reflow it, the defect this whole change
+  exists to remove. A rare flip while typing a structural character beats a
+  certain one on every tap, and the reading surface has always worked this way.
 - **Known, accepted residual — the two frameworks' line boxes.** A SwiftUI
   `Text` carries slightly more leading than the same font in a `UITextView` with
   `lineFragmentPadding` and `textContainerInset` zeroed: measured at the Large
@@ -1579,9 +1591,10 @@ that are easy to violate and expensive to discover:
   brand-coloured while reading and plain while editing. Closing it would mean
   teaching `InlineMarkdown` — the scanner the full-overwrite save re-parses — a
   construct it does not model, which is not worth a colour difference on one run
-  with no reflow. Explicit `[label](url)` links *do* match: `markdownInlineText`
-  paints every link run `textBrand` + single-underlined, as
-  `InlineTextStyleResolver` does.
+  with no reflow — `styleLinks` paints every link run, autolinked ones included,
+  so the bare URL differs by an underline as well as a colour, and neither moves
+  a glyph. Explicit `[label](url)` links *do* match: `markdownInlineText` paints
+  them `textBrand` + single-underlined, as `InlineTextStyleResolver` does.
 
 The backend stores content as an opaque base64 **Yjs CRDT** blob and has **no
 markdown write endpoint**. Understand this before touching the save path:

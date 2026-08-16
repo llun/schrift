@@ -368,9 +368,16 @@ struct EditorBlockAdornment: View {
     /// A plain `.frame(44)` would work for the target, but this is the adornment
     /// of a `.top`-aligned row, so the taller box would centre the glyph below
     /// the first line of the text it is meant to sit beside. The pair leaves the
-    /// glyph exactly where it is and takes the target to `rowMinHeight` — and,
-    /// because the two paddings cancel, the plain reading glyph occupies exactly
-    /// the same space as the editing button.
+    /// glyph exactly where it is and grows the target — and, because the two
+    /// paddings cancel, the plain reading glyph occupies exactly the same space
+    /// as the editing button.
+    ///
+    /// The shape clears `rowMinHeight` **in isolation only**. In a checklist,
+    /// consecutive rows sit `EditorBlockMetrics.blockSpacing` apart, so
+    /// neighbouring shapes overlap and the unambiguous per-checkbox target is
+    /// the row *pitch* — glyph + gap, ~35pt. That is the claim to make; 44pt on
+    /// a dense list would need a taller row, and the row is shared with the
+    /// reading surface.
     private func checkbox(checked: Bool) -> some View {
         MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
             .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)

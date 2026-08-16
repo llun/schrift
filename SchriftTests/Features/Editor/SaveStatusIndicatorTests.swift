@@ -35,10 +35,14 @@ import XCTest
 @MainActor
 final class SaveStatusIndicatorTests: XCTestCase {
 
-    /// What the header row actually offers the indicator on an iPhone 17: the
-    /// screen less the document body's horizontal gutters, which sit *outside*
-    /// the HStack the indicator lives in. Measuring the full 402pt would hide
-    /// the wrapping that decides these heights at accessibility sizes.
+    /// An **upper bound** on what the indicator is offered on an iPhone 17: the
+    /// screen less the document body's gutters. It no longer owns that width —
+    /// it shares the header's metadata row with `LinkReachPill`, a `Spacer` and
+    /// `PresenceBar` — but every assertion here is about the component not
+    /// *claiming* what it is offered and keeping its floor when offered less,
+    /// which holds at any width. The bound is kept rather than guessed at
+    /// because measuring the full 402pt would hide the wrapping that decides
+    /// these heights at accessibility sizes.
     private let screen = CGSize(width: 402 - 2 * DocsSpacing.gutter, height: 874)
 
     /// Every state that draws something, derived so a new case cannot escape

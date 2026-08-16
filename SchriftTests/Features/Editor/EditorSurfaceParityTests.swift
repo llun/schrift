@@ -439,12 +439,23 @@ final class EditorSurfaceParityTests: XCTestCase {
         CGSize(width: 402 - 2 * EditorBlockMetrics.gutter, height: 4000)
     }
 
-    /// Hosts the real `EditorDocumentHeader`. `status` picks which slot content
-    /// to measure: `nil` stands in for the reading surface's sync caption (a
-    /// plain footnote `Text`, which is what `syncCaptionLabel` renders in every
-    /// non-retry state), any case for the editing surface's indicator.
+    /// The reading slot's **retry** state is the tall one — its label floors at
+    /// `rowMinHeight` where the passive caption is a single footnote line — so
+    /// if anything in this row could move the header, it is that. It does not.
+    func testTheHeaderIsTheSameHeightWithTheCaptionsRetryAffordanceUp() {
+        XCTAssertEqual(
+            headerHeight(title: "T", editable: false, retryingCaption: true),
+            headerHeight(title: "T", editable: false), accuracy: Self.headerLineBoxResidual)
+    }
+
+    /// Hosts the real `EditorDocumentHeader`, with the **real** status views in
+    /// its slot rather than stand-ins: `SaveStatusIndicator` for the editing
+    /// surface, `SyncCaptionLabel` for the reading one. A hand-written `Text`
+    /// replica would measure a caption that no longer exists the moment either
+    /// component's own floors change — which is exactly what happened to the
+    /// retry arm mid-review.
     private func headerHeight(
-        title: String, editable: Bool, status: SaveStatusDisplay? = nil
+        title: String, editable: Bool, status: SaveStatusDisplay? = nil, retryingCaption: Bool = false
     ) -> CGFloat {
         let host = UIHostingController(
             rootView: EditorDocumentHeader(
@@ -453,7 +464,9 @@ final class EditorSurfaceParityTests: XCTestCase {
                 if let status {
                     SaveStatusIndicator(display: status, onTap: {})
                 } else {
-                    Text("Synced just now").font(DocsFont.footnote).foregroundStyle(DocsColor.textTertiary)
+                    SyncCaptionLabel(
+                        offersRetry: retryingCaption, text: "Synced just now",
+                        retryAccessibilityLabel: "Retry", onRetry: {})
                 }
             }
             .environment(english()))
