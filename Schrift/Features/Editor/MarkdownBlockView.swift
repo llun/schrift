@@ -101,7 +101,9 @@ func unknownRendersAsProse(_ text: String) -> Bool {
 /// that is not this server's) do name tokens directly. That is not an exception
 /// being smuggled in: `BlockEditorRow` names the *same* tokens in its own leaf
 /// arms, so there is one value in two places rather than two values — and
-/// `EditorSurfaceParityTests` measures the rows either way.
+/// `EditorSurfaceParityTests.testLeafRowsOccupyTheSameHeightOnBothSurfaces`
+/// measures those rows on both surfaces, so a token that drifts in one of them
+/// fails rather than ships.
 struct MarkdownBlockView: View {
     let block: EditorBlock
     /// Origin the embedded image gate compares against (`imageLoadPolicy`), and

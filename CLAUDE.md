@@ -1488,7 +1488,10 @@ that are easy to violate and expensive to discover:
   `Schrift/Features/Editor/EditorBlockStyle.swift`. (The leaf arms — divider,
   image, attachment, and the two "this url is not ours" text fallbacks — do name
   tokens directly, in both surfaces, and that is fine precisely because *both*
-  name the same ones and the row-parity test measures the result. A token in a
+  name the same ones and `testLeafRowsOccupyTheSameHeightOnBothSurfaces`
+  measures those rows on both surfaces — a claim that was false when first
+  written, because the parity fixtures were built from "every kind that carries
+  text" and so contained no leaf at all. If you add a leaf kind, add it there. A token in a
   leaf is a shared constant; a token deciding a text row's font is a second copy
   of the table.)
   - `EditorBlockMetrics` — gutter (`DocsSpacing.gutter`, the app-wide page inset

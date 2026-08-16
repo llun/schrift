@@ -566,6 +566,42 @@ final class EditorSurfaceParityTests: XCTestCase {
         }
     }
 
+    /// The **leaf** rows — the kinds that host no text view — measured on both
+    /// surfaces too.
+    ///
+    /// They were left out at first because the fixture list was built from "every
+    /// kind that carries text", and that omission was quietly load-bearing: the
+    /// leaf arms are the one place both surfaces still name design tokens
+    /// directly rather than reading the shared table, and the comments excusing
+    /// that cited this suite as the reason it is safe. It was not measuring them.
+    ///
+    /// Every fixture here takes a *fallback* path deliberately, so the test stays
+    /// hermetic: an unparseable url makes both surfaces draw the image leaf's
+    /// literal-markdown text, and a foreign origin makes both draw the
+    /// attachment leaf's plain link text. A real image url would put `AsyncImage`
+    /// on the network.
+    func testLeafRowsOccupyTheSameHeightOnBothSurfaces() {
+        let leaves = [
+            EditorBlock(kind: .divider),
+            EditorBlock(kind: .image(alt: "diagram", url: "")),
+            EditorBlock(kind: .attachment(name: "notes.pdf", url: "https://files.example/media/x.pdf")),
+        ]
+        let viewModel = makeViewModel(blocks: leaves)
+
+        for (index, block) in leaves.enumerated() {
+            let reading = rowHeight(of: block)
+            let editing = editingRowHeight(of: block, index: index, viewModel: viewModel)
+            XCTAssertEqual(
+                reading, editing, accuracy: Self.leadingResidualRatio * DocsTypographySpec.body.size,
+                "\(block.kind) is \(reading)pt while reading and \(editing)pt while editing")
+        }
+
+        // Negative control: the instrument discriminates between these rows, so
+        // "they all match" is not the trivial consequence of every leaf
+        // measuring the same.
+        XCTAssertNotEqual(rowHeight(of: leaves[0]), rowHeight(of: leaves[2]), accuracy: 1)
+    }
+
     /// Every kind whose row height is set by a SwiftUI adornment rather than by
     /// the text view agrees *exactly*, so the band above is not hiding a
     /// difference in the rows users see most.
