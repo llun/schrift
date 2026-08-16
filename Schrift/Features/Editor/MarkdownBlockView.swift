@@ -56,10 +56,18 @@ private func autolinkBareURLs(in attributed: inout AttributedString) {
 /// bare `https://…` is still brand-coloured while reading and plain while
 /// editing. It is a colour difference on one run with no reflow, and closing it
 /// is not worth touching that scanner.
+///
+/// The ranges are collected **before** anything is written. Setting an attribute
+/// splits and merges runs, so mutating inside `for run in attributed.runs` would
+/// be rewriting the collection being walked — and `AttributedString.Index` is
+/// only guaranteed valid against the value it was taken from. Two links in one
+/// paragraph is all it takes to reach that. (Same reason `autolinkBareURLs`
+/// above collects its matches from a plain `String` snapshot first.)
 private func styleLinks(in attributed: inout AttributedString) {
-    for run in attributed.runs where run.link != nil {
-        attributed[run.range].foregroundColor = DocsColor.textBrand
-        attributed[run.range].underlineStyle = .single
+    let linkRanges = attributed.runs.filter { $0.link != nil }.map(\.range)
+    for range in linkRanges {
+        attributed[range].foregroundColor = DocsColor.textBrand
+        attributed[range].underlineStyle = .single
     }
 }
 
