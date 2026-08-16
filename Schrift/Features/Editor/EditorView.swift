@@ -45,8 +45,12 @@ struct SyncCaption: Equatable {
 /// because dirty means "not on disk yet" — the draft is written by the flush — while that
 /// wording asserts durability. This is the same truth `saveStatusDisplay` keeps on the
 /// editing surface, where `.dirty` holds its Save funnel even under a conflict. In normal
-/// operation nothing renders `.dirty` on *this* caption: it needs `mode == .reading` at
-/// render time, and the only mutator that runs outside an editing session — the
+/// operation nothing renders `.dirty` on *this* caption. It used to be enough to say it
+/// needs `mode == .reading` at render time; the editing status slot falls through to this
+/// same caption when `saveStatusDisplay` is `.none`, so that premise is gone and a
+/// narrower one carries it: `saveStatusDisplay` maps `.dirty` to `.save`, never `.none`,
+/// so the fallback cannot render in a dirty state. On the reading side the old argument
+/// still holds — the only mutator that runs outside an editing session — the
 /// reading-mode photo insert — flushes in the same synchronous turn it dirties
 /// (`insertImageBlock`'s `defer`), while `finishEditing` flushes before it sets `.reading`.
 /// The one exception is a **discarded** document: `flushPendingChanges` returns on
@@ -104,6 +108,48 @@ func syncCaption(
             text: syncStatusCaption(lastSyncedAt: lastSyncedAt, now: now, locale: locale), offersRetry: false)
     }
     return SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false)
+}
+
+/// The sync caption, and the retry affordance it becomes when the save can be
+/// retried. Both editor surfaces draw it — the reading one always, the editing
+/// one whenever `saveStatusDisplay` has nothing of its own to add.
+///
+/// Its own view rather than a helper on `EditorView` so the tap target can be
+/// *measured* (`EditorViewTests`) instead of asserted. It takes resolved strings
+/// rather than `L10nKey`s, which keeps it free of `LocalizationStore` and makes
+/// it hostable with nothing injected.
+struct SyncCaptionLabel: View {
+    let offersRetry: Bool
+    let text: String
+    let retryAccessibilityLabel: String
+    var onRetry: () -> Void
+
+    var body: some View {
+        if offersRetry {
+            Button(action: onRetry) {
+                Text(text)
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textBrand)
+                    // The floor and the shape go on the **label**, exactly as
+                    // `SaveStatusIndicator` puts them on its own. A plain
+                    // `Button` hit-tests the shape its label draws, and a `Text`
+                    // draws one line — so a row floored at 44pt around this
+                    // leaves the target the ~16pt strip it always was. This is
+                    // the only affordance that unpins a document whose save
+                    // failed, so it is the last one that should be hard to hit.
+                    .frame(minHeight: DocsSpacing.rowMinHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(retryAccessibilityLabel)
+        } else {
+            // No floor: nothing here is tappable, and the row it sits in carries
+            // its own so the slot's height does not move when the state changes.
+            Text(text)
+                .font(DocsFont.footnote)
+                .foregroundStyle(DocsColor.textTertiary)
+        }
+    }
 }
 
 /// The editor toolbar's trailing actions, as an ordered list of intents. Pure so
@@ -792,25 +838,14 @@ struct EditorView: View {
     private var syncCaptionLabel: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let caption = currentSyncCaption(now: context.date)
-            if caption.offersRetry {
-                Button {
-                    viewModel.saveNow()
-                } label: {
-                    Text(resolvedCaption(caption.text))
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textBrand)
-                }
-                .buttonStyle(.plain)
+            SyncCaptionLabel(
+                offersRetry: caption.offersRetry,
+                text: resolvedCaption(caption.text),
                 // The failed-save label only fits the failed caption; a
                 // pending-sync retry falls back to its visible text.
-                .accessibilityLabel(
-                    caption.text == .key(.editor_sync_save_failed)
-                        ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text))
-            } else {
-                Text(resolvedCaption(caption.text))
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-            }
+                retryAccessibilityLabel: caption.text == .key(.editor_sync_save_failed)
+                    ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text),
+                onRetry: { viewModel.saveNow() })
         }
     }
 

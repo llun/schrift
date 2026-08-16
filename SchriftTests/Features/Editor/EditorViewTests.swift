@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 
 @testable import Schrift
@@ -167,5 +169,50 @@ final class EditorViewTests: XCTestCase {
         XCTAssertTrue(
             changed.localizedCaseInsensitiveContains("ago"),
             "a server copy changed 10 minutes back must read as elapsed time, got \(changed)")
+    }
+
+    // MARK: - The caption's retry target
+
+    /// The retry caption is the only affordance that unpins a document whose
+    /// save failed — every revalidation and pull-to-refresh no-ops while that
+    /// draft is on screen — so it is the last control that should be hard to
+    /// hit. It shipped as a bare footnote `Text` inside a plain `Button`, which
+    /// hit-tests the shape its label *draws*: one ~16pt line.
+    ///
+    /// The row it sits in floors at `rowMinHeight`, and that is exactly the trap
+    /// CLAUDE.md names — "a 44pt frame is not a 44pt tap target" — so the floor
+    /// has to be on the label. Measured, because a hit shape is invisible in a
+    /// screenshot and the row's own height reports 44pt either way.
+    @MainActor
+    func testTheRetryCaptionFloorsItsOwnLabelToTheTapTarget() {
+        let retry = captionSize(offersRetry: true)
+        XCTAssertGreaterThanOrEqual(retry.height, DocsSpacing.rowMinHeight)
+
+        // Negative control: the passive caption is one line of footnote, well
+        // short of the floor — so the assertion above is reading the floor and
+        // not something every caption has.
+        let passive = captionSize(offersRetry: false)
+        XCTAssertLessThan(passive.height, DocsSpacing.rowMinHeight)
+    }
+
+    /// …and it must not claim the height it is offered: it shares the header's
+    /// metadata row, and a greedy label there would push the document down.
+    @MainActor
+    func testTheRetryCaptionIsContentSizedAgainstAFullScreenProposal() {
+        let host = UIHostingController(
+            rootView: SyncCaptionLabel(
+                offersRetry: true, text: "Couldn't save · tap to retry", retryAccessibilityLabel: "Retry",
+                onRetry: {}))
+        let tall = host.sizeThatFits(in: CGSize(width: 370, height: 874)).height
+        XCTAssertLessThanOrEqual(tall, DocsSpacing.rowMinHeight + 1, "the caption answered \(tall)pt to 874pt")
+    }
+
+    @MainActor
+    private func captionSize(offersRetry: Bool) -> CGSize {
+        let host = UIHostingController(
+            rootView: SyncCaptionLabel(
+                offersRetry: offersRetry, text: "Couldn't save · tap to retry",
+                retryAccessibilityLabel: "Retry", onRetry: {}))
+        return host.sizeThatFits(in: CGSize(width: 370, height: 4000))
     }
 }

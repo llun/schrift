@@ -12,6 +12,7 @@ import SwiftUI
 /// An enum rather than a bare `UUID?`, so the header and the trailing tap
 /// target are expressible without minting sentinel ids that could be mistaken
 /// for a block's.
+///
 /// **Both canvases must name the same set of cases**, or the anchor stops
 /// round-tripping: a surface handed an id it does not contain scrolls nowhere,
 /// and the handoff silently degrades to "open at the top" — precisely on the
@@ -82,8 +83,13 @@ struct EditorDocumentHeader<Status: View>: View {
             // A floor, never a fixed height (which would clip at larger text
             // sizes). It equalises the two surfaces' status slots — a footnote
             // caption against a `SaveStatusIndicator` that floors itself at
-            // `rowMinHeight` — and, on the reading side, finally gives the
-            // tap-to-retry caption a full-size target.
+            // `rowMinHeight` — so swapping one for the other moves nothing below.
+            //
+            // It does **not** give anything in the row a tap target: a `Button`
+            // hit-tests the shape its label draws, so a row floored at 44pt
+            // around a one-line `Text` is still a one-line target. Each
+            // interactive thing in this slot floors its own label
+            // (`SaveStatusIndicator` does; `syncCaptionLabel`'s retry does).
             .frame(minHeight: DocsSpacing.rowMinHeight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
