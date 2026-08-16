@@ -1,0 +1,21 @@
+Schrift/Core/Networking/DocumentMove.swift
+  s_ba013086e201ce::t_77ae0bbb4ba4b9 1-58
+SchriftTests/Core/Networking/DocumentMoveClientTests.swift
+  s_ba013086e201ce::t_168cd5c81aa3f5 1-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "b362f778768034817f3af2c71f5044de248e4f1b",
+  "prompts": {},
+  "sessions": {
+    "s_ba013086e201ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94bbce44-9a01-4eed-b2ac-fb32081de459",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
