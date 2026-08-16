@@ -285,6 +285,8 @@ enum Strings_es {
         .editor_divider_a11y: "Separador",
         .editor_checklist_done_a11y: "Marcar como hecho",
         .editor_checklist_not_done_a11y: "Marcar como no hecho",
+        .editor_checklist_state_done_a11y: "Hecho",
+        .editor_checklist_state_not_done_a11y: "No hecho",
         .editor_presence_count_one: "%d persona aquí",
         .editor_presence_count_other: "%d personas aquí",
 

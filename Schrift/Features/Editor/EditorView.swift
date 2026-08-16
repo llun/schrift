@@ -198,6 +198,11 @@ struct EditorView: View {
     /// than sharing this one: it floats over this list, and a single value would let either
     /// close the other's strip.
     @State private var subpageSwipe = SwipeRevealState<UUID>()
+    /// Where the document body is scrolled to, carried across the reading ↔
+    /// editing swap so tapping a block below the fold places a caret instead of
+    /// throwing the reader back to the top of the page. Shared by both surfaces
+    /// and deliberately not observable — see `EditorScrollAnchorStore`.
+    @State private var scrollAnchor = EditorScrollAnchorStore()
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -303,7 +308,7 @@ struct EditorView: View {
             .accessibilityHidden(isPresentingPagesTree)
             .overlay { pagesTreeOverlay }
             // One system toolbar in both modes. The document title stays in the
-            // canvas as a large content header (`headerBlock`) rather than in the
+            // canvas as a large content header (`EditorDocumentHeader`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions
             // — hence `.inline` with no `.navigationTitle`.
             .navigationBarTitleDisplayMode(.inline)
@@ -650,42 +655,47 @@ struct EditorView: View {
     // MARK: - Editing
 
     private var editingSurface: some View {
-        VStack(spacing: 0) {
-            // Done moved to the toolbar; the save status stays with the canvas,
-            // where it has room for its full copy. `saveStatusDisplay` decides
+        BlockEditorView(
+            viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline, scrollAnchor: scrollAnchor
+        ) {
+            // The same header the reading surface draws, so the swap moves
+            // nothing. Only the status slot differs: `saveStatusDisplay` decides
             // what it says — including holding back any claim of a sync while a
-            // conflict parks the push, which is the rule this row exists to
-            // honour. `.none` renders nothing, so a clean session shows no strip.
-            saveStatusRow
-
-            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline)
-                .safeAreaInset(edge: .bottom) {
-                    // A container so the glass surfaces stacked here (the bar,
-                    // and the slash menu when it is up) are rendered as one
-                    // system pass and blend where they meet, rather than as
-                    // separate panes sitting on top of each other.
-                    GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
-                        VStack(spacing: DocsSpacing.spaceXS) {
-                            if viewModel.isUploadingPhoto {
-                                uploadingBanner(
-                                    loc[.editor_uploading_photo], a11y: loc[.editor_uploading_photo_a11y])
-                            }
-                            if viewModel.isUploadingAttachment {
-                                uploadingBanner(
-                                    loc[.editor_uploading_file], a11y: loc[.editor_uploading_file_a11y])
-                            }
-                            if let query = viewModel.slashQueryText {
-                                SlashMenuView(
-                                    query: query, isOffline: isOffline,
-                                    isLocalDocument: viewModel.isLocalDocument,
-                                    onSelect: { viewModel.applySlashSelection($0) })
-                            }
-                            EditorFormattingBar(viewModel: viewModel)
-                        }
+            // conflict parks the push, which is the rule that row exists to
+            // honour — and falls back to the reading caption when it has
+            // nothing of its own to add (`.none`), so the slot is never empty
+            // and its height never changes under the user mid-keystroke.
+            EditorDocumentHeader(
+                title: viewModel.title, onEditTitle: { viewModel.updateTitle($0) }, reach: reach,
+                peers: collaborationPeers
+            ) {
+                editingStatus
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            // A container so the glass surfaces stacked here (the bar, and the
+            // slash menu when it is up) are rendered as one system pass and
+            // blend where they meet, rather than as separate panes sitting on
+            // top of each other.
+            GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
+                VStack(spacing: DocsSpacing.spaceXS) {
+                    if viewModel.isUploadingPhoto {
+                        uploadingBanner(loc[.editor_uploading_photo], a11y: loc[.editor_uploading_photo_a11y])
                     }
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.bottom, DocsSpacing.spaceXS)
+                    if viewModel.isUploadingAttachment {
+                        uploadingBanner(loc[.editor_uploading_file], a11y: loc[.editor_uploading_file_a11y])
+                    }
+                    if let query = viewModel.slashQueryText {
+                        SlashMenuView(
+                            query: query, isOffline: isOffline,
+                            isLocalDocument: viewModel.isLocalDocument,
+                            onSelect: { viewModel.applySlashSelection($0) })
+                    }
+                    EditorFormattingBar(viewModel: viewModel)
                 }
+            }
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.bottom, DocsSpacing.spaceXS)
         }
         // The out-of-process system picker: no photo-library usage description and
         // no project.yml change are needed. Do NOT add `photoLibrary: .shared()` —
@@ -732,28 +742,62 @@ struct EditorView: View {
         }
     }
 
-    /// The editing session's save status, as a slim strip above the canvas.
-    /// Collapses to nothing when there is nothing to say.
+    /// The editing session's save status, in the document header's status slot.
+    ///
+    /// It used to be a strip pinned *above* the canvas, which cost two jumps:
+    /// the reading header's own metadata row had no counterpart while editing,
+    /// and the strip appeared out of nothing on the first keystroke
+    /// (`saveStatusDisplay` is `.none` while `.idle`) and shoved the whole
+    /// document down ~52pt under the caret. Sharing the header's slot fixes
+    /// both, and `saveStatusDisplay`'s precedence — including holding back any
+    /// claim of a sync while a conflict parks the push — is untouched.
+    ///
+    /// `.none` falls through to the reading caption rather than collapsing, so
+    /// the slot always says *something* and can never change height mid-edit.
+    /// The trade this makes: the status now scrolls with the document instead of
+    /// staying pinned. Nothing is lost that the user cannot reach — the toolbar
+    /// keeps Done, which flushes exactly as tapping "Save" here does.
     @ViewBuilder
-    private var saveStatusRow: some View {
+    private var editingStatus: some View {
         let display = saveStatusDisplay(
             saveState: viewModel.saveState,
             hasConflict: viewModel.syncConflict != nil,
             hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent)
-        if display != .none {
-            HStack(spacing: 0) {
-                SaveStatusIndicator(display: display, onTap: { viewModel.saveNow() })
-                Spacer(minLength: 0)
+        if display == .none {
+            syncCaptionLabel
+        } else {
+            SaveStatusIndicator(display: display, onTap: { viewModel.saveNow() })
+        }
+    }
+
+    /// The reading surface's status slot: the live "Synced 5 minutes ago" /
+    /// "Couldn't save · tap to retry" caption.
+    ///
+    /// Extracted from `headerBlock` when the header became shared, so the two
+    /// surfaces' slots are literally the same view where they say the same
+    /// thing.
+    private var syncCaptionLabel: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let caption = currentSyncCaption(now: context.date)
+            if caption.offersRetry {
+                Button {
+                    viewModel.saveNow()
+                } label: {
+                    Text(resolvedCaption(caption.text))
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(DocsColor.textBrand)
+                }
+                .buttonStyle(.plain)
+                // The failed-save label only fits the failed caption; a
+                // pending-sync retry falls back to its visible text.
+                .accessibilityLabel(
+                    caption.text == .key(.editor_sync_save_failed)
+                        ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text))
+            } else {
+                Text(resolvedCaption(caption.text))
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textTertiary)
             }
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.bottom, DocsSpacing.spaceXS)
-            // A floor, and only a floor — this is a strip above a canvas that
-            // takes whatever is left, so it must never claim the height it is
-            // offered. `SaveStatusIndicator` floors every state itself (which is
-            // also what gets the two tappable ones to 44pt), so this guards the
-            // padded strip alone; a state that ever forgot its own floor would
-            // still not collapse.
-            .frame(minHeight: DocsSpacing.rowMinHeight)
         }
     }
 
@@ -793,10 +837,25 @@ struct EditorView: View {
         viewModel.retryPendingAttachment(placeholderURL: url)
     }
 
+    /// The reading half of the editor.
+    ///
+    /// Laid out to match `BlockEditorView` block for block: the same header, the
+    /// same `EditorBlockMetrics.gutter`, the same `blockSpacing` between rows,
+    /// and the same header-to-body gap — so the tap that swaps this for the
+    /// editing canvas moves nothing. The rows are named with `EditorScrollTarget`
+    /// so the scroll anchor survives that swap too.
+    ///
+    /// A flat stack rather than nested section stacks, for the same reason:
+    /// `.scrollTargetLayout()` makes each *direct child* a scroll target, and a
+    /// nested blocks stack would make the whole document one target.
     private var readingSurface: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
-                headerBlock
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                readingHeader
+                    // Tops the stack's own `blockSpacing` up to the header-to-body
+                    // gap, exactly as the editing canvas does.
+                    .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+                    .id(EditorScrollTarget.header)
 
                 if viewModel.blocks.isEmpty {
                     // `isDocumentPendingDelete` joins the error check for the same reason the
@@ -808,8 +867,11 @@ struct EditorView: View {
                         emptyContent
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                        ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                    ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                        // Grouped so the scroll target is named once for the row
+                        // whichever branch draws it — a queued photo is still a
+                        // block the anchor may land on.
+                        Group {
                             // A queued photo renders from the bytes on disk. Branched here
                             // rather than inside `MarkdownBlockView` because the state and the
                             // Retry/Remove intents belong to the view model, which that view
@@ -833,17 +895,22 @@ struct EditorView: View {
                                 }
                             }
                         }
+                        .id(EditorScrollTarget.block(block.id))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 subpagesSection
+                    .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
             }
-            .padding(.horizontal, DocsSpacing.spaceMD - DocsSpacing.space4xs)
+            .scrollTargetLayout()
+            .padding(.horizontal, EditorBlockMetrics.gutter)
             .padding(.top, DocsSpacing.spaceSM)
             .padding(.bottom, DocsSpacing.spaceLG)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollPosition(
+            id: Binding(get: { scrollAnchor.target }, set: { scrollAnchor.target = $0 }), anchor: .top
+        )
         .refreshable {
             await viewModel.refresh()
         }
@@ -951,46 +1018,16 @@ struct EditorView: View {
     /// header (moved out of the nav bar to match the handoff — the bar keeps
     /// only the back button and trailing actions), then the reach pill and the
     /// sync caption on the row beneath it.
-    private var headerBlock: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-            Text(viewModel.title)
-                .font(DocsFont.title1)
-                .docsTracking(DocsTypographySpec.title1, DocsTracking.tight)
-                .foregroundStyle(DocsColor.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-
-            HStack(spacing: DocsSpacing.spaceXS) {
-                LinkReachPill(reach: reach)
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    let caption = currentSyncCaption(now: context.date)
-                    if caption.offersRetry {
-                        Button {
-                            viewModel.saveNow()
-                        } label: {
-                            Text(resolvedCaption(caption.text))
-                                .font(DocsFont.footnote)
-                                .foregroundStyle(DocsColor.textBrand)
-                        }
-                        .buttonStyle(.plain)
-                        // The failed-save label only fits the failed caption; a
-                        // pending-sync retry falls back to its visible text.
-                        .accessibilityLabel(
-                            caption.text == .key(.editor_sync_save_failed)
-                                ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text))
-                    } else {
-                        Text(resolvedCaption(caption.text))
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
-                    }
-                }
-
-                Spacer(minLength: DocsSpacing.spaceXS)
-                PresenceBar(peers: collaborationPeers, size: 22, max: 3)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    ///
+    /// The *same* `EditorDocumentHeader` the editing canvas draws — only the
+    /// status slot and the title's editability differ — so the swap between the
+    /// two surfaces moves nothing.
+    private var readingHeader: some View {
+        EditorDocumentHeader(
+            title: viewModel.title, onEditTitle: nil, reach: reach, peers: collaborationPeers
+        ) {
+            syncCaptionLabel
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// One Subpages row, wrapped in its swipe container.

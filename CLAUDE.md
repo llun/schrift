@@ -432,6 +432,11 @@ Schrift/
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
+│                        the one style table BOTH surfaces draw from (EditorBlockStyle:
+│                        EditorBlockMetrics, blockTextAppearance, editorBlockDecoration,
+│                        EditorBlockAdornment) + the shared EditorDocumentHeader and the
+│                        EditorScrollTarget/EditorScrollAnchorStore that carry scroll
+│                        position across the reading ↔ editing swap,
 │                        read-only version history (VersionHistoryViewModel,
 │                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
@@ -1444,6 +1449,107 @@ that are easy to violate and expensive to discover:
   cannot demonstrate the deviation against the oracle, transliterate instead.
 
 ### Editor & the on-device save (`Core/Yjs`)
+
+- **The editor draws every document twice, and `EditorBlockStyle` is the only
+  thing keeping the two drawings the same.** The reading surface is SwiftUI
+  `Text` (`MarkdownBlockView`) and the editing surface a UIKit `UITextView`
+  (`BlockTextView`); those are different frameworks with different font and
+  layout APIs, so each used to carry its own copy of what a block looks like —
+  and the copies drifted until tapping a paragraph re-laid-out the entire page
+  (22pt vs 16pt gutter, so every line re-wrapped and slid 6pt left; 12pt vs 6pt
+  between blocks, cumulative; a whole header metadata row with no editing
+  counterpart; a quote losing its panel and its brand bar; a prose `.unknown`
+  block turning into monospace in a panel; a 20pt checkbox shrinking to 17pt; a
+  completed to-do losing its strikethrough), and then jumped *again* on the first
+  keystroke when the save-status strip appeared above the canvas.
+  **So: never reach for a `DocsFont`/`DocsSpacing`/`DocsColor` token directly in
+  either surface's block rendering.** Everything goes through
+  `Schrift/Features/Editor/EditorBlockStyle.swift`:
+  - `EditorBlockMetrics` — gutter (`DocsSpacing.gutter`, the app-wide page inset
+    the editor's own error banner and formatting bar already used), inter-block
+    gap, adornment gap, checkbox size + hit padding, quote/panel padding,
+    divider padding, header spacings.
+  - `blockTextAppearance(for:text:)` → raw tokens, converted to `Font`/`Color`
+    by the reading surface and to `UIFont`/`UIColor` by `blockTextStyling` (the
+    raw-value split the design-system style resolvers use). It takes the
+    **text**, not just the kind, because `.unknown` is the one kind whose
+    appearance depends on it — a paragraph that merely spilled across lines is
+    body prose on both surfaces, and only a table/HTML fragment is verbatim
+    monospace in a panel. `blockTextStyling` therefore takes the whole
+    `EditorBlock`; its `isCodeLike`/`allowsNewlines` deliberately stay keyed to
+    the **kind**, because a prose `.unknown` is still literal multi-line text
+    however it is drawn.
+  - `editorBlockDecoration(_:)` — the quote bar and the verbatim panel, as **one
+    modifier both surfaces apply**. It varies only padding/background/overlay
+    *values*; a structural branch there would recreate the `UITextView` and drop
+    the keyboard on every `- `/slash/toolbar conversion (the standing rule that
+    every editable kind shares one structural shape).
+  - `EditorBlockAdornment` — bullet, number, checkbox. The checkbox is a
+    `Button` only where a toggle closure is supplied (editing); the symmetric
+    ±`checkboxHitPadding` pair takes the target to `rowMinHeight` and gives every
+    point back, so the plain reading glyph occupies identical space. It is 24pt —
+    larger than either surface used to draw it, since it is the document's one
+    touchable adornment.
+  - `EditorDocumentHeader` — the title plus the reach/status/presence row, drawn
+    by **both** surfaces (`readingHeader` and the header `BlockEditorView` is
+    handed). An untitled document shows the same "Untitled" placeholder on both;
+    rendering an empty `Text` on one side and a placeholder on the other made the
+    body move by a title's height on the swap.
+- **The save status lives in that shared header's status slot, not in a strip
+  above the canvas.** `saveStatusDisplay`'s precedence is untouched — a recorded
+  conflict still refuses to claim a sync or to offer a retry that would only
+  re-park — but `.none` now falls through to the reading sync caption instead of
+  collapsing, so the slot is never empty and never changes height mid-keystroke.
+  The trade is deliberate and worth knowing: the status **scrolls with the
+  document** rather than staying pinned. Nothing becomes unreachable — the
+  toolbar keeps **Done**, which flushes exactly as tapping **Save** does. Don't
+  reintroduce a pinned strip without giving the reading surface an identically
+  sized one, or the jump comes straight back.
+- **Scroll position must survive the mode swap.** The two surfaces are different
+  `ScrollView`s, so the offset was simply discarded: tapping a paragraph three
+  screens down opened the editor at the very top with the tapped block nowhere on
+  screen. Both canvases name their rows with `EditorScrollTarget` under a
+  `.scrollTargetLayout()` and share one `.scrollPosition(id:anchor: .top)`
+  binding. That binding is backed by **`EditorScrollAnchorStore`, a plain
+  reference type that is deliberately not `@Observable`** — `.scrollPosition`
+  writes its binding as the user scrolls, and routing that through `@State` would
+  invalidate `EditorView` on every change, re-running
+  `AttributedString(markdown:)` and an `NSDataDetector` pass for every block on
+  the reading surface. Keep it non-observable, and keep the reading surface's
+  block container **non-lazy** (`AttachmentCardView`'s cache revalidation depends
+  on off-screen rows still running their `.task`).
+- **A block-level attribute in the editing text view belongs in
+  `baseTextAttributes`, nowhere else.** `applyInlineStyling` calls
+  `textStorage.setAttributes(...)` over the whole range on every keystroke's
+  restyle, so an attribute applied to the marked spans — or only to
+  `typingAttributes` — is wiped a character later. That function takes the whole
+  `BlockTextStyling` rather than the two or three fields it happens to need, so a
+  new appearance field cannot be silently dropped at that call site.
+- **Known, accepted residual — the two frameworks' line boxes.** A SwiftUI
+  `Text` carries slightly more leading than the same font in a `UITextView` with
+  `lineFragmentPadding` and `textContainerInset` zeroed: measured at the Large
+  content size, ~3.7pt at body 17 and ~7.3pt at title1 28, **per wrapped line**.
+  So a paragraph is a hair shorter while editing. Every *adorned* row (bullet,
+  number, checklist) is exactly equal, because the SwiftUI adornment sets the row
+  height on both sides. `EditorSurfaceParityTests
+  .testEveryBlockOccupiesTheSameHeightOnBothSurfaces` hosts the real
+  `MarkdownBlockView` against the real `BlockEditorRow` (which is internal for
+  exactly this) and bounds the residual at `0.35 × the block's font size × its
+  line count`, with a hard `delta >= 0` on the other side — an editing row that
+  is *taller* means it has grown chrome the reading one lacks. Both historical
+  offenders are caught by that band and were mutation-checked: reverting the
+  quote's panel reds it at 19.7pt against a 5.95pt allowance, and reverting the
+  `.unknown` prose treatment reds the `>= 0` side at −14.7pt. Closing the
+  residual would mean reverse-engineering SwiftUI's line metrics into the text
+  container's insets; don't, without evidence.
+- **Known, accepted difference:** the reading surface autolinks bare URLs
+  (`NSDataDetector`) and the editing surface does not, so a bare `https://…` is
+  brand-coloured while reading and plain while editing. Closing it would mean
+  teaching `InlineMarkdown` — the scanner the full-overwrite save re-parses — a
+  construct it does not model, which is not worth a colour difference on one run
+  with no reflow. Explicit `[label](url)` links *do* match: `markdownInlineText`
+  paints every link run `textBrand` + single-underlined, as
+  `InlineTextStyleResolver` does.
 
 The backend stores content as an opaque base64 **Yjs CRDT** blob and has **no
 markdown write endpoint**. Understand this before touching the save path:

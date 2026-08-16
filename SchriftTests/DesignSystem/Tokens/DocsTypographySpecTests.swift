@@ -127,15 +127,29 @@ final class DocsTypographySpecTests: XCTestCase {
 
     /// Every block kind the editor renders has to scale, not just the one the
     /// spot-check happens to use.
+    ///
+    /// `.unknown` appears twice: its appearance is chosen from its *text*
+    /// (`blockRendersVerbatim`), so a prose one and a verbatim one take
+    /// different type ramps and both have to scale.
     func testEveryBlockKindsEditorFontScalesWithTheTextSize() {
-        let kinds: [BlockKind] = [
-            .paragraph, .heading(level: 1), .heading(level: 2), .heading(level: 3),
-            .quote, .codeBlock(language: ""), .bulletItem, .checklistItem(checked: false),
+        let blocks: [EditorBlock] = [
+            EditorBlock(kind: .paragraph, text: "a"),
+            EditorBlock(kind: .heading(level: 1), text: "a"),
+            EditorBlock(kind: .heading(level: 2), text: "a"),
+            EditorBlock(kind: .heading(level: 3), text: "a"),
+            EditorBlock(kind: .quote, text: "a"),
+            EditorBlock(kind: .codeBlock(language: ""), text: "a"),
+            EditorBlock(kind: .bulletItem, text: "a"),
+            EditorBlock(kind: .numberedItem, text: "a"),
+            EditorBlock(kind: .checklistItem(checked: false), text: "a"),
+            EditorBlock(kind: .checklistItem(checked: true), text: "a"),
+            EditorBlock(kind: .unknown, text: "one\ntwo"),
+            EditorBlock(kind: .unknown, text: "| a | b |"),
         ]
-        for kind in kinds {
-            let atLarge = blockTextStyling(for: kind, dynamicTypeSize: .large).font.pointSize
-            let atAccessibility = blockTextStyling(for: kind, dynamicTypeSize: .accessibility3).font.pointSize
-            XCTAssertGreaterThan(atAccessibility, atLarge, "\(kind) does not scale with Dynamic Type")
+        for block in blocks {
+            let atLarge = blockTextStyling(for: block, dynamicTypeSize: .large).font.pointSize
+            let atAccessibility = blockTextStyling(for: block, dynamicTypeSize: .accessibility3).font.pointSize
+            XCTAssertGreaterThan(atAccessibility, atLarge, "\(block.kind) does not scale with Dynamic Type")
         }
     }
 }

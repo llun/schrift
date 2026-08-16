@@ -2,7 +2,13 @@ import SwiftUI
 
 /// The editable block canvas: each block is an in-place editable row with
 /// Notion-style keyboard behavior (Return splits, backspace at start merges).
-struct BlockEditorView: View {
+///
+/// Its geometry — gutter, inter-block gap, header, and the gap under the header
+/// — comes from `EditorBlockMetrics`, the same table `readingSurface` lays out
+/// with, so entering edit mode places a caret rather than re-flowing the page.
+/// The document header is injected rather than built here: it is the *same*
+/// view on both surfaces, and only its status slot differs.
+struct BlockEditorView<Header: View>: View {
     @Bindable var viewModel: EditorViewModel
     /// Threaded to reach the image leaf's off-origin load gate
     /// (`imageLoadPolicy`) and the attachment leaf's card; every other row kind
@@ -12,30 +18,30 @@ struct BlockEditorView: View {
     /// online" over an uncached attachment rather than spin on a request that
     /// cannot succeed. Every other row kind ignores it.
     var isOffline: Bool = false
+    /// Carries the reading surface's scroll anchor in, and this canvas's back
+    /// out. See `EditorScrollAnchorStore` for why it is not observable.
+    let scrollAnchor: EditorScrollAnchorStore
+    @ViewBuilder var header: () -> Header
 
     @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-                    TextField(
-                        loc[.common_untitled],
-                        text: Binding(
-                            get: { viewModel.title },
-                            set: { viewModel.updateTitle($0) }
-                        )
-                    )
-                    .font(DocsFont.title1.weight(.bold))
-                    .foregroundStyle(DocsColor.textPrimary)
-                    .padding(.bottom, DocsSpacing.spaceSM)
+                LazyVStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                    header()
+                        // The stack already contributes `blockSpacing`; this
+                        // tops it up to the header-to-body gap the reading
+                        // surface leaves, rather than restating that gap.
+                        .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+                        .id(EditorScrollTarget.header)
 
                     ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
                         BlockEditorRow(
                             viewModel: viewModel, block: block, index: index, serverOrigin: serverOrigin,
                             isOffline: isOffline
                         )
-                        .id(block.id)
+                        .id(EditorScrollTarget.block(block.id))
                     }
 
                     // Tapping the empty canvas below the last block starts a
@@ -48,22 +54,34 @@ struct BlockEditorView: View {
                             viewModel.appendParagraphAtEnd()
                         }
                         .accessibilityLabel(loc[.editor_add_paragraph_a11y])
+                        .id(EditorScrollTarget.trailer)
                 }
-                .padding(.horizontal, DocsSpacing.gutter)
+                .scrollTargetLayout()
+                .padding(.horizontal, EditorBlockMetrics.gutter)
                 .padding(.top, DocsSpacing.spaceSM)
             }
+            .scrollPosition(
+                id: Binding(get: { scrollAnchor.target }, set: { scrollAnchor.target = $0 }), anchor: .top
+            )
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: viewModel.focusedBlockID) { _, focusedID in
                 guard let focusedID else { return }
                 withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(focusedID, anchor: .center)
+                    proxy.scrollTo(EditorScrollTarget.block(focusedID), anchor: .center)
                 }
             }
         }
     }
 }
 
-private struct BlockEditorRow: View {
+/// One editable row.
+///
+/// Internal rather than private so `EditorSurfaceParityTests` can host the
+/// **real** row and measure it against the `MarkdownBlockView` it replaces. That
+/// end-to-end comparison is the only thing that catches a per-kind divergence in
+/// what a block actually occupies — a shared style table proves the two read the
+/// same values, not that the two frameworks then lay them out the same way.
+struct BlockEditorRow: View {
     @Bindable var viewModel: EditorViewModel
     let block: EditorBlock
     let index: Int
@@ -88,7 +106,7 @@ private struct BlockEditorRow: View {
                 .fill(DocsColor.borderDefault)
                 .frame(height: 1)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, DocsSpacing.spaceXS)
+                .padding(.vertical, EditorBlockMetrics.dividerVerticalPadding)
                 .contentShape(Rectangle())
                 .accessibilityLabel(loc[.editor_divider_a11y])
         } else if case .image(let alt, let url) = block.kind {
@@ -107,82 +125,22 @@ private struct BlockEditorRow: View {
             // + text view with value-varying modifiers): converting the
             // focused block's kind must NOT recreate the UITextView, or the
             // keyboard would drop on every "- "/slash/toolbar conversion.
-            HStack(alignment: .top, spacing: hasAdornment ? DocsSpacing.spaceXS : 0) {
-                adornment
+            // `editorBlockDecoration` preserves that property — it varies only
+            // padding/background/overlay values, never which view is decorated.
+            //
+            // Both the spacing and the decoration come from `EditorBlockStyle`,
+            // the table `MarkdownBlockView` reads, so this row and the reading
+            // row it replaces occupy the same space.
+            HStack(
+                alignment: .top,
+                spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
+            ) {
+                EditorBlockAdornment(
+                    kind: block.kind, numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                    onToggleChecklist: { viewModel.toggleChecklist(blockID: block.id) })
                 textView
-                    .padding(isCodePanel ? DocsSpacing.spaceSM : 0)
-                    .padding(.leading, isQuote ? DocsSpacing.spaceSM : 0)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(isCodePanel ? DocsColor.surfaceSunken : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: isCodePanel ? DocsRadius.md : 0))
-                    .overlay(alignment: .leading) {
-                        if isQuote {
-                            Rectangle()
-                                .fill(DocsColor.borderDefault)
-                                .frame(width: 3)
-                        }
-                    }
+                    .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
             }
-        }
-    }
-
-    private var isCodePanel: Bool {
-        switch block.kind {
-        case .codeBlock, .unknown:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private var isQuote: Bool {
-        block.kind == .quote
-    }
-
-    private var hasAdornment: Bool {
-        switch block.kind {
-        case .bulletItem, .numberedItem, .checklistItem:
-            return true
-        default:
-            return false
-        }
-    }
-
-    @ViewBuilder
-    private var adornment: some View {
-        switch block.kind {
-        case .bulletItem:
-            Text("•")
-                .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
-
-        case .numberedItem:
-            Text("\(numberedIndex(of: index, in: viewModel.blocks)).")
-                .font(DocsFont.body)
-                .monospacedDigit()
-                .foregroundStyle(DocsColor.textPrimary)
-
-        case .checklistItem(let checked):
-            Button {
-                viewModel.toggleChecklist(blockID: block.id)
-            } label: {
-                MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: 17)
-                    .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
-                    // Grow the hit rect, then give the growth back to the layout.
-                    // A plain `.frame(44)` would work for the target but this is
-                    // the adornment of a `.top`-aligned row, so the taller box
-                    // would centre the glyph below the first line of text it is
-                    // meant to sit beside. The pair leaves the glyph exactly
-                    // where it was and roughly doubles what you can hit.
-                    .padding(DocsSpacing.spaceXS)
-                    .contentShape(Rectangle())
-                    .padding(-DocsSpacing.spaceXS)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(checked ? loc[.editor_checklist_not_done_a11y] : loc[.editor_checklist_done_a11y])
-
-        default:
-            EmptyView()
         }
     }
 
@@ -230,7 +188,7 @@ private struct BlockEditorRow: View {
                 get: { block.text },
                 set: { viewModel.updateText(blockID: block.id, text: $0) }
             ),
-            styling: blockTextStyling(for: block.kind, dynamicTypeSize: dynamicTypeSize),
+            styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
             isFocused: viewModel.focusedBlockID == block.id,
             cursorRequest: viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil,
             onEvent: { event in

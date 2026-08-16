@@ -4,8 +4,12 @@ import XCTest
 
 @testable import Schrift
 
-/// The save-status row sits directly above the canvas in a `VStack(spacing: 0)`,
-/// so a height it *insists* on is not clipped — it is taken out of the canvas.
+/// The save status used to sit directly above the canvas in a
+/// `VStack(spacing: 0)`, where a height it *insisted* on was not clipped — it
+/// was taken out of the canvas. It lives in the shared document header now, so
+/// that particular container is gone; the floor it carries is still what buys
+/// the tap target, and a greedy frame here would still be wrong (a scroll view
+/// proposes an unspecified height along its axis but a concrete one across it).
 ///
 /// `.frame(maxHeight: .infinity)` on the Save/retry label — the technique that
 /// got them to a 44pt tap target — made the row answer any proposal in full: a
@@ -23,17 +27,18 @@ import XCTest
 /// smaller than the floor and when the text scales.
 ///
 /// Scope: these host the component, as `EditorFormattingBarTests` hosts the
-/// formatting bar. `EditorView.saveStatusRow` — the padded strip around it — is
-/// private, so the composition itself is not covered here; what is covered is
-/// the necessary condition, that nothing inside the strip claims the height the
-/// canvas needs.
+/// formatting bar. Its surroundings — now the shared `EditorDocumentHeader`'s
+/// status slot, previously a padded strip pinned above the canvas — are private
+/// to `EditorView`, so the composition itself is not covered here; what is
+/// covered is the necessary condition, that nothing inside that slot claims the
+/// height the canvas needs.
 @MainActor
 final class SaveStatusIndicatorTests: XCTestCase {
 
-    /// What the row actually offers the indicator on an iPhone 17: the screen
-    /// less `saveStatusRow`'s horizontal gutters, which sit *outside* the HStack
-    /// the indicator lives in. Measuring the full 402pt would hide the wrapping
-    /// that decides these heights at accessibility sizes.
+    /// What the header row actually offers the indicator on an iPhone 17: the
+    /// screen less the document body's horizontal gutters, which sit *outside*
+    /// the HStack the indicator lives in. Measuring the full 402pt would hide
+    /// the wrapping that decides these heights at accessibility sizes.
     private let screen = CGSize(width: 402 - 2 * DocsSpacing.gutter, height: 874)
 
     /// Every state that draws something, derived so a new case cannot escape
@@ -165,8 +170,10 @@ final class SaveStatusIndicatorTests: XCTestCase {
         }
     }
 
-    /// `.none` draws nothing. `EditorView.saveStatusRow` also omits the row
-    /// entirely for it; this pins that no floor leaks onto the `EmptyView` arm.
+    /// `.none` draws nothing. `EditorView.editingStatus` never hands it over —
+    /// it falls through to the reading sync caption instead, so the header's
+    /// status slot is never empty — and this pins that no floor leaks onto the
+    /// `EmptyView` arm regardless.
     func testNoneRendersNothing() {
         let height = height(of: .none, proposing: screen)
         XCTAssertLessThan(height, DocsSpacing.rowMinHeight, "the empty state occupies \(height)pt")
