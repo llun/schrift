@@ -18,6 +18,23 @@ enum DocumentFavoriteOutcome: Equatable {
     case failed
 }
 
+enum DocumentMoveOutcome: Equatable {
+    case moved
+    case failed
+}
+
+/// Where a document is being moved to.
+///
+/// The two cases are not symmetric, because the backend's move endpoint has no "no parent"
+/// target: promoting a document to the top level is expressed as filing it *beside* an
+/// existing root, so `.root` has to name one. A local document needs no such target — it is
+/// re-parented on this device, where nil is simply nil — which is why the id is Optional
+/// rather than a second case nobody could construct correctly.
+enum DocumentMoveDestination: Equatable {
+    case root(siblingRootID: UUID?)
+    case under(parentID: UUID)
+}
+
 /// The one place a document is deleted or favorited.
 ///
 /// A value type, not a view model: it owns no UI state and publishes nothing, so a caller
@@ -206,5 +223,99 @@ struct DocumentActions {
         } catch {
             return .failed
         }
+    }
+
+    /// Move a document — with its whole subtree, which the server relocates in one atomic
+    /// transaction — under another document or up to the top level.
+    ///
+    /// The same three-state ladder `delete` walks, and the middle state matters here for the
+    /// same reason: a record that has been **checkpointed** is still `isPendingCreate`, but a
+    /// real server document exists under `syncedServerID` and that is the one the user is
+    /// looking at. Moving the local record instead would rewrite a `parentID` the migration
+    /// has already stopped reading, and nothing would move.
+    ///
+    /// **Awaited, never optimistic, and never queued** — the `setFavorite` posture. There is
+    /// no replay for a move: a transport failure changes nothing anywhere and the caller
+    /// reports it, which is honest, where an optimistic re-parent would have to be rolled back
+    /// on every failure and a queue would need a whole tombstone-shaped machinery to hold a
+    /// placement the server may reject on the merits.
+    ///
+    /// A `.notFound` is a plain failure here, deliberately unlike `delete`'s: "already
+    /// deleted" is a coherent reading of a 404 for a deletion, but there is no state of the
+    /// world in which a move that was never made is already done.
+    /// `row` is the document as some list is drawing it, when the caller has one. It is what a
+    /// surface *inserts* where the document has landed, so a caller without one — the editor's
+    /// Options sheet, which holds an id and a title rather than a row — passes nil and the
+    /// destination simply picks the document up on its next fetch. Fabricating a row there
+    /// would be worse than nil: it would be cached, and its `depth`/`path` would be invented.
+    func move(
+        documentID: UUID, row: Document?, to destination: DocumentMoveDestination
+    ) async -> DocumentMoveOutcome {
+        if let coordinator = saveCoordinator, coordinator.isPendingCreate(documentID: documentID),
+            coordinator.syncedServerID(forLocalID: documentID) == nil
+        {
+            let newParentID: UUID? =
+                switch destination {
+                case .root: nil
+                case .under(let parentID): parentID
+                }
+            return coordinator.moveLocalDocument(documentID: documentID, newParentID: newParentID)
+                ? .moved : .failed
+        }
+        // The id the server knows this document by: its own, or — for a checkpointed record
+        // met under its local id — the one the POST returned.
+        let serverID = saveCoordinator?.syncedServerID(forLocalID: documentID) ?? documentID
+        let targetID: UUID
+        let position: DocumentMovePosition
+        switch destination {
+        case .under(let parentID):
+            // A client-minted id names nothing on the server, so this would 404. The picker
+            // does not offer local destinations for a server document; this refuses the state
+            // rather than sending a request that cannot succeed.
+            guard saveCoordinator?.isPendingCreate(documentID: parentID) != true else { return .failed }
+            targetID = parentID
+            position = .lastChild
+        case .root(let siblingRootID):
+            // Promotion needs a root to sit beside. Its absence is not something to guess at —
+            // the picker withholds the affordance when it has no root to name.
+            guard let siblingRootID else { return .failed }
+            targetID = siblingRootID
+            position = .lastSibling
+        }
+        do {
+            try await client.moveDocument(
+                documentID: serverID, targetDocumentID: targetID, position: position)
+        } catch {
+            return .failed
+        }
+        let newParentID: UUID? = if case .under(let parentID) = destination { parentID } else { nil }
+        // Everything the landed move owes the device — the caches, then the announcement that
+        // is the single writer for every on-screen list. As with `delete`, the calling surface
+        // removes nothing itself.
+        //
+        // Keyed on `serverID`, which for a checkpointed record met under its *local* id is not
+        // the id the caller passed: every cache entry and every list row for such a document is
+        // written under the id the POST returned, so completing under the local one would sweep
+        // nothing and announce a row no screen holds.
+        saveCoordinator?.completeDocumentMove(
+            documentID: serverID, row: row?.identified(as: serverID), newParentID: newParentID)
+        return .moved
+    }
+}
+
+extension Document {
+    /// The same document under another id.
+    ///
+    /// `id` is a `let` — identity is not something a value should be able to drift on — so
+    /// this rebuilds through the memberwise initializer rather than mutating. The one caller
+    /// is the move ladder, re-keying a checkpointed record's row onto the server id its caches
+    /// actually use.
+    func identified(as documentID: UUID) -> Document {
+        guard documentID != id else { return self }
+        return Document(
+            id: documentID, title: title, excerpt: excerpt, abilities: abilities, linkReach: linkReach,
+            linkRole: linkRole, computedLinkReach: computedLinkReach, computedLinkRole: computedLinkRole,
+            isFavorite: isFavorite, depth: depth, numchild: numchild, path: path, createdAt: createdAt,
+            updatedAt: updatedAt, userRole: userRole, creator: creator)
     }
 }
