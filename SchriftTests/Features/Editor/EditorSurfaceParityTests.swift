@@ -236,17 +236,33 @@ final class EditorSurfaceParityTests: XCTestCase {
         XCTAssertGreaterThan(EditorBlockMetrics.checkboxSize, 20)
     }
 
-    /// The padded box the `contentShape` is taken from reaches the 44pt floor.
+    /// The padded box the `contentShape` is taken from clears the 44pt floor —
+    /// **in isolation**, which is the honest scope of this measurement.
     ///
-    /// **Measured, not computed.** Asserting
-    /// `checkboxSize + 2 * checkboxHitPadding == rowMinHeight` looks like this
-    /// test but is an algebraic identity — `checkboxHitPadding` is *defined* as
-    /// `(rowMinHeight - checkboxSize) / 2`, so substituting it gives
-    /// `rowMinHeight == rowMinHeight` for every value of both symbols, and the
-    /// assertion cannot fail for any change to either. Hosting the padded glyph
-    /// asks the question that can: a `MaterialSymbol` is a `Text` whose box is
-    /// its glyph's typographic box, not its point size, so this reads what the
-    /// finger actually gets.
+    /// Two things it does not say. It is a **reproduction** of the shipped
+    /// modifier chain, not the shipped view: `EditorBlockAdornment` follows the
+    /// padding with `.contentShape(Rectangle())` and a matching *negative*
+    /// padding, so the real adornment's layout box is the bare glyph again and
+    /// `sizeThatFits` can never see the shape at all (the same reason
+    /// `PagesTreeDrawerTests` measures a replica — keep this one in step with
+    /// `checkbox(checked:)`). And in a *checklist*, consecutive rows sit
+    /// `blockSpacing` apart, so each row's shape overlaps its neighbours' and the
+    /// unambiguous per-checkbox target is bounded by the row pitch — glyph +
+    /// gap ≈ 35pt, not 47. That is still well over the ~22pt pitch these rows
+    /// had before, which is the improvement being claimed; 44pt on a dense list
+    /// would need a taller row, and the row is shared with the reading
+    /// surface.
+    ///
+    /// **Measured, not computed**, and the history is the argument. This began
+    /// as `checkboxSize + 2 * checkboxHitPadding == rowMinHeight`, with the
+    /// padding *defined* as `(rowMinHeight - checkboxSize) / 2` — which
+    /// substitutes to `rowMinHeight == rowMinHeight`, true for every value of
+    /// both symbols, so the assertion could not fail for any change to either.
+    /// Hosting the padded glyph asks the question that can, and it answered
+    /// **43pt**: a `MaterialSymbol` is a `Text`, so it occupies its glyph's
+    /// typographic box (23pt for a 24pt symbol), not its point size, and the
+    /// arithmetic was a point short of the floor it was written to guarantee.
+    /// `checkboxHitPadding` is a token with headroom now.
     func testTheCheckboxHitRectReachesTheRowMinimum() {
         let padded = UIHostingController(
             rootView: MaterialSymbol(.check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
@@ -482,10 +498,15 @@ final class EditorSurfaceParityTests: XCTestCase {
     /// SwiftUI adornment — every list kind — are exactly equal, because the
     /// adornment sets the row height on both sides.
     ///
-    /// What the band *does* catch is a per-kind divergence: before the shared
-    /// table, a quote was ~20pt taller while reading (its panel padding had no
-    /// editing counterpart) and a verbatim `.unknown` ~11pt *shorter* (the
-    /// editing side wrapped every one in a code panel).
+    /// What the band *does* catch is a per-kind divergence, and both historical
+    /// offenders were re-measured by reverting the fix under it: a quote was
+    /// **19.7pt** taller while reading, against a 5.95pt allowance, because its
+    /// panel padding had no editing counterpart; and a **prose** `.unknown` was
+    /// **14.7pt** taller while *editing*, tripping the `delta >= 0` side,
+    /// because the editing side wrapped every `.unknown` in a code panel where
+    /// the reading side panelled only the verbatim ones. (Verbatim `.unknown`
+    /// blocks agreed on `main` — the panel was the one thing both surfaces gave
+    /// them.)
     func testEveryBlockOccupiesTheSameHeightOnBothSurfaces() {
         // Each fixture carries the number of text lines it wraps to at the row
         // width, because the residual below is per *line*, not per block.

@@ -274,13 +274,17 @@
 >   only re-park — which is the part that matters; only where it renders changed.
 >   `EditorSaveBar` is gone and `SaveStatusIndicator.swift` holds the resolver
 >   and the view.
+>   *(Superseded 2026-08-16: that slim row had no reading-mode counterpart and
+>   appeared out of nothing on the first keystroke, so it moved again — into the
+>   shared document header's status slot. The resolver and its precedence are
+>   still untouched. See the revision at the end of this file.)*
 > - **Presence while editing is a count badge** on the Options button
 >   (`presenceBadgeCount`, suppressed offline since peer state is only as fresh
 >   as the last socket message). Reading mode keeps the `PresenceBar` avatar
 >   stack, which has room for one.
 >   *(Superseded 2026-08-16: the document header is shared by both surfaces now
 >   and draws `PresenceBar` in either mode, so the badge became a second copy of
->   the same fact one row above it and was removed. `presenceBadgeCount` and its
+>   the same fact one row above it and was removed. `presentedPeerCount` and its
 >   tests remain as the freshness rule, applied on both surfaces — see the
 >   revision at the end of this file.)*
 > - **Back is the system's**, in both modes. Leaving mid-edit is safe because
@@ -901,8 +905,8 @@ amendment at the top of this document.
 Layout is verified primarily via the component `#Preview` catalogs (light **and**
 dark) and a manual run. Pure helpers are unit-tested where they exist:
 the divider leading-inset rule (`52` with a leading icon, else `16`), the
-editor's toolbar-action table (`editorToolbarActions`) and presence-badge rule
-(`presenceBadgeCount`), and the sheet detent/`maxHeight` constants.
+editor's toolbar-action table (`editorToolbarActions`) and presence-freshness
+rule (`presentedPeerCount`), and the sheet detent/`maxHeight` constants.
 (`navBarShowsTopRow` went with `NavBar`; the system bar owns that behavior now.)
 
 ## 9. Part 6 — Version history
@@ -1170,8 +1174,20 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   `UITextView` and drop the keyboard on every block conversion.
 > - `EditorBlockAdornment` — the bullet, the number and the checkbox. The
 >   checkbox is a `Button` only where a toggle closure is supplied (editing);
->   the symmetric ±`checkboxHitPadding` pair takes the target to 44pt and gives
->   every point back, so the plain reading glyph occupies exactly the same space.
+>   the symmetric ±`checkboxHitPadding` pair grows the target and gives every
+>   point back, so the plain reading glyph occupies exactly the same space. The
+>   shape clears 44pt **in isolation**; in a checklist, consecutive rows sit
+>   `blockSpacing` apart, so neighbouring shapes overlap and the unambiguous
+>   per-checkbox target is bounded by the row pitch (glyph + gap ≈ 35pt). That is
+>   the honest claim — it roughly doubles what you can hit, up from a ~22pt pitch,
+>   and 44pt on a dense list would need a taller row than the reading surface
+>   shares.
+>   That padding is a **token with headroom, not an arithmetic fit**: sizing it
+>   as `(rowMinHeight - checkboxSize) / 2` lands at 43pt, because a
+>   `MaterialSymbol` is a `Text` and occupies its glyph's typographic box (23pt
+>   for a 24pt symbol), not its point size — and the assertion that "proves" the
+>   fit substitutes to `rowMinHeight == rowMinHeight`, so it can never catch the
+>   miss. Measure the padded box instead.
 > - `EditorDocumentHeader` — the title and the reach/status/presence row, drawn
 >   by **both** surfaces. The title is a `TextField` while editing and a `Text`
 >   while reading, same font and tracking either way, and an untitled document
@@ -1191,9 +1207,16 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > - **The checkbox is 24pt**, larger than either surface drew it, and its state
 >   is finally spoken: the glyph is a Private-Use-Area character and so is
 >   `accessibilityHidden`, and a strikethrough is not spoken, so a checklist read
->   aloud gave no clue which items were done. The reading row combines into one
->   element with an `accessibilityValue` of the *state* ("Done" / "Not done"),
->   distinct from the editing checkbox's *action* label ("Mark as done").
+>   aloud gave no clue which items were done. The reading row carries an
+>   `accessibilityValue` of the *state* ("Done" / "Not done"), distinct from the
+>   editing checkbox's *action* label ("Mark as done"). It is set on the `Text`
+>   rather than by collapsing the row with
+>   `.accessibilityElement(children: .combine)` — the conventional way to give a
+>   row a value, but one that flattens the element tree, and that `Text` can hold
+>   inline links VoiceOver reaches through the Links rotor. Whether combining
+>   really would drop them is not something this repo can assert (it runs no
+>   VoiceOver tests), and between two options that both add the announcement, the
+>   one that cannot take anything away is the right bet.
 > - **Scroll position survives the swap.** The two surfaces are different
 >   `ScrollView`s, so the offset used to be discarded: tapping a paragraph three
 >   screens down opened the editor at the very top. Both canvases now name their
@@ -1229,7 +1252,7 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > **Presence has one home.** The Options button's editing-only count badge
 > existed because the editing surface had no `PresenceBar`; the shared header
 > gives it one in both modes, so the badge became a second copy of the same fact
-> one row above it and is gone. `presenceBadgeCount` — and its tests — survive as
+> one row above it and is gone. `presentedPeerCount` — renamed from `presenceBadgeCount`, since the badge it was named for is gone — and its tests survive as
 > the one rule for whether peer state is fresh enough to show at all, now applied
 > on **both** surfaces: before, only the badge honoured it and the reading
 > surface drew its avatars offline, where they are whatever the socket last said.

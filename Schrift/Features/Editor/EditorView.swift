@@ -149,14 +149,22 @@ func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorTool
 /// Offline suppresses it: peer state is whatever the socket last said, and
 /// presenting a stale count as live would be a small lie.
 ///
-/// It was named for the count badge the Options button carried while editing,
-/// which existed only because the reading surface's avatar stack had no editing
-/// counterpart. The document header is shared now and draws `PresenceBar` in
-/// both modes, so the badge is gone and this is the one rule deciding whether
-/// that bar has anything fresh enough to say — on **both** surfaces, where
-/// before the reading one showed its avatars offline and only the badge was
-/// suppressed.
-func presenceBadgeCount(peerCount: Int, isOffline: Bool) -> Int? {
+/// `isOffline` is a **coarse** proxy for that, and knowingly so — it is derived
+/// from `HomeViewModel`'s last *list* fetch, so a 5xx or a decoding bug on that
+/// one endpoint sets it with the socket perfectly healthy, and `schrift
+/// .workOffline` sets it outright. It is the signal this app uses to gate
+/// chrome, and presence is chrome; the failure is to hide something true, never
+/// to assert something false.
+///
+/// It was `presenceBadgeCount`, named for the count badge the Options button
+/// carried while editing, which existed only because the reading surface's
+/// avatar stack had no editing counterpart. The document header is shared now
+/// and draws `PresenceBar` in both modes, so the badge is gone — and the name
+/// went with it, rather than leaving a symbol pointing at an affordance nobody
+/// can find. This is the one rule deciding whether that bar has anything fresh
+/// enough to say, on **both** surfaces; before, the reading one drew its avatars
+/// offline and only the badge was suppressed.
+func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     guard !isOffline, peerCount > 0 else { return nil }
     return peerCount
 }
@@ -1248,13 +1256,13 @@ struct EditorView: View {
     /// "the same information, in the space a toolbar has". The document header is
     /// shared now and draws `PresenceBar` in both modes, so that badge became a
     /// second copy of the same fact one row above it, and it is gone. Presence
-    /// has one home again, and `presenceBadgeCount` — with its tests — becomes
+    /// has one home again, and `presentedPeerCount` — with its tests — becomes
     /// the one rule for whether peer state is fresh enough to show at all,
     /// applied on **both** surfaces. Before, only the badge honoured it: the
     /// reading surface drew its avatars offline, where they are whatever the
     /// socket last said.
     private var headerPeers: [CollaborationPeer] {
-        presenceBadgeCount(peerCount: collaborationPeers.count, isOffline: isOffline) == nil
+        presentedPeerCount(peerCount: collaborationPeers.count, isOffline: isOffline) == nil
             ? [] : collaborationPeers
     }
 }

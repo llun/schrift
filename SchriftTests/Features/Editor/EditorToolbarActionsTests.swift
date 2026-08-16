@@ -27,22 +27,22 @@ final class EditorToolbarActionsTests: XCTestCase {
         XCTAssertEqual(editorToolbarActions(isEditing: false), [.edit, .share, .options])
     }
 
-    // MARK: - Presence badge
+    // MARK: - Presence
 
-    func testPresenceBadgeShowsThePeerCount() {
-        XCTAssertEqual(presenceBadgeCount(peerCount: 1, isOffline: false), 1)
-        XCTAssertEqual(presenceBadgeCount(peerCount: 4, isOffline: false), 4)
+    func testPresenceShowsThePeerCount() {
+        XCTAssertEqual(presentedPeerCount(peerCount: 1, isOffline: false), 1)
+        XCTAssertEqual(presentedPeerCount(peerCount: 4, isOffline: false), 4)
     }
 
-    func testPresenceBadgeIsHiddenWhenAlone() {
-        XCTAssertNil(presenceBadgeCount(peerCount: 0, isOffline: false))
+    func testPresenceIsHiddenWhenAlone() {
+        XCTAssertNil(presentedPeerCount(peerCount: 0, isOffline: false))
     }
 
     /// Peer state is only ever as fresh as the last socket message, so offline
     /// it would be a claim the app can't stand behind.
-    func testPresenceBadgeIsHiddenOffline() {
-        XCTAssertNil(presenceBadgeCount(peerCount: 3, isOffline: true))
-        XCTAssertNil(presenceBadgeCount(peerCount: 0, isOffline: true))
+    func testPresenceIsHiddenOffline() {
+        XCTAssertNil(presentedPeerCount(peerCount: 3, isOffline: true))
+        XCTAssertNil(presentedPeerCount(peerCount: 0, isOffline: true))
     }
 
     /// A document that exists only on this device has no share URL and no accesses to list,

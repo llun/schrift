@@ -940,6 +940,20 @@ new code reads like the surrounding code.
     example: its date holds `layoutPriority(1)` so the date never truncates,
     which meant the *title* collapsed to `"A…"`. `rowUsesStackedLayout(_:)` is
     the shared predicate — stack the metadata under the title instead.
+- **A `MaterialSymbol`'s footprint is its glyph's typographic box, not its point
+  size** — about 23pt for a 24pt symbol. So a tap target sized by arithmetic off
+  the point size comes up short: `checkboxSize + 2 * ((44 - checkboxSize) / 2)`
+  reads as exactly 44 and measures 43. Size the padding from a token with
+  headroom and **measure the padded box** in a test; the assertion that appears
+  to prove the arithmetic (`size + 2 * padding == rowMinHeight`, with `padding`
+  defined as `(rowMinHeight - size) / 2`) substitutes to
+  `rowMinHeight == rowMinHeight` and cannot fail for any value of either.
+  **And a grown-then-given-back shape only reaches its full size in isolation**:
+  in a list, consecutive rows sit one gap apart, so neighbouring shapes overlap
+  and the unambiguous per-row target is bounded by the row *pitch* — glyph + gap,
+  ~35pt for the editor's checklist. Reaching 44 there means a taller row, which
+  on a shared surface is a document-density decision, not a padding one. Claim
+  the pitch, not the shape.
 - **Icons are Google Material Symbols, never SF Symbols.** The app's entire icon
   set is the handoff's Material Symbols Outlined, bundled as a ~18KB subset
   (`Schrift/Resources/Fonts/MaterialSymbolsOutlined-Icons.ttf`, Apache-2.0,
@@ -1030,11 +1044,14 @@ new code reads like the surrounding code.
   **stack in a
   height-bounded container** hands its children a concrete proposal, which is
   what `editingSurface`'s
-  `VStack(spacing: 0)` does, and there `SaveStatusIndicator`'s Save/retry filled
-  the row and the row filled the screen — offered 874pt it answered 874pt, the
-  `VStack` saw two greedy children, split the free height between them, and
-  parked the document title and first line of content mid-screen whenever the
-  keyboard was up. **In the second case, floor the label itself** —
+  `VStack(spacing: 0)` did (the editing canvas is a bare `BlockEditorView` now
+  and the status lives inside its `ScrollView` — but the rule is about the
+  container shape, not that one call site, and any stack you put in a
+  height-bounded container behaves this way), and there `SaveStatusIndicator`'s
+  Save/retry filled the row and the row filled the screen — offered 874pt it
+  answered 874pt, the `VStack` saw two greedy children, split the free height
+  between them, and parked the document title and first line of content
+  mid-screen whenever the keyboard was up. **In the second case, floor the label itself** —
   `.frame(minHeight: DocsSpacing.rowMinHeight)` never claims a proposal and still
   grows with Dynamic Type, which the rule above *requires* (a fixed `height:`
   clips). Note the floor is also the *larger* target: the row applies
@@ -1528,7 +1545,7 @@ that are easy to violate and expensive to discover:
 - **Presence is drawn once, in the shared header, on both surfaces.** The
   Options button used to carry a count badge while editing because the editing
   canvas had no `PresenceBar`; it has one now, so the badge was a duplicate and
-  is gone. `presenceBadgeCount` stays as the freshness rule (peer state is only
+  is gone. `presentedPeerCount` (renamed from `presenceBadgeCount`) stays as the freshness rule (peer state is only
   as fresh as the last socket message, so offline suppresses it) and now gates
   the header's bar on **both** surfaces — the reading one previously drew its
   avatars offline. Don't re-add a second presence affordance to one mode only:
