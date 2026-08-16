@@ -1586,14 +1586,23 @@ final class DocumentSaveCoordinator {
             // moot by construction — there is no work left for them to protect.
             queued[serverID] = nil
             clearResolvedConflict(documentID: serverID)
-            record.syncedServerID = nil
+            // **Edit the live record, never the captured copy.** `record` was snapshotted
+            // before this branch's two network round trips, and a move landing inside that
+            // window re-points the stored one — so writing the copy back would restore the
+            // *pre-move* `parentID` along with clearing the checkpoint, silently undoing a move
+            // the user was told had landed, and re-POSTing the document at its old location.
+            // Where the old parent is since tombstoned it is worse than cosmetic: the record
+            // wedges on `runCreatePass`'s parent gate. Same window `migrateCreatedDocument`
+            // reads the mirror for.
+            guard var live = pendingCreates[record.localID] else { return }
+            live.syncedServerID = nil
             // Cleared with the checkpoint it was stamped beside, or a persisted record would
             // carry a `postedTitle` with no `syncedServerID` — which is what its own doc
             // comment says cannot happen.
-            record.postedTitle = nil
-            record.replayBlockedAt = nil
-            record.replayBlockedBuild = nil
-            if pendingCreates[record.localID] != nil { updatePendingCreate(record) }
+            live.postedTitle = nil
+            live.replayBlockedAt = nil
+            live.replayBlockedBuild = nil
+            updatePendingCreate(live)
             return
         } catch {
             // Transient — leave it for the next pass.
@@ -1612,18 +1621,6 @@ final class DocumentSaveCoordinator {
     /// GET was in flight: an editor opening on either id, the record being deleted, a save
     /// starting or being parked for the server id, and the both-drafts window. Five guards —
     /// the first two keyed on `localID`, the next two on `serverID`, and the last on both.
-    /// Test seam: drive the migration with a deliberately **stale** record copy, which is what
-    /// the resume path holds across its two awaits. The window that copy opens cannot be
-    /// reached through a live pass, because it is the interval *between* those awaits.
-    func finishMigrationForTesting(
-        _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
-        serverMarkdown: String, document: Document?
-    ) {
-        finishMigration(
-            record, serverID: serverID, serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt,
-            serverMarkdown: serverMarkdown, document: document)
-    }
-
     private func finishMigration(
         _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?

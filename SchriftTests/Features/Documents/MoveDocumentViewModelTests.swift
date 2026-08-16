@@ -44,6 +44,8 @@ final class MoveDocumentViewModelTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: cacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("attachments")),
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
@@ -164,12 +166,25 @@ final class MoveDocumentViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.localDestinations.isEmpty)
     }
 
-    func testARootDocumentIsNotOfferedAMoveToWhereItAlreadyIs() {
+    /// A row-carrying caller's own `depth` decides, and it must be *preferred* over anything
+    /// the fetch says — the fetched page need not contain this document at all.
+    func testARootWithItsOwnRowIsNotOfferedAMoveToTheTopLevelAfterALoad() async {
+        // The fetch deliberately does not list the document, so `resolvedDepth` stays nil and
+        // only the row's depth can answer.
+        stubList([Self.entry(id: rootID, title: "Root", depth: 1)])
         let env = makeEnvironment()
-        let viewModel = makeViewModel(
-            env, row: document(id: documentID, title: "Root", depth: 1))
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Root", depth: 1))
+
+        await viewModel.loadDestinations()
 
         XCTAssertFalse(viewModel.offersHome)
+    }
+
+    func testTheTopLevelIsWithheldBeforeAnyLoadHasFinished() {
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Sub-page", depth: 2))
+
+        XCTAssertFalse(viewModel.offersHome, "there is no root to name yet")
     }
 
     func testASubPageIsOfferedAMoveToTheTopLevelOnceARootHasBeenFetched() async {
@@ -432,6 +447,87 @@ final class MoveDocumentViewModelTests: XCTestCase {
 
         XCTAssertNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.localDestinations.isEmpty)
+    }
+
+    /// The accept half of the stale-destination gate: a local destination that is *still*
+    /// local must go through, or the guard would refuse every local move.
+    func testAStillLocalDestinationIsAccepted() async throws {
+        let log = RequestRecorder()
+        stubList([], log: log)
+        let env = makeEnvironment()
+        let target = env.coordinator.createLocalDocument(
+            title: "Target", parentID: nil, ownerUserID: ownerID)
+        let moving = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: nil, ownerUserID: ownerID)
+        let viewModel = makeViewModel(env, documentID: moving.id, row: moving)
+        await viewModel.loadDestinations()
+
+        await viewModel.move(under: try XCTUnwrap(viewModel.localDestinations.first))
+
+        XCTAssertTrue(viewModel.didMove)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(env.coordinator.pendingCreateParentID(forLocalID: moving.id), target.id)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+    }
+
+    /// A checkpointed record is a **server** document as far as moving goes — the sheet used
+    /// to call it local, after which every row in the picker failed.
+    func testACheckpointedDocumentIsOfferedServerDestinationsNotLocalOnes() async {
+        stubList([Self.entry(id: rootID, title: "Root", depth: 1)])
+        let env = makeEnvironment()
+        _ = env.coordinator.createLocalDocument(title: "Another local", parentID: nil, ownerUserID: ownerID)
+        let moving = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: nil, ownerUserID: ownerID)
+        var record = env.coordinator.pendingCreateForTesting(localID: moving.id)!
+        record.syncedServerID = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        env.coordinator.savePendingCreateForTesting(record)
+        let viewModel = makeViewModel(env, documentID: moving.id, row: moving)
+
+        await viewModel.loadDestinations()
+
+        XCTAssertFalse(viewModel.isLocalDocument)
+        XCTAssertTrue(viewModel.localDestinations.isEmpty, "a server move cannot name a local parent")
+        XCTAssertEqual(viewModel.destinations.map(\.id), [rootID])
+    }
+
+    func testALoadThatFindsNowhereToPutTheDocumentShowsTheEmptyState() async {
+        stubList([])
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Root", depth: 1))
+
+        await viewModel.loadDestinations()
+
+        XCTAssertTrue(viewModel.isEmpty)
+    }
+
+    /// The model outlives its sheet on the Options route, so a landed move must not leave
+    /// `didMove` set for a later attempt to report as its own.
+    func testAFailedAttemptAfterASuccessfulOneDoesNotStillReportSuccess() async throws {
+        let listBody = """
+            {"count": 1, "next": null, "previous": null, "results": [\(Self.entry(id: rootID, title: "Root", depth: 1))]}
+            """.data(using: .utf8)!
+        nonisolated(unsafe) var moveCalls = 0
+        MockURLProtocol.stubHandler = { request in
+            guard request.url?.absoluteString.contains("/move/") == true else {
+                return .init(statusCode: 200, headers: [:], body: listBody, error: nil)
+            }
+            moveCalls += 1
+            return moveCalls == 1
+                ? .init(
+                    statusCode: 200, headers: [:],
+                    body: #"{"message": "Document moved successfully."}"#.data(using: .utf8)!, error: nil)
+                : .init(statusCode: 400, headers: [:], body: Data(), error: nil)
+        }
+        let env = makeEnvironment()
+        let viewModel = makeViewModel(env, row: document(id: documentID, title: "Moving", depth: 2))
+        await viewModel.loadDestinations()
+        await viewModel.move(under: try XCTUnwrap(viewModel.destinations.first))
+        XCTAssertTrue(viewModel.didMove, "precondition")
+
+        await viewModel.move(under: try XCTUnwrap(viewModel.destinations.first))
+
+        XCTAssertFalse(viewModel.didMove, "the second attempt failed and must say so")
+        XCTAssertEqual(viewModel.errorKey, .move_error)
     }
 
     /// Work Offline is a no-network contract on every read path — the same early return the

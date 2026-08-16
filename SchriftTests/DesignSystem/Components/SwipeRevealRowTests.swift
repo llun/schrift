@@ -137,15 +137,22 @@ final class SwipeRevealRowTests: XCTestCase {
     /// 343pt is an iPhone SE's 375pt less the 16pt gutter each side. The cap (0.6 × 343 ÷ 3 =
     /// 68.6pt) is what binds: under the 72pt base, comfortably over the 44pt floor, and the
     /// strip lands exactly on the 60% budget.
-    func testAThreeActionStripFitsTheNarrowestRowWithoutHittingTheTapTargetFloor() {
-        let width = swipeActionButtonWidth(actionCount: 3, scaledBase: 72, rowWidth: 343)
+    func testADocumentRowsStripFitsTheNarrowestRowWithoutHittingTheTapTargetFloor() {
+        // **Derived from the real resolver, not a literal.** A hard-coded 3 would keep passing
+        // when a fourth action is added, which is the whole thing this is here to catch.
+        let actionCount = documentRowSwipeActions(
+            isPendingDelete: false, isLocalDocument: false, isFavorite: false, offersPin: true,
+            keepLabel: "Keep", pinLabel: "Pin", unpinLabel: "Unpin", moveLabel: "Move",
+            deleteLabel: "Delete", onKeep: {}, onTogglePin: {}, onMove: {}, onDelete: {}
+        ).count
+        let width = swipeActionButtonWidth(actionCount: actionCount, scaledBase: 72, rowWidth: 343)
 
         XCTAssertGreaterThan(
             width, DocsSpacing.rowMinHeight,
             "the floor must not be engaged, or the strip would exceed its share of the row")
         XCTAssertLessThanOrEqual(
-            swipeActionStripWidth(actionCount: 3, buttonWidth: width), 343 * 0.6,
-            "three actions must still fit the 60% budget")
+            swipeActionStripWidth(actionCount: actionCount, buttonWidth: width), 343 * 0.6,
+            "every action a document row offers must still fit the 60% budget")
     }
 
     /// Before the first geometry callback the row's width is still zero. Falling through to

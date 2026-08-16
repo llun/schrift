@@ -727,6 +727,9 @@ final class PagesTreeViewModelTests: XCTestCase {
             contentCache: DocumentContentCacheStore(directory: contentCacheDirectory),
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: defaults,
+                directory: contentCacheDirectory.appendingPathComponent("attachments")),
             listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: cache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         let signedIn = SignedInUserStore(userDefaults: defaults)

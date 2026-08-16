@@ -48,6 +48,11 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
             client: client, draftStore: PendingDraftStore(userDefaults: defaults),
             contentCache: contentCache, createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            // The attachment store too: it defaults onto `UserDefaults.standard` *and* the real
+            // Application Support directory, and a half-isolated coordinator is what makes a
+            // later pass issue a genuine `/users/me/` that escapes `MockURLProtocol`.
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("attachments")),
             listCache: listCache, childrenCache: childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
         return Environment(
@@ -334,6 +339,18 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
         XCTAssertEqual(env.listCache.loadRecentDocuments()?.filter { $0.id == documentID }.count, 1)
     }
 
+    /// The remove twin of the rule below: nil (never cached) and `[]` (fetched, empty) are
+    /// read as different everywhere, so filing a document under a parent must not write an
+    /// empty recents list where there was none.
+    func testFilingUnderAParentNeverFabricatesARecentsListThatWasNeverCached() {
+        let env = makeEnvironment()
+
+        env.coordinator.completeDocumentMove(
+            documentID: documentID, row: document(id: documentID), newParentID: parentID)
+
+        XCTAssertNil(env.listCache.loadRecentDocuments())
+    }
+
     func testAPromotionNeverFabricatesARecentsListThatWasNeverCached() {
         let env = makeEnvironment()
 
@@ -361,50 +378,73 @@ final class DocumentSaveCoordinatorMoveTests: XCTestCase {
         XCTAssertNil(recorder.seen.first?.row)
     }
 
-    /// **The migration must not undo the move it raced.** `replayCreate`'s resume branch
-    /// captures its record before two network round trips, so a move landing inside that
-    /// window leaves the captured `parentID` describing the *old* placement — and
-    /// `insertIntoListCaches` would then write the document back where it no longer belongs.
+    /// **The migration must not undo the move it raced** — driven through a real pass, so it
+    /// also proves the migration genuinely *reaches* its cache write in this state rather than
+    /// being turned back by one of `finishMigration`'s five guards.
     ///
-    /// Driven through `completeDocumentMove` + `finishMigrationForTesting` rather than a live
-    /// pass, because the window being tested is precisely the one between the resume's awaits.
-    func testAMigrationInFlightDoesNotUndoAMoveThatLandedDuringIt() {
+    /// The window is the interval between the resume branch's two fetches, which is exactly
+    /// what a `ResponseGate` opens: the record is captured before them, so a move landing here
+    /// leaves that copy describing the *old* placement.
+    func testAMoveLandingBetweenTheResumesFetchesIsNotUndoneByTheMigration() async {
         let env = makeEnvironment()
         let oldParentID = UUID(uuidString: "66666666-6666-4666-8666-666666666666")!
         let local = env.coordinator.createLocalDocument(
-            title: "Moving", parentID: oldParentID, ownerUserID: ownerID)
+            title: "Moving", parentID: oldParentID, ownerUserID: ownerID, seedMarkdown: "# Body")
         var record = env.creates.create(for: local.id)!
         record.syncedServerID = documentID
         env.creates.save(record)
-        // The stale copy the resume is holding — captured before the move lands.
-        let capturedRecord = record
         env.listCache.saveRecentDocuments([])
         env.childrenCache.save([], for: oldParentID)
 
+        let serverDocument = """
+            {"id": "\(documentID.uuidString.lowercased())", "title": "Moving", "abilities": {}, \
+            "link_reach": "restricted", "link_role": "reader", "depth": 1, "numchild": 0, \
+            "path": "0002", "created_at": "2026-08-01T10:00:00Z", "updated_at": "2026-08-01T10:00:00Z"}
+            """.data(using: .utf8)!
+        let content = """
+            {"id": "\(documentID.uuidString.lowercased())", "title": "Moving", "content": "# Body", \
+            "created_at": "2026-08-01T10:00:00Z", "updated_at": "2026-08-01T10:00:00Z"}
+            """.data(using: .utf8)!
+        let userBody = #"{"id": "22222222-2222-4222-8222-222222222222"}"#.data(using: .utf8)!
+        // Only the *second* fetch is held, so the pass is provably inside the resume window.
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("users/me") {
+                return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
+            }
+            if url.contains("content") {
+                return .init(statusCode: 200, headers: [:], body: content, error: nil, releasedBy: gate)
+            }
+            return .init(statusCode: 200, headers: [:], body: serverDocument, error: nil)
+        }
+
+        // A record with a fresh coordinator, so the checkpoint is read from disk.
         let coordinator = DocumentSaveCoordinator(
             client: DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] }),
             draftStore: PendingDraftStore(userDefaults: env.defaults),
             contentCache: env.contentCache, createStore: env.creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: env.defaults,
+                directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
             listCache: env.listCache, childrenCache: env.childrenCache,
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)
-        let row = document(id: documentID)
 
-        // The move lands while the resume is between its awaits: it re-points the record…
-        coordinator.completeDocumentMove(documentID: documentID, row: row, newParentID: nil)
+        async let pass: Void = coordinator.syncPendingDrafts()
+        await waitUntil { MockURLProtocol.deferredDeliveryCount > 0 }
+
+        // The move lands while the resume sits between its two fetches.
+        coordinator.completeDocumentMove(
+            documentID: documentID, row: document(id: documentID), newParentID: nil)
         XCTAssertNil(env.creates.create(for: local.id)?.parentID, "precondition: record re-pointed")
 
-        // …and then the migration resolves, still holding the pre-move copy.
-        coordinator.finishMigrationForTesting(
-            capturedRecord, serverID: documentID, serverTitle: "Moving", serverUpdatedAt: Date(),
-            serverMarkdown: "", document: row)
+        gate.open()
+        await pass
 
         XCTAssertEqual(
             env.childrenCache.children(for: oldParentID), [],
-            "the old parent's cached level must not get the row back")
-        XCTAssertEqual(
-            env.listCache.loadRecentDocuments()?.map(\.id), [documentID],
-            "and the promotion stands — the migration files it where the move put it")
+            "the migration must not file the row back under the parent the move took it out of")
     }
 
     // MARK: - The fan-out

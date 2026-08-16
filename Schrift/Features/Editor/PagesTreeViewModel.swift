@@ -205,7 +205,6 @@ final class PagesTreeViewModel {
         {
             level.append(row)
             children[newParentID] = level
-            mutations[newParentID, default: 0] += 1
         }
         // A level that was never loaded stays nil — never fabricated. The coordinator has
         // already written the shared cache, which is what `load(parentID:)` seeds from when
@@ -215,6 +214,11 @@ final class PagesTreeViewModel {
         // move names: a `listChildren` issued before the move completes after it and would
         // write both the array and the cache entry — restoring the row to the old parent, or
         // installing a new-parent level that predates the arrival.
+        //
+        // This one loop is sufficient, and the new parent needs no bump of its own:
+        // `load(parentID:)` inserts into `loading` *before* it reads `mutations`, so a level
+        // being fetched is already in this set, and one that is not being fetched re-reads
+        // `mutations` when its load starts.
         for parentID in loading { mutations[parentID, default: 0] += 1 }
     }
 

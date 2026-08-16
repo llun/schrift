@@ -310,13 +310,19 @@ struct DocumentActions {
         // written under the id the POST returned, so completing under the local one would sweep
         // nothing and announce a row no screen holds.
         //
-        // **A synthetic row is dropped rather than re-keyed.** Every surface that offers Move
-        // merges `localDocument(from:)` rows in at read time, and those must never enter a
-        // persisted cache — but `identified(as:)` is exactly the operation that would remove
-        // the property making a leak obvious, since a client-minted id 404s on every fetch
-        // while a re-keyed one is indistinguishable from a real row. Passing nil costs only
-        // that the destination picks the document up on its next fetch.
-        let cacheableRow = row.flatMap { isLocalDocument($0.id) ? nil : $0.identified(as: serverID) }
+        // **The row is passed on only when it is already usable as-is.** Two things disqualify
+        // it, and between them nothing is left to re-key:
+        //
+        //  - it is **synthetic**. Every surface that offers Move merges `localDocument(from:)`
+        //    rows in at read time, and those must never enter a persisted cache. Re-keying one
+        //    onto the server id is the specific thing that would make a leak undetectable — a
+        //    client-minted id 404s on every fetch, a re-keyed one is indistinguishable from a
+        //    real row;
+        //  - it names an id the caches are not keyed by. That can only happen for a
+        //    checkpointed record met under its local id, which the first test already drops.
+        //
+        // Passing nil costs only that the destination picks the document up on its next fetch.
+        let cacheableRow = row.flatMap { $0.id == serverID && !isLocalDocument($0.id) ? $0 : nil }
         saveCoordinator?.completeDocumentMove(
             documentID: serverID, row: cacheableRow, newParentID: newParentID)
         return .moved

@@ -1798,6 +1798,28 @@ final class HomeViewModelTests: XCTestCase {
             "this fetch was issued after the move, so its answer is the truth")
     }
 
+    /// Home's feed is unfiltered, so a promoted document may already be in it. A duplicate id
+    /// in the `ForEach` is undefined row identity.
+    func testAPromotionOfADocumentAlreadyOnHomeDoesNotDuplicateItsRow() async {
+        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let fixture = Self.paginatedFixture(id: id.uuidString, title: "Q3 Planning", isFavorite: false)
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            return .init(
+                statusCode: 200, headers: [:],
+                body: path.contains("favorite_list") ? empty : fixture, error: nil)
+        }
+        let viewModel = makeViewModel()
+        await viewModel.load()
+        XCTAssertTrue(viewModel.recentDocuments.contains { $0.id == id }, "precondition")
+
+        viewModel.saveCoordinator.announceDocumentMovedForTesting(
+            DocumentMoveEvent(documentID: id, row: Self.movedDocument(id: id), newParentID: nil))
+
+        XCTAssertEqual(viewModel.recentDocuments.filter { $0.id == id }.count, 1)
+    }
+
     /// **A promotion override carries its own stored row**, so it re-inserts from itself rather
     /// than from the fetch — which means `deletedSinceLoad`, which filters the *fetch*, cannot
     /// stop it putting a deleted document back on Home and into the recents cache.

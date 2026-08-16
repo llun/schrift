@@ -100,13 +100,19 @@ final class MoveDocumentViewModel {
     /// from: a document listed among the roots is a root.
     private var resolvedDepth: Int?
 
+    /// Latest-wins, because this has **two** callers: the view's `.task` and the stale-local-
+    /// destination refusal below. Without it a superseded load resumes after the newer one and
+    /// overwrites its answer — including replacing a refusal's `move_error` with the older
+    /// fetch's `move_error_load`, which explains the wrong failure. Deliberately not a `defer`,
+    /// for the reason `HomeViewModel` states: a superseded load must not clear a newer load's
+    /// spinner.
+    private var loadGeneration = 0
+
     func loadDestinations() async {
         errorKey = nil
         isLoading = true
-        defer {
-            isLoading = false
-            hasLoaded = true
-        }
+        loadGeneration += 1
+        let generation = loadGeneration
 
         // A local document can be filed under another local one — the replay orders the two
         // creates — so those are worth offering even with no network at all.
@@ -119,10 +125,15 @@ final class MoveDocumentViewModel {
         // Work Offline is a no-network contract on every read path — the same early return
         // `HomeViewModel`, `SharedViewModel` and `PagesTreeViewModel` make. Local destinations
         // are already in hand and stay offered.
-        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return }
+        guard !userDefaults.bool(forKey: "schrift.workOffline") else {
+            isLoading = false
+            hasLoaded = true
+            return
+        }
 
         do {
             let response = try await client.listDocuments(ordering: "-updated_at")
+            guard generation == loadGeneration else { return }
             if let mine = response.results.first(where: { $0.id == documentID }) {
                 resolvedDepth = mine.depth
             }
@@ -135,10 +146,13 @@ final class MoveDocumentViewModel {
                         documentID: candidate.id, currentUserID: signedInUser.userID) ?? false)
             }
         } catch {
+            guard generation == loadGeneration else { return }
             // Silent when there is still something to choose from — the cached-data silence
             // rule every list here follows. Loud only when the sheet would otherwise be blank.
             if localDestinations.isEmpty { errorKey = .move_error_load }
         }
+        isLoading = false
+        hasLoaded = true
     }
 
     func moveToHome() async {
@@ -164,9 +178,16 @@ final class MoveDocumentViewModel {
         if localDestinations.contains(where: { $0.id == parent.id }),
             saveCoordinator?.isPendingCreate(documentID: parent.id) != true
         {
+            guard !isMoving else { return }
+            // Busy for its own duration, exactly as `perform` is: this awaits a fetch, and
+            // without it the rows stay live and a second tap could land a real move whose
+            // `didMove` this branch would then report as its own.
+            isMoving = true
+            didMove = false
             // Refresh first — `loadDestinations` clears `errorKey` on entry — so the sheet ends
             // up showing the destinations that still exist, with the failure explained.
             await loadDestinations()
+            isMoving = false
             errorKey = .move_error
             return
         }

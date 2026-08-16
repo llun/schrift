@@ -78,24 +78,6 @@ struct Document: Codable, Equatable, Hashable, Identifiable {
     let creator: UUID?
 }
 
-extension Document {
-    /// The same document under another id.
-    ///
-    /// `id` is a `let` — identity is not something a value should be able to drift on — so
-    /// this rebuilds through the memberwise initializer rather than mutating, which also makes
-    /// a field added to `Document` and forgotten here a compile error rather than silent data
-    /// loss. The one caller is the move ladder, re-keying a checkpointed record's row onto the
-    /// server id its caches and list rows are actually written under.
-    func identified(as documentID: UUID) -> Document {
-        guard documentID != id else { return self }
-        return Document(
-            id: documentID, title: title, excerpt: excerpt, abilities: abilities, linkReach: linkReach,
-            linkRole: linkRole, computedLinkReach: computedLinkReach, computedLinkRole: computedLinkRole,
-            isFavorite: isFavorite, depth: depth, numchild: numchild, path: path, createdAt: createdAt,
-            updatedAt: updatedAt, userRole: userRole, creator: creator)
-    }
-}
-
 // The decoder lives in an extension so the memberwise initializer survives — `SubpageRow`'s
 // preview builds a `Document` with it.
 extension Document {

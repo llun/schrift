@@ -662,6 +662,67 @@ final class DocumentActionsTests: XCTestCase {
         XCTAssertEqual(log.count(ofMethod: "POST"), 0)
     }
 
+    /// **A local move announces nothing and writes no persisted cache.** The whole propagation
+    /// is the version bump plus each surface's read-time merge — and it must stay that way,
+    /// because the row a surface would hand over here is a `localDocument(from:)` synthetic,
+    /// which must never enter a metadata cache.
+    func testALocalMoveAnnouncesNothingAndWritesNoPersistedCache() async {
+        let env = makeEnvironment()
+        let listCache = DocumentCacheStore(userDefaults: env.defaults)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: env.defaults)
+        listCache.saveRecentDocuments([])
+        let parent = env.coordinator.createLocalDocument(
+            title: "Parent", parentID: nil, ownerUserID: ownerID)
+        childrenCache.save([], for: parent.id)
+        let moving = env.coordinator.createLocalDocument(
+            title: "Moving", parentID: nil, ownerUserID: ownerID)
+        let recorder = MoveRecorder()
+        env.coordinator.observeDocumentMoved(recorder) { recorder.seen.append($0) }
+
+        let outcome = await env.actions.move(
+            documentID: moving.id, row: moving, to: .under(parentID: parent.id))
+
+        XCTAssertEqual(outcome, .moved)
+        XCTAssertTrue(recorder.seen.isEmpty, "a local move has nothing to announce")
+        XCTAssertEqual(listCache.loadRecentDocuments(), [], "and no synthetic row may be cached")
+        XCTAssertEqual(childrenCache.children(for: parent.id), [])
+    }
+
+    /// The tombstone outlives the move, so the only thing success would buy is a document
+    /// deleted from somewhere else.
+    func testADocumentAlreadyQueuedForDeletionIsNotMoved() async {
+        let log = RequestRecorder()
+        stubMoveOK(log)
+        let env = makeEnvironment()
+        env.coordinator.recordPendingDelete(documentID: documentID, ownerUserID: ownerID)
+
+        let outcome = await env.actions.move(
+            documentID: documentID, row: serverDocument(id: documentID),
+            to: .under(parentID: UUID()))
+
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+    }
+
+    /// **On the unscoped predicate**, deliberately: the picker filters destinations with the
+    /// *scoped* one, which answers false for an unattributable or foreign-account tombstone —
+    /// so this guard is the only thing standing between the user and filing a subtree into a
+    /// document that is on its way out.
+    func testAServerDocumentIsNeverFiledUnderATombstonedParent() async {
+        let log = RequestRecorder()
+        stubMoveOK(log)
+        let env = makeEnvironment()
+        let parentID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        env.coordinator.recordPendingDelete(documentID: parentID, ownerUserID: ownerID)
+
+        let outcome = await env.actions.move(
+            documentID: documentID, row: serverDocument(id: documentID),
+            to: .under(parentID: parentID))
+
+        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 0)
+    }
+
     /// Promotion needs a root to sit beside. Without one there is no request to make, and
     /// reporting failure is honest — the picker withholds the affordance for this reason.
     func testAServerDocumentCannotBePromotedWithoutASiblingRoot() async {
