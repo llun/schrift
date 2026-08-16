@@ -608,11 +608,13 @@ final class EditorSurfaceParityTests: XCTestCase {
     ///
     /// Expressed that way because that is how the artefact behaves: SwiftUI adds
     /// its extra leading once per line and in proportion to the type. Measured at
-    /// the Large content size it is ~0.22 of the point size (3.67pt at body 17,
-    /// 7.33pt at title1 28, 4.67pt per line for a two-line block); 0.35 is that
-    /// with headroom, and still far below the divergences it exists to catch —
-    /// a quote's missing panel padding was ~20pt on a single 17pt line, where
-    /// this allows 5.95.
+    /// the Large content size it spans **0.22–0.28** of the point size — 3.67pt
+    /// at body 17 (0.22), 7.33pt at title1 28 (0.26), 4.67pt per line for a
+    /// two-line body block (0.28). 0.35 is the *worst* of those with headroom,
+    /// which is a narrower margin than the best case suggests: tighten this
+    /// toward 0.25 and the title1 and two-line `.unknown` fixtures go red. It is
+    /// still far below the divergences it exists to catch — a quote's missing
+    /// panel padding was ~20pt on a single 17pt line, where this allows 5.95.
     private static let leadingResidualRatio: CGFloat = 0.35
 
     /// The width a row is actually offered: the screen less the body gutter.
