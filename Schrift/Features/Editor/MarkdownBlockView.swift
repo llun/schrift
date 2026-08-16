@@ -89,12 +89,19 @@ func unknownRendersAsProse(_ text: String) -> Bool {
 
 /// The reading surface's half of the editor.
 ///
-/// Every metric, font, colour and piece of chrome here comes from
-/// `EditorBlockStyle` — the same table `BlockEditorRow` reads — so a block draws
-/// identically whether the user is reading it or editing it. Do not reach for a
-/// `DocsFont`/`DocsSpacing` token directly in this view: that is exactly how the
-/// two surfaces drifted apart, and how tapping a block came to re-lay-out the
-/// whole document.
+/// Everything that decides how a block's **text** is drawn — its font, colour,
+/// strikethrough, decoration and the spacing of the row around it — comes from
+/// `EditorBlockStyle`, the same table `BlockEditorRow` reads, so a block draws
+/// identically whether the user is reading it or editing it. Do not decide any
+/// of that from a `DocsFont`/`DocsSpacing` token reached for here: that is
+/// exactly how the two surfaces drifted apart, and how tapping a block came to
+/// re-lay-out the whole document.
+///
+/// The leaf arms below (divider, image, attachment, and the fallbacks for a url
+/// that is not this server's) do name tokens directly. That is not an exception
+/// being smuggled in: `BlockEditorRow` names the *same* tokens in its own leaf
+/// arms, so there is one value in two places rather than two values — and
+/// `EditorSurfaceParityTests` measures the rows either way.
 struct MarkdownBlockView: View {
     let block: EditorBlock
     /// Origin the embedded image gate compares against (`imageLoadPolicy`), and

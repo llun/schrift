@@ -1482,9 +1482,15 @@ that are easy to violate and expensive to discover:
   block turning into monospace in a panel; a 20pt checkbox shrinking to 17pt; a
   completed to-do losing its strikethrough), and then jumped *again* on the first
   keystroke when the save-status strip appeared above the canvas.
-  **So: never reach for a `DocsFont`/`DocsSpacing`/`DocsColor` token directly in
-  either surface's block rendering.** Everything goes through
-  `Schrift/Features/Editor/EditorBlockStyle.swift`:
+  **So: never reach for a `DocsFont`/`DocsSpacing`/`DocsColor` token directly to
+  decide how a block's *text* is drawn, or how the row around it is spaced.**
+  That is the part that drifted, and it goes through
+  `Schrift/Features/Editor/EditorBlockStyle.swift`. (The leaf arms — divider,
+  image, attachment, and the two "this url is not ours" text fallbacks — do name
+  tokens directly, in both surfaces, and that is fine precisely because *both*
+  name the same ones and the row-parity test measures the result. A token in a
+  leaf is a shared constant; a token deciding a text row's font is a second copy
+  of the table.)
   - `EditorBlockMetrics` — gutter (`DocsSpacing.gutter`, the app-wide page inset
     the editor's own error banner and formatting bar already used), inter-block
     gap, adornment gap, checkbox size + hit padding, quote/panel padding,
@@ -2856,7 +2862,10 @@ markdown write endpoint**. Understand this before touching the save path:
   paragraph above isn't mistaken for a complete one.
   Two decisions ride with this. (a) **`isOffline` never gates durability or a save
   decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
-  the presence badge) plus the one POST-only affordance above that still reads it (photo).
+  and the document header's `PresenceBar`, via `headerPeers`/`presentedPeerCount`
+  — that was the Options button's presence *badge* until the shared header gave
+  both surfaces a bar, and note the gate now reaches the reading surface too)
+  plus the one POST-only affordance above that still reads it (photo).
   Nothing about whether an edit is kept, queued, or replayed reads it.
   It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
   *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the

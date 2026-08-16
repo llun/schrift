@@ -1210,8 +1210,15 @@ struct EditorView: View {
             }
             .padding(.top, DocsSpacing.spaceBase)
         }
-        // The reading surface already puts spaceMD between blocks, so this only
-        // needs to add the remainder to reach the reference's 40pt gap.
+        // Tops up to the reference's 40pt gap above Subpages. The body stack
+        // contributes `blockSpacing` (12) and `readingSurface` adds
+        // `headerToBodySpacing - blockSpacing` (12) at the call site, so the
+        // remainder here is measured from `spaceMD` — the 24pt those two make
+        // between them, which is what this stack used to contribute on its own
+        // before the two surfaces were given a shared inter-block gap. Change
+        // either metric and the 40pt has to be re-derived; it is spread across
+        // two files precisely because the *body* gap is now shared and this one
+        // is not.
         .padding(.top, DocsSpacing.spaceXL - DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
