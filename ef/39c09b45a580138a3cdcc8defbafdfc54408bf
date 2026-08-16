@@ -1,0 +1,43 @@
+Schrift/Features/Documents/MoveDocumentViewModel.swift
+  s_ba013086e201ce::t_71f3fef26fa638 181-186,190
+  s_ba013086e201ce::t_4c8675108c2d9a 103-110,114-115,128-132,136,149,154-155
+SchriftTests/DesignSystem/Components/SwipeRevealRowTests.swift
+  s_ba013086e201ce::t_a9a46969c4ca18 140-148,154-155
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_ba013086e201ce::t_a9a46969c4ca18 1801-1822
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_ba013086e201ce::t_e32786e0f1f1f3 730-732
+SchriftTests/Features/Documents/MoveDocumentViewModelTests.swift
+  s_ba013086e201ce::t_1c7a1d3336f5f1 454
+  s_ba013086e201ce::t_d084a757340b59 169-174,176-178,183-189,452-453,455-531
+  s_ba013086e201ce::t_e32786e0f1f1f3 47-48
+  s_ba013086e201ce::t_1d76e839341e48 532
+Schrift/Features/Documents/DocumentActions.swift
+  s_ba013086e201ce::t_4a4de08e3e374b 313-325
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_ba013086e201ce::t_33a72a3d5988ee 217-221
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_ba013086e201ce::t_f52d90348ea20e 1589-1598,1602-1605
+SchriftTests/Features/Documents/DocumentActionsTests.swift
+  s_ba013086e201ce::t_746cfd4297f224 665-725
+SchriftTests/Features/Editor/DocumentSaveCoordinatorMoveTests.swift
+  s_ba013086e201ce::t_e32786e0f1f1f3 51-55
+  s_ba013086e201ce::t_94d0da26aa0540 381-383,385-388,392,399-422,428-430,434-439,442-443,447
+  s_ba013086e201ce::t_a9a46969c4ca18 342-353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "ef39c09b45a580138a3cdcc8defbafdfc54408bf",
+  "prompts": {},
+  "sessions": {
+    "s_ba013086e201ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "94bbce44-9a01-4eed-b2ac-fb32081de459",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
