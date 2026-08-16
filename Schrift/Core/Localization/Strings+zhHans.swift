@@ -106,6 +106,13 @@ enum Strings_zhHans {
         .options_delete: "删除",
         .options_error_toggle_favorite: "无法更新收藏。请重试。",
         .options_error_delete: "无法删除文档。请重试。",
+        .options_move: "移动",
+        .move_title: "移动到",
+        .move_home: "主页（顶层）",
+        .move_destinations: "文档",
+        .move_empty: "没有可用的目标位置。",
+        .move_error: "无法移动文档。请重试。",
+        .move_error_load: "无法加载目标位置。请重试。",
 
         // Share sheet
         .share_title: "分享",

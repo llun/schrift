@@ -108,6 +108,13 @@ enum Strings_th {
         .options_delete: "ลบ",
         .options_error_toggle_favorite: "อัปเดตรายการโปรดไม่ได้ โปรดลองอีกครั้ง",
         .options_error_delete: "ลบเอกสารไม่ได้ โปรดลองอีกครั้ง",
+        .options_move: "ย้าย",
+        .move_title: "ย้ายไปที่",
+        .move_home: "หน้าแรก (ระดับบนสุด)",
+        .move_destinations: "เอกสาร",
+        .move_empty: "ไม่มีปลายทางให้เลือก",
+        .move_error: "ย้ายเอกสารไม่ได้ โปรดลองอีกครั้ง",
+        .move_error_load: "โหลดปลายทางไม่ได้ โปรดลองอีกครั้ง",
 
         // Share sheet
         .share_title: "แชร์",

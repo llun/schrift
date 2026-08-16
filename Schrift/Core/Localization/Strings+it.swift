@@ -109,6 +109,13 @@ enum Strings_it {
         .options_delete: "Elimina",
         .options_error_toggle_favorite: "Impossibile aggiornare il preferito. Riprova.",
         .options_error_delete: "Impossibile eliminare il documento. Riprova.",
+        .options_move: "Sposta",
+        .move_title: "Sposta in",
+        .move_home: "Home (primo livello)",
+        .move_destinations: "Documenti",
+        .move_empty: "Nessuna destinazione disponibile.",
+        .move_error: "Impossibile spostare il documento. Riprova.",
+        .move_error_load: "Impossibile caricare le destinazioni. Riprova.",
 
         // Share sheet
         .share_title: "Condividi",

@@ -106,6 +106,13 @@ enum Strings_en {
         .options_delete: "Delete",
         .options_error_toggle_favorite: "Couldn't update favorite. Please try again.",
         .options_error_delete: "Couldn't delete document. Please try again.",
+        .options_move: "Move",
+        .move_title: "Move to",
+        .move_home: "Home (top level)",
+        .move_destinations: "Documents",
+        .move_empty: "No destinations available.",
+        .move_error: "Couldn't move document. Please try again.",
+        .move_error_load: "Couldn't load destinations. Please try again.",
 
         // Share sheet
         .share_title: "Share",

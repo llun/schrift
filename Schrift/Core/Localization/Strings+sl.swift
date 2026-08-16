@@ -117,6 +117,13 @@ enum Strings_sl {
         .options_delete: "Izbriši",
         .options_error_toggle_favorite: "Priljubljene ni bilo mogoče posodobiti. Poskusite znova.",
         .options_error_delete: "Dokumenta ni bilo mogoče izbrisati. Poskusite znova.",
+        .options_move: "Premakni",
+        .move_title: "Premakni v",
+        .move_home: "Domov (najvišja raven)",
+        .move_destinations: "Dokumenti",
+        .move_empty: "Na voljo ni nobenega cilja.",
+        .move_error: "Dokumenta ni bilo mogoče premakniti. Poskusite znova.",
+        .move_error_load: "Ciljev ni bilo mogoče naložiti. Poskusite znova.",
 
         // Share sheet
         .share_title: "Deljenje",

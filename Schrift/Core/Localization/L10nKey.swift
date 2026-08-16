@@ -132,6 +132,16 @@ enum L10nKey: String, CaseIterable, Sendable {
     // "Couldn't update favorite. Please try again."
     case options_error_delete = "options.error.delete"  // "Couldn't delete document. Please try again."
 
+    // Move sheet. `options_move` is the row and the swipe label both, so the two routes to the
+    // same verb read identically — the rule the delete copy already follows.
+    case options_move = "options.move"  // "Move"
+    case move_title = "move.title"  // "Move to"
+    case move_home = "move.home"  // "Home (top level)"
+    case move_destinations = "move.destinations"  // "Documents" (eyebrow over the candidate list)
+    case move_empty = "move.empty"  // "No destinations available."
+    case move_error = "move.error"  // "Couldn't move document. Please try again."
+    case move_error_load = "move.error.load"  // "Couldn't load destinations. Please try again."
+
     // Share sheet
     case share_title = "share.title"  // "Share"
     case share_invite_placeholder = "share.invite_placeholder"  // "Invite by name or email"
