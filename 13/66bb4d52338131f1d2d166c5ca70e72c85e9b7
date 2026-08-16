@@ -1,0 +1,23 @@
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_e7f1f74b80c4ad::t_ed9b84b66c7cc0 92-104
+Schrift/Features/Editor/EditorView.swift
+  s_e7f1f74b80c4ad::t_05ad9620e2ae2f 1213-1221
+CLAUDE.md
+  s_e7f1f74b80c4ad::t_ed9b84b66c7cc0 1485-1493,2865-2868
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "1366bb4d52338131f1d2d166c5ca70e72c85e9b7",
+  "prompts": {},
+  "sessions": {
+    "s_e7f1f74b80c4ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e75283f-9d8f-401b-97d2-472feb511829",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
