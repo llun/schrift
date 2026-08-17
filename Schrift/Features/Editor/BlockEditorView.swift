@@ -63,12 +63,11 @@ struct BlockEditorView<Header: View>: View {
             .scrollPosition($scrollPosition)
             // Record continuously so `Done` hands the reading surface back the
             // place the user was editing, not the top of the page.
-            // `contentOffset.y` is measured from the scroll view's bounds origin,
-            // which sits at `-contentInsets.top` when scrolled to the top, while
-            // `scrollTo(y:)` positions relative to the content's own top edge.
-            // Recording the distance scrolled *from the content top* is what makes
-            // the two agree; without it every handoff lands one safe-area inset
-            // out (~110pt on this device, in both directions).
+            // Normalized to "distance scrolled from the content's own top edge",
+            // the origin `scrollTo(y:)` uses. Measured as zero for these scroll
+            // views, so it is defensive rather than load-bearing — see the twin
+            // comment on the reading surface, and note it is *not* what fixed
+            // the handoff's ~110pt error.
             .onScrollGeometryChange(for: CGFloat.self) {
                 $0.contentOffset.y + $0.contentInsets.top
             } action: { _, offset in

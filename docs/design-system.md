@@ -1232,6 +1232,13 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   reference type — routing scroll updates through `@State` would invalidate
 >   `EditorView` on every change, and the reading surface re-runs
 >   `AttributedString(markdown:)` and an `NSDataDetector` pass per block.
+>   *(Superseded 2026-08-17: the `.scrollPosition(id:)` mechanism described here
+>   never worked — see the amendment at the end of this file for what replaced it
+>   and why. The perf rationale is also narrower than stated: the store is kept
+>   non-observable so scrolling invalidates nothing needlessly, but the
+>   per-block re-parse it warns of was **measured and does not occur** — a probe
+>   counting `markdownInlineText` calls recorded none across a scroll, because
+>   `MarkdownBlockView`'s inputs are all `Equatable` and SwiftUI skips its body.)*
 >
 > `EditorSurfaceParityTests` pins what a shared table cannot guarantee by
 > itself — that the SwiftUI and UIKit conversions of one appearance land on the

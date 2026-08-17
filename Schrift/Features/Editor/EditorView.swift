@@ -891,8 +891,7 @@ struct EditorView: View {
     /// Laid out to match `BlockEditorView` block for block: the same header, the
     /// same `EditorBlockMetrics.gutter`, the same `blockSpacing` between rows,
     /// and the same header-to-body gap — so the tap that swaps this for the
-    /// editing canvas moves nothing. The rows are named with `EditorScrollTarget`
-    /// so the scroll anchor survives that swap too.
+    /// editing canvas moves nothing.
     ///
     /// A flat stack rather than nested section stacks: the two canvases have to
     /// contribute the same gaps in the same order for the scroll offset to mean
@@ -958,12 +957,16 @@ struct EditorView: View {
         .scrollPosition($readingScrollPosition)
         // Recorded continuously, read once — when the editing canvas appears
         // and asks where the reader was.
-        // `contentOffset.y` is measured from the scroll view's bounds origin,
-        // which sits at `-contentInsets.top` when scrolled to the top, while
-        // `scrollTo(y:)` positions relative to the content's own top edge.
-        // Recording the distance scrolled *from the content top* is what makes
-        // the two agree; without it every handoff lands one safe-area inset
-        // out (~110pt on this device, in both directions).
+        //
+        // The `+ contentInsets.top` normalizes to "distance scrolled from the
+        // content's own top edge", which is the origin `scrollTo(y:)` uses,
+        // whereas `contentOffset.y` is measured from the scroll view's bounds.
+        // **Measured as zero for these two scroll views**, so it changes nothing
+        // today and is kept only because the un-normalized form is wrong the
+        // moment either surface gains a top inset. It is *not* what fixed the
+        // ~110pt error the handoff first showed — that was the editing canvas's
+        // `LazyVStack` clamping the restore, and adding this term made no
+        // difference to it whatsoever.
         .onScrollGeometryChange(for: CGFloat.self) {
             $0.contentOffset.y + $0.contentInsets.top
         } action: { _, offset in

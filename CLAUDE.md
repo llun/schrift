@@ -435,8 +435,9 @@ Schrift/
 │                        the one style table BOTH surfaces draw from (EditorBlockStyle:
 │                        EditorBlockMetrics, blockTextAppearance, editorBlockDecoration,
 │                        EditorBlockAdornment) + the shared EditorDocumentHeader and the
-│                        EditorScrollTarget/EditorScrollAnchorStore that carry scroll
-│                        position across the reading ↔ editing swap,
+│                        EditorScrollAnchorStore that carries scroll position across the
+│                        reading ↔ editing swap (EditorScrollTarget names the editing
+│                        canvas's rows for its own ScrollViewReader, nothing more),
 │                        read-only version history (VersionHistoryViewModel,
 │                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
@@ -1560,9 +1561,12 @@ that are easy to violate and expensive to discover:
      cache revalidation depends on off-screen rows still running their `.task`.
 
   `EditorScrollAnchorStore` is deliberately **not `@Observable`**: the offset
-  changes every scroll frame, and routing that through `@State` would invalidate
-  `EditorView` each time, re-running `AttributedString(markdown:)` and an
-  `NSDataDetector` pass for every block on the reading surface.
+  changes every scroll frame, and there is no reason for any of that to
+  invalidate `EditorView`. Note the cost this avoids is smaller than it looks —
+  a probe counting `markdownInlineText` calls recorded **none** across a scroll,
+  because `MarkdownBlockView`'s inputs are all `Equatable` and SwiftUI skips its
+  body. Keep the store non-observable anyway; the point is that nothing needs
+  invalidating, not that the alternative was measured to be catastrophic.
 
   The residual after all three is ~37pt on a two-screen document — the same
   cumulative line-box drift documented below, not a fourth bug.
