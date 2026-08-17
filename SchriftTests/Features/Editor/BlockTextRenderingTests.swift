@@ -30,9 +30,7 @@ final class BlockTextRenderingTests: XCTestCase {
     }
 
     private func restyle(_ view: EditorUITextView, kind: BlockKind) {
-        let styling = blockTextStyling(for: kind)
-        view.applyInlineStyling(
-            font: styling.font, textColor: styling.textColor, rendersInlineMarkdown: styling.rendersInlineMarkdown)
+        view.applyInlineStyling(blockTextStyling(for: EditorBlock(kind: kind, text: view.text ?? "")))
     }
 
     private func renderedWidth(_ view: EditorUITextView) -> CGFloat {
@@ -130,8 +128,10 @@ final class BlockTextRenderingTests: XCTestCase {
         // Compared against the block's own resolved font, not a literal: heading
         // fonts scale with Dynamic Type, and what this pins is that the bold run
         // keeps the heading's size rather than dropping to body.
-        XCTAssertEqual(font.pointSize, blockTextStyling(for: .heading(level: 1)).font.pointSize)
-        XCTAssertGreaterThan(font.pointSize, blockTextStyling(for: .paragraph).font.pointSize)
+        XCTAssertEqual(
+            font.pointSize, blockTextStyling(for: EditorBlock(kind: .heading(level: 1), text: "")).font.pointSize)
+        XCTAssertGreaterThan(
+            font.pointSize, blockTextStyling(for: EditorBlock(kind: .paragraph, text: "")).font.pointSize)
         XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.traitBold))
     }
 

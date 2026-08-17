@@ -274,10 +274,19 @@
 >   only re-park — which is the part that matters; only where it renders changed.
 >   `EditorSaveBar` is gone and `SaveStatusIndicator.swift` holds the resolver
 >   and the view.
+>   *(Superseded 2026-08-16: that slim row had no reading-mode counterpart and
+>   appeared out of nothing on the first keystroke, so it moved again — into the
+>   shared document header's status slot. The resolver and its precedence are
+>   still untouched. See the revision at the end of this file.)*
 > - **Presence while editing is a count badge** on the Options button
 >   (`presenceBadgeCount`, suppressed offline since peer state is only as fresh
 >   as the last socket message). Reading mode keeps the `PresenceBar` avatar
 >   stack, which has room for one.
+>   *(Superseded 2026-08-16: the document header is shared by both surfaces now
+>   and draws `PresenceBar` in either mode, so the badge became a second copy of
+>   the same fact one row above it and was removed. `presentedPeerCount` and its
+>   tests remain as the freshness rule, applied on both surfaces — see the
+>   revision at the end of this file.)*
 > - **Back is the system's**, in both modes. Leaving mid-edit is safe because
 >   `onDisappear` already flushes; the old `onBack` closure existed only to
 >   drive a drawn button and is deleted.
@@ -318,6 +327,9 @@
 >   count cannot, and live collaboration is still being built out — trading that
 >   away for mock fidelity would remove information from a feature that is not
 >   finished yet.
+>   *(Superseded 2026-08-16: the badge is gone entirely. The document header is
+>   shared by both surfaces now, so the avatar stack is what presence looks like
+>   in either mode — the same conclusion, reached without the badge.)*
 
 > **Revised: 2026-07-31 (Account screen, flat Shared list, and the feedback
 > registers).** The last of the screen-level handoff work.
@@ -896,8 +908,8 @@ amendment at the top of this document.
 Layout is verified primarily via the component `#Preview` catalogs (light **and**
 dark) and a manual run. Pure helpers are unit-tested where they exist:
 the divider leading-inset rule (`52` with a leading icon, else `16`), the
-editor's toolbar-action table (`editorToolbarActions`) and presence-badge rule
-(`presenceBadgeCount`), and the sheet detent/`maxHeight` constants.
+editor's toolbar-action table (`editorToolbarActions`) and presence-freshness
+rule (`presentedPeerCount`), and the sheet detent/`maxHeight` constants.
 (`navBarShowsTopRow` went with `NavBar`; the system bar owns that behavior now.)
 
 ## 9. Part 6 — Version history
@@ -1079,10 +1091,12 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > down a concrete height. Both halves matter here: in the height axis the drawer's
 > label and the old save label were identically bounded (no min, infinite max), so
 > only the proposal separates them.
-> That is the real test, not "is an ancestor bounded". `editingSurface` is a
+> That is the real test, not "is an ancestor bounded". `editingSurface` **was** a
 > `VStack(spacing: 0)` of the row and the canvas in a height-bounded container,
 > so the Save/retry label answered 874pt to an 874pt proposal, the stack saw two
-> greedy children and split the free height between them. `PagesTreeDrawer`
+> greedy children and split the free height between them. (That structure is gone
+> — the editing canvas is a bare `BlockEditorView` and the status sits inside its
+> `ScrollView` — but the lesson is about the container shape, not that call site.) `PagesTreeDrawer`
 > keeps the same technique and is *not* greedy, because a scroll view proposes an
 > unspecified height along its scroll axis, so its rows are ideal-sized — the
 > distinction that tells the two call sites apart.
@@ -1128,3 +1142,156 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > English through an isolated `LocalizationStore` — a width floor only binds while
 > the label is narrower than the floor, which "Save" is and its translations need
 > not be.
+
+> **Revised: 2026-08-16 (one document, drawn once — the reading and editing
+> surfaces made identical).** The editor renders the same `[EditorBlock]` twice,
+> as SwiftUI `Text` while reading and as a UIKit `UITextView` while editing, and
+> each surface carried its own copy of what a block looks like. The copies had
+> drifted far enough that tapping a paragraph re-laid-out the whole page, which
+> reads as *navigating somewhere* rather than as placing a caret: the body gutter
+> was 22pt reading and 16pt editing (so every line re-wrapped and slid 6pt left),
+> the inter-block gap was 12pt against 6pt (cumulative — a ten-block document
+> pulled ~54pt up), the header's whole metadata row had no editing counterpart
+> (~38pt more), the title lost its `-0.02em` tracking, a quote lost its sunken
+> panel and its brand bar turned into a grey hairline, a prose `.unknown` block
+> turned from 17pt body text into 15pt monospace in a panel, the checkbox shrank
+> 20pt → 17pt, and a completed to-do lost its strikethrough. A second jump landed
+> on the *first keystroke*, when the save-status strip materialised above the
+> canvas and shoved the document down ~52pt.
+>
+> The fix is structural, not a round of matched constants — matched constants are
+> what had drifted. **`Schrift/Features/Editor/EditorBlockStyle.swift`** is now
+> the one table both surfaces read:
+>
+> - `EditorBlockMetrics` — gutter (`DocsSpacing.gutter`, like every other screen
+>   and like the editor's own chrome), inter-block gap, adornment gap, checkbox
+>   size and its hit padding, quote/panel padding, divider padding, and the
+>   header spacings. Each entry is a place the two surfaces disagreed.
+> - `blockTextAppearance(for:text:)` → a `BlockTextAppearance` of raw tokens
+>   (`TypographySpec`, `Font.Design?`, italic, struck-through, light/dark hex),
+>   converted to `Font`/`Color` by the reading surface and to
+>   `UIFont`/`UIColor` by `blockTextStyling` — the same raw-value split the
+>   design-system style resolvers use.
+> - `editorBlockDecoration(_:)` — one `ViewModifier` for the quote bar and the
+>   verbatim panel, so the `Text` and the `UITextView` cannot be decorated
+>   differently. It varies **only padding/background/overlay values**, never
+>   which view is decorated: a structural branch there would recreate the
+>   `UITextView` and drop the keyboard on every block conversion.
+> - `EditorBlockAdornment` — the bullet, the number and the checkbox. The
+>   checkbox is a `Button` only where a toggle closure is supplied (editing);
+>   the symmetric ±`checkboxHitPadding` pair grows the target and gives every
+>   point back, so the plain reading glyph occupies exactly the same space. The
+>   shape clears 44pt **in isolation**; in a checklist, consecutive rows sit
+>   `blockSpacing` apart, so neighbouring shapes overlap and the unambiguous
+>   per-checkbox target is bounded by the row pitch (glyph + gap ≈ 35pt). That is
+>   the honest claim — about half again as much as the ~22pt pitch these rows had
+>   before ("roughly doubles" was the old *shape* comparison and does not survive
+>   restating this as a pitch), and 44pt on a dense list would need a taller row
+>   than the reading surface shares.
+>   That padding is a **token with headroom, not an arithmetic fit**: sizing it
+>   as `(rowMinHeight - checkboxSize) / 2` lands at 43pt, because a
+>   `MaterialSymbol` is a `Text` and occupies its glyph's typographic box (23pt
+>   for a 24pt symbol), not its point size — and the assertion that "proves" the
+>   fit substitutes to `rowMinHeight == rowMinHeight`, so it can never catch the
+>   miss. Measure the padded box instead.
+> - `EditorDocumentHeader` — the title and the reach/status/presence row, drawn
+>   by **both** surfaces. The title is a `TextField` while editing and a `Text`
+>   while reading, same font and tracking either way, and an untitled document
+>   now shows the same "Untitled" placeholder on both (it used to render an empty
+>   line while reading and a placeholder while editing).
+>
+> Three consequences worth stating plainly:
+>
+> - **The save status moved into that shared header's status slot**, replacing
+>   the strip pinned above the canvas. `saveStatusDisplay` and its precedence are
+>   untouched — a recorded conflict still refuses to claim a sync or offer a
+>   retry that would only re-park — and `.none` now falls through to the reading
+>   sync caption rather than collapsing, so the slot never changes height under
+>   the user mid-keystroke. The trade: the status scrolls with the document
+>   instead of staying pinned. Nothing becomes unreachable — the toolbar keeps
+>   **Done**, which flushes exactly as tapping **Save** does.
+> - **The checkbox is 24pt**, larger than either surface drew it, and its state
+>   is finally spoken: the glyph is a Private-Use-Area character and so is
+>   `accessibilityHidden`, and a strikethrough is not spoken, so a checklist read
+>   aloud gave no clue which items were done. The reading row carries an
+>   `accessibilityValue` of the *state* ("Done" / "Not done"), distinct from the
+>   editing checkbox's *action* label ("Mark as done"). It is set on the `Text`
+>   rather than by collapsing the row with
+>   `.accessibilityElement(children: .combine)` — the conventional way to give a
+>   row a value, but one that flattens the element tree, and that `Text` can hold
+>   inline links VoiceOver reaches through the Links rotor. Whether combining
+>   really would drop them is not something this repo can assert (it runs no
+>   VoiceOver tests), and between two options that both add the announcement, the
+>   one that cannot take anything away is the right bet.
+> - **Scroll position survives the swap.** The two surfaces are different
+>   `ScrollView`s, so the offset used to be discarded: tapping a paragraph three
+>   screens down opened the editor at the very top. Both canvases now name their
+>   rows with `EditorScrollTarget` under a `.scrollTargetLayout()` and share one
+>   `.scrollPosition(id:anchor: .top)` binding. It is backed by
+>   `EditorScrollAnchorStore`, a plain (deliberately **not** `@Observable`)
+>   reference type — routing scroll updates through `@State` would invalidate
+>   `EditorView` on every change, and the reading surface re-runs
+>   `AttributedString(markdown:)` and an `NSDataDetector` pass per block.
+>   *(Superseded 2026-08-17: the `.scrollPosition(id:)` mechanism described here
+>   never worked — see the amendment at the end of this file for what replaced it
+>   and why. The perf rationale is also narrower than stated: the store is kept
+>   non-observable so scrolling invalidates nothing needlessly, but the
+>   per-block re-parse it warns of was **measured and does not occur** — a probe
+>   counting `markdownInlineText` calls recorded none across a scroll, because
+>   `MarkdownBlockView`'s inputs are all `Equatable` and SwiftUI skips its body.)*
+>
+> `EditorSurfaceParityTests` pins what a shared table cannot guarantee by
+> itself — that the SwiftUI and UIKit conversions of one appearance land on the
+> same font (weight read from the descriptor, since UIKit flags `.semibold` as
+> `.traitBold`) and the same colour, that a completed to-do is struck through
+> over the *whole buffer* on both surfaces, that the checkbox's hit padding nets
+> out, and that the decoration adds exactly the metrics it claims. Every
+> measurement carries a negative control, and the three fixes it exists to guard
+> were mutation-checked: reverting each one reds exactly the intended tests.
+>
+> **One residual is accepted and bounded rather than closed.** A SwiftUI `Text`
+> carries a little more leading than the same font in a `UITextView` with
+> `lineFragmentPadding` and `textContainerInset` zeroed — ~3.7pt at body 17,
+> ~7.3pt at title1 28, per wrapped line — so a paragraph is a hair shorter while
+> editing. Every *adorned* row is exactly equal, because the SwiftUI adornment
+> sets the row height on both sides, and nothing moves horizontally or re-wraps,
+> so it is a uniform tightening rather than a re-flow. The parity test bounds it
+> at `0.35 × font size × line count` with a hard `delta >= 0` on the other side,
+> which is what catches the two historical per-row offenders (a quote's missing
+> panel padding, ~20pt on one 17pt line; a verbatim panel around every
+> `.unknown`, ~15pt the other way). Closing it would mean reverse-engineering
+> SwiftUI's internal line metrics into the text container's insets.
+>
+> **Presence has one home.** The Options button's editing-only count badge
+> existed because the editing surface had no `PresenceBar`; the shared header
+> gives it one in both modes, so the badge became a second copy of the same fact
+> one row above it and is gone. `presentedPeerCount` — renamed from `presenceBadgeCount`, since the badge it was named for is gone — and its tests survive as
+> the one rule for whether peer state is fresh enough to show at all, now applied
+> on **both** surfaces: before, only the badge honoured it and the reading
+> surface drew its avatars offline, where they are whatever the socket last said.
+
+> **Amended: 2026-08-17 (the scroll handoff, disproved twice on a device before
+> it worked).** The reading ↔ editing scroll restore shipped in the revision
+> above as `.scrollPosition(id:anchor:)` over a shared `EditorScrollTarget`. On a
+> device it did nothing at all — the editor still opened at the top of the
+> document — and the two later attempts each failed differently. Recorded because
+> every one of them looked right in review:
+>
+> 1. `.scrollPosition(id:)` reports the id the scroll view is **aligned** to.
+>    Free-scrolling content (no `.scrollTargetBehavior(.viewAligned)`, which
+>    would make a document snap) is almost never aligned to an item, so the
+>    binding stayed nil and the handoff silently did nothing. The offset is the
+>    honest unit for a freely scrolling surface — and it only *means* anything
+>    because this change made both canvases lay out the same.
+> 2. Tracking that offset continuously fails too: a `ScrollView` being torn down
+>    reports a **final geometry of zero**, overwriting the anchor with "the top"
+>    at precisely the moment it is read. Snapshot at the swap instead.
+> 3. Restoring into the editing canvas under-scrolls by ~108pt, because it is a
+>    `LazyVStack` — at `onAppear` one screenful exists and the scroll clamps to
+>    it. A bounded re-apply over a few runloop turns lets each pass realize the
+>    rows the last one scrolled past.
+>
+> Residual after all three: ~37pt on a two-screen document, which is the
+> cumulative line-box drift already documented, not a fourth bug. **None of this
+> is reachable by the test suite** — it took a build, a real document and a
+> screenshot at a fixed coordinate to find each one.

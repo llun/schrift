@@ -78,11 +78,16 @@ struct SaveStatusIndicator: View {
                     // own. The floor is this label's own — *not* `maxHeight:
                     // .infinity`, which is what put the title mid-screen: an
                     // unbounded max fills whatever height it is **proposed**, and
-                    // `editingSurface` is a `VStack(spacing: 0)` in a
+                    // `editingSurface` was then a `VStack(spacing: 0)` in a
                     // height-bounded container, so a whole screen was proposed
                     // and answered in full, leaving the canvas the remainder.
-                    // (`saveStatusRow`'s `minHeight:` could not stop it: a floor
-                    // is not a cap.) The width floor
+                    // (The strip's own `minHeight:` could not stop it: a floor
+                    // is not a cap.) The indicator lives in the shared document
+                    // header now — inside a `ScrollView`, which proposes an
+                    // unspecified height — so that particular container is gone,
+                    // but the floor stays: it is what buys the tap target, and
+                    // an unbounded max here would be just as wrong in a scroll
+                    // view's *cross* axis. The width floor
                     // matters here and nowhere else in this switch: "Save" is
                     // four characters, narrower than 44pt at the default text
                     // size, where every other state is a whole phrase.

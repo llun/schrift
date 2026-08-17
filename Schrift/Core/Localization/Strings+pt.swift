@@ -280,6 +280,8 @@ enum Strings_pt {
         .editor_divider_a11y: "Divisor",
         .editor_checklist_done_a11y: "Marcar como concluído",
         .editor_checklist_not_done_a11y: "Marcar como não concluído",
+        .editor_checklist_state_done_a11y: "Concluído",
+        .editor_checklist_state_not_done_a11y: "Não concluído",
         .editor_presence_count_one: "%d pessoa aqui",
         .editor_presence_count_other: "%d pessoas aqui",
 

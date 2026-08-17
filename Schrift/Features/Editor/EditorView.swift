@@ -45,8 +45,12 @@ struct SyncCaption: Equatable {
 /// because dirty means "not on disk yet" — the draft is written by the flush — while that
 /// wording asserts durability. This is the same truth `saveStatusDisplay` keeps on the
 /// editing surface, where `.dirty` holds its Save funnel even under a conflict. In normal
-/// operation nothing renders `.dirty` on *this* caption: it needs `mode == .reading` at
-/// render time, and the only mutator that runs outside an editing session — the
+/// operation nothing renders `.dirty` on *this* caption. It used to be enough to say it
+/// needs `mode == .reading` at render time; the editing status slot falls through to this
+/// same caption when `saveStatusDisplay` is `.none`, so that premise is gone and a
+/// narrower one carries it: `saveStatusDisplay` maps `.dirty` to `.save`, never `.none`,
+/// so the fallback cannot render in a dirty state. On the reading side the old argument
+/// still holds — the only mutator that runs outside an editing session — the
 /// reading-mode photo insert — flushes in the same synchronous turn it dirties
 /// (`insertImageBlock`'s `defer`), while `finishEditing` flushes before it sets `.reading`.
 /// The one exception is a **discarded** document: `flushPendingChanges` returns on
@@ -106,6 +110,48 @@ func syncCaption(
     return SyncCaption(text: .key(.editor_sync_not_synced_yet), offersRetry: false)
 }
 
+/// The sync caption, and the retry affordance it becomes when the save can be
+/// retried. Both editor surfaces draw it — the reading one always, the editing
+/// one whenever `saveStatusDisplay` has nothing of its own to add.
+///
+/// Its own view rather than a helper on `EditorView` so the tap target can be
+/// *measured* (`EditorViewTests`) instead of asserted. It takes resolved strings
+/// rather than `L10nKey`s, which keeps it free of `LocalizationStore` and makes
+/// it hostable with nothing injected.
+struct SyncCaptionLabel: View {
+    let offersRetry: Bool
+    let text: String
+    let retryAccessibilityLabel: String
+    var onRetry: () -> Void
+
+    var body: some View {
+        if offersRetry {
+            Button(action: onRetry) {
+                Text(text)
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textBrand)
+                    // The floor and the shape go on the **label**, exactly as
+                    // `SaveStatusIndicator` puts them on its own. A plain
+                    // `Button` hit-tests the shape its label draws, and a `Text`
+                    // draws one line — so a row floored at 44pt around this
+                    // leaves the target the ~16pt strip it always was. This is
+                    // the only affordance that unpins a document whose save
+                    // failed, so it is the last one that should be hard to hit.
+                    .frame(minHeight: DocsSpacing.rowMinHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(retryAccessibilityLabel)
+        } else {
+            // No floor: nothing here is tappable, and the row it sits in carries
+            // its own so the slot's height does not move when the state changes.
+            Text(text)
+                .font(DocsFont.footnote)
+                .foregroundStyle(DocsColor.textTertiary)
+        }
+    }
+}
+
 /// The editor toolbar's trailing actions, as an ordered list of intents. Pure so
 /// the edit/done swap is unit-testable without SwiftUI — the view maps each case
 /// to a `ToolbarItem`.
@@ -144,14 +190,27 @@ func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorTool
     return actions
 }
 
-/// The count shown on the options button while others are in the document, or
-/// `nil` when the badge should be hidden.
+/// How many peers to present, or `nil` when presence should not be shown at all.
 ///
-/// Presence is an avatar stack on the reading surface, where there is room for
-/// one; while editing, the toolbar carries a count instead. Offline suppresses
-/// it: peer state is whatever the socket last said, and presenting a stale count
-/// as live would be a small lie.
-func presenceBadgeCount(peerCount: Int, isOffline: Bool) -> Int? {
+/// Offline suppresses it: peer state is whatever the socket last said, and
+/// presenting a stale count as live would be a small lie.
+///
+/// `isOffline` is a **coarse** proxy for that, and knowingly so — it is derived
+/// from `HomeViewModel`'s last *list* fetch, so a 5xx or a decoding bug on that
+/// one endpoint sets it with the socket perfectly healthy, and `schrift
+/// .workOffline` sets it outright. It is the signal this app uses to gate
+/// chrome, and presence is chrome; the failure is to hide something true, never
+/// to assert something false.
+///
+/// It was `presenceBadgeCount`, named for the count badge the Options button
+/// carried while editing, which existed only because the reading surface's
+/// avatar stack had no editing counterpart. The document header is shared now
+/// and draws `PresenceBar` in both modes, so the badge is gone — and the name
+/// went with it, rather than leaving a symbol pointing at an affordance nobody
+/// can find. This is the one rule deciding whether that bar has anything fresh
+/// enough to say, on **both** surfaces; before, the reading one drew its avatars
+/// offline and only the badge was suppressed.
+func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     guard !isOffline, peerCount > 0 else { return nil }
     return peerCount
 }
@@ -198,6 +257,12 @@ struct EditorView: View {
     /// than sharing this one: it floats over this list, and a single value would let either
     /// close the other's strip.
     @State private var subpageSwipe = SwipeRevealState<UUID>()
+    /// Where the document body is scrolled to, carried across the reading ↔
+    /// editing swap so tapping a block below the fold places a caret instead of
+    /// throwing the reader back to the top of the page. Shared by both surfaces
+    /// and deliberately not observable — see `EditorScrollAnchorStore`.
+    @State private var scrollAnchor = EditorScrollAnchorStore()
+    @State private var readingScrollPosition = ScrollPosition()
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -303,7 +368,7 @@ struct EditorView: View {
             .accessibilityHidden(isPresentingPagesTree)
             .overlay { pagesTreeOverlay }
             // One system toolbar in both modes. The document title stays in the
-            // canvas as a large content header (`headerBlock`) rather than in the
+            // canvas as a large content header (`EditorDocumentHeader`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions
             // — hence `.inline` with no `.navigationTitle`.
             .navigationBarTitleDisplayMode(.inline)
@@ -650,42 +715,47 @@ struct EditorView: View {
     // MARK: - Editing
 
     private var editingSurface: some View {
-        VStack(spacing: 0) {
-            // Done moved to the toolbar; the save status stays with the canvas,
-            // where it has room for its full copy. `saveStatusDisplay` decides
+        BlockEditorView(
+            viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline, scrollAnchor: scrollAnchor
+        ) {
+            // The same header the reading surface draws, so the swap moves
+            // nothing. Only the status slot differs: `saveStatusDisplay` decides
             // what it says — including holding back any claim of a sync while a
-            // conflict parks the push, which is the rule this row exists to
-            // honour. `.none` renders nothing, so a clean session shows no strip.
-            saveStatusRow
-
-            BlockEditorView(viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline)
-                .safeAreaInset(edge: .bottom) {
-                    // A container so the glass surfaces stacked here (the bar,
-                    // and the slash menu when it is up) are rendered as one
-                    // system pass and blend where they meet, rather than as
-                    // separate panes sitting on top of each other.
-                    GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
-                        VStack(spacing: DocsSpacing.spaceXS) {
-                            if viewModel.isUploadingPhoto {
-                                uploadingBanner(
-                                    loc[.editor_uploading_photo], a11y: loc[.editor_uploading_photo_a11y])
-                            }
-                            if viewModel.isUploadingAttachment {
-                                uploadingBanner(
-                                    loc[.editor_uploading_file], a11y: loc[.editor_uploading_file_a11y])
-                            }
-                            if let query = viewModel.slashQueryText {
-                                SlashMenuView(
-                                    query: query, isOffline: isOffline,
-                                    isLocalDocument: viewModel.isLocalDocument,
-                                    onSelect: { viewModel.applySlashSelection($0) })
-                            }
-                            EditorFormattingBar(viewModel: viewModel)
-                        }
+            // conflict parks the push, which is the rule that row exists to
+            // honour — and falls back to the reading caption when it has
+            // nothing of its own to add (`.none`), so the slot is never empty
+            // and its height never changes under the user mid-keystroke.
+            EditorDocumentHeader(
+                title: viewModel.title, onEditTitle: { viewModel.updateTitle($0) }, reach: reach,
+                peers: headerPeers
+            ) {
+                editingStatus
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            // A container so the glass surfaces stacked here (the bar, and the
+            // slash menu when it is up) are rendered as one system pass and
+            // blend where they meet, rather than as separate panes sitting on
+            // top of each other.
+            GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
+                VStack(spacing: DocsSpacing.spaceXS) {
+                    if viewModel.isUploadingPhoto {
+                        uploadingBanner(loc[.editor_uploading_photo], a11y: loc[.editor_uploading_photo_a11y])
                     }
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.bottom, DocsSpacing.spaceXS)
+                    if viewModel.isUploadingAttachment {
+                        uploadingBanner(loc[.editor_uploading_file], a11y: loc[.editor_uploading_file_a11y])
+                    }
+                    if let query = viewModel.slashQueryText {
+                        SlashMenuView(
+                            query: query, isOffline: isOffline,
+                            isLocalDocument: viewModel.isLocalDocument,
+                            onSelect: { viewModel.applySlashSelection($0) })
+                    }
+                    EditorFormattingBar(viewModel: viewModel)
                 }
+            }
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.bottom, DocsSpacing.spaceXS)
         }
         // The out-of-process system picker: no photo-library usage description and
         // no project.yml change are needed. Do NOT add `photoLibrary: .shared()` —
@@ -732,28 +802,51 @@ struct EditorView: View {
         }
     }
 
-    /// The editing session's save status, as a slim strip above the canvas.
-    /// Collapses to nothing when there is nothing to say.
+    /// The editing session's save status, in the document header's status slot.
+    ///
+    /// It used to be a strip pinned *above* the canvas, which cost two jumps:
+    /// the reading header's own metadata row had no counterpart while editing,
+    /// and the strip appeared out of nothing on the first keystroke
+    /// (`saveStatusDisplay` is `.none` while `.idle`) and shoved the whole
+    /// document down ~52pt under the caret. Sharing the header's slot fixes
+    /// both, and `saveStatusDisplay`'s precedence — including holding back any
+    /// claim of a sync while a conflict parks the push — is untouched.
+    ///
+    /// `.none` falls through to the reading caption rather than collapsing, so
+    /// the slot always says *something* and can never change height mid-edit.
+    /// The trade this makes: the status now scrolls with the document instead of
+    /// staying pinned. Nothing is lost that the user cannot reach — the toolbar
+    /// keeps Done, which flushes exactly as tapping "Save" here does.
     @ViewBuilder
-    private var saveStatusRow: some View {
+    private var editingStatus: some View {
         let display = saveStatusDisplay(
             saveState: viewModel.saveState,
             hasConflict: viewModel.syncConflict != nil,
             hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent)
-        if display != .none {
-            HStack(spacing: 0) {
-                SaveStatusIndicator(display: display, onTap: { viewModel.saveNow() })
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.bottom, DocsSpacing.spaceXS)
-            // A floor, and only a floor — this is a strip above a canvas that
-            // takes whatever is left, so it must never claim the height it is
-            // offered. `SaveStatusIndicator` floors every state itself (which is
-            // also what gets the two tappable ones to 44pt), so this guards the
-            // padded strip alone; a state that ever forgot its own floor would
-            // still not collapse.
-            .frame(minHeight: DocsSpacing.rowMinHeight)
+        if display == .none {
+            syncCaptionLabel
+        } else {
+            SaveStatusIndicator(display: display, onTap: { viewModel.saveNow() })
+        }
+    }
+
+    /// The reading surface's status slot: the live "Synced 5 minutes ago" /
+    /// "Couldn't save · tap to retry" caption.
+    ///
+    /// Extracted from `headerBlock` when the header became shared, so the two
+    /// surfaces' slots are literally the same view where they say the same
+    /// thing.
+    private var syncCaptionLabel: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let caption = currentSyncCaption(now: context.date)
+            SyncCaptionLabel(
+                offersRetry: caption.offersRetry,
+                text: resolvedCaption(caption.text),
+                // The failed-save label only fits the failed caption; a
+                // pending-sync retry falls back to its visible text.
+                retryAccessibilityLabel: caption.text == .key(.editor_sync_save_failed)
+                    ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text),
+                onRetry: { viewModel.saveNow() })
         }
     }
 
@@ -793,10 +886,23 @@ struct EditorView: View {
         viewModel.retryPendingAttachment(placeholderURL: url)
     }
 
+    /// The reading half of the editor.
+    ///
+    /// Laid out to match `BlockEditorView` block for block: the same header, the
+    /// same `EditorBlockMetrics.gutter`, the same `blockSpacing` between rows,
+    /// and the same header-to-body gap — so the tap that swaps this for the
+    /// editing canvas moves nothing.
+    ///
+    /// A flat stack rather than nested section stacks: the two canvases have to
+    /// contribute the same gaps in the same order for the scroll offset to mean
+    /// the same thing in both.
     private var readingSurface: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceMD) {
-                headerBlock
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                readingHeader
+                    // Tops the stack's own `blockSpacing` up to the header-to-body
+                    // gap, exactly as the editing canvas does.
+                    .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
 
                 if viewModel.blocks.isEmpty {
                     // `isDocumentPendingDelete` joins the error check for the same reason the
@@ -808,8 +914,8 @@ struct EditorView: View {
                         emptyContent
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
-                        ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                    ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                        Group {
                             // A queued photo renders from the bytes on disk. Branched here
                             // rather than inside `MarkdownBlockView` because the state and the
                             // Retry/Remove intents belong to the view model, which that view
@@ -829,20 +935,47 @@ struct EditorView: View {
                                 )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
+                                    // Snapshot before the swap, not during it:
+                                    // the outgoing ScrollView's last geometry
+                                    // report is zero.
+                                    scrollAnchor.snapshotForSwap()
                                     viewModel.startEditing(focusing: block.id)
                                 }
                             }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 subpagesSection
+                    .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
             }
-            .padding(.horizontal, DocsSpacing.spaceMD - DocsSpacing.space4xs)
+            .padding(.horizontal, EditorBlockMetrics.gutter)
             .padding(.top, DocsSpacing.spaceSM)
             .padding(.bottom, DocsSpacing.spaceLG)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollPosition($readingScrollPosition)
+        // Recorded continuously, read once — when the editing canvas appears
+        // and asks where the reader was.
+        //
+        // The `+ contentInsets.top` normalizes to "distance scrolled from the
+        // content's own top edge", which is the origin `scrollTo(y:)` uses,
+        // whereas `contentOffset.y` is measured from the scroll view's bounds.
+        // **Measured as zero for these two scroll views**, so it changes nothing
+        // today and is kept only because the un-normalized form is wrong the
+        // moment either surface gains a top inset. It is *not* what fixed the
+        // ~110pt error the handoff first showed — that was the editing canvas's
+        // `LazyVStack` clamping the restore, and adding this term made no
+        // difference to it whatsoever.
+        .onScrollGeometryChange(for: CGFloat.self) {
+            $0.contentOffset.y + $0.contentInsets.top
+        } action: { _, offset in
+            scrollAnchor.noteScrolled(to: offset)
+        }
+        .onAppear {
+            if let offsetY = scrollAnchor.consumePendingOffset() {
+                readingScrollPosition.scrollTo(y: offsetY)
+            }
         }
         .refreshable {
             await viewModel.refresh()
@@ -951,46 +1084,16 @@ struct EditorView: View {
     /// header (moved out of the nav bar to match the handoff — the bar keeps
     /// only the back button and trailing actions), then the reach pill and the
     /// sync caption on the row beneath it.
-    private var headerBlock: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-            Text(viewModel.title)
-                .font(DocsFont.title1)
-                .docsTracking(DocsTypographySpec.title1, DocsTracking.tight)
-                .foregroundStyle(DocsColor.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-
-            HStack(spacing: DocsSpacing.spaceXS) {
-                LinkReachPill(reach: reach)
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    let caption = currentSyncCaption(now: context.date)
-                    if caption.offersRetry {
-                        Button {
-                            viewModel.saveNow()
-                        } label: {
-                            Text(resolvedCaption(caption.text))
-                                .font(DocsFont.footnote)
-                                .foregroundStyle(DocsColor.textBrand)
-                        }
-                        .buttonStyle(.plain)
-                        // The failed-save label only fits the failed caption; a
-                        // pending-sync retry falls back to its visible text.
-                        .accessibilityLabel(
-                            caption.text == .key(.editor_sync_save_failed)
-                                ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text))
-                    } else {
-                        Text(resolvedCaption(caption.text))
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
-                    }
-                }
-
-                Spacer(minLength: DocsSpacing.spaceXS)
-                PresenceBar(peers: collaborationPeers, size: 22, max: 3)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    ///
+    /// The *same* `EditorDocumentHeader` the editing canvas draws — only the
+    /// status slot and the title's editability differ — so the swap between the
+    /// two surfaces moves nothing.
+    private var readingHeader: some View {
+        EditorDocumentHeader(
+            title: viewModel.title, onEditTitle: nil, reach: reach, peers: headerPeers
+        ) {
+            syncCaptionLabel
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// One Subpages row, wrapped in its swipe container.
@@ -1116,8 +1219,15 @@ struct EditorView: View {
             }
             .padding(.top, DocsSpacing.spaceBase)
         }
-        // The reading surface already puts spaceMD between blocks, so this only
-        // needs to add the remainder to reach the reference's 40pt gap.
+        // Tops up to the reference's 40pt gap above Subpages. The body stack
+        // contributes `blockSpacing` (12) and `readingSurface` adds
+        // `headerToBodySpacing - blockSpacing` (12) at the call site, so the
+        // remainder here is measured from `spaceMD` — the 24pt those two make
+        // between them, which is what this stack used to contribute on its own
+        // before the two surfaces were given a shared inter-block gap. Change
+        // either metric and the 40pt has to be re-derived; it is spread across
+        // two files precisely because the *body* gap is now shared and this one
+        // is not.
         .padding(.top, DocsSpacing.spaceXL - DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1150,6 +1260,7 @@ struct EditorView: View {
         switch action {
         case .edit:
             Button {
+                scrollAnchor.snapshotForSwap()
                 viewModel.startEditing()
             } label: {
                 MaterialSymbol(.edit, size: 22)
@@ -1166,6 +1277,7 @@ struct EditorView: View {
 
         case .done:
             Button {
+                scrollAnchor.snapshotForSwap()
                 viewModel.finishEditing()
             } label: {
                 MaterialSymbol(.check, size: 22, fill: true)
@@ -1185,48 +1297,26 @@ struct EditorView: View {
                 isPresentingOptionsSheet = true
             } label: {
                 MaterialSymbol(.more_horiz, size: 22)
-                    .overlay(alignment: .topTrailing) { presenceBadge }
             }
-            .accessibilityLabel(optionsAccessibilityLabel)
+            .accessibilityLabel(loc[.editor_action_options])
         }
     }
 
-    /// While editing there is no room for the reading surface's avatar stack, so
-    /// presence becomes a count on the options button — the same information, in
-    /// the space a toolbar has.
+    /// The peers the shared header's `PresenceBar` draws.
     ///
-    /// Brand-filled rather than the handoff's green presence hue: the app has no
-    /// presence palette in `DocsColor` (avatars derive their colours from the
-    /// accent ramp instead), and importing one token of five for a single badge
-    /// would leave a half-ported palette behind. Brand already reads as "active"
-    /// here — it is what marks the selected tab.
-    @ViewBuilder
-    private var presenceBadge: some View {
-        if let count = editingPresenceCount {
-            Text("\(count)")
-                .docsScaledFont(size: 10, weight: .bold, relativeTo: .caption2)
-                .foregroundStyle(DocsColor.textOnBrand)
-                .padding(.horizontal, 4)
-                .frame(minWidth: 16, minHeight: 16)
-                .background(Capsule().fill(DocsColor.brandFill))
-                .offset(x: 8, y: -6)
-        }
-    }
-
-    private var editingPresenceCount: Int? {
-        guard viewModel.isEditing else { return nil }
-        return presenceBadgeCount(peerCount: collaborationPeers.count, isOffline: isOffline)
-    }
-
-    /// The glyph and the badge are both decorative, so the peer count has to
-    /// reach VoiceOver through the button's own label — phrased exactly as
-    /// `PresenceBar` phrases it on the reading surface.
-    private var optionsAccessibilityLabel: String {
-        guard let count = editingPresenceCount else { return loc[.editor_action_options] }
-        let presence = loc.plural(
-            count, one: .editor_presence_count_one, other: .editor_presence_count_other,
-            two: .editor_presence_count_two, few: .editor_presence_count_few)
-        return "\(loc[.editor_action_options]), \(presence)"
+    /// The Options button used to carry a presence *count badge* while editing,
+    /// because the reading surface's avatar stack had no editing counterpart —
+    /// "the same information, in the space a toolbar has". The document header is
+    /// shared now and draws `PresenceBar` in both modes, so that badge became a
+    /// second copy of the same fact one row above it, and it is gone. Presence
+    /// has one home again, and `presentedPeerCount` — with its tests — becomes
+    /// the one rule for whether peer state is fresh enough to show at all,
+    /// applied on **both** surfaces. Before, only the badge honoured it: the
+    /// reading surface drew its avatars offline, where they are whatever the
+    /// socket last said.
+    private var headerPeers: [CollaborationPeer] {
+        presentedPeerCount(peerCount: collaborationPeers.count, isOffline: isOffline) == nil
+            ? [] : collaborationPeers
     }
 }
 

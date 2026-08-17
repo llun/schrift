@@ -333,6 +333,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_divider_a11y = "editor.divider_a11y"  // "Divider"
     case editor_checklist_done_a11y = "editor.checklist.done_a11y"  // "Mark as done"
     case editor_checklist_not_done_a11y = "editor.checklist.not_done_a11y"  // "Mark as not done"
+    // The two above are *actions* — what tapping the editing checkbox will do.
+    // These two are the *state* the reading surface announces, where nothing is
+    // tappable and the checked glyph is `accessibilityHidden`.
+    case editor_checklist_state_done_a11y = "editor.checklist.state_done_a11y"  // "Done"
+    case editor_checklist_state_not_done_a11y = "editor.checklist.state_not_done_a11y"  // "Not done"
 
     // Live-collaboration presence: the accessibility label for the avatars of
     // peers currently in the document (count excludes the local user). `two`/`few`

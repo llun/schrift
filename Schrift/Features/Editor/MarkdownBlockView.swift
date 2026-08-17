@@ -12,6 +12,7 @@ func markdownInlineText(_ text: String) -> AttributedString {
     var attributed =
         (try? AttributedString(markdown: text, options: inlineMarkdownOptions)) ?? AttributedString(text)
     autolinkBareURLs(in: &attributed)
+    styleLinks(in: &attributed)
     return attributed
 }
 
@@ -36,7 +37,38 @@ private func autolinkBareURLs(in attributed: inout AttributedString) {
         // Skip spans that markdown already turned into a link.
         guard !attributed[attributedRange].runs.contains(where: { $0.link != nil }) else { continue }
         attributed[attributedRange].link = url
-        attributed[attributedRange].foregroundColor = DocsColor.textBrand
+    }
+}
+
+/// Paints every link run — markdown's and the autolinker's alike — the way the
+/// **editing** surface paints one: `textBrand`, single-underlined
+/// (`InlineTextStyleResolver.style(for:)`'s `.link` arm).
+///
+/// Without this, a `[label](url)` run fell through to SwiftUI's default link
+/// styling, which is the environment tint and carries no underline — so a
+/// document's links changed colour *and* gained an underline the instant the
+/// user tapped into edit mode. Applied after `autolinkBareURLs` so a bare URL
+/// is styled by the same rule rather than by a second, nearly-identical one.
+///
+/// Note what this does **not** buy: the editing surface has no bare-URL
+/// autolinker at all (that would mean teaching `InlineMarkdown` — the scanner
+/// the full-overwrite save re-parses — a construct it does not model), so a
+/// bare `https://…` is still brand-coloured *and underlined* while reading and
+/// plain while editing — this runs after the autolinker, so it paints those runs
+/// too. Neither difference moves a glyph, and closing it is not worth touching
+/// that scanner.
+///
+/// The ranges are collected **before** anything is written. Setting an attribute
+/// splits and merges runs, so mutating inside `for run in attributed.runs` would
+/// be rewriting the collection being walked — and `AttributedString.Index` is
+/// only guaranteed valid against the value it was taken from. Two links in one
+/// paragraph is all it takes to reach that. (Same reason `autolinkBareURLs`
+/// above collects its matches from a plain `String` snapshot first.)
+private func styleLinks(in attributed: inout AttributedString) {
+    let linkRanges = attributed.runs.filter { $0.link != nil }.map(\.range)
+    for range in linkRanges {
+        attributed[range].foregroundColor = DocsColor.textBrand
+        attributed[range].underlineStyle = .single
     }
 }
 
@@ -55,14 +87,30 @@ func unknownRendersAsProse(_ text: String) -> Bool {
     }
 }
 
-func markdownHeadingFont(level: Int) -> Font {
-    switch level {
-    case 1: return DocsFont.title1
-    case 2: return DocsFont.title2
-    default: return DocsFont.headline
-    }
-}
-
+/// The reading surface's half of the editor.
+///
+/// Everything that decides how a block's **text** is drawn — its font, colour,
+/// strikethrough, decoration and the spacing of the row around it — comes from
+/// `EditorBlockStyle`, the same table `BlockEditorRow` reads, so a block draws
+/// identically whether the user is reading it or editing it. Do not decide any
+/// of that from a `DocsFont`/`DocsSpacing` token reached for here: that is
+/// exactly how the two surfaces drifted apart, and how tapping a block came to
+/// re-lay-out the whole document.
+///
+/// The leaf arms below (divider, image, attachment, and the fallbacks for a url
+/// that is not this server's) do name tokens directly. That is not an exception
+/// being smuggled in: `BlockEditorRow` names the *same* tokens in its own leaf
+/// arms, so there is one value in two places rather than two values — and
+/// `EditorSurfaceParityTests.testLeafRowsOccupyTheSameHeightOnBothSurfaces`
+/// measures those three rows on both surfaces, to 0.5pt.
+///
+/// That catches a token that changes what a leaf row *occupies* — a font, a
+/// padding — and nothing else. A **colour** is invisible to a height
+/// measurement, so `DocsColor.borderDefault` on the divider (the only token that
+/// arm names directly) and `DocsColor.textPrimary` on the two text fallbacks are
+/// held by inspection alone. Said plainly because the previous version of this
+/// sentence claimed a drifting token "fails rather than ships", which a height
+/// comparison cannot deliver.
 struct MarkdownBlockView: View {
     let block: EditorBlock
     /// Origin the embedded image gate compares against (`imageLoadPolicy`), and
@@ -74,75 +122,19 @@ struct MarkdownBlockView: View {
     /// whether a cached one opens.
     var isOffline: Bool = false
 
+    @Environment(LocalizationStore.self) private var loc
+
     var body: some View {
         switch block.kind {
-        case .heading(let level):
-            Text(markdownInlineText(block.text))
-                .font(markdownHeadingFont(level: level))
-                .foregroundStyle(DocsColor.textPrimary)
-
-        case .paragraph:
-            Text(markdownInlineText(block.text))
-                .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
-
-        case .bulletItem:
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                Text("•")
-                Text(markdownInlineText(block.text))
-            }
-            .font(DocsFont.body)
-            .foregroundStyle(DocsColor.textPrimary)
-
-        case .numberedItem:
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                Text("\(numberedIndex).")
-                    .monospacedDigit()
-                Text(markdownInlineText(block.text))
-            }
-            .font(DocsFont.body)
-            .foregroundStyle(DocsColor.textPrimary)
-
-        case .checklistItem(let checked):
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: 20)
-                    .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
-                Text(markdownInlineText(block.text))
-                    .strikethrough(checked)
-            }
-            .font(DocsFont.body)
-            .foregroundStyle(DocsColor.textPrimary)
-
-        case .quote:
-            HStack(alignment: .top, spacing: 0) {
-                RoundedRectangle(cornerRadius: DocsRadius.xs)
-                    .fill(DocsColor.brandFill)
-                    .frame(width: 4)
-                Text(markdownInlineText(block.text))
-                    .italic()
-                    .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textSecondary)
-                    .padding(.vertical, DocsSpacing.spaceXS)
-                    .padding(.horizontal, DocsSpacing.spaceSM)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfaceSunken)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-
-        case .codeBlock:
-            Text(block.text)
-                .font(DocsFont.code)
-                .foregroundStyle(DocsColor.textPrimary)
-                .padding(DocsSpacing.spaceSM)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DocsColor.surfaceSunken)
-                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-
         case .divider:
+            // Labelled, like the editing surface's divider: a rule the eye reads
+            // as structure was silent to VoiceOver on this surface alone.
             Rectangle()
                 .fill(DocsColor.borderDefault)
                 .frame(height: 1)
-                .padding(.vertical, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, EditorBlockMetrics.dividerVerticalPadding)
+                .accessibilityLabel(loc[.editor_divider_a11y])
 
         case .image(let alt, let url):
             if let imageURL = URL(string: url) {
@@ -169,17 +161,72 @@ struct MarkdownBlockView: View {
                     .foregroundStyle(DocsColor.textPrimary)
             }
 
-        case .unknown:
-            if unknownRendersAsProse(block.text) {
-                Text(markdownInlineText(block.text))
-                    .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
-            } else {
-                Text(block.text)
-                    .font(DocsFont.code)
-                    .foregroundStyle(DocsColor.textPrimary)
-            }
+        default:
+            textRow
         }
+    }
+
+    /// Every kind that carries text, drawn through the shared adornment slot,
+    /// appearance table and decoration — the structural twin of
+    /// `BlockEditorRow`'s editable row.
+    private var textRow: some View {
+        HStack(
+            alignment: .top,
+            spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
+        ) {
+            // No `onToggleChecklist`: the row's own tap enters the editor, so
+            // the checkbox is drawn plain here and toggled there.
+            EditorBlockAdornment(kind: block.kind, numberedIndex: numberedIndex)
+            blockText
+                .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
+        }
+    }
+
+    @ViewBuilder private var blockText: some View {
+        let appearance = blockTextAppearance(for: block.kind, text: block.text)
+        // A verbatim block's text is literal — running it through the markdown
+        // parser would promise formatting its own panel says is not applied.
+        let content =
+            blockRendersVerbatim(block.kind, text: block.text)
+            ? AttributedString(block.text) : markdownInlineText(block.text)
+        let text =
+            Text(content)
+            .font(appearance.font)
+            .foregroundStyle(appearance.color)
+            .strikethrough(appearance.isStruckThrough)
+
+        // Branched rather than handing every kind an empty value: VoiceOver
+        // skips an empty one, so it misbehaves either way, but stating an
+        // accessibility attribute on eleven kinds in order to state it for one
+        // reads as though they all have a value to give.
+        if let checklistStateDescription {
+            text.accessibilityValue(checklistStateDescription)
+        } else {
+            text
+        }
+    }
+
+    /// A completed to-do's state, spoken.
+    ///
+    /// The eye reads it from the checkbox glyph and the strikethrough, and
+    /// VoiceOver gets neither: `MaterialSymbol` is `accessibilityHidden` (its
+    /// glyph is a Private-Use-Area character with no spoken text) and a
+    /// strikethrough is not announced — so a checklist read aloud gave no clue
+    /// which items were done. A *state*, not the editing checkbox's action label
+    /// ("Mark as done"): nothing here toggles it, the row's tap enters the
+    /// editor.
+    ///
+    /// Set on the `Text` itself rather than by collapsing the row with
+    /// `.accessibilityElement(children: .combine)`. Combining would be the
+    /// conventional way to give a row a value, but it flattens the element tree,
+    /// and this `Text` can hold inline links that VoiceOver reaches through the
+    /// Links rotor. Whether combining really would drop them is not something
+    /// this repo can assert — it runs no VoiceOver tests — and between two
+    /// options that both add the announcement, the one that cannot take anything
+    /// away is the right bet.
+    private var checklistStateDescription: String? {
+        guard case .checklistItem(let checked) = block.kind else { return nil }
+        return checked ? loc[.editor_checklist_state_done_a11y] : loc[.editor_checklist_state_not_done_a11y]
     }
 }
 

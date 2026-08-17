@@ -18,6 +18,11 @@ enum BlockTextEvent {
 struct BlockTextStyling: Equatable {
     let font: UIFont
     let textColor: UIColor
+    /// A completed to-do's text is struck through, exactly as the reading
+    /// surface strikes it (`BlockTextAppearance.isStruckThrough`). Applied over
+    /// the whole buffer under the inline marks, so a `~~span~~` inside a checked
+    /// item simply lands on an already-struck line.
+    let isStruckThrough: Bool
     /// Code-like blocks disable autocorrection and smart punctuation, which
     /// would otherwise corrupt syntax.
     let isCodeLike: Bool
@@ -30,62 +35,76 @@ struct BlockTextStyling: Equatable {
     let rendersInlineMarkdown: Bool
 }
 
-/// Fonts are built at the token's reference size and then scaled through
-/// `UIFontMetrics`, so the editor tracks Dynamic Type like the SwiftUI labels
-/// around it. Scaling changes only the rendered size — never the buffer — so
-/// every `NSRange` in the editor stays the source offset it always was.
-func blockTextStyling(for kind: BlockKind, dynamicTypeSize: DynamicTypeSize = .large) -> BlockTextStyling {
-    switch kind {
-    case .heading(let level):
-        let spec: TypographySpec
-        switch level {
-        case 1: spec = DocsTypographySpec.title1
-        case 2: spec = DocsTypographySpec.title2
-        default: spec = DocsTypographySpec.headline
-        }
-        return BlockTextStyling(
-            font: scaledUIFont(
-                .systemFont(ofSize: spec.size, weight: spec.weight == .bold ? .bold : .semibold), for: spec,
-                dynamicTypeSize: dynamicTypeSize),
-            textColor: UIColor(DocsColor.textPrimary),
-            isCodeLike: false,
-            allowsNewlines: false,
-            rendersInlineMarkdown: rendersInlineMarkdown(kind)
-        )
-    case .quote:
-        return BlockTextStyling(
-            font: scaledUIFont(
-                .italicSystemFont(ofSize: DocsTypographySpec.body.size), for: DocsTypographySpec.body,
-                dynamicTypeSize: dynamicTypeSize),
-            textColor: UIColor(DocsColor.textSecondary),
-            isCodeLike: false,
-            allowsNewlines: false,
-            rendersInlineMarkdown: rendersInlineMarkdown(kind)
-        )
+/// The editing surface's view of `blockTextAppearance` — the same table the
+/// reading surface reads, converted to UIKit types.
+///
+/// Takes the whole **block**, not just its kind, because `.unknown` is styled
+/// from its text: a paragraph that merely spilled across lines is body prose on
+/// both surfaces, while a table or an HTML fragment is monospaced in a panel on
+/// both. Styling every `.unknown` as code — which this used to do — meant the
+/// commonest one changed typeface, size and background the instant the user
+/// tapped it.
+///
+/// `isCodeLike`/`allowsNewlines` deliberately stay keyed to the **kind**: an
+/// `.unknown` block's text is still literal and multi-line whatever it looks
+/// like, so autocorrect and smart punctuation must stay off and Return must
+/// still insert a newline. Only the *appearance* follows the text.
+///
+/// **Accepted residual, and it is a trade rather than a win.** Because the
+/// appearance follows the text, an `.unknown` block can flip between prose and
+/// verbatim *while the user types* — `unknownRendersAsProse` is per-line and
+/// refuses a line starting with a space, a tab, `|`, `<` or `![`, so indenting
+/// the first line of a prose `.unknown` changes its typeface and size and drops
+/// a panel around it under the caret. On `main` that could not happen, because
+/// the editing surface styled every `.unknown` as code unconditionally — and
+/// that is precisely why tapping *any* prose `.unknown` used to reflow it, which
+/// is the defect this file exists to fix. The flip is now confined to typing a
+/// structural character at the start of a line in a kind that is itself the
+/// parser's fallback; the reflow it replaced happened on every tap, on every
+/// such block. Neither is free; this one is rarer and it is the one the reading
+/// surface has always had.
+func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large) -> BlockTextStyling {
+    let appearance = blockTextAppearance(for: block.kind, text: block.text)
+    let isLiteral: Bool
+    let allowsNewlines: Bool
+    switch block.kind {
     case .codeBlock, .unknown:
-        return BlockTextStyling(
-            font: scaledUIFont(
-                .monospacedSystemFont(ofSize: DocsTypographySpec.code.size, weight: .regular),
-                for: DocsTypographySpec.code, dynamicTypeSize: dynamicTypeSize),
-            textColor: UIColor(DocsColor.textPrimary),
-            isCodeLike: true,
-            allowsNewlines: true,
-            rendersInlineMarkdown: rendersInlineMarkdown(kind)
-        )
-    case .paragraph, .bulletItem, .numberedItem, .checklistItem, .divider, .image, .attachment:
+        isLiteral = true
+        allowsNewlines = true
+    case .heading, .paragraph, .bulletItem, .numberedItem, .checklistItem, .quote, .divider, .image, .attachment:
         // `.divider`/`.image`/`.attachment` never host a text view (they render
-        // as leaves); grouped here only to keep the switch exhaustive with a
-        // sane default.
-        return BlockTextStyling(
-            font: scaledUIFont(
-                .systemFont(ofSize: DocsTypographySpec.body.size), for: DocsTypographySpec.body,
-                dynamicTypeSize: dynamicTypeSize),
-            textColor: UIColor(DocsColor.textPrimary),
-            isCodeLike: false,
-            allowsNewlines: false,
-            rendersInlineMarkdown: rendersInlineMarkdown(kind)
-        )
+        // as leaves); grouped here only to keep the switch exhaustive.
+        isLiteral = false
+        allowsNewlines = false
     }
+    return BlockTextStyling(
+        font: appearance.uiFont(dynamicTypeSize: dynamicTypeSize),
+        textColor: appearance.uiColor,
+        isStruckThrough: appearance.isStruckThrough,
+        isCodeLike: isLiteral,
+        allowsNewlines: allowsNewlines,
+        rendersInlineMarkdown: rendersInlineMarkdown(block.kind)
+    )
+}
+
+/// The attributes every character of a block starts from, before its inline
+/// marks are laid over them.
+///
+/// `setAttributes` *replaces* the whole range, so anything a block carries at
+/// block level has to be in here — a strikethrough added only to the marked
+/// spans would be wiped off the rest of the line on the next keystroke's
+/// restyle. The same dictionary seeds `typingAttributes`, so a character typed
+/// at the end of a completed to-do is struck through as it is entered rather
+/// than a frame later.
+func baseTextAttributes(for styling: BlockTextStyling) -> [NSAttributedString.Key: Any] {
+    var attributes: [NSAttributedString.Key: Any] = [
+        .font: styling.font,
+        .foregroundColor: styling.textColor,
+    ]
+    if styling.isStruckThrough {
+        attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+    }
+    return attributes
 }
 
 /// A `UITextView` whose buffer is the block's raw markdown, drawn as rich text.
@@ -179,12 +198,19 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     ///
     /// Skipped while an input method is composing, whose marked-text attributes
     /// must not be overwritten.
-    func applyInlineStyling(font: UIFont, textColor: UIColor, rendersInlineMarkdown: Bool) {
+    ///
+    /// Takes the whole `BlockTextStyling` rather than the two or three fields it
+    /// happens to need: a field added to the block's appearance that this forgot
+    /// to apply is a silent rendering difference against the reading surface,
+    /// which is exactly how the strikethrough on a completed to-do came to exist
+    /// on one surface only.
+    func applyInlineStyling(_ styling: BlockTextStyling) {
         guard markedTextRange == nil else { return }
+        let font = styling.font
         let source = text ?? ""
         let full = NSRange(location: 0, length: (source as NSString).length)
         let layout =
-            rendersInlineMarkdown
+            styling.rendersInlineMarkdown
             ? InlineMarkdown.layout(of: source)
             : InlineLayout(spans: [], syntax: [], links: [])
 
@@ -194,7 +220,7 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
 
         let selection = selectedRange
         textStorage.beginEditing()
-        textStorage.setAttributes([.font: font, .foregroundColor: textColor], range: full)
+        textStorage.setAttributes(baseTextAttributes(for: styling), range: full)
         for span in layout.spans {
             textStorage.addAttributes(inlineTextAttributes(for: span.marks, base: font), range: span.range)
         }
@@ -346,7 +372,7 @@ struct BlockTextView: UIViewRepresentable {
     private func applyStyling(to view: EditorUITextView) {
         view.font = styling.font
         view.textColor = styling.textColor
-        view.typingAttributes = [.font: styling.font, .foregroundColor: styling.textColor]
+        view.typingAttributes = baseTextAttributes(for: styling)
         if styling.isCodeLike {
             view.autocorrectionType = .no
             view.autocapitalizationType = .none
@@ -366,8 +392,7 @@ struct BlockTextView: UIViewRepresentable {
     /// restore `applyInlineStyling` performs.
     fileprivate func restyleInlineMarkdown(in view: EditorUITextView, coordinator: Coordinator) {
         coordinator.isApplyingModelChange = true
-        view.applyInlineStyling(
-            font: styling.font, textColor: styling.textColor, rendersInlineMarkdown: styling.rendersInlineMarkdown)
+        view.applyInlineStyling(styling)
         coordinator.isApplyingModelChange = false
     }
 

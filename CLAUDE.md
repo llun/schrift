@@ -432,6 +432,12 @@ Schrift/
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
+│                        the one style table BOTH surfaces draw from (EditorBlockStyle:
+│                        EditorBlockMetrics, blockTextAppearance, editorBlockDecoration,
+│                        EditorBlockAdornment) + the shared EditorDocumentHeader and the
+│                        EditorScrollAnchorStore that carries scroll position across the
+│                        reading ↔ editing swap (EditorScrollTarget names the editing
+│                        canvas's rows for its own ScrollViewReader, nothing more),
 │                        read-only version history (VersionHistoryViewModel,
 │                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
@@ -935,6 +941,20 @@ new code reads like the surrounding code.
     example: its date holds `layoutPriority(1)` so the date never truncates,
     which meant the *title* collapsed to `"A…"`. `rowUsesStackedLayout(_:)` is
     the shared predicate — stack the metadata under the title instead.
+- **A `MaterialSymbol`'s footprint is its glyph's typographic box, not its point
+  size** — about 23pt for a 24pt symbol. So a tap target sized by arithmetic off
+  the point size comes up short: `checkboxSize + 2 * ((44 - checkboxSize) / 2)`
+  reads as exactly 44 and measures 43. Size the padding from a token with
+  headroom and **measure the padded box** in a test; the assertion that appears
+  to prove the arithmetic (`size + 2 * padding == rowMinHeight`, with `padding`
+  defined as `(rowMinHeight - size) / 2`) substitutes to
+  `rowMinHeight == rowMinHeight` and cannot fail for any value of either.
+  **And a grown-then-given-back shape only reaches its full size in isolation**:
+  in a list, consecutive rows sit one gap apart, so neighbouring shapes overlap
+  and the unambiguous per-row target is bounded by the row *pitch* — glyph + gap,
+  ~35pt for the editor's checklist. Reaching 44 there means a taller row, which
+  on a shared surface is a document-density decision, not a padding one. Claim
+  the pitch, not the shape.
 - **Icons are Google Material Symbols, never SF Symbols.** The app's entire icon
   set is the handoff's Material Symbols Outlined, bundled as a ~18KB subset
   (`Schrift/Resources/Fonts/MaterialSymbolsOutlined-Icons.ttf`, Apache-2.0,
@@ -1025,17 +1045,23 @@ new code reads like the surrounding code.
   **stack in a
   height-bounded container** hands its children a concrete proposal, which is
   what `editingSurface`'s
-  `VStack(spacing: 0)` does, and there `SaveStatusIndicator`'s Save/retry filled
-  the row and the row filled the screen — offered 874pt it answered 874pt, the
-  `VStack` saw two greedy children, split the free height between them, and
-  parked the document title and first line of content mid-screen whenever the
-  keyboard was up. **In the second case, floor the label itself** —
+  `VStack(spacing: 0)` did (the editing canvas is a bare `BlockEditorView` now
+  and the status lives inside its `ScrollView` — but the rule is about the
+  container shape, not that one call site, and any stack you put in a
+  height-bounded container behaves this way), and there `SaveStatusIndicator`'s
+  Save/retry filled the row and the row filled the screen — offered 874pt it
+  answered 874pt, the `VStack` saw two greedy children, split the free height
+  between them, and parked the document title and first line of content
+  mid-screen whenever the keyboard was up. **In the second case, floor the label itself** —
   `.frame(minHeight: DocsSpacing.rowMinHeight)` never claims a proposal and still
   grows with Dynamic Type, which the rule above *requires* (a fixed `height:`
-  clips). Note the floor is also the *larger* target: the row applies
+  clips). Note the floor was also the *larger* target: that strip applied
   `.padding(.bottom, 8)` before its own `.frame(minHeight: 44)`, so a
-  fill-the-row label only ever got 36pt at the row's floor — it reached 44 only
-  while inflating the row. Give every sibling state the same floor
+  fill-the-row label only ever got 36pt at the strip's floor — it reached 44 only
+  while inflating it. (The strip is gone; the indicator sits in
+  `EditorDocumentHeader`'s status slot. The arithmetic is kept because it is the
+  worked example of why a floor on the *container* is not a floor on the label —
+  the same mistake this PR then made with the retry caption.) Give every sibling state the same floor
   (`SaveStatusIndicator`'s three passive states do) or the content below resizes
   as the state changes. That levelling is a **default-size** property: a floor
   only equalises states whose own text fits inside it, so once a phrase grows past
@@ -1444,6 +1470,162 @@ that are easy to violate and expensive to discover:
   cannot demonstrate the deviation against the oracle, transliterate instead.
 
 ### Editor & the on-device save (`Core/Yjs`)
+
+- **The editor draws every document twice, and `EditorBlockStyle` is the only
+  thing keeping the two drawings the same.** The reading surface is SwiftUI
+  `Text` (`MarkdownBlockView`) and the editing surface a UIKit `UITextView`
+  (`BlockTextView`); those are different frameworks with different font and
+  layout APIs, so each used to carry its own copy of what a block looks like —
+  and the copies drifted until tapping a paragraph re-laid-out the entire page
+  (22pt vs 16pt gutter, so every line re-wrapped and slid 6pt left; 12pt vs 6pt
+  between blocks, cumulative; a whole header metadata row with no editing
+  counterpart; a quote losing its panel and its brand bar; a prose `.unknown`
+  block turning into monospace in a panel; a 20pt checkbox shrinking to 17pt; a
+  completed to-do losing its strikethrough), and then jumped *again* on the first
+  keystroke when the save-status strip appeared above the canvas.
+  **So: never reach for a `DocsFont`/`DocsSpacing`/`DocsColor` token directly to
+  decide how a block's *text* is drawn, or how the row around it is spaced.**
+  That is the part that drifted, and it goes through
+  `Schrift/Features/Editor/EditorBlockStyle.swift`. (The leaf arms — divider,
+  image, attachment, and the two "this url is not ours" text fallbacks — do name
+  tokens directly, in both surfaces, and that is fine precisely because *both*
+  name the same ones and `testLeafRowsOccupyTheSameHeightOnBothSurfaces`
+  measures those rows on both surfaces — a claim that was false when first
+  written, because the parity fixtures were built from "every kind that carries
+  text" and so contained no leaf at all. If you add a leaf kind, add it there. A token in a
+  leaf is a shared constant; a token deciding a text row's font is a second copy
+  of the table.)
+  - `EditorBlockMetrics` — gutter (`DocsSpacing.gutter`, the app-wide page inset
+    the editor's own error banner and formatting bar already used), inter-block
+    gap, adornment gap, checkbox size + hit padding, quote/panel padding,
+    divider padding, header spacings.
+  - `blockTextAppearance(for:text:)` → raw tokens, converted to `Font`/`Color`
+    by the reading surface and to `UIFont`/`UIColor` by `blockTextStyling` (the
+    raw-value split the design-system style resolvers use). It takes the
+    **text**, not just the kind, because `.unknown` is the one kind whose
+    appearance depends on it — a paragraph that merely spilled across lines is
+    body prose on both surfaces, and only a table/HTML fragment is verbatim
+    monospace in a panel. `blockTextStyling` therefore takes the whole
+    `EditorBlock`; its `isCodeLike`/`allowsNewlines` deliberately stay keyed to
+    the **kind**, because a prose `.unknown` is still literal multi-line text
+    however it is drawn.
+  - `editorBlockDecoration(_:)` — the quote bar and the verbatim panel, as **one
+    modifier both surfaces apply**. It varies only padding/background/overlay
+    *values*; a structural branch there would recreate the `UITextView` and drop
+    the keyboard on every `- `/slash/toolbar conversion (the standing rule that
+    every editable kind shares one structural shape).
+  - `EditorBlockAdornment` — bullet, number, checkbox. The checkbox is a
+    `Button` only where a toggle closure is supplied (editing); the symmetric
+    ±`checkboxHitPadding` pair grows the target and gives every point back, so the
+    plain reading glyph occupies identical space. It is 24pt — larger than either
+    surface used to draw it, since it is the document's one touchable adornment.
+    The shape clears `rowMinHeight` **in isolation only**; in a checklist the
+    real target is the row pitch (~35pt) — see the pitch rule above.
+  - `EditorDocumentHeader` — the title plus the reach/status/presence row, drawn
+    by **both** surfaces (`readingHeader` and the header `BlockEditorView` is
+    handed). An untitled document shows the same "Untitled" placeholder on both;
+    rendering an empty `Text` on one side and a placeholder on the other made the
+    body move by a title's height on the swap.
+- **The save status lives in that shared header's status slot, not in a strip
+  above the canvas.** `saveStatusDisplay`'s precedence is untouched — a recorded
+  conflict still refuses to claim a sync or to offer a retry that would only
+  re-park — but `.none` now falls through to the reading sync caption instead of
+  collapsing, so the slot is never empty and never changes height mid-keystroke.
+  The trade is deliberate and worth knowing: the status **scrolls with the
+  document** rather than staying pinned. Nothing becomes unreachable — the
+  toolbar keeps **Done**, which flushes exactly as tapping **Save** does. Don't
+  reintroduce a pinned strip without giving the reading surface an identically
+  sized one, or the jump comes straight back.
+- **Scroll position must survive the mode swap, and three separate things had to
+  be right before it did.** The two surfaces are different `ScrollView`s, so the
+  offset was simply discarded: tapping a paragraph three screens down opened the
+  editor at the very top with the tapped block nowhere on screen. Every part of
+  the fix below was **disproved on a device first** — each looked correct and did
+  nothing:
+  1. **Not `.scrollPosition(id:)`.** It reports the id of the item the scroll
+     view is *aligned* to, and free-scrolling content is almost never aligned to
+     one, so the binding stayed nil. The handoff is a raw **content offset**
+     (`onScrollGeometryChange`), which is meaningful only *because* the two
+     layouts are now the same.
+  2. **Snapshot the offset at the swap, never track it continuously.** A
+     `ScrollView` being torn down reports a final geometry of **zero**, which
+     overwrote the anchor with "the top" at exactly the moment it was needed.
+     `snapshotForSwap()` is called from the reading row's tap and from the
+     toolbar's Edit/Done, before the surfaces exchange.
+  3. **Re-apply the restore as the lazy rows realize.** The editing canvas is a
+     `LazyVStack`, so at `onAppear` it has realized one screenful and the scroll
+     **clamps** to it — measured ~108pt shy on a two-screen document. A bounded
+     re-apply across a few runloop turns lets each pass realize what the last one
+     scrolled past. The reading surface needs none of this (plain `VStack`), and
+     it must **stay** non-lazy for a different reason: `AttachmentCardView`'s
+     cache revalidation depends on off-screen rows still running their `.task`.
+
+  `EditorScrollAnchorStore` is deliberately **not `@Observable`**: the offset
+  changes every scroll frame, and there is no reason for any of that to
+  invalidate `EditorView`. Note the cost this avoids is smaller than it looks —
+  a probe counting `markdownInlineText` calls recorded **none** across a scroll,
+  because `MarkdownBlockView`'s inputs are all `Equatable` and SwiftUI skips its
+  body. Keep the store non-observable anyway; the point is that nothing needs
+  invalidating, not that the alternative was measured to be catastrophic.
+
+  The residual after all three is ~37pt on a two-screen document — the same
+  cumulative line-box drift documented below, not a fourth bug.
+- **A block-level attribute in the editing text view belongs in
+  `baseTextAttributes`, nowhere else.** `applyInlineStyling` calls
+  `textStorage.setAttributes(...)` over the whole range on every keystroke's
+  restyle, so an attribute applied to the marked spans — or only to
+  `typingAttributes` — is wiped a character later. That function takes the whole
+  `BlockTextStyling` rather than the two or three fields it happens to need, so a
+  new appearance field cannot be silently dropped at that call site.
+- **Presence is drawn once, in the shared header, on both surfaces.** The
+  Options button used to carry a count badge while editing because the editing
+  canvas had no `PresenceBar`; it has one now, so the badge was a duplicate and
+  is gone. `presentedPeerCount` (renamed from `presenceBadgeCount`) stays as the freshness rule (peer state is only
+  as fresh as the last socket message, so offline suppresses it) and now gates
+  the header's bar on **both** surfaces — the reading one previously drew its
+  avatars offline. Don't re-add a second presence affordance to one mode only:
+  that asymmetry is what the shared header exists to prevent.
+- **The scroll anchor degrades, it never corrupts.** `install(...)` re-mints
+  every `EditorBlock.id`, so an anchor naming a block can go stale after a
+  remote change; an unresolvable id simply scrolls nowhere and the surface opens
+  where it is. `.header` and `.trailer` are stable across that, and the
+  reading surface's own `.refreshable` is only reachable from the top, where the
+  anchor is `.header`. Worth knowing before "fixing" a report of the editor
+  opening at the top after a co-author's edit.
+- **Known, accepted residual — an `.unknown` block can restyle mid-keystroke.**
+  Its appearance follows its *text* (`unknownRendersAsProse`, per-line), so
+  indenting the first line of a prose `.unknown`, or starting one with `|`/`<`,
+  flips it to monospace in a panel under the caret. The alternative is what
+  `main` did — style every `.unknown` as code unconditionally — which is what
+  made tapping *any* prose `.unknown` reflow it, the defect this whole change
+  exists to remove. A rare flip while typing a structural character beats a
+  certain one on every tap, and the reading surface has always worked this way.
+- **Known, accepted residual — the two frameworks' line boxes.** A SwiftUI
+  `Text` carries slightly more leading than the same font in a `UITextView` with
+  `lineFragmentPadding` and `textContainerInset` zeroed: measured at the Large
+  content size, ~3.7pt at body 17 and ~7.3pt at title1 28, **per wrapped line**.
+  So a paragraph is a hair shorter while editing. Every *adorned* row (bullet,
+  number, checklist) is exactly equal, because the SwiftUI adornment sets the row
+  height on both sides. `EditorSurfaceParityTests
+  .testEveryBlockOccupiesTheSameHeightOnBothSurfaces` hosts the real
+  `MarkdownBlockView` against the real `BlockEditorRow` (which is internal for
+  exactly this) and bounds the residual at `0.35 × the block's font size × its
+  line count`, with a hard `delta >= 0` on the other side — an editing row that
+  is *taller* means it has grown chrome the reading one lacks. Both historical
+  offenders are caught by that band and were mutation-checked: reverting the
+  quote's panel reds it at 19.7pt against a 5.95pt allowance, and reverting the
+  `.unknown` prose treatment reds the `>= 0` side at −14.7pt. Closing the
+  residual would mean reverse-engineering SwiftUI's line metrics into the text
+  container's insets; don't, without evidence.
+- **Known, accepted difference:** the reading surface autolinks bare URLs
+  (`NSDataDetector`) and the editing surface does not, so a bare `https://…` is
+  brand-coloured while reading and plain while editing. Closing it would mean
+  teaching `InlineMarkdown` — the scanner the full-overwrite save re-parses — a
+  construct it does not model, which is not worth a colour difference on one run
+  with no reflow — `styleLinks` paints every link run, autolinked ones included,
+  so the bare URL differs by an underline as well as a colour, and neither moves
+  a glyph. Explicit `[label](url)` links *do* match: `markdownInlineText` paints
+  them `textBrand` + single-underlined, as `InlineTextStyleResolver` does.
 
 The backend stores content as an opaque base64 **Yjs CRDT** blob and has **no
 markdown write endpoint**. Understand this before touching the save path:
@@ -2705,7 +2887,10 @@ markdown write endpoint**. Understand this before touching the save path:
   paragraph above isn't mistaken for a complete one.
   Two decisions ride with this. (a) **`isOffline` never gates durability or a save
   decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
-  the presence badge) plus the one POST-only affordance above that still reads it (photo).
+  and the document header's `PresenceBar`, via `headerPeers`/`presentedPeerCount`
+  — that was the Options button's presence *badge* until the shared header gave
+  both surfaces a bar, and note the gate now reaches the reading surface too)
+  plus the one POST-only affordance above that still reads it (photo).
   Nothing about whether an edit is kept, queued, or replayed reads it.
   It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
   *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the

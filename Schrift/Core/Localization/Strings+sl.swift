@@ -289,6 +289,8 @@ enum Strings_sl {
         .editor_divider_a11y: "Ločilna črta",
         .editor_checklist_done_a11y: "Označi kot opravljeno",
         .editor_checklist_not_done_a11y: "Označi kot neopravljeno",
+        .editor_checklist_state_done_a11y: "Opravljeno",
+        .editor_checklist_state_not_done_a11y: "Neopravljeno",
         .editor_presence_count_one: "%d oseba tukaj",
         .editor_presence_count_other: "%d oseb tukaj",
         .editor_presence_count_two: "%d osebi tukaj",

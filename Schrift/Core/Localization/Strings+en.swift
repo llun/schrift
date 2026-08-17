@@ -277,6 +277,8 @@ enum Strings_en {
         .editor_divider_a11y: "Divider",
         .editor_checklist_done_a11y: "Mark as done",
         .editor_checklist_not_done_a11y: "Mark as not done",
+        .editor_checklist_state_done_a11y: "Done",
+        .editor_checklist_state_not_done_a11y: "Not done",
         .editor_presence_count_one: "%d person here",
         .editor_presence_count_other: "%d people here",
 
