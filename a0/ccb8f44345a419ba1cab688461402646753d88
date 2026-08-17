@@ -1,0 +1,37 @@
+Schrift/Features/Editor/BlockEditorView.swift
+  s_e7f1f74b80c4ad::t_b6c43e2d20643b 78-95
+  s_e7f1f74b80c4ad::t_0e59f30f0e05af 66-71
+  s_e7f1f74b80c4ad::t_dbd50abeaa4ed8 75
+  s_e7f1f74b80c4ad::t_6f904eda7fb992 72-74
+  s_e7f1f74b80c4ad::t_8b2e578f14aeb2 27,63-65,76-77,96-97
+Schrift/Features/Editor/EditorDocumentHeader.swift
+  s_e7f1f74b80c4ad::t_dbd50abeaa4ed8 43-72
+  s_e7f1f74b80c4ad::t_6f904eda7fb992 3-4,6,8-9,13
+  s_e7f1f74b80c4ad::t_6e5db746f3d887 7,17-32,34-41
+CLAUDE.md
+  s_e7f1f74b80c4ad::t_b97ee24433ce8f 1538-1568
+docs/design-system.md
+  s_e7f1f74b80c4ad::t_b97ee24433ce8f 1265-1290
+Schrift/Features/Editor/EditorView.swift
+  s_e7f1f74b80c4ad::t_dbd50abeaa4ed8 970,973
+  s_e7f1f74b80c4ad::t_34b4806fa038c2 939-942,1260,1277
+  s_e7f1f74b80c4ad::t_8b2e578f14aeb2 265,958-960,971-972,974-976
+  s_e7f1f74b80c4ad::t_6f904eda7fb992 897-899,967-969
+  s_e7f1f74b80c4ad::t_0e59f30f0e05af 961-966
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "a0ccb8f44345a419ba1cab688461402646753d88",
+  "prompts": {},
+  "sessions": {
+    "s_e7f1f74b80c4ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e75283f-9d8f-401b-97d2-472feb511829",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
