@@ -1535,19 +1535,37 @@ that are easy to violate and expensive to discover:
   toolbar keeps **Done**, which flushes exactly as tapping **Save** does. Don't
   reintroduce a pinned strip without giving the reading surface an identically
   sized one, or the jump comes straight back.
-- **Scroll position must survive the mode swap.** The two surfaces are different
-  `ScrollView`s, so the offset was simply discarded: tapping a paragraph three
-  screens down opened the editor at the very top with the tapped block nowhere on
-  screen. Both canvases name their rows with `EditorScrollTarget` under a
-  `.scrollTargetLayout()` and share one `.scrollPosition(id:anchor: .top)`
-  binding. That binding is backed by **`EditorScrollAnchorStore`, a plain
-  reference type that is deliberately not `@Observable`** — `.scrollPosition`
-  writes its binding as the user scrolls, and routing that through `@State` would
-  invalidate `EditorView` on every change, re-running
-  `AttributedString(markdown:)` and an `NSDataDetector` pass for every block on
-  the reading surface. Keep it non-observable, and keep the reading surface's
-  block container **non-lazy** (`AttachmentCardView`'s cache revalidation depends
-  on off-screen rows still running their `.task`).
+- **Scroll position must survive the mode swap, and three separate things had to
+  be right before it did.** The two surfaces are different `ScrollView`s, so the
+  offset was simply discarded: tapping a paragraph three screens down opened the
+  editor at the very top with the tapped block nowhere on screen. Every part of
+  the fix below was **disproved on a device first** — each looked correct and did
+  nothing:
+  1. **Not `.scrollPosition(id:)`.** It reports the id of the item the scroll
+     view is *aligned* to, and free-scrolling content is almost never aligned to
+     one, so the binding stayed nil. The handoff is a raw **content offset**
+     (`onScrollGeometryChange`), which is meaningful only *because* the two
+     layouts are now the same.
+  2. **Snapshot the offset at the swap, never track it continuously.** A
+     `ScrollView` being torn down reports a final geometry of **zero**, which
+     overwrote the anchor with "the top" at exactly the moment it was needed.
+     `snapshotForSwap()` is called from the reading row's tap and from the
+     toolbar's Edit/Done, before the surfaces exchange.
+  3. **Re-apply the restore as the lazy rows realize.** The editing canvas is a
+     `LazyVStack`, so at `onAppear` it has realized one screenful and the scroll
+     **clamps** to it — measured ~108pt shy on a two-screen document. A bounded
+     re-apply across a few runloop turns lets each pass realize what the last one
+     scrolled past. The reading surface needs none of this (plain `VStack`), and
+     it must **stay** non-lazy for a different reason: `AttachmentCardView`'s
+     cache revalidation depends on off-screen rows still running their `.task`.
+
+  `EditorScrollAnchorStore` is deliberately **not `@Observable`**: the offset
+  changes every scroll frame, and routing that through `@State` would invalidate
+  `EditorView` each time, re-running `AttributedString(markdown:)` and an
+  `NSDataDetector` pass for every block on the reading surface.
+
+  The residual after all three is ~37pt on a two-screen document — the same
+  cumulative line-box drift documented below, not a fourth bug.
 - **A block-level attribute in the editing text view belongs in
   `baseTextAttributes`, nowhere else.** `applyInlineStyling` calls
   `textStorage.setAttributes(...)` over the whole range on every keystroke's

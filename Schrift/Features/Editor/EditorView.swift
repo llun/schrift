@@ -262,6 +262,7 @@ struct EditorView: View {
     /// throwing the reader back to the top of the page. Shared by both surfaces
     /// and deliberately not observable — see `EditorScrollAnchorStore`.
     @State private var scrollAnchor = EditorScrollAnchorStore()
+    @State private var readingScrollPosition = ScrollPosition()
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -893,9 +894,9 @@ struct EditorView: View {
     /// editing canvas moves nothing. The rows are named with `EditorScrollTarget`
     /// so the scroll anchor survives that swap too.
     ///
-    /// A flat stack rather than nested section stacks, for the same reason:
-    /// `.scrollTargetLayout()` makes each *direct child* a scroll target, and a
-    /// nested blocks stack would make the whole document one target.
+    /// A flat stack rather than nested section stacks: the two canvases have to
+    /// contribute the same gaps in the same order for the scroll offset to mean
+    /// the same thing in both.
     private var readingSurface: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
@@ -903,7 +904,6 @@ struct EditorView: View {
                     // Tops the stack's own `blockSpacing` up to the header-to-body
                     // gap, exactly as the editing canvas does.
                     .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
-                    .id(EditorScrollTarget.header)
 
                 if viewModel.blocks.isEmpty {
                     // `isDocumentPendingDelete` joins the error check for the same reason the
@@ -916,9 +916,6 @@ struct EditorView: View {
                     }
                 } else {
                     ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
-                        // Grouped so the scroll target is named once for the row
-                        // whichever branch draws it — a queued photo is still a
-                        // block the anchor may land on.
                         Group {
                             // A queued photo renders from the bytes on disk. Branched here
                             // rather than inside `MarkdownBlockView` because the state and the
@@ -939,35 +936,44 @@ struct EditorView: View {
                                 )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
+                                    // Snapshot before the swap, not during it:
+                                    // the outgoing ScrollView's last geometry
+                                    // report is zero.
+                                    scrollAnchor.snapshotForSwap()
                                     viewModel.startEditing(focusing: block.id)
                                 }
                             }
                         }
-                        .id(EditorScrollTarget.block(block.id))
                     }
                 }
 
                 subpagesSection
                     .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
-                    // `.trailer` — the same name the editing canvas gives the
-                    // space below its last block. The two layouts have to offer
-                    // the *same* set of scroll targets or the anchor stops
-                    // round-tripping: a reader parked past the last block would
-                    // hand the editor an id it cannot find (and vice versa), and
-                    // the handoff would silently degrade to "open at the top"
-                    // exactly where the document is long enough for that to be
-                    // the thing the user notices.
-                    .id(EditorScrollTarget.trailer)
             }
-            .scrollTargetLayout()
             .padding(.horizontal, EditorBlockMetrics.gutter)
             .padding(.top, DocsSpacing.spaceSM)
             .padding(.bottom, DocsSpacing.spaceLG)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollPosition(
-            id: Binding(get: { scrollAnchor.target }, set: { scrollAnchor.target = $0 }), anchor: .top
-        )
+        .scrollPosition($readingScrollPosition)
+        // Recorded continuously, read once — when the editing canvas appears
+        // and asks where the reader was.
+        // `contentOffset.y` is measured from the scroll view's bounds origin,
+        // which sits at `-contentInsets.top` when scrolled to the top, while
+        // `scrollTo(y:)` positions relative to the content's own top edge.
+        // Recording the distance scrolled *from the content top* is what makes
+        // the two agree; without it every handoff lands one safe-area inset
+        // out (~110pt on this device, in both directions).
+        .onScrollGeometryChange(for: CGFloat.self) {
+            $0.contentOffset.y + $0.contentInsets.top
+        } action: { _, offset in
+            scrollAnchor.noteScrolled(to: offset)
+        }
+        .onAppear {
+            if let offsetY = scrollAnchor.consumePendingOffset() {
+                readingScrollPosition.scrollTo(y: offsetY)
+            }
+        }
         .refreshable {
             await viewModel.refresh()
         }
@@ -1251,6 +1257,7 @@ struct EditorView: View {
         switch action {
         case .edit:
             Button {
+                scrollAnchor.snapshotForSwap()
                 viewModel.startEditing()
             } label: {
                 MaterialSymbol(.edit, size: 22)
@@ -1267,6 +1274,7 @@ struct EditorView: View {
 
         case .done:
             Button {
+                scrollAnchor.snapshotForSwap()
                 viewModel.finishEditing()
             } label: {
                 MaterialSymbol(.check, size: 22, fill: true)

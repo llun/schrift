@@ -1262,3 +1262,29 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > the one rule for whether peer state is fresh enough to show at all, now applied
 > on **both** surfaces: before, only the badge honoured it and the reading
 > surface drew its avatars offline, where they are whatever the socket last said.
+
+> **Amended: 2026-08-17 (the scroll handoff, disproved twice on a device before
+> it worked).** The reading ↔ editing scroll restore shipped in the revision
+> above as `.scrollPosition(id:anchor:)` over a shared `EditorScrollTarget`. On a
+> device it did nothing at all — the editor still opened at the top of the
+> document — and the two later attempts each failed differently. Recorded because
+> every one of them looked right in review:
+>
+> 1. `.scrollPosition(id:)` reports the id the scroll view is **aligned** to.
+>    Free-scrolling content (no `.scrollTargetBehavior(.viewAligned)`, which
+>    would make a document snap) is almost never aligned to an item, so the
+>    binding stayed nil and the handoff silently did nothing. The offset is the
+>    honest unit for a freely scrolling surface — and it only *means* anything
+>    because this change made both canvases lay out the same.
+> 2. Tracking that offset continuously fails too: a `ScrollView` being torn down
+>    reports a **final geometry of zero**, overwriting the anchor with "the top"
+>    at precisely the moment it is read. Snapshot at the swap instead.
+> 3. Restoring into the editing canvas under-scrolls by ~108pt, because it is a
+>    `LazyVStack` — at `onAppear` one screenful exists and the scroll clamps to
+>    it. A bounded re-apply over a few runloop turns lets each pass realize the
+>    rows the last one scrolled past.
+>
+> Residual after all three: ~37pt on a two-screen document, which is the
+> cumulative line-box drift already documented, not a fourth bug. **None of this
+> is reachable by the test suite** — it took a build, a real document and a
+> screenshot at a fixed coordinate to find each one.

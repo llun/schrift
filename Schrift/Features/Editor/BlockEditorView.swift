@@ -24,6 +24,7 @@ struct BlockEditorView<Header: View>: View {
     @ViewBuilder var header: () -> Header
 
     @Environment(LocalizationStore.self) private var loc
+    @State private var scrollPosition = ScrollPosition()
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -56,13 +57,44 @@ struct BlockEditorView<Header: View>: View {
                         .accessibilityLabel(loc[.editor_add_paragraph_a11y])
                         .id(EditorScrollTarget.trailer)
                 }
-                .scrollTargetLayout()
                 .padding(.horizontal, EditorBlockMetrics.gutter)
                 .padding(.top, DocsSpacing.spaceSM)
             }
-            .scrollPosition(
-                id: Binding(get: { scrollAnchor.target }, set: { scrollAnchor.target = $0 }), anchor: .top
-            )
+            .scrollPosition($scrollPosition)
+            // Record continuously so `Done` hands the reading surface back the
+            // place the user was editing, not the top of the page.
+            // `contentOffset.y` is measured from the scroll view's bounds origin,
+            // which sits at `-contentInsets.top` when scrolled to the top, while
+            // `scrollTo(y:)` positions relative to the content's own top edge.
+            // Recording the distance scrolled *from the content top* is what makes
+            // the two agree; without it every handoff lands one safe-area inset
+            // out (~110pt on this device, in both directions).
+            .onScrollGeometryChange(for: CGFloat.self) {
+                $0.contentOffset.y + $0.contentInsets.top
+            } action: { _, offset in
+                scrollAnchor.noteScrolled(to: offset)
+            }
+            .onAppear {
+                guard let offsetY = scrollAnchor.consumePendingOffset() else { return }
+                // Applied repeatedly, and that is not superstition. This canvas
+                // is a `LazyVStack`: when `onAppear` runs it has realized only
+                // the first screenful, so its content is short and the scroll
+                // **clamps** to the little that exists — measured at ~108pt shy
+                // of the target on a two-screen document. Each pass realizes the
+                // rows the previous one scrolled past, so the reachable offset
+                // grows until it covers the target. The reading surface needs
+                // none of this: it is a plain `VStack`, laid out in full.
+                //
+                // Bounded rather than looped-until-equal: a document shorter
+                // than the requested offset would never converge.
+                scrollPosition.scrollTo(y: offsetY)
+                Task { @MainActor in
+                    for _ in 0..<4 {
+                        await Task.yield()
+                        scrollPosition.scrollTo(y: offsetY)
+                    }
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: viewModel.focusedBlockID) { _, focusedID in
                 guard let focusedID else { return }
