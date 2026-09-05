@@ -1,0 +1,22 @@
+CLAUDE.md
+  h_580a04e334fef4 1057
+Schrift/Features/Editor/BlockEditorView.swift
+  h_580a04e334fef4 169,176-178,180
+Schrift/Features/Editor/EditorView.swift
+  h_580a04e334fef4 824-835
+Schrift/Features/Editor/MarkdownBlockView.swift
+  h_580a04e334fef4 76-79,112-138
+SchriftTests/Features/Editor/BlockEditorChecklistTests.swift
+  h_580a04e334fef4 1-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "07e110863a7c64d2cace54f9e4283d2424ada025",
+  "prompts": {},
+  "humans": {
+    "h_580a04e334fef4": {
+      "author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
