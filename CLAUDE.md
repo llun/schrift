@@ -1080,7 +1080,7 @@ new code reads like the surrounding code.
     first line of text it sits beside — grow the hit rect and give the growth
     back with **symmetric negative padding**
     (`.padding(x).contentShape(Rectangle()).padding(-x)`): same layout, bigger
-    target.
+    target (a 24pt glyph padded by `DocsSpacing.spaceSM` reaches a 48x48pt target).
   The hit *shape* is invisible in a screenshot and uncatchable by the suite,
   which is why it survived a whole design refresh on `Delete document`,
   `Sign out` and both conflict-resolution rows — check that by tapping the

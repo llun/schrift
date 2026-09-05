@@ -121,6 +121,8 @@ struct MarkdownBlockView: View {
     /// Chrome only: it changes what an *uncached* attachment card says, never
     /// whether a cached one opens.
     var isOffline: Bool = false
+    var onToggleChecklist: (() -> Void)? = nil
+    var onTapText: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -174,11 +176,19 @@ struct MarkdownBlockView: View {
             alignment: .top,
             spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
         ) {
-            // No `onToggleChecklist`: the row's own tap enters the editor, so
-            // the checkbox is drawn plain here and toggled there.
-            EditorBlockAdornment(kind: block.kind, numberedIndex: numberedIndex)
-            blockText
-                .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
+            EditorBlockAdornment(
+                kind: block.kind, numberedIndex: numberedIndex,
+                onToggleChecklist: onToggleChecklist)
+            if let onTapText {
+                blockText
+                    .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onTapText)
+            } else {
+                blockText
+                    .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
+            }
         }
     }
 

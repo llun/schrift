@@ -927,6 +927,19 @@ struct EditorView: View {
                                     alt: pendingAttachmentAlt(for: block), display: display,
                                     onRetry: { retryPendingAttachment(for: block) },
                                     onRemove: { viewModel.removePendingAttachment(blockID: block.id) })
+                            } else if case .checklistItem = block.kind {
+                                MarkdownBlockView(
+                                    block: block, serverOrigin: serverOrigin,
+                                    numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                    isOffline: isOffline,
+                                    onToggleChecklist: {
+                                        viewModel.toggleChecklist(blockID: block.id)
+                                    },
+                                    onTapText: {
+                                        scrollAnchor.snapshotForSwap()
+                                        viewModel.startEditing(focusing: block.id)
+                                    }
+                                )
                             } else {
                                 MarkdownBlockView(
                                     block: block, serverOrigin: serverOrigin,
