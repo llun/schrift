@@ -82,6 +82,45 @@ final class SearchViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentSearches.first, "Roadmap")
     }
 
+    func testReturningToSearchRetainsQueryResultsAndRecentTerms() async {
+        let viewModel = makeViewModel()
+        let body = Self.paginatedFixture(
+            id: "11111111-1111-4111-8111-111111111111", title: "Roadmap", isFavorite: true)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+        viewModel.query = "Roadmap"
+        viewModel.recordSearch()
+        await viewModel.search()
+
+        // The shell retains this same model when Search is popped or its tab is switched.
+        await viewModel.loadQuickAccess()
+
+        XCTAssertEqual(viewModel.query, "Roadmap")
+        XCTAssertEqual(viewModel.results.map(\.title), ["Roadmap"])
+        XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])
+        XCTAssertEqual(viewModel.quickAccess.map(\.title), ["Roadmap"])
+    }
+
+    func testNetworkLossWhileReturningKeepsResultsAndReportsSearchFailure() async {
+        let viewModel = makeViewModel()
+        viewModel.query = "Roadmap"
+        let body = Self.paginatedFixture(
+            id: "11111111-1111-4111-8111-111111111111", title: "Roadmap", isFavorite: true)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+        await viewModel.search()
+        viewModel.recordSearch()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.errorKey, .search_error_search)
+        XCTAssertFalse(viewModel.isSearching)
+        XCTAssertEqual(viewModel.results.map(\.title), ["Roadmap"])
+        XCTAssertEqual(viewModel.query, "Roadmap")
+        XCTAssertEqual(viewModel.recentSearches, ["Roadmap"])
+    }
+
     // MARK: - Rows for documents whose deletion is queued
 
     /// Search annotates too, so a document deleted from its own screen stops looking alive in
