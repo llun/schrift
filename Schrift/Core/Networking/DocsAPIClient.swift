@@ -20,6 +20,10 @@ actor DocsAPIClient {
     /// a relaunch. See `formattedContent(documentID:format:)`.
     var prefersLegacyContentRoute = false
 
+    /// A favorites route that returned a decoded page. Scoped to this server/client;
+    /// discarded on a later 404 so a server upgrade can be detected without signing out.
+    var favoriteListPath: String?
+
     init(
         baseURL: URL,
         session: URLSession = .shared,

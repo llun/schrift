@@ -801,6 +801,20 @@ new code reads like the surrounding code.
   `application/xhtml+xml` will not trigger the fallback and will report its
   documents as deleted. Django's default 404 page is `text/html`, and that is what
   the one legacy server this was tested against returns.
+- **Favorites routes are versioned.** Docs **5.7.0** renamed
+  `documents/favorite_list/` to `documents/favorites/` (upstream #2540).
+  `favoriteDocuments()` checks `config/`'s `RELEASE_VERSION` with a numeric
+  comparison: older releases use the legacy action, 5.7.0+ use the renamed one.
+  Missing, malformed, or unavailable config starts with the legacy route; a
+  config 401 still propagates and raises reauthentication. A collection GET's
+  JSON or HTML 404 permits **one** attempt at the alternate action, including
+  backported/custom servers. No other favorites error qualifies. Cache only a
+  route that returned a decoded page, scoped to the client; a later 404 clears
+  it and tries the alternate so an in-session upgrade can recover. Do not replace
+  the action with `documents/?is_favorite=true`: the generic list keeps only
+  highest ancestors and can omit pinned subpages that the favorites action includes.
+  Home awaits this list before applying Recent, so a wrong action also blanks Recent
+  and marks Home offline even when its standard list GET succeeded.
 - **A field the *list* endpoints return is not necessarily a field the *create*
   endpoints return.** `is_favorite` is a queryset **annotation**: the list views
   add it, while `POST documents/` and `POST documents/{id}/children/` serialize a
@@ -2423,7 +2437,7 @@ markdown write endpoint**. Understand this before touching the save path:
   the one place `applyFavoriteOverrides`' shape must not be copied.** `applyMoveOverrides`
   (`Features/Home/MoveOverlay.swift`) folds a move into a recents fetch that predates it, by the
   usual rule (filter, never bump `loadGeneration`). But a pin is *directly observable* in
-  `favorite_list/`, so the pin overlay can retire on agreement, whereas **placement is not
+  the favorites action, so the pin overlay can retire on agreement, whereas **placement is not
   observable here**: `Document` carries no parent id, and Home's feed is fetched without a
   parent filter, so whether it lists sub-pages is the server's answer to give. Retiring on
   content therefore reads an ambiguous signal as proof and wedges both ways — a filed document
@@ -2448,7 +2462,7 @@ markdown write endpoint**. Understand this before touching the save path:
   point the server agrees with it would veto the next change made from the web for the life
   of the process. `applyFavoriteOverrides` therefore also reports `confirmed`, retired inside
   the winning generation's guard, and applies to *membership* of the pinned list, not only
-  to the flag — a just-pinned document is simply absent from a `favorite_list/` that predates
+  to the flag — a just-pinned document is simply absent from a favorites response that predates
   the POST. `DocumentCacheStore.setFavorite` write-throughs and, like `removeDocument`,
   **never fabricates** a list that was never cached.
 - **Each Home document renders in exactly one section: Pinned wins, Recent is the residue.**
@@ -2456,7 +2470,7 @@ markdown write endpoint**. Understand this before touching the save path:
   document in both responses and it used to draw twice on one screen.
   `recentsExcludingPinned` (`FavoriteOverlay.swift`) subtracts one list from the other inside
   `recentDocuments`. Three rules travel with it. **Keyed on membership of the rendered pinned
-  list, never on `isFavorite`** — the two genuinely disagree, because `favorite_list/` is
+  list, never on `isFavorite`** — the two genuinely disagree, because the favorites action is
   paginated and Home consumes only `.results`, so a favorite past page one is flagged in the
   feed and absent from `pinnedDocuments`; a flag-keyed filter would hide it from *both*
   sections, whereas membership can only move a row, never take it off the screen (every id
