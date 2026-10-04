@@ -1,0 +1,39 @@
+docs/design-system.md
+  s_51555cf672f070::t_bf65436ebaec1a 249-253
+Schrift/Features/Home/DocumentListView.swift
+  s_51555cf672f070::t_bf65436ebaec1a 285-286,298,302-309
+  s_51555cf672f070::t_eb534df03d280d 294-296
+  s_51555cf672f070::t_b03df42f14b9e3 114,287-293,297
+  s_0f3728a0613c42::t_32fced5c9a6945 299-300
+AGENTS.md
+  s_51555cf672f070::t_eb534df03d280d 553-555
+SchriftTests/Features/Home/NewDocumentToolbarButtonTests.swift
+  s_51555cf672f070::t_b03df42f14b9e3 1-7,10-11,25-44,46-53,62-73
+  s_51555cf672f070::t_ec34c2175a2c35 8-9,56
+  s_51555cf672f070::t_bf65436ebaec1a 12-24,45,54-55,57-60
+  s_51555cf672f070::t_eb534df03d280d 61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35210a714bff00a4a9504ac1de295660107db976",
+  "prompts": {},
+  "sessions": {
+    "s_0f3728a0613c42": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10869-d93b-7583-a06c-057ebe7fdc27",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_51555cf672f070": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10864-547d-7373-b45f-5b8f8e0a6262",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
