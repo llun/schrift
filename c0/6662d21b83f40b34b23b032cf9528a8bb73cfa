@@ -1,0 +1,36 @@
+CLAUDE.md
+  s_86270e6b54577a::t_881fc4dcd33f58 804-817,2440,2465,2473
+SchriftTests/Core/Networking/DocumentEndpointsTests.swift
+  s_86270e6b54577a::t_e72d3aa6a13167 120,124-125,141,161-162,164,166,197-199,241,244,271,300,310,313,326-327,329,348
+  s_86270e6b54577a::t_a68d791e977b2d 295-299,301-309,311-312,314-325,328,330-343
+  s_86270e6b54577a::t_881fc4dcd33f58 140,282-287
+  s_86270e6b54577a::t_45973abdde9265 102-119,121-123,126-139,142-160,163,165,167-196,200-240,242-243,245-270,272-281,288-294,344-347,349-368
+Schrift/Core/Networking/DocumentEndpoints.swift
+  s_86270e6b54577a::t_9b3552909decb1 32-47,77-111
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_86270e6b54577a::t_9b3552909decb1 23-26
+docs/architecture.md
+  s_86270e6b54577a::t_881fc4dcd33f58 920,1213
+  s_86270e6b54577a::t_06d8bfddfb1219 930-940
+  s_86270e6b54577a::t_35842f388df663 941
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_86270e6b54577a::t_e72d3aa6a13167 182-183,186,188
+  s_86270e6b54577a::t_c24111e4718003 429,432,436,440,456,459,463,467,1425-1428
+  s_86270e6b54577a::t_45973abdde9265 173-181,184-185,187,189-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c06662d21b83f40b34b23b032cf9528a8bb73cfa",
+  "prompts": {},
+  "sessions": {
+    "s_86270e6b54577a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a107c8-7423-7f22-a965-b52e32e78dae",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
