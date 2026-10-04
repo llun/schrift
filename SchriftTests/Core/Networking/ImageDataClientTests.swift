@@ -86,6 +86,58 @@ final class ImageDataClientTests: XCTestCase {
         XCTAssertFalse(imageRedirectAllowed(fromOrigin: "https://external.example", to: source))
     }
 
+    func testRedirectDropsInheritedCookiesAndAuthenticationHeaders() async throws {
+        let session = MockURLProtocol.makeSession()
+        let delegate = ImageRequestDelegate(origin: origin)
+        let source = URL(string: "\(origin)/media/photo")!
+        let response = HTTPURLResponse(url: source, statusCode: 302, httpVersion: nil, headerFields: nil)!
+        var inherited = URLRequest(url: URL(string: "\(origin)/other/photo")!)
+        inherited.httpShouldHandleCookies = true
+        inherited.allHTTPHeaderFields = [
+            "Cookie": "pathScoped=original", "Authorization": "Basic original",
+            "Proxy-Authorization": "Basic original", "Origin": origin, "X-CSRFToken": "original",
+        ]
+        let request = inherited
+        let result: URLRequest? = await withCheckedContinuation { continuation in
+            delegate.urlSession(
+                session, task: session.dataTask(with: source), willPerformHTTPRedirection: response,
+                newRequest: request
+            ) { continuation.resume(returning: $0) }
+        }
+        let redirected = try XCTUnwrap(result)
+        for header in ["Cookie", "Authorization", "Proxy-Authorization", "Origin", "X-CSRFToken"] {
+            XCTAssertNil(redirected.value(forHTTPHeaderField: header))
+        }
+        XCTAssertFalse(redirected.httpShouldHandleCookies)
+    }
+
+    func testServerRedirectReSelectsOnlyCookiesApplicableToDestination() async throws {
+        let session = MockURLProtocol.makeSession()
+        let scoped = HTTPCookie(properties: [
+            .domain: "docs.example.org", .path: "/media", .name: "mediaOnly", .value: "fake",
+        ])!
+        let delegate = ImageRequestDelegate(
+            origin: origin,
+            cookieProvider: { url in
+                url.path.hasPrefix("/media/") ? [scoped] : []
+            })
+        let source = URL(string: "\(origin)/media/photo")!
+        let response = HTTPURLResponse(url: source, statusCode: 302, httpVersion: nil, headerFields: nil)!
+        for path in ["/other/photo", "/media/other"] {
+            var request = URLRequest(url: URL(string: "\(origin)\(path)")!)
+            request.setValue("mediaOnly=inherited", forHTTPHeaderField: "Cookie")
+            let proposed = request
+            let result: URLRequest? = await withCheckedContinuation { continuation in
+                delegate.urlSession(
+                    session, task: session.dataTask(with: source), willPerformHTTPRedirection: response,
+                    newRequest: proposed
+                ) { continuation.resume(returning: $0) }
+            }
+            XCTAssertEqual(
+                result?.value(forHTTPHeaderField: "Cookie"), path.hasPrefix("/media/") ? "mediaOnly=fake" : nil)
+        }
+    }
+
     func testStreamingLimitAppliesWithoutContentLength() async {
         MockURLProtocol.stubHandler = { _ in
             .init(

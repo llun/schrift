@@ -118,8 +118,8 @@ struct MarkdownBlockView: View {
     /// Required (no default) so a new render site can't silently skip the gate.
     let serverOrigin: String
     var numberedIndex: Int = 1
-    /// Chrome only: it changes what an *uncached* attachment card says, never
-    /// whether a cached one opens.
+    /// Offline withholds image/attachment downloads while still consulting disk;
+    /// cached bytes remain available in either document surface.
     var isOffline: Bool = false
     var onToggleChecklist: (() -> Void)? = nil
     var onTapText: (() -> Void)? = nil

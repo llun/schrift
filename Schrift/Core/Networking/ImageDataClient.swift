@@ -40,7 +40,9 @@ actor ImageDataClient {
             let cookies = cookieProvider(url)
             if !cookies.isEmpty { request.allHTTPHeaderFields = HTTPCookie.requestHeaderFields(with: cookies) }
         }
-        let delegate = ImageRequestDelegate(origin: origin)
+        let redirectCookies: @Sendable (URL) -> [HTTPCookie]
+        if origin == serverOrigin { redirectCookies = cookieProvider } else { redirectCookies = { _ in [] } }
+        let delegate = ImageRequestDelegate(origin: origin, cookieProvider: redirectCookies)
         let (stream, response) = try await session.bytes(for: request, delegate: delegate)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
             response.url.flatMap(siteOrigin(for:)) == origin,
@@ -69,7 +71,11 @@ func imageRedirectAllowed(fromOrigin: String, to url: URL) -> Bool {
 
 final class ImageRequestDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     private let origin: String
-    init(origin: String) { self.origin = origin }
+    private let cookieProvider: @Sendable (URL) -> [HTTPCookie]
+    init(origin: String, cookieProvider: @escaping @Sendable (URL) -> [HTTPCookie] = { _ in [] }) {
+        self.origin = origin
+        self.cookieProvider = cookieProvider
+    }
 
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
@@ -79,7 +85,18 @@ final class ImageRequestDelegate: NSObject, URLSessionTaskDelegate, Sendable {
             completionHandler(nil)
             return
         }
-        completionHandler(request)
+        // URLSession can retain manually supplied headers. Re-select cookies for the
+        // destination rather than carrying a path-scoped cookie outside its Path.
+        var redirected = request
+        redirected.httpShouldHandleCookies = false
+        for header in ["Cookie", "Authorization", "Proxy-Authorization", "Origin", "X-CSRFToken"] {
+            redirected.setValue(nil, forHTTPHeaderField: header)
+        }
+        let cookies = cookieProvider(url)
+        for (name, value) in HTTPCookie.requestHeaderFields(with: cookies) {
+            redirected.setValue(value, forHTTPHeaderField: name)
+        }
+        completionHandler(redirected)
     }
 
     func urlSession(

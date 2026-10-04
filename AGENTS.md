@@ -1738,7 +1738,9 @@ markdown write endpoint**. Understand this before touching the save path:
   hit needs no new request and renders offline in either surface. `ImageDataClient`
   blocks redirects away from the initial origin (including scheme/port changes),
   refuses URL credentials and HTTP authentication, and never gives an external
-  image app cookies, CSRF, Origin or Authorization headers.
+  image app cookies, CSRF, Origin or Authorization headers. Same-origin
+  redirects drop inherited credential headers and re-select applicable cookies
+  for the destination, honoring cookie Path boundaries.
 - **Displayed images persist through `ImageLoader` + `ImageCacheStore`.** Both
   surfaces pass `isOffline`; offline still consults disk and only withholds the
   network. The loader owns and joins downloads across surface cancellation and

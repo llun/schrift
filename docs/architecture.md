@@ -989,7 +989,8 @@ Only a same-server URL receives the applicable server cookies; external URLs
 require exact-URL, view-local consent, scoped to the authenticated session, and
 receive no app credentials. A task delegate blocks redirects away from the
 initial origin (for both server and external requests), embedded URL credentials,
-and HTTP authentication. TLS uses system trust. Streaming stops at 12 MiB,
+and HTTP authentication. Same-origin redirects strip inherited credentials
+and re-select cookies applicable to the destination path. TLS uses system trust. Streaming stops at 12 MiB,
 including responses without a declared length; non-2xx bodies are never cached.
 
 See [image-byte persistence](offline-and-sync.md#displayed-image-bytes-imagecachestore)
