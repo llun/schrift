@@ -1,0 +1,92 @@
+Schrift/Core/Yjs/TextSpanDiff.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 27
+SchriftTests/DesignSystem/Components/SwipeRevealRowGeometryTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 109
+SchriftTests/Features/Editor/EditorViewTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 183,191
+docs/architecture.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 5,1213
+Schrift/Features/Editor/ConflictSheetView.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 31
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 15
+Schrift/Core/Networking/ConnectivityMonitor.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 31
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 335
+docs/design-system.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 8,134,159,183,308,535,921,1062,1101
+.github/workflows/pr-checks.yml
+  s_200355a7027a8e::t_6ec13e0efcdae5 73
+docs/ci.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 15
+AGENTS.md
+  s_200355a7027a8e::t_76b9a30c3ba1f6 3-5
+  s_200355a7027a8e::t_6ec13e0efcdae5 6-3714
+Schrift/Core/Yjs/YContent.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 50
+Schrift/Features/Editor/EditorViewModel.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 293
+SchriftTests/Core/Yjs/YStateEncoderTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 130
+docs/offline-and-sync.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 8,1283,1696,2080,2189,2816
+Schrift/Core/Yjs/BlockNoteWrite.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 28,289
+SchriftTests/DesignSystem/Components/SwipeRevealRowTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 133
+README.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 39
+SchriftTests/DesignSystem/Components/SwipeActionStyleResolverTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 38
+.gitignore
+  s_200355a7027a8e::t_6ec13e0efcdae5 49
+Schrift/Features/Home/HomeViewModel.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 505
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 93
+docs/README.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 5,8,10
+SchriftTests/Core/Yjs/BlockNoteWriteOracleTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 15
+Schrift/Core/Yjs/YWrite.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 30
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 416
+SchriftTests/Core/Yjs/InlineMarkdownTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 89
+SchriftTests/Core/Yjs/YIntegrationTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 338
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 215
+SchriftTests/Core/Networking/SiteOriginTests.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 40
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 299
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 15
+Schrift/Core/Networking/DocumentSave.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 72
+.github/PULL_REQUEST_TEMPLATE.md
+  s_200355a7027a8e::t_6ec13e0efcdae5 10
+.github/dependabot.yml
+  s_200355a7027a8e::t_6ec13e0efcdae5 5
+Schrift/Core/Yjs/YTransaction.swift
+  s_200355a7027a8e::t_6ec13e0efcdae5 97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "792758f5ef68a5e65d41edd487fc619b9b281e2c",
+  "prompts": {},
+  "sessions": {
+    "s_200355a7027a8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a107f5-4330-73c2-9077-0cf073e58429",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
