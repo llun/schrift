@@ -1,0 +1,25 @@
+docs/design-system.md
+  s_59aefceeac4eec::t_dc79d5f10b3eb1 444-445
+docs/assets/app-icon/make-svg.mjs
+  s_59aefceeac4eec::t_dc79d5f10b3eb1 9-11,28-29
+Schrift/DesignSystem/Tokens/DocsColorHexDark.swift
+  s_59aefceeac4eec::t_dc79d5f10b3eb1 48-49
+CLAUDE.md
+  s_59aefceeac4eec::t_a32ff1685f9525 861-865
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ffc58d696e075494f64eadd4467608bd3580e806",
+  "prompts": {},
+  "sessions": {
+    "s_59aefceeac4eec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74ff1fa4-4479-4fbe-a565-8fe0a94bc2ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
