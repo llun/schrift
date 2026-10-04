@@ -514,6 +514,9 @@ final class EditorViewModel {
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
             markAvailableAgain()
+            // Content initialization is complete. Children revalidate separately and must
+            // not keep the initialized canvas (or its one-time title focus) behind a spinner.
+            if hasLoadedContent { isLoading = false }
             enterNewDocumentIfReady()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
