@@ -1,0 +1,19 @@
+SchriftTests/Features/Home/HomeViewModelTests.swift
+  s_86270e6b54577a::t_147f0ee47eaa53 1408,1414-1417,1422,1426-1428,1432,1435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d5acac4bec6a2e6f1367ab342c78cb72064a89c",
+  "prompts": {},
+  "sessions": {
+    "s_86270e6b54577a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a107c8-7423-7f22-a965-b52e32e78dae",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
