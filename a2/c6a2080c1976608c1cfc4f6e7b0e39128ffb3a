@@ -1,0 +1,23 @@
+Schrift/Assets.xcassets/SchriftLogo.imageset/Contents.json
+  s_ca912cf2b9f28d::t_8394c02ef89a06 4
+docs/design-system.md
+  s_ca912cf2b9f28d::t_8394c02ef89a06 432-448
+CLAUDE.md
+  s_ca912cf2b9f28d::t_8394c02ef89a06 856-861
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2c6a2080c1976608c1cfc4f6e7b0e39128ffb3a",
+  "prompts": {},
+  "sessions": {
+    "s_ca912cf2b9f28d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1060f-ed1f-73e3-a23a-d377828a40aa",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
