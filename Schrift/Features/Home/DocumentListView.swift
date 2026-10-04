@@ -111,10 +111,7 @@ struct DocumentListView: View {
         .toolbar {
             if let onNewDocument {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: onNewDocument) {
-                        MaterialSymbol(.add, size: 24)
-                    }
-                    .accessibilityLabel(loc[.home_newdoc])
+                    NewDocumentToolbarButton(action: onNewDocument)
                 }
             }
         }
@@ -285,11 +282,30 @@ struct DocumentListView: View {
     }
 }
 
+/// A template image lets the system toolbar recognize an icon-only action,
+/// rather than sizing the Material Symbols text glyph as a wider text button.
+struct NewDocumentToolbarButton: View {
+    var action: () -> Void
+
+    @Environment(LocalizationStore.self) private var loc
+
+    var body: some View {
+        Button(action: action) {
+            Image(uiImage: MaterialIcon.add.uiImage(pointSize: 24) ?? UIImage())
+        }
+        .buttonBorderShape(.circle)
+        .accessibilityLabel(loc[.home_newdoc])
+    }
+}
+
 #Preview {
-    DocumentListView(
-        viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
-        serverHost: "docs.llun.dev",
-        onSelect: { _ in }
-    )
+    NavigationStack {
+        DocumentListView(
+            viewModel: HomeViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
+            serverHost: "docs.llun.dev",
+            onSelect: { _ in },
+            onNewDocument: {}
+        )
+    }
     .environment(LocalizationStore())
 }

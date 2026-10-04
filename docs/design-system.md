@@ -246,7 +246,11 @@
 >   own stack, and per-tab paths are what preserve each tab's navigation state.
 > - **The four tab roots dropped `NavBar`** for `.navigationTitle` +
 >   `.navigationSubtitle(serverHost)` + `.toolbar`; Home's "+" is a
->   `ToolbarItem`. The drawn `TabBar` component and its catalog entry are
+>   `ToolbarItem`. Its icon-only create action uses a Material Symbols template
+>   image and `.buttonBorderShape(.circle)`, keeping the native glass surface
+>   circular on iPhone and iPad, including at accessibility text sizes. A text
+>   glyph label makes the toolbar treat it as a wider text action instead.
+>   The drawn `TabBar` component and its catalog entry are
 >   deleted. `NavBar` itself survives only for the editor, which converts next.
 > - **Search uses the system field** (`.searchable` bound to the search role,
 >   `.onSubmit(of: .search)` recording the term). `SearchViewModel` is untouched
