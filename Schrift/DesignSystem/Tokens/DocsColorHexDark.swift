@@ -45,7 +45,8 @@ enum DocsColorHexDark {
     static let success650: UInt32 = 0x4FB878
     static let warning650: UInt32 = 0xE6915F
 
-    // Brand logo / app-icon field
+    // Brand logo shadow: the dark icon's relief colour (= brandFill), not a dark field tone,
+    // which would vanish against the dark page.
     static let brandLogo: UInt32 = 0x7B79E8
 
     // Neutral gray ramp (cool-tinted; a subset of the Cunningham grey scale)

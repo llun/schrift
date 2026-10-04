@@ -441,7 +441,8 @@ writing or paper, and its palette is drawn from the app's purple brand ramp.
 source of truth. It writes the SVG masters beside itself, and
 [`export.sh`](assets/app-icon/export.sh) renders them into the asset catalog.
 That script is local, macOS-only tooling (Node, Google Chrome, ImageMagick and
-`sips`; set `CHROME` to point at another Chrome binary) and never runs in CI. To change the icon, change a number in `make-svg.mjs` and re-export.
+`sips`; set `CHROME` to point at another Chrome binary) and never runs in CI.
+To change the icon, change a number in `make-svg.mjs` and re-export.
 Never hand-edit the PNGs or regenerate them with an image model: the first
 version was a generated bitmap, and its lumpy, asymmetric shape could not be
 corrected because there was no source to edit.

@@ -6,9 +6,9 @@
 import { writeFileSync } from 'node:fs';
 const out = new URL('./', import.meta.url);
 
-// Nib drawn pointing UP in local space from the origin; its rounded point peaks at
-// (0, -4.5). Placed with its axis on the tile's diagonal x + y = 1024, so it leaves
-// exactly through the top-right corner.
+// Nib drawn in local space with its body running toward -y; the rounded point's
+// apex is at (0, -4.5). Placed with its axis on the tile's diagonal x + y = 1024,
+// so it leaves exactly through the top-right corner.
 const NIB = `M4.5 -12
 C34 -104 92 -250 134 -372
 C162 -452 206 -504 222 -568
@@ -25,7 +25,8 @@ Q0 3 4.5 -12 Z`;
 // Breather hole + slit (slit stops short of the tip so the point stays one clean point).
 const HOLE = `M0 -458 a56 56 0 1 0 0 112 a56 56 0 1 0 0 -112 Z`;
 const SLIT = `M-10 -400 L10 -400 L2.2 -84 Q0 -74 -2.2 -84 Z`;
-// Origin at (205, 819), so the point renders at ~(208, 816); axis on the diagonal x + y = 1024; puts the hole on the tile centre.
+// Origin at (205, 819), so the point renders at ~(208, 816); the axis lies on the
+// diagonal x + y = 1024 and the breather hole lands on the tile centre.
 const PLACE = 'translate(205 819) rotate(45) scale(1.08)';
 
 const palettes = {

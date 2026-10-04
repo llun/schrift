@@ -858,10 +858,11 @@ new code reads like the surrounding code.
   for the app icon and the sign-in logo; `export.sh` beside it renders every PNG
   (icon default/dark/tinted, logo Any/Dark). Change the geometry there and
   re-export — **never hand-edit the PNGs or regenerate them with an image
-  model.** Every PNG is 1024×1024, opaque, sRGB, with square corners (iOS and
-  `ConnectView` apply the rounding). Keep `DocsColor.brandLogo` in step with the
-  icon (light = field mid stop, dark = dark relief colour). Rationale and
-  geometry: [`docs/design-system.md`](docs/design-system.md#app-identity).
+  model.** Every PNG is 1024×1024, opaque, sRGB, with square corners — do not
+  bake a corner mask into either; iOS and `ConnectView` apply the rounding. Keep
+  `DocsColor.brandLogo` in step with the icon (light = field mid stop, dark =
+  dark relief colour). Rationale and geometry:
+  [`docs/design-system.md`](docs/design-system.md#app-identity).
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),
