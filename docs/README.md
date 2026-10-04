@@ -2,12 +2,12 @@
 
 Project documentation for the Schrift iOS app. These are **living documents** —
 keep them current with the code, in the same change that alters behavior (see the
-"Docs convention" in [`../CLAUDE.md`](../CLAUDE.md)).
+"Docs convention" in [`../AGENTS.md`](../AGENTS.md)).
 
 Agent- and contributor-facing conventions, workflow, and safety rules live in
-[`../CLAUDE.md`](../CLAUDE.md), which is the single source of truth for "how we
+[`../AGENTS.md`](../AGENTS.md), which is the single source of truth for "how we
 write code here." The documents below capture the architecture and design
-rationale that `CLAUDE.md` only summarizes.
+rationale that `AGENTS.md` only summarizes.
 
 ## Design & architecture
 

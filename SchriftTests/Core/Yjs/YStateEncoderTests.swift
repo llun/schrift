@@ -127,7 +127,7 @@ final class YStateEncoderTests: XCTestCase {
     /// Found by Task 4's B3 fuzz campaign's lane 2 (`--lane2 --seeds 500`,
     /// formatting ops included): 0 divergences and 0 B4-shaped ones in 500
     /// random-formatting seeds. That is expected, not a gap in the campaign —
-    /// the known B4 gap (`CLAUDE.md`, "Formatting cleanup is a known gap")
+    /// the known B4 gap (`AGENTS.md`, "Formatting cleanup is a known gap")
     /// needs a *remote* transaction whose formatting a *concurrent* edit made
     /// redundant, so `cleanupYTextAfterTransaction` has something to delete;
     /// a single local `.format()` with no concurrent writer is exactly the

@@ -12,7 +12,7 @@ func versionRowDate(_ version: DocumentVersion, locale: Locale) -> String {
 /// Read-only version history (Phase F, tasks F1-F3). There is no in-app
 /// restore: the versions retrieve/restore API can't be verified end-to-end in
 /// this headless environment, and restoring would touch the safety-critical
-/// full-overwrite save path (see CLAUDE.md's Yjs section), so it is deferred
+/// full-overwrite save path (see AGENTS.md's Yjs section), so it is deferred
 /// to F4. Older rows are display-only; "Restore on the web" is the one
 /// restore affordance, and it hands off to the web app instead.
 struct VersionHistorySheetView: View {

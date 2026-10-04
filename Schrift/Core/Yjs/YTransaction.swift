@@ -94,7 +94,7 @@ final class YTransaction {
     /// **the exact device-safe ceiling is owed a real-device, Release-build
     /// measurement before the `schrift.liveCollaboration` flag is defaulted on** —
     /// a *simulator* Release measurement would not expose the device stack.
-    /// See CLAUDE.md "Malformed input must throw, never trap".
+    /// See AGENTS.md "Malformed input must throw, never trap".
     static let maxTypeNestingDepth = 256
 
     /// Current depth of the in-progress delete cascade (`YItem.delete`). The gc

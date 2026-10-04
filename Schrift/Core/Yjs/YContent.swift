@@ -47,7 +47,7 @@ enum YIntegrationError: Error, Equatable {
 /// `YContentRecord`, so nothing hinges on JSON canonicalization.
 ///
 /// Pure value code: no concurrency annotations, callable from any isolation
-/// domain (`CLAUDE.md`, "Pure logic layers").
+/// domain (`AGENTS.md`, "Pure logic layers").
 enum YContent {
     case deleted(len: UInt)  // 1  ContentDeleted
     case json([String])  // 2  ContentJSON — raw per-item strings ("undefined" kept literal)

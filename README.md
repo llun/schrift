@@ -36,7 +36,7 @@ bytes directly. See the design spec's "Editing & save mechanism" for details.
 
 ## Code standards
 
-See [`CLAUDE.md`](CLAUDE.md) for the coding conventions, testing patterns, and
+See [`AGENTS.md`](AGENTS.md) for the coding conventions, testing patterns, and
 repo safety rules (written for AI agents and human contributors alike).
 
 ## Setup

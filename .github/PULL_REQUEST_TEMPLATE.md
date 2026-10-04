@@ -7,7 +7,7 @@
 
 <!-- What changed and why. -->
 
-## Definition of done (see CLAUDE.md "Task workflow")
+## Definition of done (see AGENTS.md "Task workflow")
 
 - [ ] `swift format --recursive --in-place Schrift SchriftTests` run
 - [ ] Full test suite passes locally (`xcodebuild test -project Schrift.xcodeproj -scheme Schrift …`)

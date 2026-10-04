@@ -12,7 +12,7 @@ import XCTest
 /// store-structure level: B6's within-block text edit is always
 /// `YWrite.delete` + a self-describing `YWrite.insert(pieces)`, which
 /// constructs different-but-equivalent items than yjs's `deleteText` yet is
-/// correct at the document level (see `CLAUDE.md`, "The Yjs CRDT core" and the
+/// correct at the document level (see `AGENTS.md`, "The Yjs CRDT core" and the
 /// Task 8 brief). The final `apply-to-oracle` lane cross-checks that a real
 /// yjs peer, seeded from the same golden initial update, renders `new` from
 /// B6's incremental update — and that a genuine yjs concurrent edit and B6's

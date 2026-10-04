@@ -37,7 +37,7 @@ final class SiteOriginTests: XCTestCase {
         // returns "evil.com" here, and this function's whole job is scoping
         // cookies/CSRF/the socket to the user's own server. A future string-parse
         // "simplification" that split on "://" would derive the wrong origin —
-        // this locks the true-host contract (CLAUDE.md flags exactly this shape).
+        // this locks the true-host contract (AGENTS.md flags exactly this shape).
         XCTAssertEqual(siteOrigin(for: URL(string: "https://docs.example.org@evil.com/api/")!), "https://evil.com")
     }
 }

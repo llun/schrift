@@ -12,7 +12,7 @@ Never merge the two: `testflight.yml` must never gain a `pull_request` /
 `pr-checks.yml` must never gain a secret or a `pull_request_target` trigger (PRs
 run on the fork-safe `pull_request` trigger, and its `push` trigger fires only
 for `main` — code that has already been reviewed and merged — so it stays safe
-by construction). See the Safety section in [`CLAUDE.md`](../CLAUDE.md).
+by construction). See the Safety section in [`AGENTS.md`](../AGENTS.md).
 
 ## What runs on every PR and every push to `main`
 

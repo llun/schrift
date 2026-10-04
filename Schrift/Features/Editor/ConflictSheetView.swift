@@ -28,7 +28,7 @@ struct IdentifiedSyncConflict: Identifiable {
 /// **detects and asks** rather than merging (there is no on-device Yjs decoder and
 /// no CRDT), so the user picks a single winner.
 ///
-/// Flat, boxless `SheetHeader` chrome per the design system (see CLAUDE.md): the
+/// Flat, boxless `SheetHeader` chrome per the design system (see AGENTS.md): the
 /// two choices are `ListRow`s drawn directly on `DocsColor.surfacePage`, no
 /// `NavigationStack`/"Done" and no `ListSection` card. "Keep the server version"
 /// discards the queued local edit, so it is destructive and goes through a

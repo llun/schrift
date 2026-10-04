@@ -5,7 +5,7 @@
 > full-overwrite save from ever eating content. Kept current with the shipped
 > app; update it in place when behavior changes. See also
 > [`architecture.md`](architecture.md) for the overall architecture and
-> [`CLAUDE.md`](../CLAUDE.md) for the operational conventions.
+> [`AGENTS.md`](../AGENTS.md) for the operational conventions.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same
@@ -1280,7 +1280,7 @@ means a session that knows who it is pays nothing.
 
 It carries a **second** guard on `schrift.workOffline`. That one is not redundant with
 `load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and
-`HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
+`HomeViewModel` is one of the three view models AGENTS.md names as honouring the
 preference — the same reason `createDocument` withholds its POST. Unguarded, every
 pull-to-refresh in the mode would park the spinner on a `/users/me/` carrying cookies the
 user asked not to send.
@@ -1693,7 +1693,7 @@ already-recorded ghost residual below, not a new one.
   reads "no longer available". Nothing is lost (the teardown flushes first, the draft
   survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI gates that fetch via `EditorViewModel.isLocalDocument`, without which a
   locally-created document would be unusable the moment it is opened.
-  Recorded in `isPendingCreate`'s docstring and CLAUDE.md; it belongs in this list too.
+  Recorded in `isPendingCreate`'s docstring and AGENTS.md; it belongs in this list too.
 - **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
   checkpointed record it takes the `isPendingCreate` branch and removes only the local
   draft, leaving a `serverID` draft and its id-keyed maps behind — where the
@@ -2077,7 +2077,7 @@ is unrecoverable where a delayed retry is not — which is exactly why the block
 scoped to a build rather than made permanent. The in-memory `.failed` rule is exactly wrong there,
 because `init` re-seeds every record to `.pendingSync` — a free retry for a
 validation 400, but for this one, a fresh POST on every launch that abandons the
-document the last one built. This is not hypothetical: `CLAUDE.md` records
+document the last one built. This is not hypothetical: `AGENTS.md` records
 `is_favorite`-as-required-`Bool` failing every create after the server had already
 made the document, "quietly littering the server with them". So a decode failure
 stamps `replayBlockedAt` on the record, which the pass skips. The record stays
@@ -2186,7 +2186,7 @@ stranded draft is separately reaped by `runSyncPass`, which GETs it and takes th
 
 **And it starts over only when nothing is left under that id.** The premise of the whole
 branch is "the checkpointed document is gone", and a bare `.notFound` does not establish
-that — a proxy hiccup maps to it too (`CLAUDE.md` invariant 0c). Two effects hang off that
+that — a proxy hiccup maps to it too (`AGENTS.md` invariant 0c). Two effects hang off that
 premise, and both are destructive: discharging the conflict drops the held keystrokes, and
 clearing `syncedServerID` disarms the server-id suppression above — after which
 `runSyncPass`, next in the *same* pass and on the *same* 404, deletes the draft. So one
@@ -2813,7 +2813,7 @@ XCTest, mirroring the source tree. New/updated:
 
 ## Docs to update alongside implementation
 
-- `CLAUDE.md` — note the content cache tier and the load precedence in the Editor
+- `AGENTS.md` — note the content cache tier and the load precedence in the Editor
   section; add `DocumentContentCacheStore` to the persistence-stores list (with
   the file-based/backup-excluded/sign-out-cleared posture) and the repo-layout
   map.

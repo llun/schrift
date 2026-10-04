@@ -69,7 +69,7 @@ extension DocsAPIClient {
     /// conflict against the user's own writing.
     ///
     /// Reporting the half-land as a return value rather than a second thrown type keeps
-    /// `DocsAPIError` the one error type crossing this layer (see CLAUDE.md, Networking). The
+    /// `DocsAPIError` the one error type crossing this layer (see AGENTS.md, Networking). The
     /// result is **not** discardable: a caller that ignores it silently loses the fact that
     /// the server holds its content, which is the whole point.
     func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> DocsAPIError? {
