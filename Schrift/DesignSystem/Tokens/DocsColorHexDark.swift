@@ -46,7 +46,7 @@ enum DocsColorHexDark {
     static let warning650: UInt32 = 0xE6915F
 
     // Brand logo / app-icon field
-    static let brandLogo: UInt32 = 0x7C79F2
+    static let brandLogo: UInt32 = 0x7B79E8
 
     // Neutral gray ramp (cool-tinted; a subset of the Cunningham grey scale)
     static let gray050: UInt32 = 0x202028

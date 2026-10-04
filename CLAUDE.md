@@ -443,7 +443,8 @@ Schrift/
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
 docs/                    living project docs — architecture.md, offline-and-sync.md,
-                         design-system.md, ci.md, testflight-setup.md (see docs/README.md)
+                         design-system.md, ci.md, testflight-setup.md (see docs/README.md);
+                         assets/app-icon/ holds the icon's vector masters + export script
 fastlane/ scripts/ .github/workflows/   CI: PR build/test checks + TestFlight release pipeline
 ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
@@ -853,12 +854,18 @@ new code reads like the surrounding code.
 
 ### Design system (`DesignSystem`)
 
-- **App identity:** `AppIcon.appiconset` and `SchriftLogo.imageset` use the
-  same Soft relief fountain-pen artwork. Keep their PNGs identical: 1024×1024,
-  opaque, sRGB, with square corners. iOS masks the Home Screen icon;
-  `ConnectView` applies its own continuous rounded rectangle to the sign-in
-  logo. Do not bake a second corner mask into either bitmap. The visual
-  direction is recorded in [`docs/design-system.md`](docs/design-system.md#app-identity).
+- **App identity:** the app icon and the sign-in logo are rendered from vector
+  masters. `docs/assets/app-icon/make-svg.mjs` is the source of truth, and
+  `export.sh` beside it writes every PNG: the icon's default, dark and tinted
+  appearances, plus the logo's Any and Dark appearances. Change the geometry
+  there and re-export. **Never hand-edit the PNGs, and never regenerate them
+  with an image model.** The first Soft relief bitmap was generated, so its
+  lumpy shape had no source to fix. Every PNG is 1024×1024, opaque, sRGB, with
+  square corners: iOS masks the Home Screen icon and `ConnectView` rounds the
+  logo, so do not bake a corner mask into either. `DocsColor.brandLogo` (the
+  logo's shadow) is the icon field's mid stop — retune it whenever the field
+  changes. Rationale and geometry:
+  [`docs/design-system.md`](docs/design-system.md#app-identity).
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),

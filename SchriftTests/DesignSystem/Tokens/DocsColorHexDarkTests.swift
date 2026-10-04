@@ -56,7 +56,7 @@ final class DocsColorHexDarkTests: XCTestCase {
     }
 
     func testDarkBrandLogoMatchesDesignSpec() {
-        XCTAssertEqual(DocsColorHexDark.brandLogo, 0x7C79F2)
+        XCTAssertEqual(DocsColorHexDark.brandLogo, 0x7B79E8)
     }
 
     func testDarkGrayRampMatchesDesignSpec() {
