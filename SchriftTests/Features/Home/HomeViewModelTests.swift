@@ -1405,28 +1405,34 @@ final class HomeViewModelTests: XCTestCase {
         let recentBody = Self.paginatedFixture(id: id.uuidString.lowercased(), title: "Doomed", isFavorite: false)
         let empty = Self.emptyFixture
         let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             let url = request.url?.absoluteString ?? ""
             if url.contains("/favorite/") {
                 return .init(statusCode: 201, headers: [:], body: Data(), error: nil)
             }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.6.1"}"#.utf8), error: nil)
+            }
             log.record(request)
             // The pre-pin list answers: not a favorite, and absent from `favorite_list/`.
             return .init(
                 statusCode: 200, headers: [:],
-                body: url.contains("favorite_list") ? empty : recentBody, error: nil, delay: 0.2)
+                body: url.contains("favorite_list") ? empty : recentBody, error: nil, releasedBy: gate)
         }
 
         let loading = Task { await viewModel.load() }
-        // **Ordered on the recorder, not a sleep.** Both list requests must have *reached* the
-        // stub — and be held open by its delay — before the pin runs, or the fetch resolves
-        // first and the test passes while exercising nothing (`load()` would set `pinned = []`
-        // and the later pin would insert the row anyway).
+        // Both stale document responses must be registered as held before pinning.
+        // Recorder arrival alone precedes registration; the explicit gate prevents either
+        // response from completing during a scheduler pause before the pin finishes.
         await waitUntil {
             log.count(ofMethod: "GET", urlContaining: "/documents/favorite_list/") == 1
                 && log.count(ofMethod: "GET", urlContaining: "/documents/?") == 1
+                && MockURLProtocol.deferredDeliveryCount == 2
         }
         await viewModel.toggleFavorite(document)
+        gate.open()
         await loading.value
 
         XCTAssertEqual(
