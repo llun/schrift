@@ -240,19 +240,12 @@ struct MarkdownBlockView: View {
     }
 }
 
-/// Renders a document image inline. When the image is same-origin as the user's
-/// Docs server (`imageLoadPolicy`) it fetches through `URLSession.shared`, which
-/// carries the session cookie from `HTTPCookieStorage.shared`, so authenticated
-/// media loads without extra plumbing. An image from any other origin renders a
-/// tap-to-load placeholder and issues no request until the reader taps it — an
-/// off-origin `AsyncImage` would leak the reader's IP/User-Agent/timing to a host
-/// the document's author chose. A failed load degrades to a tappable link so the
-/// URL is never lost.
-///
-/// Known residual: `AsyncImage` follows HTTP redirects, so a same-origin URL that
-/// the user's own server 302s off-origin still leaks. Out of v1 scope (see the
-/// architecture doc); the fix would be a custom loader with a redirect-blocking
-/// `URLSession` delegate.
+/// Renders the same persistent image in reading and editing. The app-scoped loader
+/// owns disk lookup and downloads; offline suppresses requests, never cache reads.
+/// Same-server images load automatically, while an uncached external image requires
+/// exact-URL, authenticated-scope consent. Failed loads keep an image card and its URL.
+/// `ImageDataClient` supplies credentials only to applicable server requests and blocks
+/// redirects away from the initial origin, including for consented external images.
 struct MarkdownImageView: View {
     let alt: String
     let url: URL
