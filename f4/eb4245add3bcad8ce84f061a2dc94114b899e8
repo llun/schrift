@@ -1,0 +1,33 @@
+AGENTS.md
+  s_b41534c519615d::t_76b9c803be910c 1748-1754
+Schrift/Core/Auth/SessionStore.swift
+  s_b41534c519615d::t_0efc9965019ad4 86-89,108-113,166-168,211,213-217
+Schrift/Features/Editor/ImageLoader.swift
+  s_b41534c519615d::t_a38f736480dc74 35-37,47,50-52,55-58,70,72-73,81-83,86-87,89-92,95,97,100-101,105,108-142,145-146,148,150-155,157,159,161,165-169
+Schrift/Features/Editor/MarkdownImageView.swift
+  s_b41534c519615d::t_17cbf97d315fb0 11-18,31-38,41,63-78,85,135
+SchriftTests/Core/Auth/FakeKeychainStore.swift
+  s_b41534c519615d::t_ff3c9765d5ebfa 6,13
+SchriftTests/Features/Editor/ImageLoaderTests.swift
+  s_b41534c519615d::t_7265801a170e73 1,190-302
+docs/architecture.md
+  s_b41534c519615d::t_78a75652180057 979-980,988-993,1014-1018
+docs/offline-and-sync.md
+  s_b41534c519615d::t_6632063f0e9728 1096-1100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4eb4245add3bcad8ce84f061a2dc94114b899e8",
+  "prompts": {},
+  "sessions": {
+    "s_b41534c519615d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1086a-1fa4-7e72-9c7a-15fa1c927d9c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
