@@ -121,12 +121,12 @@ struct MainTabView: View {
                 DocumentListView(
                     viewModel: viewModel,
                     serverHost: serverHost,
-                    onSelect: { docsPath.append($0) },
+                    onSelect: { docsPath.append(DocumentEditorRoute(document: $0)) },
                     onSearchTap: { selectedTab = .search },
                     onNewDocument: createDocument
                 )
-                .navigationDestination(for: Document.self) { document in
-                    editorScreen(for: document, path: $docsPath)
+                .navigationDestination(for: DocumentEditorRoute.self) { route in
+                    editorScreen(for: route, path: $docsPath)
                 }
             }
         }
@@ -135,10 +135,11 @@ struct MainTabView: View {
     private var sharedTab: some View {
         NavigationStack(path: $sharedPath) {
             SharedScreen(
-                viewModel: sharedViewModel, serverHost: serverHost, onOpenDocument: { sharedPath.append($0) }
+                viewModel: sharedViewModel, serverHost: serverHost,
+                onOpenDocument: { sharedPath.append(DocumentEditorRoute(document: $0)) }
             )
-            .navigationDestination(for: Document.self) { document in
-                editorScreen(for: document, path: $sharedPath)
+            .navigationDestination(for: DocumentEditorRoute.self) { route in
+                editorScreen(for: route, path: $sharedPath)
             }
         }
     }
@@ -146,10 +147,11 @@ struct MainTabView: View {
     private var searchTab: some View {
         NavigationStack(path: $searchPath) {
             SearchScreen(
-                viewModel: searchViewModel, serverHost: serverHost, onOpenDocument: { searchPath.append($0) }
+                viewModel: searchViewModel, serverHost: serverHost,
+                onOpenDocument: { searchPath.append(DocumentEditorRoute(document: $0)) }
             )
-            .navigationDestination(for: Document.self) { document in
-                editorScreen(for: document, path: $searchPath)
+            .navigationDestination(for: DocumentEditorRoute.self) { route in
+                editorScreen(for: route, path: $searchPath)
             }
         }
     }
@@ -196,12 +198,14 @@ struct MainTabView: View {
 
     /// One builder for all three stacks that can open a document, so the editor
     /// is configured identically no matter which tab it was reached from.
-    private func editorScreen(for document: Document, path: Binding<NavigationPath>) -> some View {
-        EditorScreen(
+    private func editorScreen(for route: DocumentEditorRoute, path: Binding<NavigationPath>) -> some View {
+        let document = route.document
+        return EditorScreen(
             client: viewModel.client,
             documentID: document.id,
             title: document.title ?? loc[.common_untitled],
             saveCoordinator: viewModel.saveCoordinator,
+            entryIntent: route.entryIntent,
             diagnostics: viewModel.diagnostics,
             reach: document.linkReach,
             serverHost: serverHost,
@@ -213,7 +217,8 @@ struct MainTabView: View {
                 pop(path)
                 Task { await viewModel.load() }
             },
-            onOpenDocument: { path.wrappedValue.append($0) }
+            onOpenDocument: { path.wrappedValue.append(DocumentEditorRoute(document: $0)) },
+            onCreatedDocument: { path.wrappedValue.append(DocumentEditorRoute(createdDocument: $0)) }
         )
         // The editor is a full-screen surface: the tab bar steps aside for it,
         // and returns when the stack pops. Its navigation bar is the system's
@@ -225,7 +230,7 @@ struct MainTabView: View {
     private func createDocument() {
         Task {
             if let document = await viewModel.createDocument() {
-                docsPath.append(document)
+                docsPath.append(DocumentEditorRoute(createdDocument: document))
             }
         }
     }

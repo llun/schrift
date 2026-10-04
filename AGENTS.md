@@ -532,11 +532,12 @@ new code reads like the surrounding code.
   Binding setters and intent methods early-return on unchanged input
   (`guard old != new`) to avoid spurious dirty/save churn.
 - **Navigation lives in the view**, not the VM: a `NavigationStack(path:)` per
-  tab over a `NavigationPath` — push `Document` values for document screens
+  tab over a `NavigationPath` — push `DocumentEditorRoute` values for document
+  screens (ordinary open or one-time creation intent)
   (add a small `Hashable` route enum alongside them if an auxiliary screen ever
   needs one), with one `navigationDestination(for:)` per pushed type — plus
   closure callbacks
-  (`onOpenDocument`, `onSignOut`, …). VMs signal outcomes via state flags
+  (`onOpenDocument`, `onCreatedDocument`, `onSignOut`, …). VMs signal outcomes via state flags
   (`didDelete`), they don't navigate.
 - **Top-level navigation is the system `TabView`, and the tab roots use system
   navigation bars.** `MainTabView` (`Schrift/Features/Home/MainTabView.swift`)
@@ -1871,6 +1872,17 @@ markdown write endpoint**. Understand this before touching the save path:
   **read-only** — the outbound write path (C2, now wired end-to-end by C2c below) is
   a separate funnel that never calls `install` either. See `docs/architecture.md`
   ("Live editing (C1)").
+- **Only a creation action opens editing automatically.** `DocumentEditorRoute(createdDocument:)`
+  carries a reference-backed `NewDocumentEntryIntent`; ordinary routes carry none. Home's
+  compact push, regular-width selection, Subpages add, and Pages drawer create all use it.
+  `EditorViewModel` consumes it only after successful content installation or local restoration,
+  through `canStartEditing` / `startEditing`. Failed loads keep the intent pending for a
+  successful retry; they never seed an unloaded body. The editable shared header claims a
+  separate one-time title-focus request and selects the existing title without clearing or
+  dirtying it. Do not derive entry/focus from the default title, emptiness, connectivity, a
+  pending-create id, or an appearance callback: refresh, reconnect, navigation restoration,
+  rerenders, and local-to-server migration must never re-arm it. The title field uses a vertical
+  axis so long titles wrap on both surfaces, including Dynamic Type.
 - Saves go through **`DocumentSaveCoordinator`** (app-scoped; owns its `Task`s so
   navigating away never cancels a save; write-ahead draft to `PendingDraftStore`;
   per-document latest-wins coalescing; background-task assertion; draft replay).

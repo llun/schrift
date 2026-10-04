@@ -1253,7 +1253,12 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   by **both** surfaces. The title is a `TextField` while editing and a `Text`
 >   while reading, same font and tracking either way, and an untitled document
 >   now shows the same "Untitled" placeholder on both (it used to render an empty
->   line while reading and a placeholder while editing).
+>   line while reading and a placeholder while editing). The editing field uses
+>   a vertical axis so long titles wrap, including at accessibility text sizes.
+>   A newly created document enters editing after content initialization and
+>   focuses/selects its title once; selection does not clear or save the default
+>   title. Ordinary opens start reading. Focus is consumed by the rendered field,
+>   so rerenders, refreshes, and returning to the screen never reclaim the caret.
 >
 > Three consequences worth stating plainly:
 >

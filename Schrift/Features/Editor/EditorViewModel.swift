@@ -152,6 +152,8 @@ final class EditorViewModel {
     private(set) var isUnavailable = false
     private var savedMarkdown = ""
     private var savedTitle = ""
+    private let entryIntent: NewDocumentEntryIntent?
+    private var initialTitleFocusPending = false
     private var autosaveTask: Task<Void, Never>?
     /// Debounces revalidation triggered by a live-collaboration change signal, so
     /// a burst of peer edits coalesces into one re-fetch.
@@ -208,6 +210,7 @@ final class EditorViewModel {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        entryIntent: NewDocumentEntryIntent? = nil,
         serverOrigin: String = "",
         signedInUser: SignedInUserStore = SignedInUserStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
@@ -221,6 +224,7 @@ final class EditorViewModel {
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
+        self.entryIntent = entryIntent
         self.serverOrigin = serverOrigin
         self.signedInUser = signedInUser
         self.contentCache = contentCache
@@ -441,6 +445,7 @@ final class EditorViewModel {
                     subpages = cachedChildren
                 }
                 restoreLocalContent()
+                enterNewDocumentIfReady()
             }
             // No spinner for a document declared gone: `readingSurface` owns the
             // only `.refreshable`, and swapping it for a `ProgressView` mid-refresh
@@ -509,6 +514,7 @@ final class EditorViewModel {
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
             markAvailableAgain()
+            enterNewDocumentIfReady()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration else { return }
@@ -1650,7 +1656,25 @@ final class EditorViewModel {
     /// and a document whose content never loaded is the case this exists for, on or off.
     var canStartEditing: Bool { hasLoadedContent }
 
-    func startEditing(focusing blockID: UUID? = nil) {
+    /// Called only after initialization/restoration, never from a rerender or reconnect.
+    /// Entering via the ordinary gate preserves the unloaded-content save invariant.
+    private func enterNewDocumentIfReady() {
+        guard canStartEditing, !isUnavailable, !isDocumentPendingDelete,
+            entryIntent?.consume() == true
+        else { return }
+        startEditing(focusingTitle: true)
+        initialTitleFocusPending = true
+    }
+
+    /// The rendered editing header claims focus once. A recreated screen sharing a consumed
+    /// navigation intent starts reading and has no focus request of its own.
+    func consumeInitialTitleFocus() -> Bool {
+        guard isEditing, canStartEditing, initialTitleFocusPending else { return false }
+        initialTitleFocusPending = false
+        return true
+    }
+
+    func startEditing(focusing blockID: UUID? = nil, focusingTitle: Bool = false) {
         guard canStartEditing else { return }
         clearError()
         // Hide the banner while the caret is in the document (`applyPendingUpdate` is guarded
@@ -1666,7 +1690,7 @@ final class EditorViewModel {
             let seed = EditorBlock(kind: .paragraph)
             blocks = [seed]
             mode = .blocks
-            focusBlock(seed.id, cursorAt: 0)
+            if !focusingTitle { focusBlock(seed.id, cursorAt: 0) }
             return
         }
         mode = .blocks
@@ -1676,6 +1700,7 @@ final class EditorViewModel {
     }
 
     func finishEditing() {
+        initialTitleFocusPending = false
         flushPendingChanges()
         // Sync the reading-mode source to the edited blocks so its consumers (Options
         // "copy markdown", a late photo insert) reflect the session's work — but *only*

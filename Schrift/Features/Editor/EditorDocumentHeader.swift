@@ -93,9 +93,12 @@ struct EditorDocumentHeader<Status: View>: View {
     let onEditTitle: ((String) -> Void)?
     let reach: LinkReach
     let peers: [CollaborationPeer]
+    var onConsumeInitialTitleFocus: (() -> Bool)? = nil
     @ViewBuilder var status: () -> Status
 
     @Environment(LocalizationStore.self) private var loc
+    @FocusState private var isTitleFocused: Bool
+    @State private var titleSelection: TextSelection?
 
     var body: some View {
         VStack(alignment: .leading, spacing: EditorBlockMetrics.titleToMetadataSpacing) {
@@ -130,8 +133,19 @@ struct EditorDocumentHeader<Status: View>: View {
         if let onEditTitle {
             // The placeholder doubles as the field's accessibility label, which
             // is why this needs none of its own.
-            TextField(loc[.common_untitled], text: Binding(get: { title }, set: onEditTitle))
-                .foregroundStyle(DocsColor.textPrimary)
+            TextField(
+                loc[.common_untitled], text: Binding(get: { title }, set: onEditTitle),
+                selection: $titleSelection, axis: .vertical
+            )
+            .foregroundStyle(DocsColor.textPrimary)
+            .focused($isTitleFocused)
+            .task {
+                guard onConsumeInitialTitleFocus?() == true else { return }
+                // Select the creation title without clearing it or marking a draft dirty.
+                // The next keystroke replaces it; ordinary/manual edits retain their caret.
+                titleSelection = TextSelection(range: title.startIndex..<title.endIndex)
+                isTitleFocused = true
+            }
         } else {
             // The same placeholder the field shows, rather than the empty string
             // the reading surface used to render: an untitled document otherwise
