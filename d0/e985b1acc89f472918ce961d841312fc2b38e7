@@ -1,0 +1,54 @@
+docs/assets/app-icon/schrift-icon-dark.svg
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-69
+docs/assets/app-icon/export.sh
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-17,22-29
+  s_59aefceeac4eec::t_637b9037cca380 18-21
+docs/assets/app-icon/layer-nib-light.svg
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-68
+docs/design-system.md
+  s_59aefceeac4eec::t_8113f862928e74 606
+  s_59aefceeac4eec::t_03564e82c2f7db 434-480
+Schrift/Assets.xcassets/SchriftLogo.imageset/Contents.json
+  s_59aefceeac4eec::t_8113f862928e74 9-29,36-44
+  s_59aefceeac4eec::t_fef3f53aa39247 45
+Schrift/DesignSystem/Tokens/DocsColor.swift
+  s_59aefceeac4eec::t_8113f862928e74 48
+docs/assets/app-icon/make-svg.mjs
+  s_59aefceeac4eec::t_ccf53e38f3a7b5 6,8-44,46,48-98
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-5,7,45,47
+docs/assets/app-icon/schrift-icon-tinted.svg
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-69
+docs/assets/app-icon/schrift-icon-light.svg
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-69
+Schrift/DesignSystem/Tokens/DocsColorHexDark.swift
+  s_59aefceeac4eec::t_8113f862928e74 49
+CLAUDE.md
+  s_59aefceeac4eec::t_03564e82c2f7db 857-868
+  s_59aefceeac4eec::t_a9ca5ef9546f07 446-447
+docs/README.md
+  s_59aefceeac4eec::t_8ece9d8fbf05cb 22-25
+docs/assets/app-icon/layer-background-light.svg
+  s_59aefceeac4eec::t_f7eac01a7ba17f 1-24
+SchriftTests/DesignSystem/Tokens/DocsColorHexTests.swift
+  s_59aefceeac4eec::t_59ad9b3870ede4 15-20
+Schrift/Assets.xcassets/AppIcon.appiconset/Contents.json
+  s_59aefceeac4eec::t_8113f862928e74 8-31
+SchriftTests/DesignSystem/Tokens/DocsColorHexDarkTests.swift
+  s_59aefceeac4eec::t_8113f862928e74 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0e985b1acc89f472918ce961d841312fc2b38e7",
+  "prompts": {},
+  "sessions": {
+    "s_59aefceeac4eec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74ff1fa4-4479-4fbe-a565-8fe0a94bc2ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
