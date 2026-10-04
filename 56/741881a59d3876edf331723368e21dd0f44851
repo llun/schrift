@@ -1,0 +1,27 @@
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_a5f0559accf47a::t_23bcc4f4dd12c1 121-122
+AGENTS.md
+  s_a5f0559accf47a::t_550d23203fce4a 1740-1742
+Schrift/Core/Networking/ImageDataClient.swift
+  s_a5f0559accf47a::t_60f634181ed930 43-45,74-78,88-99
+SchriftTests/Core/Networking/ImageDataClientTests.swift
+  s_a5f0559accf47a::t_b07b5fad9d86c8 89-140
+docs/architecture.md
+  s_a5f0559accf47a::t_0cd4e1d2e6560f 979-980
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56741881a59d3876edf331723368e21dd0f44851",
+  "prompts": {},
+  "sessions": {
+    "s_a5f0559accf47a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10834-b8e3-7f51-bb91-2dcaae490b81",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
