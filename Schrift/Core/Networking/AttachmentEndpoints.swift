@@ -114,7 +114,7 @@ extension DocsAPIClient {
     /// the layer that actually issues the request.
     ///
     /// Cookies authenticate it via the shared storage, like every other request.
-    /// Known residual, shared with `MarkdownImageView`: `URLSession` follows
+    /// Known attachment-only residual (image requests block cross-origin redirects): `URLSession` follows
     /// redirects, so a same-origin path the trusted server 302s off-origin still
     /// leaks. A redirect-blocking session is the fix and is a separate change.
     func mediaData(path: String) async throws -> Data {

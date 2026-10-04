@@ -4,7 +4,7 @@ import Foundation
 /// block renders.
 ///
 /// `![alt](url)` is authored by anyone who can write the document — a co-author, a
-/// web client, a live-collaboration peer — and `AsyncImage` issues its GET on
+/// web client, a live-collaboration peer — and the loader can issue a GET on
 /// appear. An off-server image therefore discloses the *reader's* IP address,
 /// User-Agent and reading time to a host the reader never chose. Cookies are
 /// domain-scoped so no session data goes with it: the request itself is the leak.

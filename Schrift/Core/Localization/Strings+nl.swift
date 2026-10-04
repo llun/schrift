@@ -260,6 +260,10 @@ enum Strings_nl {
         .versions_empty: "Nog geen eerdere versies.",
 
         // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_offline: "Afbeelding beschikbaar wanneer online",
+        .editor_image_failed: "Afbeelding kon niet worden geladen",
+        .editor_image_retry: "Afbeelding opnieuw laden",
+        .editor_image_open: "Afbeeldings-URL openen",
         .editor_image_a11y: "Afbeelding",
         .editor_image_loading_a11y: "Afbeelding laden",
         .editor_image_loading_named_a11y: "Afbeelding laden: %@",

@@ -39,8 +39,11 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   (every `/media/…` attachment) auto-loads; one hosted anywhere else renders a
   tap-to-load placeholder and fetches nothing until the reader taps it, closing a
   render-time IP/User-Agent/timing disclosure to a host the document's author
-  chose (`imageLoadPolicy`). Redirect-after-load — a same-origin URL the trusted
-  server 302s off-origin — is a known accepted residual. **Generic file
+  chose (`imageLoadPolicy`). Both surfaces share `ImageLoader` and a persistent,
+  bounded `ImageCacheStore`: viewed bytes survive mode changes, reopen and cold
+  offline launch. Image redirects may stay only on their initial origin.
+  A failed download keeps an image card and its URL, rather than drawing just a
+  link; image parsing/serialization and pending-photo replay are unchanged. **Generic file
   attachments** (PDF, docx, …) that the web editor added render as inline cards
   that download once and preview full-screen through QuickLook, and stay
   readable offline from a disk cache — see
@@ -969,6 +972,32 @@ This is the part with no direct backend support, so it's called out explicitly:
 
 **Known limitation:** this is a full-document overwrite with no conflict detection (no ETag/version check in v1). If someone edits the same document live in the web app concurrently, the loser's changes are silently overwritten. This is an explicit, accepted trade-off of choosing non-realtime editing — not hidden from the user; the Editor screen should make clear this isn't live-collaborative.
 
+## Displayed images
+
+`MarkdownBlockView` (reading) and `BlockEditorRow` (editing) both render
+`MarkdownImageView`. Its former `AsyncImage.failure` link explained how entering
+editing could *look* like an image-to-link conversion while `BlockKind.image`
+remained intact. Parsing stays conservative and unchanged. Both surfaces now use
+one app-scoped `ImageLoader`: cache lookup precedes connectivity and consent,
+concurrent callers join an owned download, and a surface swap cannot cancel it.
+Cached, loading, unavailable-offline, failed and external-consent states are explicit.
+Failures retain alt text and the URL, with Open image URL and deliberate retry.
+
+`ImageDataClient` is deliberately separate from the authenticated REST client:
+an ephemeral session has no automatic cookies, credential storage or URL cache.
+Only a same-server URL receives the applicable server cookies; external URLs
+require exact-URL, view-local consent, scoped to the authenticated session, and
+receive no app credentials. A task delegate blocks redirects away from the
+initial origin (for both server and external requests), embedded URL credentials,
+and HTTP authentication. Same-origin redirects strip inherited credentials
+and re-select cookies applicable to the destination path. TLS uses system trust. Streaming stops at 12 MiB,
+including responses without a declared length; non-2xx bodies are never cached.
+
+See [image-byte persistence](offline-and-sync.md#displayed-image-bytes-imagecachestore)
+for disk bounds, scope rotation, eviction and cold-launch behavior. This loader
+never handles `schrift-attachment://`: pending-photo rendering still branches
+before it in both surfaces and its backup-included bytes/replay remain unchanged.
+
 ## File attachments (read side)
 
 *Added 2026-08-07.* Generic file attachments — PDFs, Office documents, archives —
@@ -1093,8 +1122,9 @@ routinely. Such a card renders inert with "Can't be previewed here" rather than
 disappearing: the document does link that file, and saying so is honest.
 
 **Accepted residuals.** (1) `URLSession` follows redirects, so a same-origin path
-the trusted server 302s off-origin still leaks — shared with `MarkdownImageView`,
-and the fix is one redirect-blocking session for both. (2) QuickLook previews
+the trusted server 302s off-origin still leaks for file attachments. Images now
+use `ImageDataClient` and block this; extending that guard to attachments remains
+separate work. (2) QuickLook previews
 co-author-controlled bytes for the types it *does* handle; that is the same
 exposure Mail and Files accept (QuickLook renders out-of-process). (3) There is
 no per-file read-side size cap and the whole file is buffered in memory

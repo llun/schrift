@@ -253,6 +253,10 @@ enum Strings_zhHant {
         .versions_empty: "尚無較早的版本。",
 
         // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_offline: "連線後可查看圖片",
+        .editor_image_failed: "無法載入圖片",
+        .editor_image_retry: "重試載入圖片",
+        .editor_image_open: "開啟圖片連結",
         .editor_image_a11y: "圖片",
         .editor_image_loading_a11y: "正在載入圖片",
         .editor_image_loading_named_a11y: "正在載入圖片：%@",

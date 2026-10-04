@@ -1357,4 +1357,5 @@ struct EditorView: View {
     .environment(LocalizationStore())
     .environment(DocumentCollaborationManager.inert())
     .environment(AttachmentLoader.inert())
+    .environment(ImageLoader.inert())
 }
