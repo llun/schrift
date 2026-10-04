@@ -429,6 +429,23 @@
 > reason recorded in the previous amendment — the API exposes no ancestors
 > route, and the tree drawer does not change that.
 
+## App identity
+
+Schrift's **Soft relief** icon uses a white fountain-pen nib entering from the
+top-right corner and pointing down-left at 45 degrees. A shallow lavender edge
+and soft shadow give the nib depth against a lavender-to-indigo background.
+The mark contains no writing or paper, and its palette complements the app's
+existing purple brand tokens.
+
+The Home Screen icon is
+`Schrift/Assets.xcassets/AppIcon.appiconset/schrift-app-icon-1024.png`.
+The sign-in logo is an identical copy at
+`Schrift/Assets.xcassets/SchriftLogo.imageset/schrift-logo-1024.png`.
+Both are opaque 1024×1024 sRGB PNGs with square corners. iOS supplies the app
+icon mask; `ConnectView` displays the logo at 72pt and applies a 17pt continuous
+corner radius and the existing brand shadow. Corner rounding is applied only
+at display time. The same artwork is used in light and dark appearances.
+
 ## 1. Goals
 
 1. **Update all four tab pages** (Schrift/Home, Search, Shared, Profile) to match

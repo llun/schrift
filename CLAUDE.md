@@ -853,6 +853,12 @@ new code reads like the surrounding code.
 
 ### Design system (`DesignSystem`)
 
+- **App identity:** `AppIcon.appiconset` and `SchriftLogo.imageset` use the
+  same Soft relief fountain-pen artwork. Keep their PNGs identical: 1024×1024,
+  opaque, sRGB, with square corners. iOS masks the Home Screen icon;
+  `ConnectView` applies its own continuous rounded rectangle to the sign-in
+  logo. Do not bake a second corner mask into either bitmap. The visual
+  direction is recorded in [`docs/design-system.md`](docs/design-system.md#app-identity).
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),
