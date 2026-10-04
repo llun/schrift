@@ -431,20 +431,58 @@
 
 ## App identity
 
-Schrift's **Soft relief** icon uses a white fountain-pen nib entering from the
-top-right corner and pointing down-left at 45 degrees. A shallow lavender edge
-and soft shadow give the nib depth against a lavender-to-indigo background.
-The mark contains no writing or paper, and its palette complements the app's
-existing purple brand tokens.
+Schrift's **Soft relief** icon is a white fountain-pen nib that enters from the
+top-right corner and points down-left. A lavender relief edge and a narrow
+contact shadow give it depth against a violet field. The mark contains no
+writing or paper, and its palette is drawn from the app's purple brand ramp.
 
-The Home Screen icon is
-`Schrift/Assets.xcassets/AppIcon.appiconset/schrift-app-icon-1024.png`.
-The sign-in logo is an identical copy at
-`Schrift/Assets.xcassets/SchriftLogo.imageset/schrift-logo-1024.png`.
-Both are opaque 1024×1024 sRGB PNGs with square corners. iOS supplies the app
-icon mask; `ConnectView` displays the logo at 72pt and applies a 17pt continuous
-corner radius and the existing brand shadow. Corner rounding is applied only
-at display time. The same artwork is used in light and dark appearances.
+**The icon is vector geometry, not a bitmap.**
+[`docs/assets/app-icon/make-svg.mjs`](assets/app-icon/make-svg.mjs) is the
+source of truth. It writes the SVG masters beside itself, and
+[`export.sh`](assets/app-icon/export.sh) renders them into the asset catalog.
+That script is local, macOS-only tooling (Node, Google Chrome, ImageMagick and
+`sips`; set `CHROME` to point at another Chrome binary) and never runs in CI.
+To change the icon, change a number in `make-svg.mjs` and re-export.
+Never hand-edit the PNGs or regenerate them with an image model: the first
+version was a generated bitmap, and its lumpy, asymmetric shape could not be
+corrected because there was no source to edit.
+
+The geometry, all in the 1024 canvas:
+
+- **Axis** — the nib lies exactly on the diagonal `x + y = 1024`, so its body
+  leaves through the top-right corner, cropped by both edges.
+- **Breather hole** — centred on the tile, at (512, 512).
+- **Tip** — at about (208, 816), inside the icon mask's safe area. The slit tapers
+  from the hole and stops short of the tip, so the nib ends in one clean
+  point. A slit that runs to the tip splits it into two tines, which blur
+  together at small sizes.
+- **Relief** — the same nib sheared 2.6° about its tip. The lavender edge
+  therefore grows from nothing at the point to about 28 px at the shoulder,
+  widening further toward the cropped corner.
+- **Field** — a `#7F7CF7 → #5F5BE0 → #3F39B6` gradient with a faint bloom in
+  the top-left. `DocsColor.brandLogo` tints the sign-in logo's shadow and
+  follows the icon: in **light** it is the field's mid stop (`#5F5BE0`); in
+  **dark** it is the dark icon's relief colour (`#7B79E8`, dark `brandFill`),
+  because a dark field tone would make the shadow vanish against the dark page.
+  Retune it whenever those change.
+
+`AppIcon.appiconset` carries three opaque 1024×1024 sRGB PNGs:
+
+- **default** — the violet field;
+- **dark** — an ink field with a lavender nib and a `#7B79E8` relief edge
+  (dark `brandFill`);
+- **tinted** — a grayscale nib on black, which iOS recolours.
+
+`SchriftLogo.imageset` uses the default and dark PNGs as its Any and Dark
+appearances, so the sign-in screen follows dark mode. `ConnectView` displays
+the logo at 72pt with a 17pt continuous corner radius. iOS masks the Home
+Screen icon. Every bitmap therefore has square corners — rounding is applied
+only at display time.
+
+The masters also include the background and the nib as separate layers
+(`layer-*.svg`). They are what an Icon Composer `.icon` would need for iOS 26's
+Liquid Glass and clear appearances, which the asset catalog cannot express.
+They are not wired up yet.
 
 ## 1. Goals
 
@@ -570,7 +608,7 @@ initials read on both); the **accent palette is identical** in dark.
 | brandFillSubtle | `EEF1FA` | `1E1E33` |
 | textBrand | `3E3B98` | `A9ADF9` |
 | textBrandSecondary | `534FC2` | `9195FC` |
-| brandLogo | `4F46E5` | `7C79F2` |
+| brandLogo | `5F5BE0` | `7B79E8` |
 | borderDefault | `E2E2EA` | `2E2E38` |
 | borderStrong | `D3D4E0` | `3C3C48` |
 | borderFocus | `8184FC` | `9CA0FF` |

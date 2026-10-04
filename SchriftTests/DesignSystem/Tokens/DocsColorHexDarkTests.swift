@@ -55,8 +55,10 @@ final class DocsColorHexDarkTests: XCTestCase {
         XCTAssertEqual(DocsColorHexDark.warning650, 0xE6915F)
     }
 
+    /// The dark icon's relief colour (= dark brandFill), not a dark field tone,
+    /// which would make the sign-in logo's shadow vanish on the dark page.
     func testDarkBrandLogoMatchesDesignSpec() {
-        XCTAssertEqual(DocsColorHexDark.brandLogo, 0x7C79F2)
+        XCTAssertEqual(DocsColorHexDark.brandLogo, 0x7B79E8)
     }
 
     func testDarkGrayRampMatchesDesignSpec() {

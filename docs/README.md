@@ -19,6 +19,10 @@ rationale that `CLAUDE.md` only summarizes.
   save from ever eating content.
 - [`design-system.md`](design-system.md) — the design-system refresh: adaptive
   dark theme, in-app localization, layout fidelity, and read-only version history.
+  Its "App identity" section covers the app icon.
+- [`assets/app-icon/`](assets/app-icon/) — the app icon's vector masters and the
+  script that renders them into the asset catalog. They are design sources and
+  are not compiled into the app.
 
 ## Build, CI & release
 

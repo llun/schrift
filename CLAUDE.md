@@ -443,7 +443,8 @@ Schrift/
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
 docs/                    living project docs — architecture.md, offline-and-sync.md,
-                         design-system.md, ci.md, testflight-setup.md (see docs/README.md)
+                         design-system.md, ci.md, testflight-setup.md (see docs/README.md);
+                         assets/app-icon/ holds the icon's vector masters + export script
 fastlane/ scripts/ .github/workflows/   CI: PR build/test checks + TestFlight release pipeline
 ci_scripts/             Xcode Cloud build hooks (ci_post_clone.sh regenerates the project)
 project.yml              XcodeGen spec — the source of truth for the Xcode project
@@ -853,12 +854,15 @@ new code reads like the surrounding code.
 
 ### Design system (`DesignSystem`)
 
-- **App identity:** `AppIcon.appiconset` and `SchriftLogo.imageset` use the
-  same Soft relief fountain-pen artwork. Keep their PNGs identical: 1024×1024,
-  opaque, sRGB, with square corners. iOS masks the Home Screen icon;
-  `ConnectView` applies its own continuous rounded rectangle to the sign-in
-  logo. Do not bake a second corner mask into either bitmap. The visual
-  direction is recorded in [`docs/design-system.md`](docs/design-system.md#app-identity).
+- **App identity:** `docs/assets/app-icon/make-svg.mjs` is the source of truth
+  for the app icon and the sign-in logo; `export.sh` beside it renders every PNG
+  (icon default/dark/tinted, logo Any/Dark). Change the geometry there and
+  re-export — **never hand-edit the PNGs or regenerate them with an image
+  model.** Every PNG is 1024×1024, opaque, sRGB, with square corners — do not
+  bake a corner mask into either; iOS and `ConnectView` apply the rounding. Keep
+  `DocsColor.brandLogo` in step with the icon (light = field mid stop, dark =
+  dark relief colour). Rationale and geometry:
+  [`docs/design-system.md`](docs/design-system.md#app-identity).
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),
