@@ -140,7 +140,7 @@ struct MarkdownBlockView: View {
 
         case .image(let alt, let url):
             if let imageURL = URL(string: url) {
-                MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
+                MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin, isOffline: isOffline)
             } else {
                 Text("![\(alt)](\(url))")
                     .font(DocsFont.code)
@@ -256,81 +256,108 @@ struct MarkdownBlockView: View {
 struct MarkdownImageView: View {
     let alt: String
     let url: URL
-    /// `siteOrigin(for:)` of the signed-in server. "" blocks everything — the
-    /// safe direction.
     let serverOrigin: String
+    var isOffline: Bool = false
 
     @Environment(LocalizationStore.self) private var loc
-
-    /// The cross-origin URL the reader approved, if any. Held as the *URL*, not a
-    /// `Bool`: `applyLiveRemoteChange` reuses a surviving block's `EditorBlock.id`,
-    /// so this view's identity — and this `@State` — outlives a content change, and
-    /// consent for one host must never carry to a URL an edit later swapped in.
-    /// View-local and never persisted: approval is one URL, one session.
+    @Environment(ImageLoader.self) private var loader
     @State private var approvedURL: URL?
+    @State private var approvedScope: String?
 
-    private var shouldLoad: Bool {
-        imageLoadPolicy(for: url, serverOrigin: serverOrigin) == .allow || approvedURL == url
+    private struct LoadIdentity: Hashable {
+        let url: URL
+        let scope: String?
+        let offline: Bool
+        let approval: URL?
     }
+
+    private var approval: URL? { approvedScope == loader.scope ? approvedURL : nil }
 
     var body: some View {
-        if shouldLoad { remoteImage } else { tapToLoad }
-    }
-
-    private var remoteImage: some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-                    .accessibilityLabel(alt.isEmpty ? loc[.editor_image_a11y] : alt)
-            case .failure:
-                fallbackLink
-            case .empty:
+        Group {
+            switch loader.state(for: url) {
+            case .cached(let file):
+                if let image = imageThumbnail(at: file) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+                        .accessibilityLabel(alt.isEmpty ? loc[.editor_image_a11y] : alt)
+                } else {
+                    unavailable(offline: isOffline)
+                }
+            case .requiresConsent:
+                tapToLoad
+            case .unavailableOffline:
+                unavailable(offline: true)
+            case .failed:
+                unavailable(offline: isOffline)
+            case .loading:
                 placeholder
-            @unknown default:
-                placeholder
+            case nil:
+                if isOffline || loader.scope == nil {
+                    unavailable(offline: true)
+                } else if imageLoadPolicy(for: url, serverOrigin: serverOrigin) == .confirm {
+                    tapToLoad
+                } else {
+                    placeholder
+                }
             }
+        }
+        .task(id: LoadIdentity(url: url, scope: loader.scope, offline: isOffline, approval: approval)) {
+            await loader.loadIfNeeded(url, allowsNetwork: !isOffline, approvedURL: approval)
         }
     }
 
-    /// Off-origin: a card (the same family as `fallbackLink` — "we are not showing
-    /// the image", not the spinner that promises one is coming) that fetches only
-    /// when tapped. `Button` rather than `.onTapGesture` so it takes the tap from
-    /// the reading row's own tap-to-edit gesture, carries the button trait, and
-    /// flattens its two labels into one accessibility element.
     private var tapToLoad: some View {
         Button {
+            approvedScope = loader.scope
             approvedURL = url
         } label: {
-            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-                MaterialSymbol(.image, size: 16)
-                    .foregroundStyle(DocsColor.textTertiary)
-                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(loc[.editor_image_external])
-                        .foregroundStyle(DocsColor.textBrand)
-                    if let host = url.host {
-                        // host is document content — never localized.
-                        Text(host)
-                            .foregroundStyle(DocsColor.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .font(DocsFont.footnote)
-            .padding(DocsSpacing.spaceSM)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfaceSunken)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-            .contentShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+            imageCard(title: loc[.editor_image_external], detail: url.host ?? url.absoluteString)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(loc.format(.editor_image_external_a11y, url.host ?? url.absoluteString))
+    }
+
+    private func unavailable(offline: Bool) -> some View {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            imageCard(
+                title: loc[offline ? .editor_image_offline : .editor_image_failed],
+                detail: alt.isEmpty ? url.absoluteString : alt)
+            HStack {
+                Link(loc[.editor_image_open], destination: url)
+                if !offline {
+                    Button(loc[.editor_image_retry]) {
+                        Task {
+                            await loader.loadIfNeeded(
+                                url, allowsNetwork: !isOffline, approvedURL: approval, retry: true)
+                        }
+                    }
+                }
+            }
+            .font(DocsFont.footnote)
+            .padding(.horizontal, DocsSpacing.spaceSM)
+        }
+    }
+
+    private func imageCard(title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
+            MaterialSymbol(.image, size: 16)
+                .foregroundStyle(DocsColor.textTertiary)
+            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                Text(title).foregroundStyle(DocsColor.textPrimary)
+                Text(detail).foregroundStyle(DocsColor.textTertiary)
+                    .lineLimit(2).truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(DocsFont.footnote)
+        .padding(DocsSpacing.spaceSM)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DocsColor.surfaceSunken)
+        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
     }
 
     private var placeholder: some View {
@@ -341,23 +368,6 @@ struct MarkdownImageView: View {
             .overlay { ProgressView() }
             .accessibilityLabel(
                 alt.isEmpty ? loc[.editor_image_loading_a11y] : loc.format(.editor_image_loading_named_a11y, alt))
-    }
-
-    private var fallbackLink: some View {
-        Link(destination: url) {
-            HStack(spacing: DocsSpacing.spaceXS) {
-                MaterialSymbol(.image, size: 16)
-                Text(alt.isEmpty ? url.absoluteString : alt)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .font(DocsFont.footnote)
-            .foregroundStyle(DocsColor.textBrand)
-            .padding(DocsSpacing.spaceSM)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfaceSunken)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-        }
     }
 }
 
@@ -443,6 +453,7 @@ private struct MarkdownBlockCatalog: View {
     MarkdownBlockCatalog()
         .environment(LocalizationStore())
         .environment(previewAttachmentLoader())
+        .environment(ImageLoader.inert())
         .preferredColorScheme(.light)
 }
 
@@ -450,5 +461,6 @@ private struct MarkdownBlockCatalog: View {
     MarkdownBlockCatalog()
         .environment(LocalizationStore())
         .environment(previewAttachmentLoader())
+        .environment(ImageLoader.inert())
         .preferredColorScheme(.dark)
 }

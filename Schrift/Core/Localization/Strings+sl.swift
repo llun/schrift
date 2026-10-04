@@ -268,6 +268,10 @@ enum Strings_sl {
         .versions_empty: "Še ni starejših različic.",
 
         // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_offline: "Slika je na voljo, ko ste povezani",
+        .editor_image_failed: "Slike ni bilo mogoče naložiti",
+        .editor_image_retry: "Znova naloži sliko",
+        .editor_image_open: "Odpri URL slike",
         .editor_image_a11y: "Slika",
         .editor_image_loading_a11y: "Nalaganje slike",
         .editor_image_loading_named_a11y: "Nalaganje slike: %@",

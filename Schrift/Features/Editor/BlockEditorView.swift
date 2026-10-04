@@ -203,7 +203,7 @@ struct BlockEditorRow: View {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if let imageURL = URL(string: url) {
-            MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin)
+            MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin, isOffline: isOffline)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         } else {

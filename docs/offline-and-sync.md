@@ -1030,6 +1030,44 @@ to what the Home list passes (still a `Document` / id).
   (see below). Both are called from `RootView`'s `onSignOut` closure, **not**
   from `SessionStore.signOut()` — a new sign-out path must call them explicitly.
 
+### Displayed image bytes: `ImageCacheStore`
+
+Images successfully viewed online persist at
+`Application Support/dev.llun.Schrift/ImageCache/`, outside purgeable Caches,
+with atomic writes, file protection until first unlock and backup exclusion.
+Both reading and editing use the same app-scoped `ImageLoader`, which consults
+this store even offline. A new process can therefore show the same image without
+cookies reaching any network. Disk hits for previously consented external images
+are safe without repeating consent; fetching any uncached external URL still
+requires an explicit tap. Consent is exact-URL and session-scoped, view-local,
+and never saved to disk.
+
+Names are SHA-256 over length-framed server origin, a random authenticated
+session scope, and the complete image URL (including query and document path).
+`SessionStore.imageCacheScope` survives a normal relaunch but rotates and clears
+bytes at cookie handover, sign-in and sign-out, including a re-login sheet over
+existing screens. Expiry or cancellation alone retains it. An in-flight response
+checks the scope again before a write/publication, so a late old-account response
+cannot repopulate a cleared cache. This is independent of cached account IDs,
+which can be unknown between cookie replacement and identity confirmation.
+
+The cache strictly holds at most **100 entries / 64 MiB**, uses read recency for
+eviction, and rejects individual images above **12 MiB**, invalid image data or
+sources above 48 megapixels. Rendering downsamples to a 2048px maximum dimension.
+The newest entry must fit too; count zero disables storage. Retention is bounded:
+evicted images honestly show “Image available when online” offline and can be
+fetched again online. A failed download shows a named image card with its URL,
+Open image URL and Retry image; it never changes the document block or saved URL.
+A missing offline entry makes no request, and returning online restarts its load.
+
+This cache is re-downloadable display content, separate from the backup-included
+`PendingAttachmentStore` JPEGs that are the only copy of an un-uploaded photo.
+Insertion, placeholder classification, save holds and two-phase upload replay
+are untouched. Regression tests cover cold offline reopen, shared requests and
+surface cancellation, changed URLs, eviction, server/session isolation, account
+replacement mid-download, explicit external consent, redirects and credentials.
+A rendered fixture compares the actual reading and editing image rows offline.
+
 ### 7. Attachment bytes: `AttachmentCacheStore` (2026-08-07)
 
 Downloaded file attachments (PDF, docx, …) are cached on disk so a document read

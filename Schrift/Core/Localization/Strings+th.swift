@@ -255,6 +255,10 @@ enum Strings_th {
         .versions_empty: "ยังไม่มีเวอร์ชันก่อนหน้า",
 
         // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_offline: "ภาพพร้อมใช้งานเมื่อออนไลน์",
+        .editor_image_failed: "โหลดภาพไม่ได้",
+        .editor_image_retry: "ลองโหลดภาพอีกครั้ง",
+        .editor_image_open: "เปิด URL ของภาพ",
         .editor_image_a11y: "รูปภาพ",
         .editor_image_loading_a11y: "กำลังโหลดรูปภาพ",
         .editor_image_loading_named_a11y: "กำลังโหลดรูปภาพ: %@",

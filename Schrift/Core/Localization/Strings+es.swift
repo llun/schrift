@@ -264,6 +264,10 @@ enum Strings_es {
         .versions_empty: "Aún no hay versiones anteriores.",
 
         // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_offline: "Imagen disponible al conectarse",
+        .editor_image_failed: "No se pudo cargar la imagen",
+        .editor_image_retry: "Reintentar imagen",
+        .editor_image_open: "Abrir URL de la imagen",
         .editor_image_a11y: "Imagen",
         .editor_image_loading_a11y: "Cargando imagen",
         .editor_image_loading_named_a11y: "Cargando imagen: %@",

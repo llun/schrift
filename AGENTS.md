@@ -674,9 +674,10 @@ new code reads like the surrounding code.
 - Everything goes through `DocsAPIClient`'s four primitives
   (`get`/`getRawData`/`send`/`sendVoid`) over one private `performRequest`.
   Endpoint code **never** builds a `URLRequest` or touches `URLSession`. (One
-  intentional exception: inline document images render via
-  `AsyncImage`/`URLSession.shared`, authenticated by the shared cookie storage —
-  see `MarkdownImageView`.)
+  intentional exception: inline document images use `ImageDataClient` through
+  app-scoped `ImageLoader`, with a credential-free ephemeral session and explicit
+  same-server cookies. It streams with a 12 MiB ceiling and blocks cross-origin
+  redirects; never route consented external images through the authenticated REST client.)
 - Add each feature's endpoints as an `extension DocsAPIClient` in **its own file**.
 - **Decode** with the shared `JSONDecoder.docsAPI` (snake_case + dual ISO8601 date
   handling) — never a bare `JSONDecoder` for API responses. **Encoding** uses a
@@ -1716,7 +1717,7 @@ markdown write endpoint**. Understand this before touching the save path:
   used to render as one); no content is lost either way.
 - **An embedded image is fetched on render only when it is same-origin as the
   user's server; otherwise it is tap-to-load.** `![alt](url)` is author-controlled
-  (a co-author, a web client, a live peer), and `AsyncImage` GETs on appear, so an
+  (a co-author, a web client, a live peer), and the image loader GETs on appear, so an
   off-origin image would disclose the *reader's* IP/User-Agent/timing to a host the
   author chose (cookies are domain-scoped, so it is the request itself that leaks,
   not the session). `imageLoadPolicy(for:serverOrigin:)`
@@ -1731,11 +1732,26 @@ markdown write endpoint**. Understand this before touching the save path:
   threaded, required (non-defaulted), to **both** render sites — the reading
   `MarkdownImageView` and the editing `BlockEditorRow.imageLeaf` — so a new image
   render path is a compile error until it passes the gate; route any such path
-  through `MarkdownImageView`. Consent is view-local `@State` keyed on the exact
-  approved `URL` (not a `Bool`), so a live edit that swaps the URL under a reused
-  `EditorBlock.id` can't auto-load. **Known accepted residual:** `AsyncImage` follows
-  redirects, so a same-origin URL the trusted server 302s off-origin still leaks; the
-  fix (a redirect-blocking `URLSession` delegate) is a follow-up.
+  through `MarkdownImageView`. Network consent is view-local `@State` keyed on the exact
+  approved `URL` and authenticated image-cache scope, so a live edit or account
+  change cannot carry permission to a new request. A previously consented disk
+  hit needs no new request and renders offline in either surface. `ImageDataClient`
+  blocks redirects away from the initial origin (including scheme/port changes),
+  refuses URL credentials and HTTP authentication, and never gives an external
+  image app cookies, CSRF, Origin or Authorization headers.
+- **Displayed images persist through `ImageLoader` + `ImageCacheStore`.** Both
+  surfaces pass `isOffline`; offline still consults disk and only withholds the
+  network. The loader owns and joins downloads across surface cancellation and
+  rechecks its authenticated scope before publishing or writing. `SessionStore`
+  persists a random image scope across relaunches, rotates it and clears the image
+  cache at cookie handover, sign-in and sign-out (not expiry/cancel). Cache names
+  hash server, scope and the complete URL including queries/document path. Storage
+  is atomic, protected and backup-excluded, strictly capped at 100 files/64 MiB,
+  with a 12 MiB per-image ceiling and read recency. Decode a bounded 2048px
+  thumbnail, reject invalid/over-48MP sources, and leave pending-photo bytes,
+  save holds and upload replay entirely with `PendingAttachmentStore`. A failed
+  or uncached-offline image remains an image card with its URL and retry/open
+  affordances; never mutate parsing or replace the block with a paragraph.
 - **A generic file attachment (PDF, docx, …) is a first-class leaf block, and
   classification is enabled by an origin.** The web's BlockNote `file` block and
   docs' custom `pdf` block both export as a standalone `[name](url)` line, so
@@ -1816,8 +1832,8 @@ markdown write endpoint**. Understand this before touching the save path:
   cards showing one attachment de-duplicate a single download instead of racing
   two writers over one cache file; its state is keyed by **url string**, because
   `applyLiveRemoteChange` reuses a surviving `EditorBlock.id` and a live edit can
-  swap the url under a card that never re-rendered. It is the **second sanctioned
-  media fetch path** (after `MarkdownImageView`'s `AsyncImage`) and must stay
+  swap the url under a card that never re-rendered. It is the authenticated file-attachment
+  fetch path (images use `ImageLoader`/`ImageDataClient`) and must stay
   origin-pinned: `DocsAPIClient.mediaData(path:)` re-checks `isSameOriginPath`
   before issuing, exactly as `checkMedia` does. `AttachmentCacheStore` names each
   file `{document-uuid}_{file-uuid}[-unsafe].{ext}` from the classifier's

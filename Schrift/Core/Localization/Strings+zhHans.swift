@@ -253,6 +253,10 @@ enum Strings_zhHans {
         .versions_empty: "暂无早期版本。",
 
         // Editor - inline image (MarkdownImageView; accessibility labels only)
+        .editor_image_offline: "联网后可查看图片",
+        .editor_image_failed: "无法加载图片",
+        .editor_image_retry: "重试加载图片",
+        .editor_image_open: "打开图片链接",
         .editor_image_a11y: "图片",
         .editor_image_loading_a11y: "正在加载图片",
         .editor_image_loading_named_a11y: "正在加载图片：%@",

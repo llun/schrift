@@ -461,3 +461,22 @@ final class SessionStoreTests: XCTestCase {
     }
 
 }
+
+extension SessionStoreTests {
+    func testImageCacheScopeSurvivesRelaunchAndChangesAtCookieHandoverAndSignOut() throws {
+        let keychain = FakeKeychainStore()
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain)
+        XCTAssertNil(first.imageCacheScope)
+        try first.signIn(serverURL: serverURL)
+        let initial = try XCTUnwrap(first.imageCacheScope)
+        let cold = SessionStore(userDefaults: userDefaults, keychain: keychain)
+        XCTAssertEqual(cold.imageCacheScope, initial)
+        first.noteSessionExpired()
+        first.cancelReauthentication()
+        XCTAssertEqual(first.imageCacheScope, initial)
+        first.noteSessionCookiesReplaced()
+        XCTAssertNotEqual(first.imageCacheScope, initial)
+        try first.signOut()
+        XCTAssertNil(first.imageCacheScope)
+    }
+}

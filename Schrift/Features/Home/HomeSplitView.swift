@@ -80,4 +80,5 @@ struct HomeSplitView: View {
     )
     .environment(LocalizationStore())
     .environment(AttachmentLoader.inert())
+    .environment(ImageLoader.inert())
 }

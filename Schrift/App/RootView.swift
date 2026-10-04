@@ -32,6 +32,7 @@ private struct AuthenticatedHomeContainer: View {
     @State private var viewModel: HomeViewModel
     @State private var collaboration: DocumentCollaborationManager
     @State private var attachments: AttachmentLoader
+    @State private var images: ImageLoader
     let serverURL: URL
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
@@ -82,6 +83,11 @@ private struct AuthenticatedHomeContainer: View {
         // be on screen in more than one place, and one owner is what gives
         // in-flight de-duplication and a single authority over the disk cache.
         _attachments = State(initialValue: AttachmentLoader(client: client, serverOrigin: origin))
+        let imageClient = ImageDataClient()
+        _images = State(
+            initialValue: ImageLoader(
+                serverOrigin: origin, scopeProvider: { sessionStore.imageCacheScope },
+                fetch: { url, origin in try await imageClient.data(for: url, serverOrigin: origin) }))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
@@ -155,6 +161,7 @@ private struct AuthenticatedHomeContainer: View {
         }
         .environment(collaboration)
         .environment(attachments)
+        .environment(images)
         .task {
             // Learn whether this deployment runs the collaboration server, so the
             // availability gate can open once the toggle is on, and our own

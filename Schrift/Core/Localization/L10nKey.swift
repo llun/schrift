@@ -309,6 +309,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     // image's host are document content and are never localized; these are the
     // chrome around them. `external*` label the tap-to-load placeholder shown for
     // an image hosted anywhere but the user's own server — see `imageLoadPolicy`.
+    case editor_image_offline = "editor.image.offline"
+    case editor_image_failed = "editor.image.failed"
+    case editor_image_retry = "editor.image.retry"
+    case editor_image_open = "editor.image.open"
     case editor_image_a11y = "editor.image.a11y"  // "Image"
     case editor_image_loading_a11y = "editor.image.loading_a11y"  // "Loading image"
     case editor_image_loading_named_a11y = "editor.image.loading_named_a11y"  // "Loading image: %@"

@@ -8,6 +8,7 @@ import Foundation
 @MainActor
 @Observable
 final class SessionStore {
+    private static let imageCacheScopeKey = "dev.llun.Schrift.imageCacheScope"
     private static let serverURLKey = "dev.llun.Schrift.serverURL"
     private static let authenticatedKeychainKey = "dev.llun.Schrift.isAuthenticated"
     private static let sessionCookiesKeychainKey = "dev.llun.Schrift.sessionCookies"
@@ -23,7 +24,12 @@ final class SessionStore {
     /// moments and for the same reason: it is *displayed* before any fetch, so a kept entry
     /// would name the previous account on the new one's screen.
     private let cachedUser: CurrentUserCacheStore
+    private let clearImageCache: () -> Void
 
+    /// A random authenticated-session namespace, durable across launches and replaced whenever
+    /// cookies change hands. It isolates re-downloadable image bytes without relying on a
+    /// cached account id while a new login's identity is still unknown.
+    private(set) var imageCacheScope: String?
     private(set) var serverURL: URL?
     private(set) var isAuthenticated: Bool
     /// A request hit a real 401 while signed in — the server session is dead
@@ -48,8 +54,10 @@ final class SessionStore {
         userDefaults: UserDefaults = .standard,
         keychain: KeychainStoring = KeychainStore(),
         cookieStorage: CookieStoring = HTTPCookieStorage.shared,
-        signedInUser: SignedInUserStore? = nil
+        signedInUser: SignedInUserStore? = nil,
+        clearImageCache: @escaping () -> Void = { ImageCacheStore().removeAll() }
     ) {
+        self.clearImageCache = clearImageCache
         self.userDefaults = userDefaults
         self.keychain = keychain
         self.cookieStorage = cookieStorage
@@ -62,6 +70,9 @@ final class SessionStore {
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
+            let scope = userDefaults.string(forKey: Self.imageCacheScopeKey) ?? UUID().uuidString
+            imageCacheScope = scope
+            userDefaults.set(scope, forKey: Self.imageCacheScopeKey)
             // A session stored by a build that predates the ThisDeviceOnly
             // accessibility class would otherwise keep the weaker one for as long
             // as it stays valid — which is indefinitely, since nothing re-saves
@@ -151,6 +162,10 @@ final class SessionStore {
         // (Why none of this happens at a mere expiry is `signIn`'s comment above: a dismissed
         // re-login sheet must keep showing what it already showed.)
         cachedUser.clear()
+        clearImageCache()
+        let scope = UUID().uuidString
+        imageCacheScope = scope
+        userDefaults.set(scope, forKey: Self.imageCacheScopeKey)
     }
 
     func signOut() throws {
@@ -162,6 +177,8 @@ final class SessionStore {
         deleteServerCookies()
         needsReauthentication = false
         isAuthenticated = false
+        imageCacheScope = nil
+        userDefaults.removeObject(forKey: Self.imageCacheScopeKey)
     }
 
     /// Called (via the API client's `onSessionExpired` hook) whenever any

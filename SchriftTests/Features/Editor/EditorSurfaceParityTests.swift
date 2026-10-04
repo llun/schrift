@@ -692,7 +692,8 @@ final class EditorSurfaceParityTests: XCTestCase {
         let host = UIHostingController(
             rootView: MarkdownBlockView(block: block, serverOrigin: "https://docs.example.org", numberedIndex: 1)
                 .environment(english())
-                .environment(AttachmentLoader.inert()))
+                .environment(AttachmentLoader.inert())
+                .environment(ImageLoader.inert()))
         return host.sizeThatFits(in: rowProposal).height
     }
 
@@ -703,7 +704,8 @@ final class EditorSurfaceParityTests: XCTestCase {
                 isOffline: false
             )
             .environment(english())
-            .environment(AttachmentLoader.inert()))
+            .environment(AttachmentLoader.inert())
+            .environment(ImageLoader.inert()))
         return host.sizeThatFits(in: rowProposal).height
     }
 
@@ -755,7 +757,67 @@ final class EditorSurfaceParityTests: XCTestCase {
         let host = UIHostingController(
             rootView: MarkdownBlockView(block: block, serverOrigin: "https://docs.example.org")
                 .environment(english())
-                .environment(AttachmentLoader.inert()))
+                .environment(AttachmentLoader.inert())
+                .environment(ImageLoader.inert()))
         return host.sizeThatFits(in: proposal).height
+    }
+}
+
+extension EditorSurfaceParityTests {
+    func testPersistedImageRendersInBothRealSurfacesAfterColdOfflineReopen() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let origin = "https://docs.example.org"
+        let url = URL(string: "\(origin)/media/parity.png")!
+        let cache = ImageCacheStore(directory: directory)
+        let fixture = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 180)).pngData { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+            UIColor.systemYellow.setFill()
+            context.fill(CGRect(x: 40, y: 35, width: 85, height: 110))
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 155, y: 65, width: 125, height: 50))
+        }
+        let online = ImageLoader(
+            serverOrigin: origin, cache: cache, scopeProvider: { "session-a" },
+            fetch: { _, _ in fixture })
+        await online.loadIfNeeded(url, allowsNetwork: true)
+        let cold = ImageLoader(
+            serverOrigin: origin, cache: ImageCacheStore(directory: directory),
+            scopeProvider: { "session-a" },
+            fetch: { _, _ in
+                XCTFail("Offline must not fetch")
+                return Data()
+            })
+        await cold.loadIfNeeded(url, allowsNetwork: false)
+        let blocks = parseEditorBlocks("![Persistence diagram](\(url.absoluteString))", serverOrigin: origin)
+        let block = try XCTUnwrap(blocks.first)
+        let viewModel = makeViewModel(blocks: blocks)
+        let reading = MarkdownBlockView(block: block, serverOrigin: origin, isOffline: true)
+            .environment(english()).environment(cold)
+        let editing = BlockEditorRow(
+            viewModel: viewModel, block: block, index: 0,
+            serverOrigin: origin, isOffline: true
+        ).environment(english()).environment(cold)
+        let readHeight = UIHostingController(rootView: reading).sizeThatFits(in: CGSize(width: 370, height: 2000))
+            .height
+        let editHeight = UIHostingController(rootView: editing).sizeThatFits(in: CGSize(width: 370, height: 2000))
+            .height
+        XCTAssertGreaterThan(readHeight, 180, "A cached image must not collapse to its link fallback")
+        XCTAssertEqual(readHeight, editHeight, accuracy: 1)
+        XCTAssertEqual(viewModel.blocks.first?.kind, block.kind)
+        let catalog = VStack(alignment: .leading, spacing: 16) {
+            Text("Reading · cold offline reopen").font(.headline)
+            reading
+            Text("Editing · same cached image").font(.headline)
+            editing
+        }.padding(20).frame(width: 410).background(Color.white).environment(\.colorScheme, .light)
+        let renderer = ImageRenderer(content: catalog)
+        renderer.scale = 2
+        let screenshot = try XCTUnwrap(renderer.uiImage)
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = "persisted-image-reading-and-editing"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }
