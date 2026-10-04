@@ -1,0 +1,43 @@
+SchriftTests/DesignSystem/Tokens/DocsColorHexDarkTests.swift
+  s_59aefceeac4eec::t_2269eab0408c72 58-59
+docs/design-system.md
+  s_59aefceeac4eec::t_2269eab0408c72 443-444,462-466
+  s_59aefceeac4eec::t_13675b5d8bb66c 454
+  s_59aefceeac4eec::t_3d0a560bbeb1d4 459-460
+docs/assets/app-icon/layer-nib-light.svg
+  s_59aefceeac4eec::t_2269eab0408c72 2,40
+docs/assets/app-icon/schrift-icon-light.svg
+  s_59aefceeac4eec::t_2269eab0408c72 2,41
+CLAUDE.md
+  s_59aefceeac4eec::t_2269eab0408c72 857-864
+SchriftTests/DesignSystem/Tokens/DocsColorHexTests.swift
+  s_59aefceeac4eec::t_2269eab0408c72 15-17
+docs/assets/app-icon/export.sh
+  s_59aefceeac4eec::t_2269eab0408c72 3-4,17-18,20-24
+docs/assets/app-icon/make-svg.mjs
+  s_59aefceeac4eec::t_3d0a560bbeb1d4 9-11
+  s_59aefceeac4eec::t_2269eab0408c72 63,68
+  s_59aefceeac4eec::t_13675b5d8bb66c 28
+docs/assets/app-icon/schrift-icon-tinted.svg
+  s_59aefceeac4eec::t_2269eab0408c72 2,41
+docs/assets/app-icon/schrift-icon-dark.svg
+  s_59aefceeac4eec::t_2269eab0408c72 2,41
+docs/assets/app-icon/layer-background-light.svg
+  s_59aefceeac4eec::t_2269eab0408c72 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c5939efe30fa227164f38e2639f030cb9f7ee016",
+  "prompts": {},
+  "sessions": {
+    "s_59aefceeac4eec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74ff1fa4-4479-4fbe-a565-8fe0a94bc2ce",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
