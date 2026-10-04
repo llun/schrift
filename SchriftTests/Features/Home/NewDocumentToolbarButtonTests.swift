@@ -9,22 +9,25 @@ final class NewDocumentToolbarButtonTests: XCTestCase {
         [view] + view.subviews.flatMap { views(in: $0) }
     }
 
-    /// The glass surface encloses the accessible label's host. Measure the first
-    /// enclosing view with a full tap-target size, without naming UIKit's private
-    /// toolbar wrapper classes (which differ between OS releases).
-    private func buttonSurface(enclosing label: UIView) -> UIView? {
-        var candidate: UIView? = label
-        while let view = candidate {
-            if view.bounds.width >= 44 && view.bounds.height >= 44 { return view }
-            candidate = view.superview
+    /// This fixture has exactly one toolbar action. Find its outermost surface
+    /// by size and trailing placement, without naming UIKit's private wrappers
+    /// or depending on accessibility bundles being loaded on a fresh simulator.
+    private func buttonSurface(in root: UIView) -> UIView? {
+        guard let bar = views(in: root).first(where: { $0 is UINavigationBar }) else { return nil }
+        return views(in: bar).first { view in
+            let bounds = view.bounds
+            return bounds.width >= 44 && bounds.height >= 44
+                && bounds.width < 100 && bounds.height < 100
+                && view.convert(bounds, to: bar).midX > bar.bounds.midX
         }
-        return nil
     }
 
     func testNativeToolbarButtonIsCircularAtNormalAndAccessibilitySizes() async throws {
         let suite = "NewDocumentToolbarButtonTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
+        let localization = LocalizationStore(userDefaults: defaults)
+        localization.language = .english
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene)
@@ -46,20 +49,13 @@ final class NewDocumentToolbarButtonTests: XCTestCase {
                                 }
                             }
                     }
-                    .environment(LocalizationStore(userDefaults: defaults))
+                    .environment(localization)
                     .environment(\.dynamicTypeSize, size)
                     .preferredColorScheme(scheme))
                 window.rootViewController = host
                 window.makeKeyAndVisible()
-                await waitUntil {
-                    self.views(in: host.view).contains { $0.accessibilityLabel == "New doc" && $0.bounds.height > 0 }
-                }
+                await waitUntil { self.buttonSurface(in: host.view) != nil }
                 host.view.layoutIfNeeded()
-                let label = try XCTUnwrap(views(in: host.view).first { $0.accessibilityLabel == "New doc" })
-                let surface = try XCTUnwrap(buttonSurface(enclosing: label))
-                XCTAssertEqual(surface.bounds.width, surface.bounds.height, accuracy: 1, "\(size), \(scheme)")
-                XCTAssertLessThan(surface.bounds.width, 100, "measure the button, not the whole bar")
-
                 let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                     window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
                 }
@@ -67,6 +63,10 @@ final class NewDocumentToolbarButtonTests: XCTestCase {
                 attachment.name = "Create button \(size) \(scheme)"
                 attachment.lifetime = .keepAlways
                 add(attachment)
+
+                let surface = try XCTUnwrap(buttonSurface(in: host.view))
+                XCTAssertEqual(surface.bounds.width, surface.bounds.height, accuracy: 1, "\(size), \(scheme)")
+                XCTAssertLessThan(surface.bounds.width, 100, "measure the button, not the whole bar")
             }
         }
     }
