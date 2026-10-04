@@ -170,6 +170,38 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
+    func testLoadOnNewServerDoesNotLoseRecentsToRemovedFavoritesRoute() async {
+        let viewModel = makeViewModel()
+        let log = RequestRecorder()
+        let pinnedBody = Self.paginatedFixture(
+            id: "11111111-1111-4111-8111-111111111111", title: "Pinned Doc", isFavorite: true)
+        let recentBody = Self.paginatedFixture(
+            id: "22222222-2222-4222-8222-222222222222", title: "Recent Doc", isFavorite: false)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch request.url?.absoluteString {
+            case "https://docs.example.org/api/v1.0/config/":
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.7.0"}"#.utf8), error: nil)
+            case "https://docs.example.org/api/v1.0/documents/favorite_list/":
+                return .init(statusCode: 404, headers: [:], body: Data(#"{"detail":"Not found."}"#.utf8), error: nil)
+            case "https://docs.example.org/api/v1.0/documents/favorites/":
+                return .init(statusCode: 200, headers: [:], body: pinnedBody, error: nil)
+            default:
+                return .init(statusCode: 200, headers: [:], body: recentBody, error: nil)
+            }
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.pinnedDocuments.map(\.title), ["Pinned Doc"])
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Recent Doc"])
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/documents/favorite_list/"), 0)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/documents/favorites/"), 1)
+    }
+
     /// **The recents feed is fetched unfiltered**, so the server returns pinned documents in
     /// both responses and the same row rendered in both sections. Pinned wins; Recent is what
     /// is left.
@@ -394,20 +426,18 @@ final class HomeViewModelTests: XCTestCase {
         // while the fetch is in flight.
         let viewModel = makeViewModel()
         let recorder = RequestRecorder()
-        let gate = DispatchSemaphore(value: 0)
+        let gate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             recorder.record(request)
-            gate.wait()  // hold the fetch open so the mid-flight state is observable
-            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil, releasedBy: gate)
         }
 
         let load = Task { await viewModel.load() }
-        await waitUntil { recorder.count(ofMethod: "GET") >= 1 }  // load() is now in its network phase
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         XCTAssertTrue(viewModel.isLoading, "a true first run with nothing local must show the spinner")
 
-        gate.signal()
-        gate.signal()
+        gate.open()
         await load.value
         XCTAssertFalse(viewModel.isLoading)
     }
@@ -423,20 +453,18 @@ final class HomeViewModelTests: XCTestCase {
             [try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: pinnedBody).results[0]])
         let viewModel = makeViewModel(cache: cache)
         let recorder = RequestRecorder()
-        let gate = DispatchSemaphore(value: 0)
+        let gate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             recorder.record(request)
-            gate.wait()
-            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil, releasedBy: gate)
         }
 
         let load = Task { await viewModel.load() }
-        await waitUntil { recorder.count(ofMethod: "GET") >= 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount >= 1 }
 
         XCTAssertFalse(viewModel.isLoading, "visible pinned rows are no first-run spinner")
 
-        gate.signal()
-        gate.signal()
+        gate.open()
         await load.value
     }
 
@@ -1377,25 +1405,34 @@ final class HomeViewModelTests: XCTestCase {
         let recentBody = Self.paginatedFixture(id: id.uuidString.lowercased(), title: "Doomed", isFavorite: false)
         let empty = Self.emptyFixture
         let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
             let url = request.url?.absoluteString ?? ""
             if url.contains("/favorite/") {
                 return .init(statusCode: 201, headers: [:], body: Data(), error: nil)
             }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.6.1"}"#.utf8), error: nil)
+            }
             log.record(request)
             // The pre-pin list answers: not a favorite, and absent from `favorite_list/`.
             return .init(
                 statusCode: 200, headers: [:],
-                body: url.contains("favorite_list") ? empty : recentBody, error: nil, delay: 0.2)
+                body: url.contains("favorite_list") ? empty : recentBody, error: nil, releasedBy: gate)
         }
 
         let loading = Task { await viewModel.load() }
-        // **Ordered on the recorder, not a sleep.** Both list requests must have *reached* the
-        // stub — and be held open by its delay — before the pin runs, or the fetch resolves
-        // first and the test passes while exercising nothing (`load()` would set `pinned = []`
-        // and the later pin would insert the row anyway).
-        await waitUntil { log.count(ofMethod: "GET") >= 2 }
+        // Both stale document responses must be registered as held before pinning.
+        // Recorder arrival alone precedes registration; the explicit gate prevents either
+        // response from completing during a scheduler pause before the pin finishes.
+        await waitUntil {
+            log.count(ofMethod: "GET", urlContaining: "/documents/favorite_list/") == 1
+                && log.count(ofMethod: "GET", urlContaining: "/documents/?") == 1
+                && MockURLProtocol.deferredDeliveryCount == 2
+        }
         await viewModel.toggleFavorite(document)
+        gate.open()
         await loading.value
 
         XCTAssertEqual(
