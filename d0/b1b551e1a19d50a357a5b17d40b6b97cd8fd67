@@ -1,0 +1,19 @@
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_d0f84443378ec2::t_751a65d2c49628 243-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0b1b551e1a19d50a357a5b17d40b6b97cd8fd67",
+  "prompts": {},
+  "sessions": {
+    "s_d0f84443378ec2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10835-ca62-79a2-b122-3dd77e26a54a",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
