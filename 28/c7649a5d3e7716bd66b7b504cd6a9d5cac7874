@@ -1,0 +1,79 @@
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 258-259
+Schrift/Core/Networking/AttachmentEndpoints.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 117
+Schrift/Features/Editor/ImageLoadPolicy.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 7
+Schrift/Core/Localization/Strings+en.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 260
+SchriftTests/Core/Networking/ImageDataClientTests.swift
+  s_b41534c519615d::t_118a541a89e60d 1-168
+SchriftTests/Features/Editor/ImagePersistenceIntegrationTests.swift
+  s_b41534c519615d::t_dc85b13c77e15c 1-85,87-136,138-203
+  s_b41534c519615d::t_ad17980f1212a6 86,137
+SchriftTests/Features/Editor/EditorSurfaceParityTests.swift
+  s_b41534c519615d::t_118a541a89e60d 841-899
+Schrift/Core/Localization/Strings+pt.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 262
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 258-259
+Schrift/Core/Localization/Strings+sl.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 271,273
+Schrift/Core/Networking/ImageDataClient.swift
+  s_b41534c519615d::t_118a541a89e60d 1-19,21-48,52,54,56,62-67,69-82,84-154
+  s_b41534c519615d::t_5952e0f2865e56 20,49-51,53,55,57-61,68,83
+Schrift/Features/Editor/ImageLoader.swift
+  s_b41534c519615d::t_dc85b13c77e15c 40,48,65-87
+  s_b41534c519615d::t_eed491d36c2c1f 144-146,171-173
+Schrift/Core/Localization/Strings+de.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 265
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_b41534c519615d::t_118a541a89e60d 485-503
+Schrift/Core/Auth/SessionStore.swift
+  s_b41534c519615d::t_118a541a89e60d 27,57-58,60
+  s_b41534c519615d::t_dc85b13c77e15c 28,173
+Schrift/Core/Localization/Strings+es.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 269-270
+Schrift/Core/Localization/Strings+it.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 265
+Schrift/Core/Localization/L10nKey.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 312-315
+Schrift/Features/Editor/ImageCacheStore.swift
+  s_b41534c519615d::t_dc85b13c77e15c 3-4,8-9,11-15,95-100,103-104
+  s_b41534c519615d::t_118a541a89e60d 16,22-28,31-48,50,57-58,65-66,69-70,76,78,81,84,86-90,92,107-112,116,122-131,133-142
+  s_b41534c519615d::t_a0bd42f86029a1 10
+  s_b41534c519615d::t_1892429f19bbb9 17-21
+  s_b41534c519615d::t_b65b79594a7754 77
+Schrift/Core/Localization/Strings+th.swift
+  s_b41534c519615d::t_32a7ecec4e4c3b 258-261
+AGENTS.md
+  s_b41534c519615d::t_db0e28f0e861bc 1739,1742-1743,1746,3304,3306-3308
+Schrift/Features/Editor/ImageTransport.swift
+  s_b41534c519615d::t_b271ce878b547e 18-19,21-24,26-27
+docs/architecture.md
+  s_b41534c519615d::t_8b5fa1286d3f01 979,988-990,997-998,1002-1004,1006-1007,1026-1028
+docs/offline-and-sync.md
+  s_b41534c519615d::t_d3024b9141cef2 1079-1093,1101-1104,1116-1117,1131
+SchriftTests/Features/Editor/ImageCacheStoreTests.swift
+  s_b41534c519615d::t_a0d1ccc0ed1ab8 20,23,29,39-41,44,47,50,55,60
+SchriftTests/Features/Editor/ImageLoaderTests.swift
+  s_b41534c519615d::t_8310db060218a4 281-309
+SchriftTests/Features/Editor/ImageTransportTests.swift
+  s_b41534c519615d::t_d3832233b661ee 44-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28c7649a5d3e7716bd66b7b504cd6a9d5cac7874",
+  "prompts": {},
+  "sessions": {
+    "s_b41534c519615d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1086a-1fa4-7e72-9c7a-15fa1c927d9c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
