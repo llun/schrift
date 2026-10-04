@@ -1,0 +1,19 @@
+Schrift/Features/Editor/EditorViewModel.swift
+  s_c0b09540de7308::t_48375c0d122c32 517-519
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "243fbc1d3f1eb92107eb42127f96c28ffcff3762",
+  "prompts": {},
+  "sessions": {
+    "s_c0b09540de7308": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10836-306b-79f2-a514-40463ee5d4a0",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
