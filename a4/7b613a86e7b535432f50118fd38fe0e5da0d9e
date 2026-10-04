@@ -1,0 +1,20 @@
+SchriftTests/Features/Home/NewDocumentToolbarButtonTests.swift
+  s_51555cf672f070::t_6e17f5cd9defc8 29-30,52,66,68-69
+  s_51555cf672f070::t_acbd898f8afc6e 12-21,57,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a47b613a86e7b535432f50118fd38fe0e5da0d9e",
+  "prompts": {},
+  "sessions": {
+    "s_51555cf672f070": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10864-547d-7373-b45f-5b8f8e0a6262",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
