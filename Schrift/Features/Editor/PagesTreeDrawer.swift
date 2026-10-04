@@ -27,6 +27,7 @@ struct PagesTreeDrawer: View {
     @Bindable var viewModel: PagesTreeViewModel
     let rootTitle: String
     var onOpen: (Document) -> Void
+    var onCreated: (Document) -> Void = { _ in }
     var onClose: () -> Void
     /// A row's Delete swipe action was tapped. The *editor* owns the confirmation alert, not
     /// the drawer: an alert presented from inside a view that is itself a transitioning
@@ -276,7 +277,7 @@ struct PagesTreeDrawer: View {
             Button {
                 Task {
                     if let created = await viewModel.addPage(under: viewModel.rootID) {
-                        onOpen(created)
+                        onCreated(created)
                     }
                 }
             } label: {

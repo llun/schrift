@@ -227,6 +227,7 @@ struct EditorView: View {
     var isOffline: Bool = false
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
+    var onCreatedDocument: ((Document) -> Void)? = nil
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(LocalizationStore.self) private var loc
@@ -292,7 +293,8 @@ struct EditorView: View {
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
         onDeleted: (() -> Void)? = nil,
-        onOpenDocument: ((Document) -> Void)? = nil
+        onOpenDocument: ((Document) -> Void)? = nil,
+        onCreatedDocument: ((Document) -> Void)? = nil
     ) {
         self.viewModel = viewModel
         self.reach = reach
@@ -303,6 +305,7 @@ struct EditorView: View {
         self.isOffline = isOffline
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
+        self.onCreatedDocument = onCreatedDocument
         _optionsViewModel = State(
             initialValue: OptionsViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
@@ -563,6 +566,10 @@ struct EditorView: View {
                         isPresentingPagesTree = false
                         onOpenDocument?(document)
                     },
+                    onCreated: { document in
+                        dismissPagesTree()
+                        onCreatedDocument?(document)
+                    },
                     onClose: { dismissPagesTree() },
                     // The drawer closes first: the confirmation is presented by the editor
                     // beneath it, and leaving the drawer up would put a system alert over a
@@ -727,7 +734,7 @@ struct EditorView: View {
             // and its height never changes under the user mid-keystroke.
             EditorDocumentHeader(
                 title: viewModel.title, onEditTitle: { viewModel.updateTitle($0) }, reach: reach,
-                peers: headerPeers
+                peers: headerPeers, onConsumeInitialTitleFocus: viewModel.consumeInitialTitleFocus
             ) {
                 editingStatus
             }
@@ -1213,7 +1220,7 @@ struct EditorView: View {
                 Button {
                     Task {
                         if let child = await viewModel.addSubpage() {
-                            onOpenDocument?(child)
+                            onCreatedDocument?(child)
                         }
                     }
                 } label: {

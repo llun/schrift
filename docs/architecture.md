@@ -943,6 +943,19 @@ Codable models mirror `ListDocumentSerializer`/`DocumentSerializer` fields: `id,
 
 ## Editing & save mechanism
 
+A successful creation action opens the editor with a one-time entry intent: Home on iPhone
+pushes `DocumentEditorRoute(createdDocument:)`, Home on iPad selects that route, and both
+Subpages **Add a subpage** and the Pages drawer **New page** use the same creation callback.
+Ordinary opens (including reopening a newly created document) carry no intent and start in
+reading mode. Content must first initialize from the server or restore from a local draft/cache;
+only then does the view model consume the intent through `canStartEditing` and `startEditing`.
+A failed load stays in reading/error mode without a draft or empty-body save and preserves the
+intent for a successful retry. Offline creation restores its seed draft without fetching a local
+UUID. The rendered shared header focuses the title once and selects its existing text, so typing
+replaces the default without first deleting it. Selection alone never dirties the document.
+Consumption is shared with the route so screen recreation, refresh, reconnect, and a changed
+server identity cannot replay entry; the separate focus request belongs to the editing session.
+
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).

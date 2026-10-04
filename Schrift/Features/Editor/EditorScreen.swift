@@ -14,6 +14,7 @@ struct EditorScreen: View {
     var isOffline: Bool = false
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
+    var onCreatedDocument: ((Document) -> Void)? = nil
 
     @State private var viewModel: EditorViewModel
     /// Retained past `init` because the Pages drawer reads the same store the
@@ -25,6 +26,7 @@ struct EditorScreen: View {
         documentID: UUID,
         title: String,
         saveCoordinator: DocumentSaveCoordinator,
+        entryIntent: NewDocumentEntryIntent? = nil,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         diagnostics: APIDiagnosticsLog? = nil,
@@ -35,7 +37,8 @@ struct EditorScreen: View {
         initialIsFavorite: Bool = false,
         isOffline: Bool = false,
         onDeleted: (() -> Void)? = nil,
-        onOpenDocument: ((Document) -> Void)? = nil
+        onOpenDocument: ((Document) -> Void)? = nil,
+        onCreatedDocument: ((Document) -> Void)? = nil
     ) {
         _viewModel = State(
             initialValue: EditorViewModel(
@@ -43,6 +46,7 @@ struct EditorScreen: View {
                 documentID: documentID,
                 title: title,
                 saveCoordinator: saveCoordinator,
+                entryIntent: entryIntent,
                 serverOrigin: serverOrigin,
                 contentCache: contentCache,
                 childrenCache: childrenCache,
@@ -57,6 +61,7 @@ struct EditorScreen: View {
         self.isOffline = isOffline
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
+        self.onCreatedDocument = onCreatedDocument
     }
 
     var body: some View {
@@ -70,7 +75,8 @@ struct EditorScreen: View {
             initialIsFavorite: initialIsFavorite,
             isOffline: isOffline,
             onDeleted: onDeleted,
-            onOpenDocument: onOpenDocument
+            onOpenDocument: onOpenDocument,
+            onCreatedDocument: onCreatedDocument
         )
     }
 }

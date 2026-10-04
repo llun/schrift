@@ -394,6 +394,28 @@ final class EditorSurfaceParityTests: XCTestCase {
         XCTAssertEqual(reading, editing, accuracy: Self.headerLineBoxResidual)
     }
 
+    func testLongTitlesWrapOnBothSurfacesAtPhoneAndTabletWidthsAndDynamicType() {
+        let title = "A long document title that needs several lines without hiding its ending while editing"
+        for width: CGFloat in [320, 700] {
+            for size: DynamicTypeSize in [.large, .accessibility3] {
+                func height(editable: Bool, title: String) -> CGFloat {
+                    let host = UIHostingController(
+                        rootView: EditorDocumentHeader(
+                            title: title, onEditTitle: editable ? { _ in } : nil,
+                            reach: .restricted, peers: []
+                        ) { Text("Synced just now").font(DocsFont.footnote) }
+                        .environment(english())
+                        .environment(\.dynamicTypeSize, size))
+                    return host.sizeThatFits(in: CGSize(width: width, height: 4000)).height
+                }
+                let reading = height(editable: false, title: title)
+                let editing = height(editable: true, title: title)
+                XCTAssertGreaterThan(editing, height(editable: true, title: "Short"), "long title must wrap")
+                XCTAssertEqual(reading, editing, accuracy: 8, "header/body shift at \(width), \(size)")
+            }
+        }
+    }
+
     /// One title line's worth of the same leading residual measured on the rows.
     /// Small enough to be paid once; a regression that dropped the metadata row
     /// or the placeholder would be tens of points and fail loudly.

@@ -1318,6 +1318,14 @@ that tests gate on is not a local change.
 
 ## Documents created on this device (2026-08-01 storage/gates/replay; 2026-08-02 create UI)
 
+Creation navigation carries the same one-time editing/title-focus intent online and offline.
+The editor must restore the seed or edited draft before consuming it; it never opens an
+uninitialized empty editor or sends a read/save to a client-minted UUID. The title is selected
+for replacement without changing the draft. Subsequent title edits use the existing write-ahead
+save coordinator and preserve the restored body. Reopening, including after local-to-server
+migration, uses an ordinary reading route and cannot re-arm focus. This also applies to new
+subpages, whether created below the document or from the Pages drawer.
+
 Offline *creation* has landed — the non-goal above is withdrawn — and its **storage, its safety gates
 and its replay have landed, and the create UI with them** — Home's `+`, the editor's
 "Add a subpage" and the drawer's "New page" all mint records. They landed first and

@@ -11,7 +11,7 @@ struct HomeSplitView: View {
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
     let serverOrigin: String
 
-    @State private var selectedDocument: Document?
+    @State private var selectedRoute: DocumentEditorRoute?
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -20,7 +20,7 @@ struct HomeSplitView: View {
             DocumentListView(
                 viewModel: viewModel,
                 serverHost: serverHost,
-                onSelect: { selectedDocument = $0 },
+                onSelect: { selectedRoute = DocumentEditorRoute(document: $0) },
                 // Creation is owned here, not passed in: a split view opens a
                 // document by *selecting* it. Handing this to the tab shell's
                 // push-a-path version would create the document on the server
@@ -29,18 +29,20 @@ struct HomeSplitView: View {
                 onNewDocument: {
                     Task {
                         if let document = await viewModel.createDocument() {
-                            selectedDocument = document
+                            selectedRoute = DocumentEditorRoute(createdDocument: document)
                         }
                     }
                 }
             )
         } detail: {
-            if let selectedDocument {
+            if let selectedRoute {
+                let selectedDocument = selectedRoute.document
                 EditorScreen(
                     client: viewModel.client,
                     documentID: selectedDocument.id,
                     title: selectedDocument.title ?? loc[.common_untitled],
                     saveCoordinator: viewModel.saveCoordinator,
+                    entryIntent: selectedRoute.entryIntent,
                     diagnostics: viewModel.diagnostics,
                     reach: selectedDocument.linkReach,
                     serverHost: serverHost,
@@ -49,10 +51,11 @@ struct HomeSplitView: View {
                     initialIsFavorite: selectedDocument.isFavorite,
                     isOffline: viewModel.isOffline,
                     onDeleted: {
-                        self.selectedDocument = nil
+                        self.selectedRoute = nil
                         Task { await viewModel.load() }
                     },
-                    onOpenDocument: { self.selectedDocument = $0 }
+                    onOpenDocument: { self.selectedRoute = DocumentEditorRoute(document: $0) },
+                    onCreatedDocument: { self.selectedRoute = DocumentEditorRoute(createdDocument: $0) }
                 )
                 .id(selectedDocument.id)
             } else {
