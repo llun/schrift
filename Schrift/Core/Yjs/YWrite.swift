@@ -27,7 +27,7 @@ import Foundation
 ///
 /// Pure value code with no concurrency annotations, but it **mutates** the live
 /// replica graph, so it must run inside an open transaction owned by the replica's
-/// single owner (`YDoc.transact`). See `CLAUDE.md`, "The Yjs CRDT core".
+/// single owner (`YDoc.transact`). See `AGENTS.md`, "The Yjs CRDT core".
 enum YWrite {
 
     /// Insert `contents` as consecutive list children immediately after `left`

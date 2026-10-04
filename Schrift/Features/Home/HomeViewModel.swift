@@ -502,7 +502,7 @@ final class HomeViewModel {
     /// ahead of `load()`, so `load()`'s own early return cannot cover it. The identity guard above
     /// runs first, so this withholds only a pull made while the answer is *unknown* — which in
     /// this mode is every such pull, since nothing arrives to make it known, each one parking
-    /// the spinner on a `/users/me/` carrying cookies the user asked not to send. `HomeViewModel` is one of the three view models CLAUDE.md names as honouring the
+    /// the spinner on a `/users/me/` carrying cookies the user asked not to send. `HomeViewModel` is one of the three view models AGENTS.md names as honouring the
     /// preference, and `createDocument` withholds its POST for the same reason.
     ///
     /// Scope it accurately, though: the preference is **not** app-wide, and this guard does not

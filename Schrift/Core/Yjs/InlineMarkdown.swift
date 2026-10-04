@@ -12,7 +12,7 @@ import Foundation
 // punctuation that produces them (`syntax`). `parse(_:)` is a projection of
 // that same result, so the block editor's styling and the save path can never
 // disagree about what a `*` means — they are one engine, not two. See the
-// "Editor & the on-device save" section in `CLAUDE.md`.
+// "Editor & the on-device save" section in `AGENTS.md`.
 
 /// An inline mark carried by a span of text. `key`/`valueJSON` are the exact
 /// BlockNote wire values the Yjs encoder emits; changing either changes the

@@ -28,7 +28,7 @@ struct NetworkPathMonitoring: Sendable {
 /// It is a **sync trigger only** — it deliberately does *not* replace the inferred
 /// `isOffline` state or the `workOffline` toggle. Those also catch server-down /
 /// HTTP-3-stall states that a satisfied `NWPath` misses (the documented Simulator
-/// quirk in CLAUDE.md), so reachability here answers "can the OS see a network",
+/// quirk in AGENTS.md), so reachability here answers "can the OS see a network",
 /// not "is the server usable". Reachability starts optimistic (`true`) so nothing
 /// reads offline before the first path update, and every change is delivered on
 /// the main actor **in order**.

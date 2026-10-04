@@ -335,7 +335,7 @@ final class YIntegrationTests: XCTestCase {
     func testAdjacentInsertsFromOneClientMergeIntoASingleStruct() throws {
         // Store *shape*, not just projected text: merge cleanup is invisible to a
         // text assertion, so without this the whole suite passes with the merge
-        // deleted — even though CLAUDE.md calls it mandatory and skipping it makes
+        // deleted — even though AGENTS.md calls it mandatory and skipping it makes
         // every later comparison with yjs disagree.
         let doc = makeDoc()
         try apply(adjacentInsertsMerge, to: doc)

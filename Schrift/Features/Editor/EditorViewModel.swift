@@ -290,7 +290,7 @@ final class EditorViewModel {
         // A failed or pending-sync save leaves the draft as the user's only copy of
         // that edit (the server hasn't confirmed it), so it is unsaved local content
         // whatever `displaySource` says.
-        // Exhaustive on purpose: this is one of the two save funnels the CLAUDE.md
+        // Exhaustive on purpose: this is one of the two save funnels the AGENTS.md
         // invariants are written around, so a new coordinator state must be a compile
         // error here, not fall silently into the least-protective branch.
         switch saveCoordinator.state(for: documentID) {

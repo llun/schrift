@@ -24,7 +24,7 @@ enum TextSpanDiff {
         for run in runs {
             // `uniquingKeysWith:` (last-wins) rather than `uniqueKeysWithValues:`, which
             // traps on a duplicate key — a run's marks array is not guaranteed unique by
-            // its type, and the store must never crash on malformed input (see CLAUDE.md
+            // its type, and the store must never crash on malformed input (see AGENTS.md
             // "Malformed input must throw, never trap").
             let m = Dictionary(run.marks.map { ($0.key, $0.valueJSON) }, uniquingKeysWith: { _, last in last })
             for u in Array(run.text.utf16) {

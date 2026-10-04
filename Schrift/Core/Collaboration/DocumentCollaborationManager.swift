@@ -296,7 +296,7 @@ final class DocumentCollaborationManager {
         } catch {
             // A malformed replica: mirror `applyReplicaUpdate`'s catch — destroy the
             // corrupt store, latch fail-safe so it never drives the editor again, then
-            // rethrow. Never trap (clocks are peer-influenced — see `CLAUDE.md`).
+            // rethrow. Never trap (clocks are peer-influenced — see `AGENTS.md`).
             replica.destroy()
             entry.replica = nil
             entry.replicaFailSafe = true

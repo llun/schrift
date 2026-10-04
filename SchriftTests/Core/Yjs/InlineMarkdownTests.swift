@@ -86,7 +86,7 @@ final class InlineMarkdownTests: XCTestCase {
     // MARK: - Underscore emphasis (CommonMark flanking)
     //
     // The rule and its saved-byte delta are recorded in the
-    // "Editor & the on-device save" section of `CLAUDE.md`.
+    // "Editor & the on-device save" section of `AGENTS.md`.
     // Each case below was cross-checked against Foundation's
     // `AttributedString(markdown:)` — the reading surface, and the oracle this
     // scanner converges on.

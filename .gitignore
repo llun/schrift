@@ -46,5 +46,5 @@ Local.xcconfig
 
 # Plans and "superpowers" workflow documents must never be committed — design
 # knowledge lives in the living docs under docs/ instead. See the "Docs
-# convention" in CLAUDE.md.
+# convention" in AGENTS.md.
 docs/superpowers/

@@ -35,7 +35,7 @@ final class SwipeActionStyleResolverTests: XCTestCase {
     ///
     /// So dark inverts the pairing rather than reusing the light ink: the same salmon fill
     /// with the page's own near-black as the ink, ~8:1. A single hex plus a global
-    /// light→dark lookup could not express this, which is exactly the case CLAUDE.md's
+    /// light→dark lookup could not express this, which is exactly the case AGENTS.md's
     /// "both light and dark raw fields per color" rule exists for.
     ///
     /// This assertion is deliberately phrased against `textOnBrand` — a well-meaning

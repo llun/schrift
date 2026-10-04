@@ -25,7 +25,7 @@ import Foundation
 ///
 /// Pure value code (no concurrency annotations), but it **mutates** the live
 /// replica graph, so every entry point runs inside an open transaction owned by the
-/// replica's single owner (`YDoc.transact`). See `CLAUDE.md`, "The Yjs CRDT core".
+/// replica's single owner (`YDoc.transact`). See `AGENTS.md`, "The Yjs CRDT core".
 enum BlockNoteWrite {
     /// The BlockNote fragment root — one `document-store` XmlFragment.
     static let fragmentField = BlockNoteYjs.fragmentField
@@ -286,7 +286,7 @@ enum BlockNoteWrite {
         else {
             // A survivor the projection matched always has a live content element;
             // reaching here means a malformed replica, which is a caught error, not a
-            // trap (clocks are peer-influenced — see `CLAUDE.md`).
+            // trap (clocks are peer-influenced — see `AGENTS.md`).
             throw YIntegrationError.unexpectedCase
         }
 

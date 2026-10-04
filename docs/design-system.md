@@ -5,7 +5,7 @@
 > in-app localization, layout-fidelity work, and read-only version history — plus
 > two new user-facing features, all of which shipped. Kept current with the app;
 > update it in place when behavior changes. See also
-> [`architecture.md`](architecture.md) and [`CLAUDE.md`](../CLAUDE.md).
+> [`architecture.md`](architecture.md) and [`AGENTS.md`](../AGENTS.md).
 
 > **Revised: 2026-07-11 (post-implementation).** §3 and §5.7 below plan for
 > **English and French** as primary/reviewed translations. As shipped, only
@@ -131,7 +131,7 @@
 > view's unspecified height proposal.
 >
 > Three consequences worth knowing, all documented in full in
-> [`CLAUDE.md`](../CLAUDE.md): the drag is a **UIKit recognizer** with a
+> [`AGENTS.md`](../AGENTS.md): the drag is a **UIKit recognizer** with a
 > decided-once axis lock, and it *refuses* non-horizontal drags rather than
 > ignoring them (see the 2026-08-13 revision above); `SubpageRow` and the drawer's title were converted off `Button` to
 > `.contentShape` + `.onTapGesture`, because a `Button` can still fire on touch-up
@@ -156,7 +156,7 @@
 > history · Delete** (matching the handoff exactly), and **Copy as Markdown**
 > and **Duplicate** — plus the `duplicateDocument` endpoint that backed the
 > latter — were removed. The new `SheetHeader` component + the flat-sheet
-> pattern are documented in [`CLAUDE.md`](../CLAUDE.md); the Share and
+> pattern are documented in [`AGENTS.md`](../AGENTS.md); the Share and
 > Version-history sheets were flattened onto the same pattern shortly after —
 > see the next amendment.
 
@@ -180,7 +180,7 @@
 > is now a **standing rule**: *every list inside a sheet/dialog is flat* (boxless,
 > dividerless, on `surfacePage` under a `SheetHeader`); grouped `ListSection`
 > cards are reserved for the **tab screens** (Profile, Shared). See
-> [`CLAUDE.md`](../CLAUDE.md).
+> [`AGENTS.md`](../AGENTS.md).
 
 > **Revised: 2026-07-31 (iOS 26 minimum + Dynamic Type).** This is the first
 > change of the **native-first / Liquid Glass** refresh, following a revised
@@ -305,7 +305,7 @@
 >   share a `GlassEffectContainer`, so the system supplies the refraction, edge
 >   and shadow and renders both in one pass. This is the standing rule now:
 >   *glass is for surfaces that float over content, never for content itself* —
->   see [`CLAUDE.md`](../CLAUDE.md).
+>   see [`AGENTS.md`](../AGENTS.md).
 > - **Subpage rows carry the handoff's one-line summary** under the title
 >   (`Document.excerpt`, dropped when blank). The child-count chip
 >   (`account_tree` + `numchild`) was already there.
@@ -532,7 +532,7 @@ otherwise churned.
 - **Translations beyond English/French are AI-generated** and must be marked as
   needing native-speaker review (see §5.7).
 - No new third-party dependencies; no telemetry; no weakening of the security
-  posture (per `CLAUDE.md` Safety).
+  posture (per `AGENTS.md` Safety).
 
 ---
 
@@ -918,7 +918,7 @@ padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved (sti
 used by the Shared and Profile tab screens). (The **Options, Share, and
 Version-history sheets** were later flattened to boxless, dividerless menus under
 a `SheetHeader` — see the 2026-07-12 amendments at the top and the flat-sheet
-pattern in [`CLAUDE.md`](../CLAUDE.md); `ProfileRowDivider` consequently has no
+pattern in [`AGENTS.md`](../AGENTS.md); `ProfileRowDivider` consequently has no
 remaining call sites.)
 
 ### 8.4 Sheets & scrolling (the "share dialog scroll" fix)
@@ -1059,7 +1059,7 @@ uncertain piece.
 
 ## 11. Docs to update in this change
 
-- **`CLAUDE.md`** — new conventions: adaptive color tokens
+- **`AGENTS.md`** — new conventions: adaptive color tokens
   (`DocsColorHexDark` + `Color(lightHex:darkHex:)`), the resolver light+dark
   contract, the `AppearanceStore`/`LocalizationStore` injection rule, the in-code
   localization catalog + completeness test, the "language is a local app
@@ -1098,7 +1098,7 @@ uncertain piece.
 
 ## 13. Definition of done
 
-Per `CLAUDE.md`: swift-format run; full suite green locally and on CI
+Per `AGENTS.md`: swift-format run; full suite green locally and on CI
 (`Build & Test`); new behavior test-covered; docs updated in the same change; PR
 title a Conventional Commit; PR review loop run and threads resolved.
 

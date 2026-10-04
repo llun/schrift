@@ -2,7 +2,7 @@
 # pinned action has a newer release, updating both the SHA and the trailing
 # `# vX.Y.Z` comment. Each PR still gates on the `Build & Test` check, so a bump
 # can't land unverified. Actions only — the app has a deliberate
-# zero-third-party-runtime-dependency posture (see CLAUDE.md), and Ruby/fastlane
+# zero-third-party-runtime-dependency posture (see AGENTS.md), and Ruby/fastlane
 # are bumped intentionally via `bundle update`, not automatically.
 version: 2
 updates:

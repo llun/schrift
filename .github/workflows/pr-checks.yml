@@ -70,7 +70,7 @@ jobs:
         run: brew install xcodegen
 
       # The Xcode project is generated from project.yml and not committed —
-      # CI must regenerate it before any xcodebuild call (see CLAUDE.md).
+      # CI must regenerate it before any xcodebuild call (see AGENTS.md).
       - name: Generate Xcode project
         run: xcodegen generate
 

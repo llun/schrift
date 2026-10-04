@@ -106,7 +106,7 @@ final class SwipeRevealRowGeometryTests: XCTestCase {
 
     /// **The negative control.** Without it the assertions above pass just as happily on a
     /// strip that never rendered at all — and a measurement that cannot fail is not evidence
-    /// (CLAUDE.md's rule, learned from `PagesTreeDrawerTests`). Hosting the same buttons
+    /// (AGENTS.md's rule, learned from `PagesTreeDrawerTests`). Hosting the same buttons
     /// alone proves the instrument can see the strip's width, so "the composed row measures
     /// the content's width" is a statement about composition rather than about an empty view.
     func testTheActionStripAloneMeasuresItsOwnWidth() {

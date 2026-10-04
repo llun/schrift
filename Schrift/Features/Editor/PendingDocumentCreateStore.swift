@@ -90,7 +90,7 @@ struct PendingDocumentCreate: Codable, Equatable, Sendable {
     ///
     /// Every failure on the merits (a validation 400) proves nothing was created, so it stays the in-memory
     /// `.failed` state that `init` deliberately re-seeds to `.pendingSync` — a relaunch
-    /// retries and costs nothing. A decode failure is the opposite: `CLAUDE.md` records
+    /// retries and costs nothing. A decode failure is the opposite: `AGENTS.md` records
     /// this having happened here for real (`is_favorite` decoded as a required `Bool`
     /// failed every create *after* the server had built the document, "quietly littering
     /// the server with them"), and with a per-launch replay that becomes one orphaned
