@@ -550,6 +550,9 @@ new code reads like the surrounding code.
   minimize-on-scroll (`.tabBarMinimizeBehavior(.onScrollDown)`), scroll-edge
   effects, and correct safe areas for free; see the handoff's `native-first`
   and `tab-bars` guidelines.
+  - Home's circular create action uses a Material Symbols template `Image`
+    and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
+    as a wider text action by the native toolbar, making its glass surface oval.
   - **One `NavigationStack` per tab**, each owning its own `NavigationPath`.
     `.toolbar(.hidden, for: .tabBar)` — which the editor uses so it gets the
     full screen — only reaches the bar from *inside* a tab's own stack; per-tab
