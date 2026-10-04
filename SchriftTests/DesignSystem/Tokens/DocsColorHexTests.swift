@@ -12,9 +12,9 @@ final class DocsColorHexTests: XCTestCase {
         XCTAssertEqual(DocsColorHex.textBrandSecondary, 0x534FC2)
     }
 
-    /// The sign-in logo's shadow is tinted with this, so it tracks the app icon's
-    /// field: the mid stop of the Soft relief gradient (docs/assets/app-icon).
-    func testBrandLogoMatchesAppIconField() {
+    /// The sign-in logo's shadow colour: the app icon field's mid stop
+    /// (docs/assets/app-icon/make-svg.mjs). Nothing ties the two automatically.
+    func testBrandLogoMatchesDesignSpec() {
         XCTAssertEqual(DocsColorHex.brandLogo, 0x5F5BE0)
     }
 

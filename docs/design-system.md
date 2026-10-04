@@ -440,8 +440,8 @@ writing or paper, and its palette is drawn from the app's purple brand ramp.
 [`docs/assets/app-icon/make-svg.mjs`](assets/app-icon/make-svg.mjs) is the
 source of truth. It writes the SVG masters beside itself, and
 [`export.sh`](assets/app-icon/export.sh) renders them into the asset catalog.
-That script is local tooling only (Google Chrome + ImageMagick) and never runs
-in CI. To change the icon, change a number in `make-svg.mjs` and re-export.
+That script is local, macOS-only tooling (Node, Google Chrome, ImageMagick and
+`sips`; set `CHROME` to point at another Chrome binary) and never runs in CI. To change the icon, change a number in `make-svg.mjs` and re-export.
 Never hand-edit the PNGs or regenerate them with an image model: the first
 version was a generated bitmap, and its lumpy, asymmetric shape could not be
 corrected because there was no source to edit.
@@ -451,15 +451,19 @@ The geometry, all in the 1024 canvas:
 - **Axis** — the nib lies exactly on the diagonal `x + y = 1024`, so its body
   leaves through the top-right corner, cropped by both edges.
 - **Breather hole** — centred on the tile, at (512, 512).
-- **Tip** — at (205, 819), inside the icon mask's safe area. The slit tapers
+- **Tip** — at about (208, 816), inside the icon mask's safe area. The slit tapers
   from the hole and stops short of the tip, so the nib ends in one clean
   point. A slit that runs to the tip splits it into two tines, which blur
   together at small sizes.
 - **Relief** — the same nib sheared 2.6° about its tip. The lavender edge
-  therefore grows from nothing at the point to about 35 px along the body.
+  therefore grows from nothing at the point to about 28 px at the shoulder,
+  widening further toward the cropped corner.
 - **Field** — a `#7F7CF7 → #5F5BE0 → #3F39B6` gradient with a faint bloom in
-  the top-left. `DocsColor.brandLogo` is the mid stop. It tints the sign-in
-  logo's shadow, so retune it whenever the field changes.
+  the top-left. `DocsColor.brandLogo` tints the sign-in logo's shadow and
+  follows the icon: in **light** it is the field's mid stop (`#5F5BE0`); in
+  **dark** it is the dark icon's relief colour (`#7B79E8`, dark `brandFill`),
+  because a dark field tone would make the shadow vanish against the dark page.
+  Retune it whenever those change.
 
 `AppIcon.appiconset` carries three opaque 1024×1024 sRGB PNGs:
 

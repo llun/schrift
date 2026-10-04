@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <title>Schrift — Soft relief v2 (tinted)</title>
+  <title>Schrift app icon (tinted)</title>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1C1C1C"/><stop offset="1" stop-color="#000000"/></linearGradient>
     <radialGradient id="glow" cx="170" cy="120" r="760" gradientUnits="userSpaceOnUse">
@@ -38,7 +38,7 @@ Q0 3 4.5 -12 Z" fill="#000000"/></g></g>
   </g>
   <g mask="url(#cut)">
     <!-- relief: the same nib sheared about its tip, so the lavender edge grows from
-         nothing at the point to ~30px along the body's lower-right side -->
+         nothing at the point to ~28px at the shoulder (|y| x tan 2.6deg x 1.08) -->
     <g transform="translate(205 819) rotate(45) scale(1.08) skewX(-2.6)"><path d="M4.5 -12
 C34 -104 92 -250 134 -372
 C162 -452 206 -504 222 -568

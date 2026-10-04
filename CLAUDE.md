@@ -854,18 +854,14 @@ new code reads like the surrounding code.
 
 ### Design system (`DesignSystem`)
 
-- **App identity:** the app icon and the sign-in logo are rendered from vector
-  masters. `docs/assets/app-icon/make-svg.mjs` is the source of truth, and
-  `export.sh` beside it writes every PNG: the icon's default, dark and tinted
-  appearances, plus the logo's Any and Dark appearances. Change the geometry
-  there and re-export. **Never hand-edit the PNGs, and never regenerate them
-  with an image model.** The first Soft relief bitmap was generated, so its
-  lumpy shape had no source to fix. Every PNG is 1024×1024, opaque, sRGB, with
-  square corners: iOS masks the Home Screen icon and `ConnectView` rounds the
-  logo, so do not bake a corner mask into either. `DocsColor.brandLogo` (the
-  logo's shadow) is the icon field's mid stop — retune it whenever the field
-  changes. Rationale and geometry:
-  [`docs/design-system.md`](docs/design-system.md#app-identity).
+- **App identity:** `docs/assets/app-icon/make-svg.mjs` is the source of truth
+  for the app icon and the sign-in logo; `export.sh` beside it renders every PNG
+  (icon default/dark/tinted, logo Any/Dark). Change the geometry there and
+  re-export — **never hand-edit the PNGs or regenerate them with an image
+  model.** Every PNG is 1024×1024, opaque, sRGB, with square corners (iOS and
+  `ConnectView` apply the rounding). Keep `DocsColor.brandLogo` in step with the
+  icon (light = field mid stop, dark = dark relief colour). Rationale and
+  geometry: [`docs/design-system.md`](docs/design-system.md#app-identity).
 - **Tokens** are caseless `enum` namespaces of `static let` (`DocsColor` /
   `DocsColorHex`, `DocsFont` / `DocsTypographySpec`, `DocsTracking`
   (letter-spacing, applied as `.docsTracking(spec, DocsTracking.tight)`),
