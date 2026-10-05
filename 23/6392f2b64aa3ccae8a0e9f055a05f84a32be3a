@@ -1,0 +1,37 @@
+AGENTS.md
+  s_9d14a7149b17e7::t_c0f10f5b6a25e5 2542-2545
+Schrift/Features/Documents/DocumentPinCoordinator.swift
+  s_9d14a7149b17e7::t_0f7af7b7a3a9df 26,77,89,141-142,224-249,253,268-269,289-290,293
+Schrift/Features/Editor/EditorViewModel.swift
+  s_9d14a7149b17e7::t_d952cf2fdcd309 1549-1550,1559
+Schrift/Features/Editor/PagesTreeViewModel.swift
+  s_9d14a7149b17e7::t_c0bb7e312b2e95 316-317,324
+Schrift/Features/Home/HomeViewModel.swift
+  s_9d14a7149b17e7::t_338bab99b3088d 299,376,477,501-503
+Schrift/Features/Search/SearchViewModel.swift
+  s_9d14a7149b17e7::t_6627fe044601f7 113,122-128,140,168
+Schrift/Features/Shared/SharedViewModel.swift
+  s_9d14a7149b17e7::t_bd851e6258ac93 131,170
+SchriftTests/Features/Documents/DocumentPinCoordinatorTests.swift
+  s_9d14a7149b17e7::t_8c7c45229e778e 1,651-783
+docs/architecture.md
+  s_9d14a7149b17e7::t_b253eefe681d62 940-942
+docs/offline-and-sync.md
+  s_9d14a7149b17e7::t_c6231ea420d1fb 2626-2630
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "236392f2b64aa3ccae8a0e9f055a05f84a32be3a",
+  "prompts": {},
+  "sessions": {
+    "s_9d14a7149b17e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10b63-c197-73e0-a8d4-a61382ec4897",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
