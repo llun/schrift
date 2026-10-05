@@ -23,10 +23,30 @@ final class ChecklistFilterTests: XCTestCase {
         add(attachment)
     }
 
+    private func enableCompletedFilter(in app: XCUIApplication) -> Bool {
+        let toggle = app.switches["checklist.hideCompleted"]
+        XCTAssertEqual(toggle.value as? String, "0")
+        let nativeSwitch = toggle.switches.firstMatch
+        guard nativeSwitch.waitForExistence(timeout: 5), nativeSwitch.isHittable else {
+            XCTFail("The native Hide completed switch must be available for interaction")
+            return false
+        }
+        // CI captured a correctly targeted 50ms tap that left the switch off.
+        // Exercise one physical off-to-on gesture, without retrying or supplying
+        // configured state, and verify it before testing projection/mode changes.
+        nativeSwitch.swipeRight(velocity: .slow)
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
+        guard XCTWaiter.wait(for: [enabled], timeout: 5) == .completed else {
+            XCTFail("The Hide completed gesture must enable filtering before the flow continues")
+            return false
+        }
+        return true
+    }
+
     func testMixedDocumentFilterRevealAndEditingRetainEveryItem() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Finished one"].exists)
-        app.switches["checklist.hideCompleted"].tap()
+        guard enableCompletedFilter(in: app) else { return }
         XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Finished one"].exists)
         XCTAssertFalse(app.staticTexts["Finished two"].exists)
@@ -63,7 +83,7 @@ final class ChecklistFilterTests: XCTestCase {
 
     private func verifyAllCompleted(_ arguments: [String]) throws {
         let app = launch(["--all-completed"] + arguments)
-        app.switches["checklist.hideCompleted"].tap()
+        guard enableCompletedFilter(in: app) else { return }
         let reveal = app.buttons["checklist.showCompleted"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 5))
         XCTAssertTrue(reveal.isHittable)

@@ -3662,7 +3662,11 @@ markdown write endpoint**. Understand this before touching the save path:
   under test. A synthesized switch tap can leave the fixture unfiltered, falsely
   blaming a later remote update or mode swap. Mixed/all-completed flows retain
   actual switch and reveal interactions; do not replace their interaction coverage
-  with configured state or weaken scroll-return assertions.
+  with configured state or weaken scroll-return assertions. These interaction
+  flows use one slow swipe on the native switch and require its off-to-on value
+  transition before continuing. CI captured a correctly targeted 50ms synthesized
+  tap that left the switch off; its underlying UIKit cause is unconfirmed. Do not
+  retry gestures until green or treat an unactivated filter as a mode-swap defect.
 
 ## Docs convention
 
