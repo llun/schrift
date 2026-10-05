@@ -18,8 +18,8 @@ enum AttachmentLoadState: Equatable, Sendable {
 /// Downloads and caches attachment bytes for the document surfaces.
 ///
 /// **Why this exists rather than a fetch inside the card view.** Views never do
-/// networking or persistence directly. Like `ImageLoader`, this object owns the
-/// bytes across view lifetimes. An attachment needs the app's
+/// networking or persistence directly; both attachment and displayed-image
+/// views ask app-scoped loaders for durable bytes. An attachment needs the app's
 /// origin-pinned client (for cookies, error mapping and the diagnostics hook)
 /// and a disk cache that must survive the view. So the view asks this object,
 /// which owns both.

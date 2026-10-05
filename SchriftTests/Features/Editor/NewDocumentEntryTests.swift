@@ -408,6 +408,7 @@ final class NewDocumentEntryTests: XCTestCase {
                 .environment(LocalizationStore(userDefaults: defaults))
                 .environment(DocumentCollaborationManager.inert())
                 .environment(AttachmentLoader.inert())
+                .environment(ImageLoader.inert())
                 .environment(\.dynamicTypeSize, fixture.1))
             window.rootViewController = host
             window.makeKeyAndVisible()

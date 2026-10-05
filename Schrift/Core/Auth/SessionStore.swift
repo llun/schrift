@@ -8,7 +8,7 @@ import Foundation
 @MainActor
 @Observable
 final class SessionStore {
-    private static let imageCacheScopeKey = "dev.llun.Schrift.imageCacheScope"
+    private static let imageCacheSessionKey = "dev.llun.Schrift.imageCacheSessionID"
     private static let serverURLKey = "dev.llun.Schrift.serverURL"
     private static let authenticatedKeychainKey = "dev.llun.Schrift.isAuthenticated"
     private static let sessionCookiesKeychainKey = "dev.llun.Schrift.sessionCookies"
@@ -25,11 +25,8 @@ final class SessionStore {
     /// would name the previous account on the new one's screen.
     private let cachedUser: CurrentUserCacheStore
     private let clearImageCache: () -> Void
+    var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
-    /// A random authenticated-session namespace, durable across launches and replaced whenever
-    /// cookies change hands. It isolates re-downloadable image bytes without relying on a
-    /// cached account id while a new login's identity is still unknown.
-    private(set) var imageCacheScope: String?
     private(set) var serverURL: URL?
     private(set) var isAuthenticated: Bool
     /// A request hit a real 401 while signed in — the server session is dead
@@ -49,6 +46,9 @@ final class SessionStore {
     /// keeps showing. Never persisted: what matters is only that it *changes* within a
     /// process, and a fresh launch rebuilds every screen anyway.
     private(set) var signInGeneration = 0
+    /// An opaque cache namespace, not an account id or credential. Persisted so
+    /// image bytes survive offline relaunch; rotated whenever cookies change hands.
+    private(set) var imageCacheSessionID: UUID?
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -70,9 +70,10 @@ final class SessionStore {
         // Synchronous, so the cookies are back in the shared storage before
         // RootView builds the API client and the first request fires.
         if isAuthenticated {
-            let scope = userDefaults.string(forKey: Self.imageCacheScopeKey) ?? UUID().uuidString
-            imageCacheScope = scope
-            userDefaults.set(scope, forKey: Self.imageCacheScopeKey)
+            let existing = userDefaults.string(forKey: Self.imageCacheSessionKey).flatMap(UUID.init(uuidString:))
+            let namespace = existing ?? UUID()
+            imageCacheSessionID = namespace
+            userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey)
             // A session stored by a build that predates the ThisDeviceOnly
             // accessibility class would otherwise keep the weaker one for as long
             // as it stays valid — which is indefinitely, since nothing re-saves
@@ -86,7 +87,10 @@ final class SessionStore {
     func signIn(serverURL: URL) throws {
         userDefaults.set(serverURL, forKey: Self.serverURLKey)
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
-        persistSessionCookies(for: serverURL)
+        // Invalidate the old disk namespace before saving replacement cookies,
+        // so an interruption cannot restore new credentials with old images.
+        forgetSignedInIdentity()
+        let cookiesPersisted = persistSessionCookies(for: serverURL)
         self.serverURL = serverURL
         self.isAuthenticated = true
         // Serves both a fresh login and a completed re-login sheet.
@@ -105,7 +109,12 @@ final class SessionStore {
         // sheet, whose documented contract is that cached data keeps showing — with no
         // message and nothing to re-fetch it until a Profile visit. Same safety, strictly more
         // collateral, so it is done here.
-        forgetSignedInIdentity()
+        // Only a namespace paired with the successfully saved cookie snapshot
+        // may survive relaunch. A failed handover/Keychain write must not let
+        // this account's images display with the previous restored cookies.
+        if cookiesPersisted, let imageCacheSessionID {
+            userDefaults.set(imageCacheSessionID.uuidString, forKey: Self.imageCacheSessionKey)
+        }
         // Tell screens that survived the sheet to re-read what they are showing.
         signInGeneration += 1
     }
@@ -156,16 +165,18 @@ final class SessionStore {
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
     /// later piece of account-scoped state has one place to be added rather than three.
     private func forgetSignedInIdentity() {
+        let namespace = UUID()
+        imageCacheSessionID = namespace
+        // Cookie handover precedes /users/me confirmation. Keep its new
+        // namespace memory-only until signIn saves the matching cookies.
+        userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
+        clearImageCache()
         signedInUser.clear()
         // The account's displayed profile goes with the id — it is *displayed* before any
         // fetch, so a kept entry would name the previous account on the new one's screen.
         // (Why none of this happens at a mere expiry is `signIn`'s comment above: a dismissed
         // re-login sheet must keep showing what it already showed.)
         cachedUser.clear()
-        clearImageCache()
-        let scope = UUID().uuidString
-        imageCacheScope = scope
-        userDefaults.set(scope, forKey: Self.imageCacheScopeKey)
     }
 
     func signOut() throws {
@@ -177,8 +188,8 @@ final class SessionStore {
         deleteServerCookies()
         needsReauthentication = false
         isAuthenticated = false
-        imageCacheScope = nil
-        userDefaults.removeObject(forKey: Self.imageCacheScopeKey)
+        imageCacheSessionID = nil
+        userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
     }
 
     /// Called (via the API client's `onSessionExpired` hook) whenever any
@@ -202,10 +213,13 @@ final class SessionStore {
     /// storage; IdP-host cookies stay in WebKit's own store) into the Keychain.
     /// Encoded with a bare JSONEncoder — this is Keychain data, not an API
     /// payload, so the `.docsAPI` decoder's conventions don't apply.
-    private func persistSessionCookies(for serverURL: URL) {
+    private func persistSessionCookies(for serverURL: URL) -> Bool {
         let cookies = (cookieStorage.cookies(for: serverURL) ?? []).map(StoredCookie.init)
-        guard let data = try? JSONEncoder().encode(cookies) else { return }
-        try? keychain.save(data, forKey: Self.sessionCookiesKeychainKey)
+        guard let data = try? JSONEncoder().encode(cookies) else { return false }
+        do {
+            try keychain.save(data, forKey: Self.sessionCookiesKeychainKey)
+            return true
+        } catch { return false }
     }
 
     /// Restores the Keychain cookie snapshot into the cookie storage. Any

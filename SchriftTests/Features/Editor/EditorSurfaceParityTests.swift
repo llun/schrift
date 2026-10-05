@@ -632,6 +632,82 @@ final class EditorSurfaceParityTests: XCTestCase {
         XCTAssertNotEqual(rowHeight(of: leaves[0]), rowHeight(of: leaves[2]), accuracy: 1)
     }
 
+    /// Render the actual reading and editing leaves from a cold offline loader.
+    /// Attachments preserve pixels for visual inspection, beyond the geometry check.
+    func testCachedImageRendersOnBothSurfacesOffline() async throws {
+        let origin = "https://docs.example.org"
+        let scope = ImageCacheScope(serverOrigin: origin, sessionID: UUID())
+        let url = URL(string: "\(origin)/media/diagram.png")!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = ImageCacheStore(directory: directory)
+        XCTAssertNotNil(cache.store(testPNGData(width: 160, height: 80), for: url, scope: scope))
+        let loader = ImageLoader(
+            scopeProvider: { scope }, cache: cache,
+            fetch: { _, _ in
+                XCTFail("Offline rendering must not fetch")
+                throw URLError(.notConnectedToInternet)
+            }, cookieProvider: { _ in [] })
+        await loader.loadIfNeeded(url, allowsNetwork: false)
+        let block = EditorBlock(kind: .image(alt: "Persisted diagram", url: url.absoluteString))
+        let viewModel = makeViewModel(blocks: [block])
+        let reading = UIHostingController(
+            rootView:
+                MarkdownBlockView(block: block, serverOrigin: origin, isOffline: true)
+                .environment(english()).environment(AttachmentLoader.inert()).environment(loader))
+        let editing = UIHostingController(
+            rootView:
+                BlockEditorRow(viewModel: viewModel, block: block, index: 0, serverOrigin: origin, isOffline: true)
+                .environment(english()).environment(AttachmentLoader.inert()).environment(loader))
+        let readingHeight = reading.sizeThatFits(in: rowProposal).height
+        let editingHeight = editing.sizeThatFits(in: rowProposal).height
+        XCTAssertEqual(readingHeight, rowProposal.width / 2, accuracy: 1)
+        XCTAssertEqual(readingHeight, editingHeight, accuracy: 0.5)
+        await attachImageSurface(reading, name: "persisted-image-reading-offline")
+        await attachImageSurface(editing, name: "persisted-image-editing-offline")
+    }
+
+    private func attachImageSurface<V: View>(_ host: UIHostingController<V>, name: String) async {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+            return XCTFail("Expected test host window scene")
+        }
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        defer {
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        host.safeAreaRegions = []
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.backgroundColor = .white
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        // A first layout can precede SwiftUI's rendered content. Require actual
+        // coloured image pixels, rather than attaching a blank success screenshot.
+        var rendered: UIImage?
+        await waitUntil {
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            rendered = image
+            guard let cg = image.cgImage, let bytes = cg.dataProvider?.data,
+                let pointer = CFDataGetBytePtr(bytes)
+            else { return false }
+            var coloured = 0
+            for offset in stride(from: 0, to: CFDataGetLength(bytes) - 4, by: 4) {
+                let channels = [pointer[offset], pointer[offset + 1], pointer[offset + 2]]
+                if Int(channels.max()!) - Int(channels.min()!) > 40 { coloured += 1 }
+            }
+            return coloured > 20_000
+        }
+        guard let rendered else { return XCTFail("Expected rendered image") }
+        let attachment = XCTAttachment(image: rendered)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     /// Every kind whose row height is set by a SwiftUI adornment rather than by
     /// the text view agrees *exactly*, so the band above is not hiding a
     /// difference in the rows users see most.

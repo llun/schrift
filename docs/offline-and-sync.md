@@ -1030,44 +1030,6 @@ to what the Home list passes (still a `Document` / id).
   (see below). Both are called from `RootView`'s `onSignOut` closure, **not**
   from `SessionStore.signOut()` — a new sign-out path must call them explicitly.
 
-### Displayed image bytes: `ImageCacheStore`
-
-Images successfully viewed online persist at
-`Application Support/dev.llun.Schrift/ImageCache/`, outside purgeable Caches,
-with atomic writes, file protection until first unlock and backup exclusion.
-Both reading and editing use the same app-scoped `ImageLoader`, which consults
-this store even offline. A new process can therefore show the same image without
-cookies reaching any network. Disk hits for previously consented external images
-are safe without repeating consent; fetching any uncached external URL still
-requires an explicit tap. Consent is exact-URL and session-scoped, view-local,
-and never saved to disk.
-
-Names are SHA-256 over length-framed server origin, a random authenticated
-session scope, and the complete image URL (including query and document path).
-`SessionStore.imageCacheScope` survives a normal relaunch but rotates and clears
-bytes at cookie handover, sign-in and sign-out, including a re-login sheet over
-existing screens. Expiry or cancellation alone retains it. An in-flight response
-checks the scope again before a write/publication, so a late old-account response
-cannot repopulate a cleared cache. This is independent of cached account IDs,
-which can be unknown between cookie replacement and identity confirmation.
-
-The cache strictly holds at most **100 entries / 64 MiB**, uses read recency for
-eviction, and rejects individual images above **12 MiB**, invalid image data or
-sources above 48 megapixels. Rendering downsamples to a 2048px maximum dimension.
-The newest entry must fit too; count zero disables storage. Retention is bounded:
-evicted images honestly show “Image available when online” offline and can be
-fetched again online. A failed download shows a named image card with its URL,
-Open image URL and Retry image; it never changes the document block or saved URL.
-A missing offline entry makes no request, and returning online restarts its load.
-
-This cache is re-downloadable display content, separate from the backup-included
-`PendingAttachmentStore` JPEGs that are the only copy of an un-uploaded photo.
-Insertion, placeholder classification, save holds and two-phase upload replay
-are untouched. Regression tests cover cold offline reopen, shared requests and
-surface cancellation, changed URLs, eviction, server/session isolation, account
-replacement mid-download, explicit external consent, redirects and credentials.
-A rendered fixture compares the actual reading and editing image rows offline.
-
 ### 7. Attachment bytes: `AttachmentCacheStore` (2026-08-07)
 
 Downloaded file attachments (PDF, docx, …) are cached on disk so a document read
@@ -1129,7 +1091,44 @@ time on the client (the encoder reads the origin off its own `baseURL`), so a
 draft written before this feature existed still encodes as a `file` node when it
 finally syncs.
 
-### 8. The account's profile: `CurrentUserCacheStore` (2026-08-15)
+### 8. Displayed image bytes: `ImageCacheStore`
+
+Images successfully viewed online remain available in reading and editing,
+on document reopen, and after offline relaunch, while retained by the bounded
+cache. `ImageCacheStore` stores bytes under
+`Application Support/dev.llun.Schrift/ImageCache/`, excludes the directory from
+backups, writes atomically with file protection, and caps it globally at **100
+entries and 64 MiB**. Individual images above 12 MiB, invalid image bytes and source images above
+48 megapixels are refused before bitmap decoding rather than exempted from the
+cap. Reads touch modification dates; least-recently-used eviction protects the
+just-written entry while enforcing both caps. As with other bounded caches, eviction means an
+older image may need another online load.
+
+Filenames hash a length-delimited tuple of server origin, opaque session
+namespace, and the **entire URL**, including its query. Neither author paths nor
+signed URLs become filenames. Changed URLs and different accounts/servers never
+share bytes. The namespace persists across relaunch, rotates synchronously when
+login cookies change hands (even if confirmation fails), and is removed at
+sign-out; late requests cannot refill the previous namespace. Cookie handover
+removes the persistent namespace immediately and creates a temporary in-memory
+one. Only signIn saving the matching Keychain cookie snapshot makes its namespace
+reusable on relaunch; a failed confirmation or cookie write cannot restore old
+credentials together with the new account's images. SessionStore clears downloaded
+bytes at every handover/sign-in/sign-out through its existing injected callback. RootView clears
+all downloaded image bytes on sign-out. This store is independent of
+`PendingAttachmentStore`, whose unsent photos must survive sign-out.
+
+`ImageLoader.loadIfNeeded(_:allowsNetwork:)` always consults disk, even when
+network is withheld. A cold offline hit displays the image; a miss keeps an image
+card with “Image available when online” and its original URL. Requests are joined
+and owned by the loader across mode changes. Failed loads remain image cards
+with an explicit Retry and secondary URL action. External images fetch only
+after exact-URL consent; cached external bytes render without networking, but a
+cold evicted external image requires consent again. Consent is never stored on
+disk. Redirects cannot leave the initial origin, and external requests carry no
+server cookies. See [displayed image loading](architecture.md#displayed-document-images).
+
+### 9. The account's profile: `CurrentUserCacheStore` (2026-08-15)
 
 The Profile screen showed **"—"** where the account's email belongs whenever the
 device was offline, and its account detail was unreachable behind a disabled row —

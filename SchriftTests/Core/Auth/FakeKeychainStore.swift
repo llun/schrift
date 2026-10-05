@@ -3,12 +3,14 @@ import Foundation
 @testable import Schrift
 
 final class FakeKeychainStore: KeychainStoring {
+    var failingSaveKeys: Set<String> = []
     private var storage: [String: Data] = [:]
     /// Keys passed to `upgradeAccessibility`, in call order — lets a test assert
     /// the launch-time migration fires for exactly the right keys.
     private(set) var upgradedKeys: [String] = []
 
     func save(_ data: Data, forKey key: String) throws {
+        if failingSaveKeys.contains(key) { throw NSError(domain: "FakeKeychain", code: 1) }
         storage[key] = data
     }
 
