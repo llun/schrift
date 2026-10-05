@@ -10,7 +10,9 @@ final class ChecklistFilterTests: XCTestCase {
         }
         app.launch()
         XCTAssertTrue(app.switches["checklist.hideCompleted"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.switches["checklist.hideCompleted"].value as? String, "0")
+        XCTAssertEqual(
+            app.switches["checklist.hideCompleted"].value as? String,
+            arguments.contains("--initially-hide-completed") ? "1" : "0")
         return app
     }
 
@@ -84,9 +86,14 @@ final class ChecklistFilterTests: XCTestCase {
     }
 
     func testRemoteReopeningImmediatelyRestoresTheHiddenRow() {
-        let app = launch()
-        app.switches["checklist.hideCompleted"].tap()
+        // Establish the filtered state independently of a synthesized switch
+        // tap, so this test isolates remote projection. The mixed/all-completed
+        // flows above retain actual toggle and reveal interactions.
+        let app = launch(["--initially-hide-completed"])
+        XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Completed items hidden: 2"].exists)
         XCTAssertFalse(app.staticTexts["Finished one"].exists)
+        XCTAssertFalse(app.staticTexts["Finished two"].exists)
         app.buttons["fixture.remoteChange"].tap()
         XCTAssertTrue(app.staticTexts["Reopened remotely"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Completed items hidden: 1"].exists)

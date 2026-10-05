@@ -60,6 +60,9 @@ struct ChecklistTestHostApp: App {
             children.save([], for: vm.documentID)
             vm.blocks = []
             vm.mode = .reading
+            if ProcessInfo.processInfo.arguments.contains("--initially-hide-completed") {
+                vm.setHidesCompletedChecklistItems(true)
+            }
         }
         _model = State(initialValue: vm)
     }
