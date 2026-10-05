@@ -196,6 +196,31 @@ final class ChecklistPresentationTests: XCTestCase {
                         attachment.name = name
                         attachment.lifetime = .keepAlways
                         add(attachment)
+                        let textFont =
+                            editing
+                            ? blockTextStyling(for: block, dynamicTypeSize: size).font
+                            : UIFont.preferredFont(
+                                forTextStyle: .body,
+                                compatibleWith: UITraitCollection(
+                                    preferredContentSizeCategory: uiContentSizeCategory(for: size)))
+                        // A blurred first line can disappear from inkRows altogether,
+                        // making the second line look like a misaligned first line.
+                        if editing {
+                            let editor = try XCTUnwrap(textViews(in: host.view).first)
+                            let layout = editor.layoutManager
+                            layout.ensureLayout(for: editor.textContainer)
+                            var laidOutLines = 0
+                            layout.enumerateLineFragments(
+                                forGlyphRange: NSRange(location: 0, length: layout.numberOfGlyphs)
+                            ) { _, _, _, _, _ in laidOutLines += 1 }
+                            XCTAssertEqual(lines.count, laidOutLines, "\(name): every laid-out line must be visible")
+                        }
+                        for (index, line) in lines.enumerated() {
+                            XCTAssertEqual(
+                                line.maxY - line.minY + 1 / pixels.scale,
+                                textFont.capHeight, accuracy: 1,
+                                "\(name): capital glyphs on line \(index) must remain fully visible, without edge blur")
+                        }
                         XCTAssertEqual(lines.count > 1, wrapped)
                         XCTAssertEqual(
                             glyph.midY, firstLine.midY, accuracy: 1,

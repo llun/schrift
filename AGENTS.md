@@ -1574,6 +1574,17 @@ that are easy to violate and expensive to discover:
     visible glyph/text pixels on both real surfaces for checked/unchecked,
     single/wrapped, default/accessibility cases, and exercises the hosted editor
     through toggle, end typing, formatting, and mode transitions.
+    A non-scrolling `BlockTextView` must hide its own four `UIScrollEdgeEffect`s;
+    the enclosing document scroll view owns scroll-edge chrome. On iOS 27,
+    disabling scrolling alone leaves automatic edge blur active in isolated
+    hosted rows. It obscures capital glyphs and can hide the first line entirely,
+    making a pixel test report the second line as a displaced first line. This
+    is an edge-effect rendering failure, not changed checkbox alignment metrics;
+    the normal dense outer-scroll fixture was already sharp. Keep the 1pt
+    alignment assertion, check complete capital-glyph ink height, and compare
+    visible editing line count with TextKit's laid-out lines before interpreting
+    an alignment failure. Do not fix this by shifting the checkbox or relaxing
+    tolerances. The document's outer scroll effects remain enabled.
   - `EditorDocumentHeader` — the title plus the reach/status/presence row, drawn
     by **both** surfaces (`readingHeader` and the header `BlockEditorView` is
     handed). An untitled document shows the same "Untitled" placeholder on both;
