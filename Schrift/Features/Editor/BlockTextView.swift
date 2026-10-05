@@ -338,6 +338,12 @@ struct BlockTextView: UIViewRepresentable {
         let view = EditorUITextView.textKit1()
         view.delegate = context.coordinator
         view.isScrollEnabled = false
+        // The document scrolls as a whole. Inner row edge effects can obscure
+        // the first text line on iOS 27 even with scrolling disabled.
+        view.topEdgeEffect.isHidden = true
+        view.bottomEdgeEffect.isHidden = true
+        view.leftEdgeEffect.isHidden = true
+        view.rightEdgeEffect.isHidden = true
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0

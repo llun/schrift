@@ -1271,6 +1271,20 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   this defect. Completed-item strikethrough still comes from the existing
 >   block-wide attributes, verified through toggling, typing at the end, inline
 >   formatting, and reading/editing transitions without replacing that path.
+>   On iOS 27 (24A434), the same isolated-row fixture exposed automatic
+>   `UITextView` scroll-edge blur despite `isScrollEnabled = false`. The
+>   checkbox bounds stayed unchanged, but blurred text ink yielded five
+>   alignment failures; one wrapped case detected the second line as the first
+>   (an apparent 21pt offset). A delayed capture retained the blur. The normal
+>   dense checklist in its outer scroll view was already sharp, so these
+>   failures do not demonstrate displaced checkboxes in the document screen.
+>   `BlockTextView` explicitly hides its four inner edge effects: a row does
+>   not own scrolling, and the document's outer scroll effects stay enabled.
+>   With that ownership explicit, the isolated iOS 27 rendering matches iOS
+>   26.5: maximum first-line center error 0.33pt, with the original 1pt
+>   tolerance. The pixel matrix also checks complete capital-glyph ink height
+>   on every line and matches visible editing lines to TextKit's line count,
+>   so partial blur or an entirely obscured first line cannot silently pass.
 > - `EditorDocumentHeader` — the title and the reach/status/presence row, drawn
 >   by **both** surfaces. The title is a `TextField` while editing and a `Text`
 >   while reading, same font and tracking either way, and an untitled document
