@@ -287,6 +287,9 @@ enum Strings_pt {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Adicionar parágrafo no final",
         .editor_divider_a11y: "Divisor",
+        .editor_checklist_hide_completed: "Ocultar concluídos",
+        .editor_checklist_hidden_count: "Itens concluídos ocultos: %d",
+        .editor_checklist_show_completed: "Mostrar concluídos",
         .editor_checklist_done_a11y: "Marcar como concluído",
         .editor_checklist_not_done_a11y: "Marcar como não concluído",
         .editor_checklist_state_done_a11y: "Concluído",

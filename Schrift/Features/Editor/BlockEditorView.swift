@@ -43,6 +43,7 @@ struct BlockEditorView<Header: View>: View {
                             isOffline: isOffline
                         )
                         .id(EditorScrollTarget.block(block.id))
+                        .recordingEditorBlockFrame(block.id)
                     }
 
                     // Tapping the empty canvas below the last block starts a
@@ -73,7 +74,18 @@ struct BlockEditorView<Header: View>: View {
             } action: { _, offset in
                 scrollAnchor.noteScrolled(to: offset)
             }
+            .onPreferenceChange(EditorBlockFramesKey.self) { frames in
+                scrollAnchor.noteBlockFrames(frames)
+            }
             .onAppear {
+                if let blockID = scrollAnchor.consumePendingBlock() {
+                    if viewModel.blocks.contains(where: { $0.id == blockID }) {
+                        proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
+                    } else {
+                        scrollPosition.scrollTo(y: 0)
+                    }
+                    return
+                }
                 guard let offsetY = scrollAnchor.consumePendingOffset() else { return }
                 // Applied repeatedly, and that is not superstition. This canvas
                 // is a `LazyVStack`: when `onAppear` runs it has realized only

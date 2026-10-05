@@ -291,6 +291,9 @@ enum Strings_de {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Absatz am Ende hinzufügen",
         .editor_divider_a11y: "Trennlinie",
+        .editor_checklist_hide_completed: "Erledigte ausblenden",
+        .editor_checklist_hidden_count: "Ausgeblendete erledigte Einträge: %d",
+        .editor_checklist_show_completed: "Erledigte anzeigen",
         .editor_checklist_done_a11y: "Als erledigt markieren",
         .editor_checklist_not_done_a11y: "Als nicht erledigt markieren",
         .editor_checklist_state_done_a11y: "Erledigt",

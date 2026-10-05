@@ -1018,6 +1018,15 @@ including repeated prefixes whose characters still match after their offsets cha
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).
+   Reading's optional **Hide completed** preference is session-local and off by
+   default. `ChecklistReadingPresentation` derives visible rows from the complete
+   `[EditorBlock]`, retaining IDs and source indices; only checked checklist blocks
+   are omitted. A hidden count and Show completed action remain when every checklist
+   item is completed. Editing, serialization, drafts and the live replica always
+   retain the full array. Preference changes never enter a dirty/save/live-write
+   path, and remote updates recompute the projection instead of updating a second
+   cached collection. Checklist reading/editing swaps restore a measured visible
+   block ID because filtered and full layouts cannot share raw content offsets.
 2. **Save** (full content replace, since v1 explicitly excludes real-time merge):
    a. Serialize the edited native content back to Markdown.
    b. Convert Markdown → a Yjs v1 update entirely **on-device** (`Core/Yjs`: `MarkdownYjs.encode`, backed by the hand-written `YjsUpdateEncoder`).

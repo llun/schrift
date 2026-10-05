@@ -28,10 +28,42 @@ struct ChecklistTestHostApp: App {
         let vm = EditorViewModel(
             client: client, documentID: UUID(), title: "Checklist",
             saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: defaults),
-            contentCache: content, childrenCache: children)
+            contentCache: content, childrenCache: children,
+            availability: OnlineAvailability(userDefaults: defaults))
         // No document is loaded or saved: this fixture only toggles local rows.
         vm.blocks = (0..<6).map { EditorBlock(kind: .checklistItem(checked: false), text: "Task \($0 + 1)") }
         vm.mode = .blocks
+        if ProcessInfo.processInfo.arguments.contains("--checklist-filter") {
+            defaults.set(true, forKey: "schrift.workOffline")
+            let source: String
+            if ProcessInfo.processInfo.arguments.contains("--all-completed") {
+                source = "- [x] Finished one\n- [x] Finished two"
+            } else if ProcessInfo.processInfo.arguments.contains("--long-checklist") {
+                source = (1...80).map { "- [\($0.isMultiple(of: 2) ? "x" : " ")] Task \($0)" }.joined(separator: "\n")
+            } else {
+                source = """
+                    Introduction
+
+                    - [x] Finished one
+                    - [ ] Next task
+                    - [x] Finished two
+
+                    1. First numbered
+                    2. Second numbered
+
+                    Tail paragraph
+                    """
+            }
+            content.save(
+                CachedDocumentContent(documentID: vm.documentID, title: "Checklist", markdown: source, syncedAt: Date())
+            )
+            children.save([], for: vm.documentID)
+            vm.blocks = []
+            vm.mode = .reading
+            if ProcessInfo.processInfo.arguments.contains("--initially-hide-completed") {
+                vm.setHidesCompletedChecklistItems(true)
+            }
+        }
         _model = State(initialValue: vm)
     }
 
@@ -39,6 +71,40 @@ struct ChecklistTestHostApp: App {
         WindowGroup {
             if ProcessInfo.processInfo.arguments.contains("--offline-controls") {
                 OfflineControlsTestHost()
+            } else if ProcessInfo.processInfo.arguments.contains("--reading-controls-audit") {
+                ChecklistReadingControlsAuditHost(
+                    initiallyHidingCompleted: ProcessInfo.processInfo.arguments.contains("--audit-hidden-completed")
+                )
+                .environment(loc)
+            } else if ProcessInfo.processInfo.arguments.contains("--checklist-filter") {
+                NavigationStack {
+                    EditorView(
+                        viewModel: model, reach: .restricted,
+                        serverHost: "docs.example.org", serverOrigin: "https://docs.example.org"
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .bottomBar) {
+                            Button("Remote change") {
+                                guard let item = model.blocks.first(where: { $0.kind == .checklistItem(checked: true) })
+                                else { return }
+                                var updated = model.blocks
+                                let index = updated.firstIndex(where: { $0.id == item.id })!
+                                updated[index].kind = .checklistItem(checked: false)
+                                updated[index].text = "Reopened remotely"
+                                model.applyLiveRemoteChange(
+                                    LiveChangeSet(changes: [
+                                        .update(id: item.id, kind: updated[index].kind, text: updated[index].text)
+                                    ]), projectedMarkdown: serializeMarkdown(updated))
+                            }
+                            .accessibilityIdentifier("fixture.remoteChange")
+                        }
+                    }
+                }
+                .environment(loc)
+                .environment(DocumentCollaborationManager.inert())
+                .environment(AttachmentLoader.inert())
+                .environment(ImageLoader.inert())
+                .preferredColorScheme(.light)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
@@ -60,5 +126,24 @@ struct ChecklistTestHostApp: App {
                 .preferredColorScheme(.light)
             }
         }
+    }
+}
+
+/// Isolates the new production chrome for an unfiltered accessibility audit.
+/// Whole-editor flow/scroll tests still use the complete production screen.
+private struct ChecklistReadingControlsAuditHost: View {
+    @State private var hidden: Bool
+
+    init(initiallyHidingCompleted: Bool) {
+        _hidden = State(initialValue: initiallyHidingCompleted)
+    }
+
+    var body: some View {
+        VStack {
+            ChecklistReadingControls(hidesCompleted: $hidden, hiddenCount: hidden ? 2 : 0)
+            Spacer()
+        }
+        .padding()
+        .background(DocsColor.surfacePage)
     }
 }

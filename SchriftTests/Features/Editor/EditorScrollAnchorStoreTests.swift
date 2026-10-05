@@ -71,4 +71,46 @@ final class EditorScrollAnchorStoreTests: XCTestCase {
 
         XCTAssertEqual(store.consumePendingOffset(), 640)
     }
+
+    func testFilteredSwapUsesMeasuredVisibleBlockRatherThanUnrelatedContentOffset() {
+        let store = EditorScrollAnchorStore()
+        let ids = (0..<4).map { _ in UUID() }
+        store.noteScrolled(to: 640)
+        store.noteBlockFrames([
+            ids[0]: CGRect(x: 0, y: -90, width: 300, height: 40),
+            ids[2]: CGRect(x: 0, y: -10, width: 300, height: 40),
+            ids[3]: CGRect(x: 0, y: 42, width: 300, height: 40),
+        ])
+        store.snapshotForSwap(blockOrder: [ids[0], ids[2], ids[3]], restoringAmong: ids)
+        store.noteBlockFrames([:])  // outgoing teardown cannot erase the snapshot
+        store.noteScrolled(to: 0)
+        XCTAssertEqual(store.consumePendingBlock(), ids[2])
+        XCTAssertNil(store.consumePendingOffset())
+        XCTAssertNil(store.consumePendingBlock())
+    }
+
+    func testDoneFromACompletedBlockChoosesTheNextSurvivingVisibleBlock() {
+        let store = EditorScrollAnchorStore()
+        let ids = (0..<4).map { _ in UUID() }
+        store.noteScrolled(to: 300)
+        store.noteBlockFrames([ids[1]: CGRect(x: 0, y: -10, width: 300, height: 40)])
+        store.snapshotForSwap(blockOrder: ids, restoringAmong: [ids[0], ids[3]])
+        XCTAssertEqual(store.consumePendingBlock(), ids[3])
+    }
+
+    func testFilteredSwapFallsBackToPreviousSurvivorOrTopForAllHiddenAndHeader() {
+        let ids = (0..<3).map { _ in UUID() }
+        let store = EditorScrollAnchorStore()
+        store.noteScrolled(to: 300)
+        store.noteBlockFrames([ids[2]: CGRect(x: 0, y: -10, width: 300, height: 40)])
+        store.snapshotForSwap(blockOrder: ids, restoringAmong: [ids[0]])
+        XCTAssertEqual(store.consumePendingBlock(), ids[0])
+        store.snapshotForSwap(blockOrder: ids, restoringAmong: [])
+        XCTAssertNil(store.consumePendingBlock())
+        XCTAssertEqual(store.consumePendingOffset(), 0)
+        store.noteScrolled(to: 0)
+        store.snapshotForSwap(blockOrder: ids, restoringAmong: ids)
+        XCTAssertNil(store.consumePendingBlock())
+        XCTAssertEqual(store.consumePendingOffset(), 0)
+    }
 }

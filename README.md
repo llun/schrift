@@ -14,6 +14,10 @@ languages** (English, French, Spanish, German, Italian, Dutch, Portuguese,
 Slovene, Thai, and Simplified/Traditional Chinese) that switches the UI live,
 with no relaunch — document content itself is never translated.
 
+Reading checklist documents offers **Hide completed**, off by default. A hidden
+count and **Show completed** action reveal the items again; editing always shows
+every block. This local display preference never changes or reorders saved content.
+
 ## Design & architecture docs
 
 See [`docs/architecture.md`](docs/architecture.md) for the full architecture and

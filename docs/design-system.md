@@ -14,6 +14,31 @@
 > compressing its nine actions or widening the editor. The editable Sketch source
 > `/Users/llun/Desktop/Schrift.sketch` uses the same control dimensions and shapes.
 
+> **Revised: 2026-10-05 (Hide completed checklist items).** Reading mode offers
+> a native **Hide completed** switch above the body whenever the document contains
+> checklist blocks. It starts off for each editor session. Enabled, it hides only
+> checked checklist blocks and shows **Completed items hidden: N** with a full-width,
+> at-least-44pt **Show completed** button. The notice and reveal remain visible for
+> an all-completed list; the document is never presented as empty. Native switch
+> state, a count-bearing reveal accessibility label, wrapping text and Dynamic Type
+> make the preference reversible without depending on a checkbox that disappeared.
+> Editing shows all blocks and omits these reading controls. The preference survives
+> the mode swap and derives its rows/count afresh after every remote update.
+>
+> This is presentation only: no sorting, moving, markdown normalization, dirtying,
+> saving or collaboration update. Block IDs and source indices are retained. The
+> checkbox geometry and adjacent hit targets from PR #150 are unchanged. Because
+> checklist chrome and filtering change canvas height, checklist mode swaps restore
+> the first measured visible block at the top of the incoming viewport, rather than
+> treating a filtered content offset as a full-document offset. If Done hides that
+> block, the next visible survivor is used, then the previous; all-hidden or stale
+> anchors fall back safely to the top. Ordinary documents keep the existing offset
+> handoff. The isolated checklist host exercises production EditorView for mixed,
+> all-completed, remote-reopened and long scrolled lists, including accessibility
+> audits at default and Accessibility 3 sizes. The audits host the new production
+> controls independently and exclude no findings; complete-editor tests separately
+> verify discovery, all-hidden reveal, mode transitions and scrolling.
+
 > **Living design document.** This covers a design-system refresh handed off from
 > Claude Design (`schrift-ios-design-system.zip`) — the adaptive dark theme,
 > in-app localization, layout-fidelity work, and read-only version history — plus
