@@ -112,10 +112,12 @@ final class ChecklistFilterTests: XCTestCase {
         // complete-editor tests separately check discovery/reveal, all-hidden mode
         // swaps and scrolling; existing toolbar/offline chrome is outside this audit.
         for filtered in [false, true] {
-            // Accessibility audits exercise font-size changes. Relaunch each state
-            // so the next interaction cannot use geometry left over from an audit.
+            // Audit each configured state independently. The complete-editor tests
+            // above exercise the actual toggle/reveal interactions; this fixture
+            // checks their semantics/layout without coupling to synthesized taps.
             let app = XCUIApplication()
             app.launchArguments = ["--reading-controls-audit"]
+            if filtered { app.launchArguments += ["--audit-hidden-completed"] }
             if accessibility {
                 app.launchArguments += [
                     "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL",
@@ -124,21 +126,17 @@ final class ChecklistFilterTests: XCTestCase {
             app.launch()
             let toggle = app.switches["checklist.hideCompleted"]
             XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-            XCTAssertEqual(toggle.value as? String, "0")
+            XCTAssertEqual(toggle.value as? String, filtered ? "1" : "0")
             if filtered {
-                // SwiftUI's labeled AX switch wraps the actual UISwitch. Target
-                // that native control rather than guessing a point in the label.
-                let nativeSwitch = toggle.switches.firstMatch
-                XCTAssertTrue(nativeSwitch.waitForExistence(timeout: 5))
-                nativeSwitch.tap()
-                let isOn = NSPredicate(format: "value == %@", "1")
-                let enabled = XCTNSPredicateExpectation(predicate: isOn, object: toggle)
-                XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
                 XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.staticTexts["Completed items hidden: 2"].exists)
+            } else {
+                XCTAssertFalse(app.buttons["checklist.showCompleted"].exists)
             }
             try app.performAccessibilityAudit(for: [
                 .elementDetection, .sufficientElementDescription, .dynamicType, .textClipped,
             ])
+            XCTAssertEqual(toggle.value as? String, filtered ? "1" : "0")
             if filtered {
                 XCTAssertTrue(app.buttons["checklist.showCompleted"].isHittable)
                 capture(app, accessibility ? "controls-accessibility-audit" : "controls-default-audit")

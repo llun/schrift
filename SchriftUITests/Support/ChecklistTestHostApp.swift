@@ -69,8 +69,10 @@ struct ChecklistTestHostApp: App {
             if ProcessInfo.processInfo.arguments.contains("--offline-controls") {
                 OfflineControlsTestHost()
             } else if ProcessInfo.processInfo.arguments.contains("--reading-controls-audit") {
-                ChecklistReadingControlsAuditHost()
-                    .environment(loc)
+                ChecklistReadingControlsAuditHost(
+                    initiallyHidingCompleted: ProcessInfo.processInfo.arguments.contains("--audit-hidden-completed")
+                )
+                .environment(loc)
             } else if ProcessInfo.processInfo.arguments.contains("--checklist-filter") {
                 NavigationStack {
                     EditorView(
@@ -127,7 +129,11 @@ struct ChecklistTestHostApp: App {
 /// Isolates the new production chrome for an unfiltered accessibility audit.
 /// Whole-editor flow/scroll tests still use the complete production screen.
 private struct ChecklistReadingControlsAuditHost: View {
-    @State private var hidden = false
+    @State private var hidden: Bool
+
+    init(initiallyHidingCompleted: Bool) {
+        _hidden = State(initialValue: initiallyHidingCompleted)
+    }
 
     var body: some View {
         VStack {
