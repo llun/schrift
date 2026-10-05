@@ -1,0 +1,99 @@
+Schrift/Features/Editor/ChecklistReadingControls.swift
+  s_c483ea2fd44bfe::t_1be8c38a5ff560 1-7,9-36,40-42,44-45,47-62
+  s_c483ea2fd44bfe::t_4e38a58cb487a2 8,43,46
+  s_c483ea2fd44bfe::t_ab8f901a45c095 37-39
+Schrift/Core/Localization/Strings+sl.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 300-302
+Schrift/Core/Localization/Strings+th.swift
+  s_c483ea2fd44bfe::t_ab8f901a45c095 286-288
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_c483ea2fd44bfe::t_ab8f901a45c095 284-286
+SchriftUITests/Features/Editor/ChecklistFilterTests.swift
+  s_c483ea2fd44bfe::t_2a2df3b0969a3a 146-149,154,159-161
+  s_c483ea2fd44bfe::t_397353b528f410 1-7,11-73,80-98,134-145,150-153,155-158,162-166
+  s_c483ea2fd44bfe::t_ff67d18e5b5bf7 74-79
+  s_c483ea2fd44bfe::t_f756dc25e80f40 123-127
+  s_c483ea2fd44bfe::t_dbce383f105021 8-10
+  s_c483ea2fd44bfe::t_9b93aa244e8e28 99-122,128-133
+docs/design-system.md
+  s_c483ea2fd44bfe::t_be365f828e75d9 17-37,41
+  s_c483ea2fd44bfe::t_9b93aa244e8e28 38-40
+Schrift/Core/Localization/Strings+it.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 290-292
+Schrift/Features/Editor/ChecklistReadingPresentation.swift
+  s_c483ea2fd44bfe::t_8f999577fb6254 1-24
+SchriftTests/Features/Editor/ChecklistReadingPresentationTests.swift
+  s_c483ea2fd44bfe::t_87fcd029150581 1-6,9-28,34-39,43-65,68-69
+  s_c483ea2fd44bfe::t_ab8f901a45c095 7-8,66-67
+  s_c483ea2fd44bfe::t_4c165d8876ccab 29-33,40-42
+Schrift/Features/Editor/EditorViewModel.swift
+  s_c483ea2fd44bfe::t_8f999577fb6254 56-66
+Schrift/Core/Localization/Strings+nl.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 291-293
+Schrift/Core/Localization/Strings+fr.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 291-293
+SchriftTests/Features/Editor/EditorScrollAnchorStoreTests.swift
+  s_c483ea2fd44bfe::t_731a0450fdedce 74-84,86-115
+  s_c483ea2fd44bfe::t_ab8f901a45c095 85
+Schrift/Core/Localization/Strings+es.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 295-297
+README.md
+  s_c483ea2fd44bfe::t_4c165d8876ccab 17-20
+SchriftUITests/Support/ChecklistTestHostApp.swift
+  s_c483ea2fd44bfe::t_f756dc25e80f40 133-138
+  s_c483ea2fd44bfe::t_5e96fe2fba6629 31-32,36-57,60-63,74-77,93,95,97-102
+  s_c483ea2fd44bfe::t_9b93aa244e8e28 71-73,126-132
+  s_c483ea2fd44bfe::t_27f48509688f4e 58-59,78-92,94,96
+  s_c483ea2fd44bfe::t_d428be32b31393 139-140
+docs/architecture.md
+  s_c483ea2fd44bfe::t_be365f828e75d9 1021-1029
+Schrift/Core/Localization/Strings+en.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 287-289
+AGENTS.md
+  s_c483ea2fd44bfe::t_be365f828e75d9 1514-1526
+Schrift/Core/Localization/Strings+pt.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 290-292
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_c483ea2fd44bfe::t_ab8f901a45c095 284-286
+Schrift/Core/Localization/Strings+de.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 294-296
+Schrift/Features/Editor/EditorDocumentHeader.swift
+  s_c483ea2fd44bfe::t_1be8c38a5ff560 3,7,50-55,69,73-82,85-93,103-122
+  s_c483ea2fd44bfe::t_ab8f901a45c095 83-84
+  s_c483ea2fd44bfe::t_4964e9f0775819 31-32
+  s_c483ea2fd44bfe::t_9a430da8992f50 123
+Schrift/Core/Localization/L10nKey.swift
+  s_c483ea2fd44bfe::t_42b95a90dc07a8 343-345
+SchriftTests/Features/Editor/EditorChecklistFilterTests.swift
+  s_c483ea2fd44bfe::t_4ca7b4bcf90bb3 1-84,86-116,118-135,181
+  s_c483ea2fd44bfe::t_4f765d21da25c7 136-141,143-148,150-151,169-180
+  s_c483ea2fd44bfe::t_c9b731a1fd3307 152-157,159,161-168
+  s_c483ea2fd44bfe::t_2a2df3b0969a3a 142,149
+  s_c483ea2fd44bfe::t_53ec0ae8d5608e 158
+  s_c483ea2fd44bfe::t_a022293b4be283 160
+  s_c483ea2fd44bfe::t_483b00ef912f19 85,117
+Schrift/Features/Editor/BlockEditorView.swift
+  s_c483ea2fd44bfe::t_92d37c20b81683 46,77-79,81,87-88
+  s_c483ea2fd44bfe::t_092d5e9ea73100 82-86
+Schrift/Features/Editor/EditorView.swift
+  s_c483ea2fd44bfe::t_92d37c20b81683 915-916,985,1051-1058,1060-1061,1064-1066,1334,1352
+  s_c483ea2fd44bfe::t_ab8f901a45c095 917-922,924-928,932-964,968-984,990-991,995-1001,1003-1019,1021-1024,1031-1049,1062-1063
+  s_c483ea2fd44bfe::t_4e38a58cb487a2 250,929-930,965-967
+  s_c483ea2fd44bfe::t_092d5e9ea73100 1025-1030
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7275f4075efeb7e2ca025db98458618c34f563a",
+  "prompts": {},
+  "sessions": {
+    "s_c483ea2fd44bfe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c0d-d009-7312-b2b6-5d35c5bd8711",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
