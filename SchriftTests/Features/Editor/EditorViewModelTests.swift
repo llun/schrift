@@ -34,6 +34,21 @@ final class EditorViewModelTests: XCTestCase {
         super.tearDown()
     }
 
+    func testEnteringAndLeavingEditingKeepsTheImageBlockAndExactURL() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        let url = "https://docs.example.org/media/photo.png?revision=1"
+        let markdown = "![Diagram](\(url))"
+        contentCache.save(cachedEntry(markdown: markdown))
+        stubOffline()
+        await viewModel.load()
+        XCTAssertEqual(viewModel.blocks.first?.kind, .image(alt: "Diagram", url: url))
+        viewModel.startEditing()
+        XCTAssertEqual(viewModel.blocks.first?.kind, .image(alt: "Diagram", url: url))
+        viewModel.finishEditing()
+        XCTAssertEqual(viewModel.rawMarkdown, markdown)
+        XCTAssertEqual(viewModel.blocks.first?.kind, .image(alt: "Diagram", url: url))
+    }
+
     private func makeEnvironment(
         title: String = "Untitled document",
         autosaveInterval: Duration = .seconds(10),

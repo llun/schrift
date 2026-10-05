@@ -3,6 +3,31 @@ import Foundation
 import ImageIO
 import UIKit
 
+struct ImageCacheScope: Codable, Hashable, Sendable {
+    let serverOrigin: String
+    let sessionID: String
+    init(serverOrigin: String, sessionID: String) {
+        self.serverOrigin = serverOrigin
+        self.sessionID = sessionID
+    }
+    init(serverOrigin: String, sessionID: UUID) {
+        self.init(serverOrigin: serverOrigin, sessionID: sessionID.uuidString)
+    }
+}
+
+/// Read source metadata before any bitmap work, including on cold disk loads.
+func imageDataIsWithinLimits(_ data: Data) -> Bool {
+    guard !data.isEmpty, data.count <= ImageCacheStore.maximumImageBytes,
+        let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+        CGImageSourceGetCount(source) > 0,
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+        let width = properties[kCGImagePropertyPixelWidth] as? Int,
+        let height = properties[kCGImagePropertyPixelHeight] as? Int,
+        width > 0, height > 0, width <= 48_000_000 / height
+    else { return false }
+    return true
+}
+
 /// A decoded thumbnail keeps a compressed, oversized image from allocating an unbounded bitmap.
 /// The source bytes on disk remain unchanged; this is display-only, never the photo upload path.
 func imageThumbnail(at file: URL) -> UIImage? {
@@ -49,14 +74,7 @@ final class ImageCacheStore {
     }
 
     func store(_ data: Data, for url: URL, serverOrigin: String, scope: String) -> URL? {
-        guard countLimit > 0, !data.isEmpty, data.count <= min(byteLimit, Self.maximumImageBytes),
-            let source = CGImageSourceCreateWithData(data as CFData, nil),
-            CGImageSourceGetCount(source) > 0,
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? Int,
-            let height = properties[kCGImagePropertyPixelHeight] as? Int,
-            width > 0, height > 0, width <= 48_000_000 / height
-        else { return nil }
+        guard countLimit > 0, data.count <= byteLimit, imageDataIsWithinLimits(data) else { return nil }
         let file = fileURL(for: url, serverOrigin: serverOrigin, scope: scope)
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -72,6 +90,18 @@ final class ImageCacheStore {
             evict(protecting: file)
             return fileManager.fileExists(atPath: file.path) ? file : nil
         } catch { return nil }
+    }
+
+    func cachedFileURL(for url: URL, scope: ImageCacheScope) -> URL? {
+        cachedFileURL(for: url, serverOrigin: scope.serverOrigin, scope: scope.sessionID)
+    }
+
+    func store(_ data: Data, for url: URL, scope: ImageCacheScope) -> URL? {
+        store(data, for: url, serverOrigin: scope.serverOrigin, scope: scope.sessionID)
+    }
+
+    func remove(_ url: URL, scope: ImageCacheScope) {
+        try? fileManager.removeItem(at: fileURL(for: url, serverOrigin: scope.serverOrigin, scope: scope.sessionID))
     }
 
     func removeAll() { try? fileManager.removeItem(at: directory) }

@@ -87,6 +87,27 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(keychain.upgradedKeys.isEmpty)
     }
 
+    func testImageCacheNamespaceSurvivesRelaunchButRotatesAtCookieHandoverAndSignIn() throws {
+        let keychain = FakeKeychainStore()
+        let cookies = FakeCookieStorage()
+        let first = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookies)
+        XCTAssertNil(first.imageCacheSessionID)
+        try first.signIn(serverURL: serverURL)
+        let initial = try XCTUnwrap(first.imageCacheSessionID)
+        let cold = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookies)
+        XCTAssertEqual(cold.imageCacheSessionID, initial)
+        first.noteSessionExpired()
+        first.cancelReauthentication()
+        XCTAssertEqual(first.imageCacheSessionID, initial)
+        first.noteSessionCookiesReplaced()
+        XCTAssertNotEqual(first.imageCacheSessionID, initial)
+        let handedOver = first.imageCacheSessionID
+        try first.signIn(serverURL: serverURL)
+        XCTAssertNotEqual(first.imageCacheSessionID, handedOver)
+        try first.signOut()
+        XCTAssertNil(first.imageCacheSessionID)
+    }
+
     // MARK: - Session cookie persistence
 
     func testSignInSnapshotsServerCookiesIntoKeychain() throws {

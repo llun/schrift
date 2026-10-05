@@ -679,10 +679,9 @@ new code reads like the surrounding code.
 - Everything goes through `DocsAPIClient`'s four primitives
   (`get`/`getRawData`/`send`/`sendVoid`) over one private `performRequest`.
   Endpoint code **never** builds a `URLRequest` or touches `URLSession`. (One
-  intentional exception: inline document images use `ImageDataClient` through
-  app-scoped `ImageLoader`, with a credential-free ephemeral session and explicit
-  same-server cookies. It streams with a 12 MiB ceiling and blocks cross-origin
-  redirects; never route consented external images through the authenticated REST client.)
+  intentional exception: absolute document images use `ImageLoader` and
+  `ImageTransport`, whose ephemeral, origin-pinned session supports explicitly
+  consented external URLs without sharing credentials.)
 - Add each feature's endpoints as an `extension DocsAPIClient` in **its own file**.
 - **Decode** with the shared `JSONDecoder.docsAPI` (snake_case + dual ISO8601 date
   handling) — never a bare `JSONDecoder` for API responses. **Encoding** uses a
@@ -1737,7 +1736,7 @@ markdown write endpoint**. Understand this before touching the save path:
   used to render as one); no content is lost either way.
 - **An embedded image is fetched on render only when it is same-origin as the
   user's server; otherwise it is tap-to-load.** `![alt](url)` is author-controlled
-  (a co-author, a web client, a live peer), and the image loader GETs on appear, so an
+  (a co-author, a web client, a live peer), so silently fetching an
   off-origin image would disclose the *reader's* IP/User-Agent/timing to a host the
   author chose (cookies are domain-scoped, so it is the request itself that leaks,
   not the session). `imageLoadPolicy(for:serverOrigin:)`
@@ -1752,28 +1751,31 @@ markdown write endpoint**. Understand this before touching the save path:
   threaded, required (non-defaulted), to **both** render sites — the reading
   `MarkdownImageView` and the editing `BlockEditorRow.imageLeaf` — so a new image
   render path is a compile error until it passes the gate; route any such path
-  through `MarkdownImageView`. Network consent is view-local `@State` keyed on the exact
-  approved `URL` and authenticated image-cache scope, so a live edit or account
-  change cannot carry permission to a new request. A previously consented disk
-  hit needs no new request and renders offline in either surface. `ImageDataClient`
-  blocks redirects away from the initial origin (including scheme/port changes),
-  refuses URL credentials and HTTP authentication, and never gives an external
-  image app cookies, CSRF, Origin or Authorization headers. Same-origin
-  redirects drop inherited credential headers and re-select applicable cookies
-  for the destination, honoring cookie Path boundaries.
-- **Displayed images persist through `ImageLoader` + `ImageCacheStore`.** Both
-  surfaces pass `isOffline`; offline still consults disk and only withholds the
-  network. The loader owns and joins downloads across surface cancellation and
-  rechecks its authenticated scope before publishing or writing. `SessionStore`
-  persists a random image scope across relaunches, rotates it and clears the image
-  cache at cookie handover, sign-in and sign-out (not expiry/cancel). Cache names
-  hash server, scope and the complete URL including queries/document path. Storage
-  is atomic, protected and backup-excluded, strictly capped at 100 files/64 MiB,
-  with a 12 MiB per-image ceiling and read recency. Decode a bounded 2048px
-  thumbnail, reject invalid/over-48MP sources, and leave pending-photo bytes,
-  save holds and upload replay entirely with `PendingAttachmentStore`. A failed
-  or uncached-offline image remains an image card with its URL and retry/open
-  affordances; never mutate parsing or replace the block with a paragraph.
+  through `MarkdownImageView`. `ImageLoader` owns requests across mode swaps,
+  joins duplicates, and checks persistent disk even offline. Consent is
+  memory-only and keyed by exact URL plus session namespace; it survives modes,
+  never a changed URL or replaced session. Cached external bytes render without
+  another tap because no request is issued. Retry never bypasses consent.
+  `ImageTransport` delegates to `ImageDataClient`, whose ephemeral session has no ambient cookies,
+  credential storage or URLCache; only same-origin requests receive an explicit
+  cookie snapshot. Redirects stay on the initial origin, with no userinfo or
+  scheme downgrade. Downloads stop at 12 MiB; shared metadata validation rejects sources over
+  48 MP before decoding bounded ImageIO thumbnails. Failure/offline states remain image cards with the URL.
+  `ImageCacheStore` hashes server origin, opaque session namespace and full URL,
+  uses Application Support with backup exclusion, and caps entries globally at
+  100 / 64 MiB (no oversized-entry exception). The namespace is persisted by
+  `SessionStore` across launches and rotated synchronously by
+  `forgetSignedInIdentity`; handover removes the persisted namespace, and only
+  signIn successfully saving its cookie snapshot persists the replacement. Never
+  let failed confirmation or a failed Keychain write pair a new account's images
+  with old restored cookies. All completions check scope before publishing or
+  writing. Keep disk reads/thumbnail preparation out of view bodies: asynchronous
+  loading prepares images, a 12-entry / 48 MiB NSCache reuses them, and each leaf
+  retains its current URL/scope presentation. RootView clears bytes on sign-out. Never reuse SignedInUserStore as
+  the namespace: it can be unknown while a new login's cookies are already live.
+  Inject `ImageLoader.inert()` into previews/tests that embed either image
+  surface; inert loaders issue no requests. Keep pending-photo branches ahead
+  of remote loading and never clear their store with this re-downloadable cache.
 - **A generic file attachment (PDF, docx, …) is a first-class leaf block, and
   classification is enabled by an origin.** The web's BlockNote `file` block and
   docs' custom `pdf` block both export as a standalone `[name](url)` line, so
@@ -1854,8 +1856,8 @@ markdown write endpoint**. Understand this before touching the save path:
   cards showing one attachment de-duplicate a single download instead of racing
   two writers over one cache file; its state is keyed by **url string**, because
   `applyLiveRemoteChange` reuses a surviving `EditorBlock.id` and a live edit can
-  swap the url under a card that never re-rendered. It is the authenticated file-attachment
-  fetch path (images use `ImageLoader`/`ImageDataClient`) and must stay
+  swap the url under a card that never re-rendered. It is a sanctioned
+  media fetch path alongside `ImageLoader` and must stay
   origin-pinned: `DocsAPIClient.mediaData(path:)` re-checks `isSameOriginPath`
   before issuing, exactly as `checkMedia` does. `AttachmentCacheStore` names each
   file `{document-uuid}_{file-uuid}[-unsafe].{ext}` from the classifier's
@@ -3321,7 +3323,9 @@ markdown write endpoint**. Understand this before touching the save path:
   ones with the RootView-only rule**: `DocumentContentCacheStore().removeAll()` and
   `AttachmentCacheStore().removeAll()` live in RootView's `onSignOut` closure and
   **not** inside `SessionStore.signOut()`, so a new sign-out path must call them
-  explicitly. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
+  explicitly. Displayed image bytes are also cleared at cookie handover, sign-in
+  and sign-out through SessionStore's injected `clearImageCache` callback; keep
+  that stronger account-isolation lifecycle. See [`docs/offline-and-sync.md`](docs/offline-and-sync.md).
 - **The account's displayed profile is cached too** (`CurrentUserCacheStore`,
   `dev.llun.Schrift.currentUser`), because `/users/me/` is the only source of the
   email and names and it is a network call: `ProfileViewModel` held it in memory
