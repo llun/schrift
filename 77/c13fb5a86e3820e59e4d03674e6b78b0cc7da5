@@ -1,0 +1,22 @@
+docs/ci.md
+  s_cda8a11c8519d3::t_6811aa8e902728 50-54
+SchriftUITests/Features/Editor/ChecklistFilterTests.swift
+  s_cda8a11c8519d3::t_6811aa8e902728 35-54,57-66,83,88,119,123,143,145,214,219
+  s_cda8a11c8519d3::t_c3918f3de3970a 55-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77c13fb5a86e3820e59e4d03674e6b78b0cc7da5",
+  "prompts": {},
+  "sessions": {
+    "s_cda8a11c8519d3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cfb-fb15-7b43-a181-a02531be474f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
