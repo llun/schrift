@@ -1,0 +1,29 @@
+AGENTS.md
+  s_9d14a7149b17e7::t_96801effc9574b 2535-2537
+Schrift/Features/Documents/DocumentPinCoordinator.swift
+  s_9d14a7149b17e7::t_856488af117fe5 40-42,241-243,253-254,269-270,273,293,296
+Schrift/Features/Documents/PendingDocumentPinStore.swift
+  s_9d14a7149b17e7::t_1675c51dac629a 18-19,74-75
+SchriftTests/Features/Documents/DocumentPinCoordinatorTests.swift
+  s_9d14a7149b17e7::t_0529e3f5688181 364-365,785-813
+docs/architecture.md
+  s_9d14a7149b17e7::t_4ed48e551d5c79 937-939
+docs/offline-and-sync.md
+  s_9d14a7149b17e7::t_41f22a4eb6cce4 2620-2631
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e7852e546bba9a135c618a357e27ce1cd8e8808",
+  "prompts": {},
+  "sessions": {
+    "s_9d14a7149b17e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10b63-c197-73e0-a8d4-a61382ec4897",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
