@@ -980,12 +980,13 @@ new code reads like the surrounding code.
   to prove the arithmetic (`size + 2 * padding == rowMinHeight`, with `padding`
   defined as `(rowMinHeight - size) / 2`) substitutes to
   `rowMinHeight == rowMinHeight` and cannot fail for any value of either.
-  **And a grown-then-given-back shape only reaches its full size in isolation**:
-  in a list, consecutive rows sit one gap apart, so neighbouring shapes overlap
-  and the unambiguous per-row target is bounded by the row *pitch* — glyph + gap,
-  ~35pt for the editor's checklist. Reaching 44 there means a taller row, which
-  on a shared surface is a document-density decision, not a padding one. Claim
-  the pitch, not the shape.
+  **In a dense checklist, bound vertical target growth to half the row gap on
+  each side.** Larger shapes overlap and a tap near the boundary can toggle the
+  neighbouring row. `checkboxVerticalHitPadding` keeps targets within the row
+  pitch (glyph box + gap; measured 41pt at default size on iOS 26.5). Horizontal
+  padding still grows the checkbox target; its overlap with the text column
+  belongs to the text view. Reaching 44pt vertically would need a taller row
+  shared with reading, a document-density decision rather than a padding one.
 - **Icons are Google Material Symbols, never SF Symbols.** The app's entire icon
   set is the handoff's Material Symbols Outlined, bundled as a ~18KB subset
   (`Schrift/Resources/Fonts/MaterialSymbolsOutlined-Icons.ttf`, Apache-2.0,
@@ -1107,11 +1108,12 @@ new code reads like the surrounding code.
     through `IconButton` rather than wrapping a bare `MaterialSymbol` in a
     `Button` (the Home error-banner dismiss was a 13pt cross before it did);
   - where a hard frame would move the glyph — the checklist checkbox is the
-    adornment of a `.top`-aligned row, so a 44pt box would centre it below the
+    adornment beside the first text line, so a 44pt box would move it below the
     first line of text it sits beside — grow the hit rect and give the growth
     back with **symmetric negative padding**
     (`.padding(x).contentShape(Rectangle()).padding(-x)`): same layout, bigger
-    target (a 24pt glyph padded by `DocsSpacing.spaceSM` reaches a 48x48pt target).
+    target. Checklist vertical padding is capped at half the row gap, so adjacent
+    targets meet without overlap; the resulting height is the row pitch.
   The hit *shape* is invisible in a screenshot and uncatchable by the suite,
   which is why it survived a whole design refresh on `Delete document`,
   `Sign out` and both conflict-resolution rows — check that by tapping the
@@ -1547,11 +1549,22 @@ that are easy to violate and expensive to discover:
     every editable kind shares one structural shape).
   - `EditorBlockAdornment` — bullet, number, checkbox. The checkbox is a
     `Button` only where a toggle closure is supplied (editing); the symmetric
-    ±`checkboxHitPadding` pair grows the target and gives every point back, so the
+    positive/negative padding pairs grow the target and give every point back, so the
     plain reading glyph occupies identical space. It is 24pt — larger than either
     surface used to draw it, since it is the document's one touchable adornment.
-    The shape clears `rowMinHeight` **in isolation only**; in a checklist the
-    real target is the row pitch (~35pt) — see the pitch rule above.
+    Horizontal growth uses `checkboxHitPadding`; vertical growth uses
+    `checkboxVerticalHitPadding`, half the block gap, so targets fit the row
+    pitch without overlap. Check real taps near adjacent-row boundaries, not
+    just the dimensions of an isolated padded glyph.
+    Checklist rows use `checklistFirstLine`, centering the Material glyph's
+    actual font bounds on the first text line's capital-height center. Reading
+    uses SwiftUI's first baseline; editing uses the zero-inset text view's
+    ascender. These metrics live in `EditorBlockStyle` and scale with Dynamic
+    Type. Do not substitute top alignment or a fixed 44pt box: equal row heights
+    do not prove first-line alignment. `ChecklistPresentationTests` measures
+    visible glyph/text pixels on both real surfaces for checked/unchecked,
+    single/wrapped, default/accessibility cases, and exercises the hosted editor
+    through toggle, end typing, formatting, and mode transitions.
   - `EditorDocumentHeader` — the title plus the reach/status/presence row, drawn
     by **both** surfaces (`readingHeader` and the header `BlockEditorView` is
     handed). An untitled document shows the same "Untitled" placeholder on both;
@@ -1635,9 +1648,11 @@ that are easy to violate and expensive to discover:
   `Text` carries slightly more leading than the same font in a `UITextView` with
   `lineFragmentPadding` and `textContainerInset` zeroed: measured at the Large
   content size, ~3.7pt at body 17 and ~7.3pt at title1 28, **per wrapped line**.
-  So a paragraph is a hair shorter while editing. Every *adorned* row (bullet,
-  number, checklist) is exactly equal, because the SwiftUI adornment sets the row
-  height on both sides. `EditorSurfaceParityTests
+  So a paragraph is a hair shorter while editing. Single-line *adorned* rows
+  (bullet, number, checklist) are equal because the SwiftUI adornment sets their
+  height on both sides; wrapped rows can still accumulate the text-leading
+  residual. Checklist first-line alignment is tested separately from row height.
+  `EditorSurfaceParityTests
   .testEveryBlockOccupiesTheSameHeightOnBothSurfaces` hosts the real
   `MarkdownBlockView` against the real `BlockEditorRow` (which is internal for
   exactly this) and bounds the residual at `0.35 × the block's font size × its

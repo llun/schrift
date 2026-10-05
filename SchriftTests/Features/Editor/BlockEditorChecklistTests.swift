@@ -9,13 +9,14 @@ final class BlockEditorChecklistTests: XCTestCase {
 
     // MARK: - Tap target geometry
 
-    /// The checkbox button in the document editor must meet or exceed Apple HIG's
-    /// 44x44pt minimum tap target. With a 24pt glyph and DocsSpacing.spaceSM (12pt)
-    /// padding, the tap target comfortably exceeds 44x44pt (measuring ~53x53pt).
-    func testCheckboxButtonHitTargetReachesStandard() {
+    /// Dense checklist targets grow horizontally, but their vertical growth is
+    /// limited to the existing gap so adjacent buttons cannot steal taps.
+    /// This measures the positive padding before layout cancellation, not taps.
+    func testCheckboxButtonTargetFitsDenseRows() {
         let button = Button(action: {}) {
             MaterialSymbol(.check_box, size: 24)
-                .padding(DocsSpacing.spaceSM)
+                .padding(.horizontal, EditorBlockMetrics.checkboxHitPadding)
+                .padding(.vertical, EditorBlockMetrics.checkboxVerticalHitPadding)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -24,7 +25,10 @@ final class BlockEditorChecklistTests: XCTestCase {
         let size = host.sizeThatFits(in: CGSize(width: 200, height: 200))
 
         XCTAssertGreaterThanOrEqual(size.width, DocsSpacing.rowMinHeight)
-        XCTAssertGreaterThanOrEqual(size.height, DocsSpacing.rowMinHeight)
+        let bare = UIHostingController(rootView: MaterialSymbol(.check_box, size: 24))
+            .sizeThatFits(in: CGSize(width: 200, height: 200))
+        XCTAssertGreaterThan(size.height, bare.height)
+        XCTAssertLessThanOrEqual(size.height, bare.height + EditorBlockMetrics.blockSpacing + 0.5)
     }
 
     /// Symmetric negative padding shrinks the layout footprint back to the glyph's
@@ -37,9 +41,11 @@ final class BlockEditorChecklistTests: XCTestCase {
 
         let adornment = Button(action: {}) {
             MaterialSymbol(.check_box, size: 24)
-                .padding(DocsSpacing.spaceSM)
+                .padding(.horizontal, EditorBlockMetrics.checkboxHitPadding)
+                .padding(.vertical, EditorBlockMetrics.checkboxVerticalHitPadding)
                 .contentShape(Rectangle())
-                .padding(-DocsSpacing.spaceSM)
+                .padding(.horizontal, -EditorBlockMetrics.checkboxHitPadding)
+                .padding(.vertical, -EditorBlockMetrics.checkboxVerticalHitPadding)
         }
         .buttonStyle(.plain)
 

@@ -163,13 +163,17 @@ struct BlockEditorRow: View {
             // the table `MarkdownBlockView` reads, so this row and the reading
             // row it replaces occupy the same space.
             HStack(
-                alignment: .top,
+                alignment: blockRowAlignment(block.kind),
                 spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
             ) {
                 EditorBlockAdornment(
                     kind: block.kind, numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
                     onToggleChecklist: { viewModel.toggleChecklist(blockID: block.id) })
                 textView
+                    .alignmentGuide(.checklistFirstLine) { dimensions in
+                        let font = blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize).font
+                        return EditorChecklistAlignment.editing(in: dimensions, font: font)
+                    }
                     .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
             }
         }
@@ -263,4 +267,53 @@ struct BlockEditorRow: View {
             viewModel.removeLink(blockID: block.id, span: span)
         }
     }
+}
+
+private struct ChecklistCatalog: View {
+    @State private var viewModel: EditorViewModel = {
+        let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] })
+        let model = EditorViewModel(
+            client: client, documentID: UUID(), title: "Checklist",
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop))
+        model.blocks = [
+            EditorBlock(kind: .checklistItem(checked: false), text: "Prepare the report"),
+            EditorBlock(kind: .checklistItem(checked: true), text: "Send **the summary**"),
+            EditorBlock(
+                kind: .checklistItem(checked: false),
+                text: "Review the longer checklist item that wraps onto another line beside its checkbox"),
+            EditorBlock(
+                kind: .checklistItem(checked: true),
+                text: "Share the *completed report* and [supporting notes](https://example.org) with the team"),
+        ]
+        return model
+    }()
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                Text("Reading").font(.headline)
+                ForEach(viewModel.blocks) { block in
+                    MarkdownBlockView(block: block, serverOrigin: "https://docs.example.org")
+                }
+                Text("Editing").font(.headline)
+                ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                    BlockEditorRow(
+                        viewModel: viewModel, block: block, index: index,
+                        serverOrigin: "https://docs.example.org", isOffline: true)
+                }
+            }
+            .padding(EditorBlockMetrics.gutter)
+        }
+        .environment(LocalizationStore())
+        .environment(AttachmentLoader.inert())
+        .environment(ImageLoader.inert())
+    }
+}
+
+#Preview("Checklist · Default") {
+    ChecklistCatalog().dynamicTypeSize(.large)
+}
+
+#Preview("Checklist · Accessibility") {
+    ChecklistCatalog().dynamicTypeSize(.accessibility3)
 }

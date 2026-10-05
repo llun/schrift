@@ -1119,7 +1119,7 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   and pads *outside* it to the floor, rather than wrapping a bare
 >   `MaterialSymbol` in a `Button` (the Home error-banner dismiss was a 13pt
 >   cross). Where a hard frame would move the glyph — the checklist checkbox is
->   the adornment of a `.top`-aligned row — grow the hit rect and give the growth
+>   the adornment beside the first text line — grow the hit rect and give the growth
 >   back with symmetric negative padding.
 > - **`Avatar`/`AvatarGroup` now scale with Dynamic Type**, the last shipping
 >   views with a bare `Font.system(size:)` and a fixed frame; the refresh's
@@ -1232,21 +1232,28 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   `UITextView` and drop the keyboard on every block conversion.
 > - `EditorBlockAdornment` — the bullet, the number and the checkbox. The
 >   checkbox is a `Button` only where a toggle closure is supplied (editing);
->   the symmetric ±`checkboxHitPadding` pair grows the target and gives every
->   point back, so the plain reading glyph occupies exactly the same space. The
->   shape clears 44pt **in isolation**; in a checklist, consecutive rows sit
->   `blockSpacing` apart, so neighbouring shapes overlap and the unambiguous
->   per-checkbox target is bounded by the row pitch (glyph + gap ≈ 35pt). That is
->   the honest claim — about half again as much as the ~22pt pitch these rows had
->   before ("roughly doubles" was the old *shape* comparison and does not survive
->   restating this as a pitch), and 44pt on a dense list would need a taller row
->   than the reading surface shares.
->   That padding is a **token with headroom, not an arithmetic fit**: sizing it
->   as `(rowMinHeight - checkboxSize) / 2` lands at 43pt, because a
->   `MaterialSymbol` is a `Text` and occupies its glyph's typographic box (23pt
->   for a 24pt symbol), not its point size — and the assertion that "proves" the
->   fit substitutes to `rowMinHeight == rowMinHeight`, so it can never catch the
->   miss. Measure the padded box instead.
+>   positive/negative padding pairs grow the target and give every point back,
+>   so the plain reading glyph occupies exactly the same space. Horizontal
+>   padding uses `checkboxHitPadding`; vertical padding is half `blockSpacing`.
+>   Larger vertical targets overlapped, and rendered UI taps near a row boundary
+>   could toggle the next item. Capping growth makes adjacent targets meet
+>   without overlap, at the row pitch (41pt default / 75pt Accessibility 3 on
+>   iOS 26.5). Horizontal target overlap with the text column belongs to the text
+>   view. A 44pt vertical target would require taller rows shared with reading.
+>   Measure font boxes and real taps rather than deriving a target from the
+>   symbol's nominal point size.
+>   Checklist rows align the checkbox's actual glyph bounds with the first
+>   text line's capital-height center. Top-aligning their different font boxes
+>   placed the editing checkbox 4pt below that center at the default size and
+>   9.2pt below it at Accessibility 3 (iOS 26.5); reading was 2pt/3pt below.
+>   `EditorChecklistAlignment` uses the reading text's first baseline and the
+>   editing font's ascender, with each font's own cap height. The glyph keeps
+>   its natural footprint and padded target without inflating row layout. The real-view pixel
+>   matrix in `ChecklistPresentationTests` measures checked/unchecked and
+>   single/wrapped rows at both sizes; equal-height tests alone cannot detect
+>   this defect. Completed-item strikethrough still comes from the existing
+>   block-wide attributes, verified through toggling, typing at the end, inline
+>   formatting, and reading/editing transitions without replacing that path.
 > - `EditorDocumentHeader` — the title and the reach/status/presence row, drawn
 >   by **both** surfaces. The title is a `TextField` while editing and a `Text`
 >   while reading, same font and tracking either way, and an untitled document
@@ -1311,9 +1318,10 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > carries a little more leading than the same font in a `UITextView` with
 > `lineFragmentPadding` and `textContainerInset` zeroed — ~3.7pt at body 17,
 > ~7.3pt at title1 28, per wrapped line — so a paragraph is a hair shorter while
-> editing. Every *adorned* row is exactly equal, because the SwiftUI adornment
-> sets the row height on both sides, and nothing moves horizontally or re-wraps,
-> so it is a uniform tightening rather than a re-flow. The parity test bounds it
+> editing. Single-line *adorned* rows are equal because the SwiftUI adornment
+> sets their height on both sides; wrapped rows can still accumulate the text
+> leading residual. First-line checklist alignment has its own rendering test.
+> The parity test bounds the height residual
 > at `0.35 × font size × line count` with a hard `delta >= 0` on the other side,
 > which is what catches the two historical per-row offenders (a quote's missing
 > panel padding, ~20pt on one 17pt line; a verbatim panel around every
