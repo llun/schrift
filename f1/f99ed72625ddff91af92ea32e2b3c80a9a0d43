@@ -1,0 +1,27 @@
+AGENTS.md
+  s_2072e3325b8685::t_c0b21e2574aba6 1577-1587
+SchriftTests/Features/Editor/ChecklistPresentationTests.swift
+  s_2072e3325b8685::t_2f4201c9126f1e 201-205
+  s_2072e3325b8685::t_e139fa0480a2ba 199-200
+  s_2072e3325b8685::t_5529f023793173 206-223
+Schrift/Features/Editor/BlockTextView.swift
+  s_2072e3325b8685::t_e139fa0480a2ba 341-346
+docs/design-system.md
+  s_2072e3325b8685::t_c0b21e2574aba6 1274-1287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f1f99ed72625ddff91af92ea32e2b3c80a9a0d43",
+  "prompts": {},
+  "sessions": {
+    "s_2072e3325b8685": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cbb-51e3-7ed0-a37a-db146024cb4d",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
