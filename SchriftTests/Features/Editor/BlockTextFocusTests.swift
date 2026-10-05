@@ -18,7 +18,9 @@ final class BlockTextFocusTests: XCTestCase {
         @Bindable var fixture: Fixture
 
         var body: some View {
-            BlockTextView(
+            _ = fixture.isFocused
+            _ = fixture.request
+            return BlockTextView(
                 text: { fixture.text },
                 styling: blockTextStyling(for: EditorBlock(kind: .paragraph, text: fixture.text)),
                 isFocused: { fixture.isFocused },
@@ -94,13 +96,10 @@ final class BlockTextFocusTests: XCTestCase {
     }
 
     func testAttachmentDoesNotReplayCancelledFocusIntent() async throws {
-        try await withDetachedRow { fixture, host, text, window in
-            // Consuming another request proves the coordinator received the cancelled
-            // focus value while the row was still detached.
+        try await withDetachedRow { fixture, _, text, window in
+            // Cancellation must be read on attachment without a coincidental
+            // SwiftUI update of the manually detached UIKit view.
             fixture.isFocused = false
-            fixture.request = .init(blockID: UUID(), offset: 0)
-            _ = host.sizeThatFits(in: CGSize(width: 370, height: 200))
-            await waitUntil { fixture.request == nil }
             let other = UITextField(frame: CGRect(x: 0, y: 250, width: 370, height: 44))
             window.addSubview(other)
             XCTAssertTrue(other.becomeFirstResponder())
@@ -108,6 +107,38 @@ final class BlockTextFocusTests: XCTestCase {
             XCTAssertFalse(text.isFirstResponder)
             XCTAssertTrue(other.isFirstResponder, "a stale attachment callback must not steal focus")
             XCTAssertEqual(fixture.focusEvents, 0)
+        }
+    }
+
+    func testFocusOnlyCancellationResignsAttachedRow() async throws {
+        let fixture = Fixture()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: Probe(fixture: fixture))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.endEditing(true)
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+        await waitUntil { self.textView(in: host.view)?.isFirstResponder == true && fixture.request == nil }
+        let text = try XCTUnwrap(textView(in: host.view))
+        fixture.isFocused = false
+        await waitUntil { !text.isFirstResponder }
+        XCTAssertNil(fixture.request)
+    }
+
+    func testCursorOnlyRequestUpdatesExistingRow() async throws {
+        try await withRow(text: "abc") { vm, _, text, _ in
+            let block = vm.blocks[0]
+            text.selectedRange = NSRange(location: 0, length: 0)
+            vm.cursorRequest = .init(blockID: block.id, offset: 2)
+            await waitUntil { vm.cursorRequest == nil }
+            XCTAssertEqual(text.selectedRange, NSRange(location: 2, length: 0))
+            XCTAssertEqual(vm.blocks, [block])
+            XCTAssertEqual(vm.focusedBlockID, block.id)
         }
     }
 
@@ -162,6 +193,36 @@ final class BlockTextFocusTests: XCTestCase {
             XCTAssertEqual(vm.blocks.map(\.text), ["lead 😀", "Xtail"])
             XCTAssertEqual(vm.cursorRequest?.offset, 1)
             XCTAssertEqual(vm.currentMarkdown(), "lead 😀\n\nXtail\n")
+        }
+    }
+
+    func testSourceKeepsKeyboardUntilPendingDestinationAttaches() async throws {
+        try await withRow(text: "---") { vm, host, text, row in
+            text.selectedRange = NSRange(location: 3, length: 0)
+            self.type("\n", in: text)
+            let destination = vm.blocks[1].id
+            host.rootView = AnyView(row.environment(LocalizationStore()))
+            _ = host.sizeThatFits(in: CGSize(width: 370, height: 200))
+            XCTAssertTrue(self.textView(in: host.view) === text)
+            XCTAssertTrue(text.isFirstResponder, "keep a keyboard recipient while the destination has no window")
+            self.type("af", in: text)
+            XCTAssertEqual(vm.blocks.map(\.text), ["", "af"])
+            XCTAssertEqual(vm.focusedBlockID, destination)
+            let targetRow = BlockEditorRow(
+                viewModel: vm, block: vm.blocks[1], index: 1, serverOrigin: "https://docs.example.org", isOffline: true)
+            host.rootView = AnyView(targetRow.id(destination).environment(LocalizationStore()))
+            await waitUntil {
+                guard let target = self.textView(in: host.view) else { return false }
+                return target !== text && target.isFirstResponder && target.text == "af"
+            }
+            let target = try XCTUnwrap(self.textView(in: host.view))
+            XCTAssertFalse(target === text)
+            XCTAssertEqual(target.text, "af")
+            XCTAssertEqual(target.selectedRange, NSRange(location: 2, length: 0))
+            vm.focusedBlockID = nil
+            host.rootView = AnyView(targetRow.id(destination).environment(LocalizationStore()))
+            _ = host.sizeThatFits(in: CGSize(width: 370, height: 200))
+            XCTAssertFalse(target.isFirstResponder, "clearing focus ends the handoff immediately")
         }
     }
 

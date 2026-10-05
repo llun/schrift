@@ -962,9 +962,14 @@ editing canvas may consume the new row's caret request before attachment, leavin
 later model update to acquire keyboard focus. The attachment callback checks the
 coordinator's current focus intent through the same synchronous, delegate-suppressed
 funnel used by model updates; it leaves block IDs, source offsets, and saving unchanged.
-The row resolves text, focus, and cursor intent from the current view-model block by that same stable ID during
-UIKit updates, bypassing SwiftUI's cached Binding value, so a
-queued row snapshot cannot overwrite text entered since the snapshot was captured or
+During a block-to-block handoff the old row retains first responder until the new
+row can take it directly, so keyboard events still have a recipient while the
+destination is detached. Clearing focus or leaving editing still resigns normally.
+The row resolves text, focus, and cursor intent from the current view-model block
+by that same stable ID during UIKit updates. Explicit body-time focus/cursor reads preserve SwiftUI's observation
+dependencies even though the values passed to UIKit are read later. The text reader
+bypasses SwiftUI's cached Binding value, so a queued row snapshot cannot overwrite
+text entered since the snapshot was captured or
 move the caret backward. Keyboard events that arrive between a structural edit
 and UIKit reconciliation are applied as deltas to the model's current block and
 pending source selection through `applyPendingKeyboardInput`. Stable block IDs

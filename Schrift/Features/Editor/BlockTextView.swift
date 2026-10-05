@@ -316,6 +316,7 @@ struct BlockTextView: UIViewRepresentable {
     var text: () -> String
     let styling: BlockTextStyling
     let isFocused: () -> Bool
+    var hasPendingFocusTarget: () -> Bool = { false }
     let cursorRequest: () -> EditorViewModel.CursorRequest?
     var onEvent: (BlockTextEvent) -> Void
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
@@ -437,7 +438,9 @@ struct BlockTextView: UIViewRepresentable {
             coordinator.isApplyingModelChange = true
             uiView.becomeFirstResponder()
             coordinator.isApplyingModelChange = false
-        } else if !focused, uiView.isFirstResponder {
+        } else if !focused, uiView.isFirstResponder, !hasPendingFocusTarget() {
+            // Another row takes the responder directly once it joins a window.
+            // Resigning first creates a gap in which keyboard events disappear.
             coordinator.isApplyingModelChange = true
             uiView.resignFirstResponder()
             coordinator.isApplyingModelChange = false

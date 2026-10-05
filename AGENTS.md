@@ -3169,7 +3169,13 @@ markdown write endpoint**. Understand this before touching the save path:
   intent synchronously, with delegate echoes suppressed by the existing focus
   funnel. Do not rely on cursor-request clearing to cause an update after
   attachment, or defer a captured focus intent that could steal focus later.
+  During a block-to-block handoff, the old row must keep its keyboard recipient
+  until the new row takes first responder; resigning before attachment drops
+  keystrokes without any delegate callback. A cleared focus or leaving blocks mode
+  still resigns normally.
   The row's text, focus, and cursor readers must resolve current intent by ID during UIKit updates,
+  while explicit body-time focus/cursor reads register SwiftUI observation so
+  focus-only and cursor-only changes still update an unchanged row.
   bypassing SwiftUI's cached Binding value as well as its captured
   `EditorBlock` value: a queued row snapshot can otherwise overwrite a newer
   keystroke and move the caret backward. Return and prefix shortcuts can also

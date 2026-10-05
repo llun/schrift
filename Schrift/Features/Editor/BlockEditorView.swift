@@ -218,12 +218,25 @@ struct BlockEditorRow: View {
     }
 
     private var textView: some View {
-        BlockTextView(
+        // Register SwiftUI dependencies here; the escaping readers below still
+        // resolve the latest values when UIKit actually consumes the update.
+        _ = viewModel.focusedBlockID
+        _ = viewModel.cursorRequest
+        return BlockTextView(
             // Resolve by identity when UIKit updates, beyond SwiftUI's cached
             // row and Binding values. All writes already go through onEvent.
             text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
             styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
             isFocused: { viewModel.focusedBlockID == block.id },
+            hasPendingFocusTarget: {
+                guard viewModel.mode == .blocks,
+                    let target = viewModel.blocks.first(where: { $0.id == viewModel.focusedBlockID })
+                else { return false }
+                switch target.kind {
+                case .divider, .image, .attachment: return false
+                default: return true
+                }
+            },
             cursorRequest: { viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil },
             onEvent: { event in
                 handle(event)
