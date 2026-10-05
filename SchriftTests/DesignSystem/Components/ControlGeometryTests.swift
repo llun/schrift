@@ -73,6 +73,15 @@ final class ControlGeometryTests: XCTestCase {
         }
     }
 
+    func testRecentSearchAndEditorNoticeActionsShareTheControlHeight() {
+        let recent = RecentSearchesFlow(terms: ["Roadmap"], onSelect: { _ in })
+        let notice = EditorNoticeLabel(icon: .warning, title: "Review local changes", foreground: DocsColor.danger)
+        XCTAssertEqual(measured(recent).height, 44, accuracy: 0.5)
+        XCTAssertEqual(measured(notice).height, 44, accuracy: 0.5)
+        XCTAssertGreaterThan(measured(recent.dynamicTypeSize(.accessibility5)).height, 44)
+        XCTAssertGreaterThan(measured(notice.dynamicTypeSize(.accessibility5)).height, 44)
+    }
+
     func testTextControlsCanGrowAtAccessibilitySizes() {
         let button = measured(DocsButton(title: "Save", action: {}).dynamicTypeSize(.accessibility5))
         let field = measured(DocsTextField(text: .constant("Document")).dynamicTypeSize(.accessibility5))

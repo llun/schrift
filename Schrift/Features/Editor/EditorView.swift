@@ -633,15 +633,7 @@ struct EditorView: View {
                 Button {
                     conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
                 } label: {
-                    HStack(spacing: DocsSpacing.space2xs) {
-                        MaterialSymbol(.warning, size: 13)
-                        Text(loc[.editor_conflict_pill])
-                            .font(DocsFont.footnote)
-                    }
-                    .foregroundStyle(DocsColor.danger)
-                    .padding(.horizontal, DocsSpacing.spaceSM)
-                    .padding(.vertical, DocsSpacing.space2xs)
-                    .background(Capsule().fill(DocsColor.gray050))
+                    EditorNoticeLabel(icon: .warning, title: loc[.editor_conflict_pill], foreground: DocsColor.danger)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -654,15 +646,8 @@ struct EditorView: View {
                 Button {
                     viewModel.applyPendingUpdate()
                 } label: {
-                    HStack(spacing: DocsSpacing.space2xs) {
-                        MaterialSymbol(.sync, size: 13)
-                        Text(loc[.editor_update_available])
-                            .font(DocsFont.footnote)
-                    }
-                    .foregroundStyle(DocsColor.textBrand)
-                    .padding(.horizontal, DocsSpacing.spaceSM)
-                    .padding(.vertical, DocsSpacing.space2xs)
-                    .background(Capsule().fill(DocsColor.gray050))
+                    EditorNoticeLabel(
+                        icon: .sync, title: loc[.editor_update_available], foreground: DocsColor.textBrand)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -1384,4 +1369,24 @@ struct EditorView: View {
     .environment(DocumentCollaborationManager.inert())
     .environment(AttachmentLoader.inert())
     .environment(ImageLoader.inert())
+}
+
+/// Shared label geometry for the editor's actionable conflict and update notices.
+struct EditorNoticeLabel: View {
+    let icon: MaterialIcon
+    let title: String
+    let foreground: Color
+
+    var body: some View {
+        HStack(spacing: DocsSpacing.space2xs) {
+            MaterialSymbol(icon, size: 13)
+            Text(title).font(DocsFont.footnote)
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, DocsSpacing.spaceSM)
+        .padding(.vertical, DocsSpacing.space2xs)
+        .frame(minHeight: DocsSpacing.rowMinHeight)
+        .background(Capsule().fill(DocsColor.gray050))
+        .contentShape(Capsule())
+    }
 }
