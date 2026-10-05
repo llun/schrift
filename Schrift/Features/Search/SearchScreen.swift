@@ -44,11 +44,15 @@ struct SearchScreen: View {
         }
         .navigationTitle(loc[.search_title])
         .navigationSubtitle(serverHost)
-        // The system field, bound to the tab's search role: tapping the tab
-        // activates it. The recents and quick-access lists stay as page content
+        // Always expose the system field on this pushed destination; it no longer has
+        // a search-role tab to reveal it. Recents and quick access stay as page content
         // rather than becoming `.searchSuggestions`, which would replace the
         // designed empty state with a plain system list.
-        .searchable(text: $viewModel.query, prompt: loc[.search_placeholder])
+        .searchable(
+            text: $viewModel.query,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: loc[.search_placeholder]
+        )
         .onSubmit(of: .search) {
             viewModel.recordSearch()
         }

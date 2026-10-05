@@ -7,30 +7,21 @@ func documentRowDate(_ document: Document, locale: Locale) -> String {
     return formatter.localizedString(for: document.updatedAt, relativeTo: Date())
 }
 
-/// The app's top-level destinations.
-///
-/// Order is the order they appear, and `search` is last because it is the
-/// system's *search role* — on iOS 26 that renders as the separated circular
-/// button at the trailing edge of the floating tab bar rather than as a fourth
-/// tab in the capsule, which is what the handoff asks for.
+/// The primary destinations, in their system tab-bar order. Profile is always last.
 enum AppTab: Hashable {
     case docs
     case shared
     case profile
+}
+
+/// Auxiliary destinations on Home's compact-width navigation stack.
+enum HomeRoute: Hashable {
     case search
 }
 
-/// The app shell: a system `TabView` hosting one navigation stack per tab.
-///
-/// This is deliberately the platform's own tab bar rather than a drawn one. It
-/// buys the whole set of behaviors the handoff's "native first" rule is after —
-/// the Liquid Glass capsule, minimize-on-scroll, the separated search role,
-/// safe areas, and the iPad tab strip — none of which a custom bar gets.
-///
-/// **One stack per tab, not one around the whole shell.** `.toolbar(.hidden,
-/// for: .tabBar)` only reaches the bar from inside a tab's own stack; each tab
-/// keeps its own navigation state across switches; and the search tab's
-/// `.searchable` field has to live in its own stack to bind to the search role.
+/// A native system tab shell with independent navigation state per primary destination.
+/// Home owns compact-width Search, so opening a result and going back preserves the query.
+/// Regular-width Home keeps its split view and inline sidebar search.
 struct MainTabView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
@@ -45,12 +36,11 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .docs
     @State private var docsPath = NavigationPath()
     @State private var sharedPath = NavigationPath()
-    @State private var searchPath = NavigationPath()
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    // Built once and retained, so a tab's loaded state and recent searches
+    // Built once and retained, so loaded state and recent searches
     // survive switching away and back regardless of what the system does with
     // unselected tab content.
     @State private var searchViewModel: SearchViewModel
@@ -95,11 +85,6 @@ struct MainTabView: View {
             } label: {
                 tabLabel(loc[.common_profile], icon: .account_circle)
             }
-
-            // The system supplies this one's label and its separated placement.
-            Tab(value: AppTab.search, role: .search) {
-                searchTab
-            }
         }
         .tint(DocsColor.brandFill)
         .tabBarMinimizeBehavior(.onScrollDown)
@@ -122,11 +107,20 @@ struct MainTabView: View {
                     viewModel: viewModel,
                     serverHost: serverHost,
                     onSelect: { docsPath.append(DocumentEditorRoute(document: $0)) },
-                    onSearchTap: { selectedTab = .search },
+                    onSearchTap: { docsPath.append(HomeRoute.search) },
                     onNewDocument: createDocument
                 )
                 .navigationDestination(for: DocumentEditorRoute.self) { route in
                     editorScreen(for: route, path: $docsPath)
+                }
+                .navigationDestination(for: HomeRoute.self) { route in
+                    switch route {
+                    case .search:
+                        SearchScreen(
+                            viewModel: searchViewModel, serverHost: serverHost,
+                            onOpenDocument: { docsPath.append(DocumentEditorRoute(document: $0)) }
+                        )
+                    }
                 }
             }
         }
@@ -140,18 +134,6 @@ struct MainTabView: View {
             )
             .navigationDestination(for: DocumentEditorRoute.self) { route in
                 editorScreen(for: route, path: $sharedPath)
-            }
-        }
-    }
-
-    private var searchTab: some View {
-        NavigationStack(path: $searchPath) {
-            SearchScreen(
-                viewModel: searchViewModel, serverHost: serverHost,
-                onOpenDocument: { searchPath.append(DocumentEditorRoute(document: $0)) }
-            )
-            .navigationDestination(for: DocumentEditorRoute.self) { route in
-                editorScreen(for: route, path: $searchPath)
             }
         }
     }
@@ -196,7 +178,7 @@ struct MainTabView: View {
         }
     }
 
-    /// One builder for all three stacks that can open a document, so the editor
+    /// One builder for Home (including Search) and Shared, so the editor
     /// is configured identically no matter which tab it was reached from.
     private func editorScreen(for route: DocumentEditorRoute, path: Binding<NavigationPath>) -> some View {
         let document = route.document

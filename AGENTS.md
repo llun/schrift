@@ -541,25 +541,27 @@ new code reads like the surrounding code.
   (`didDelete`), they don't navigate.
 - **Top-level navigation is the system `TabView`, and the tab roots use system
   navigation bars.** `MainTabView` (`Schrift/Features/Home/MainTabView.swift`)
-  is the one shell for both idioms: `Tab(value:)` for Schrift/Shared/Profile and
-  **`Tab(value:role: .search)` last**, which the system renders as the separated
-  circular button on the trailing edge of the floating Liquid Glass capsule (and
-  which, when selected, morphs the bar into the search field). Screens set
-  `.navigationTitle` / `.navigationSubtitle` and put actions in `.toolbar` —
-  they do **not** draw a `NavBar`. That is what buys Liquid Glass,
-  minimize-on-scroll (`.tabBarMinimizeBehavior(.onScrollDown)`), scroll-edge
-  effects, and correct safe areas for free; see the handoff's `native-first`
-  and `tab-bars` guidelines.
+  is the one shell for both idioms: ordinary `Tab(value:)` destinations for
+  Schrift/Shared/Profile, with **Profile last**. Search is not a primary tab and
+  no destination uses `role: .search`. Screens set `.navigationTitle` /
+  `.navigationSubtitle` and put actions in `.toolbar` — they do not draw a `NavBar`.
+  Keep native Liquid Glass, minimize-on-scroll, scroll-edge effects and safe areas.
   - Home's circular create action uses a Material Symbols template `Image`
     and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
     as a wider text action by the native toolbar, making its glass surface oval.
-  - **One `NavigationStack` per tab**, each owning its own `NavigationPath`.
-    `.toolbar(.hidden, for: .tabBar)` — which the editor uses so it gets the
-    full screen — only reaches the bar from *inside* a tab's own stack; per-tab
-    paths are also what keeps each tab's navigation state across switches.
-  - The three stacks that can open a document share **one** `editorScreen(for:
-    path:)` builder, so the editor is configured identically however it was
-    reached. Don't duplicate that call.
+  - **Independent navigation per primary tab.** Compact Home and Shared own
+    separate `NavigationPath`s; Profile owns its account stack. Regular-width
+    Home owns a `NavigationSplitView` with inline sidebar search.
+  - Home's compact search affordance pushes `HomeRoute.search` onto `docsPath`.
+    Search results push `DocumentEditorRoute` onto that same path: Back returns
+    to Search, then Home. Retain the shell-owned `SearchViewModel` so the query,
+    results and recent terms survive navigation and tab switches.
+  - Search uses `.searchable` with `.navigationBarDrawer(displayMode: .always)`;
+    do not rely on a search-role tab to reveal its field. Home's shortcut remains
+    one localized accessibility button; the regular-width field remains editable.
+  - Home (including Search) and Shared share one `editorScreen(for:path:)`
+    builder. `.toolbar(.hidden, for: .tabBar)` hides the native bar while an
+    editor is pushed and restores it on pop. Keep Profile's account destination.
   - The **editor** uses the same system bar, `.inline` and title-less: the
     document title is a large in-canvas header, not bar chrome. One toolbar
     serves both modes — `editorToolbarActions` swaps **Edit** for **Done** in

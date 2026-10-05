@@ -4,8 +4,8 @@ struct DocumentListView: View {
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
     var onSelect: (Document) -> Void
-    /// When set, the search field becomes a read-only shortcut into the Search tab
-    /// (phone). Left nil on iPad, where the field performs inline search.
+    /// When set, the search field becomes a read-only shortcut into Home’s Search screen
+    /// (compact width). Left nil at regular width, where the field performs inline search.
     var onSearchTap: (() -> Void)? = nil
     /// When set, shows a "New doc" nav-bar action that creates and opens a document.
     var onNewDocument: (() -> Void)? = nil

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The documents tab on a regular width: the list beside the open document.
 ///
-/// The search field here searches inline rather than jumping to the Search tab
+/// The search field here searches inline rather than pushing a dedicated Search screen
 /// (`onSearchTap` stays nil), because the list is permanently on screen next to
 /// the editor — there is nothing to navigate away from.
 struct HomeSplitView: View {
