@@ -3169,7 +3169,7 @@ markdown write endpoint**. Understand this before touching the save path:
   intent synchronously, with delegate echoes suppressed by the existing focus
   funnel. Do not rely on cursor-request clearing to cause an update after
   attachment, or defer a captured focus intent that could steal focus later.
-  The row's text reader must resolve the current block by ID during UIKit updates,
+  The row's text, focus, and cursor readers must resolve current intent by ID during UIKit updates,
   bypassing SwiftUI's cached Binding value as well as its captured
   `EditorBlock` value: a queued row snapshot can otherwise overwrite a newer
   keystroke and move the caret backward. Return and prefix shortcuts can also
@@ -3178,9 +3178,14 @@ markdown write endpoint**. Understand this before touching the save path:
   stable identity and the coordinator's consumed cursor token. Never forward
   the old row's whole buffer to the new block. Ignore obsolete selection echoes
   until the pending token is applied. Ranged source corrections must remain
-  deltas against the retained source block, never restoring a moved suffix.
-  Publish typed text before restyling, whose UIKit layout may reenter queued
-  model updates. `BlockTextFocusTests` covers these races,
+  deltas against the retained source block, never restoring a moved suffix;
+  validate the old UIKit buffer's correspondence and recognize consumed
+  shortcuts before translating prefix coordinates. After a handled source correction,
+  reject further old-buffer ranges until UIKit reconciles; repeated prefixes cannot
+  establish valid coordinates after a length change. Publish typed text before
+  restyling. While that publication is active, defer both text and caret
+  reconciliation: Observation notifies before the write finishes. Reconcile
+  after the outermost publication, never consuming a token against old text. `BlockTextFocusTests` covers these races,
   cancellation, repeated Return/backspace, identity, Unicode, and caret retention.
 - **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
   block's source into visible `spans` (styled) and hidden `syntax` (the

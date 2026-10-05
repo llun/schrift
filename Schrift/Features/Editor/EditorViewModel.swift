@@ -1870,15 +1870,31 @@ final class EditorViewModel {
     /// Autocorrection still addresses the old row, even after Return has moved
     /// its suffix to a new block. Replace only the retained source range; never
     /// copy the old UIKit buffer (or removed leaf syntax) back into the model.
-    func applyPendingSourceReplacement(blockID: UUID, range: NSRange, text: String) -> Bool {
-        guard mode == .blocks, let focusedBlockID, focusedBlockID != blockID, let index = blockIndex(blockID) else {
+    func applyPendingSourceReplacement(
+        blockID: UUID, range originalRange: NSRange, text: String, sourceText: String, consumedCursorToken: UUID?
+    ) -> Bool {
+        guard mode == .blocks, let focusedBlockID, let index = blockIndex(blockID) else {
             return false
         }
+        let sameTarget = focusedBlockID == blockID
+        let request = cursorRequest?.blockID == blockID ? cursorRequest : nil
+        guard !sameTarget || (request != nil && request?.token != consumedCursorToken) else { return false }
         switch blocks[index].kind {
         case .divider, .image, .attachment: return true
         default: break
         }
         let source = blocks[index].text as NSString
+        var range = originalRange
+        if sameTarget, sourceText != blocks[index].text {
+            guard let match = detectMarkdownShortcut(text: sourceText) ?? detectEnterShortcut(text: sourceText),
+                match.kind == blocks[index].kind, match.remainderText == blocks[index].text
+            else { return true }
+            let prefix = (sourceText as NSString).length - source.length
+            guard range.location >= prefix else { return true }
+            range.location -= prefix
+        } else if !sameTarget, !sourceText.hasPrefix(blocks[index].text) {
+            return true  // An earlier correction changed these old UIKit coordinates.
+        }
         guard range.location >= 0, range.location <= source.length, range.length >= 0,
             range.length <= source.length - range.location
         else { return true }  // The correction addresses text already moved out of this row.
@@ -1890,6 +1906,19 @@ final class EditorViewModel {
         let updated = source.replacingCharacters(in: range, with: replacement)
         if updated != blocks[index].text {
             blocks[index].text = updated
+            if sameTarget, let request {
+                let replacementLength = (replacement as NSString).length
+                func correctedOffset(_ offset: Int) -> Int {
+                    if offset <= range.location { return offset }
+                    if offset >= range.location + range.length { return offset + replacementLength - range.length }
+                    return range.location + replacementLength
+                }
+                let length = (updated as NSString).length
+                let start = min(max(0, correctedOffset(request.offset)), length)
+                let end = min(max(start, correctedOffset(request.offset + request.length)), length)
+                cursorRequest = CursorRequest(blockID: blockID, offset: start, length: end - start)
+                selection = NSRange(location: start, length: end - start)
+            }
             markDirty()
         }
         return true

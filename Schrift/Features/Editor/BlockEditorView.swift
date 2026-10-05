@@ -223,8 +223,8 @@ struct BlockEditorRow: View {
             // row and Binding values. All writes already go through onEvent.
             text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
             styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
-            isFocused: viewModel.focusedBlockID == block.id,
-            cursorRequest: viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil,
+            isFocused: { viewModel.focusedBlockID == block.id },
+            cursorRequest: { viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil },
             onEvent: { event in
                 handle(event)
             },
@@ -236,8 +236,9 @@ struct BlockEditorRow: View {
             onPendingInput: { text, token in
                 viewModel.applyPendingKeyboardInput(from: block.id, text: text, consumedCursorToken: token)
             },
-            onPendingSourceReplacement: { range, text in
-                viewModel.applyPendingSourceReplacement(blockID: block.id, range: range, text: text)
+            onPendingSourceReplacement: { range, text, source, token in
+                viewModel.applyPendingSourceReplacement(
+                    blockID: block.id, range: range, text: text, sourceText: source, consumedCursorToken: token)
             },
             hasPendingSelection: { token in
                 guard let request = viewModel.cursorRequest, request.blockID == block.id else { return false }

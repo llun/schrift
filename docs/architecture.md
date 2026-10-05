@@ -962,7 +962,7 @@ editing canvas may consume the new row's caret request before attachment, leavin
 later model update to acquire keyboard focus. The attachment callback checks the
 coordinator's current focus intent through the same synchronous, delegate-suppressed
 funnel used by model updates; it leaves block IDs, source offsets, and saving unchanged.
-The row resolves text from the current view-model block by that same stable ID during
+The row resolves text, focus, and cursor intent from the current view-model block by that same stable ID during
 UIKit updates, bypassing SwiftUI's cached Binding value, so a
 queued row snapshot cannot overwrite text entered since the snapshot was captured or
 move the caret backward. Keyboard events that arrive between a structural edit
@@ -975,7 +975,13 @@ backspace rules. Ranged corrections still address the retained source block;
 `applyPendingSourceReplacement` prevents the old UIKit buffer from duplicating a
 suffix moved by Return or restoring removed leaf syntax. The coordinator publishes
 typed text before restyling, because attribute edits/layout can reenter UIKit and
-run a queued model update.
+run a queued model update. Observation also notifies before the text write finishes:
+a nesting counter defers text/caret reconciliation during delegate publication and
+reconciles after the outermost call completes. Source corrections validate their
+old-buffer coordinates; recognized consumed shortcuts supply the only prefix
+translation, and corrections with obsolete correspondence are ignored. A handled
+source correction invalidates further old-buffer ranges until UIKit reconciliation,
+including repeated prefixes whose characters still match after their offsets changed.
 
 This is the part with no direct backend support, so it's called out explicitly:
 

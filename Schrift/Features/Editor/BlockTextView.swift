@@ -315,13 +315,13 @@ struct BlockTextView: UIViewRepresentable {
     /// before a newer keyboard delegate event reaches the model.
     var text: () -> String
     let styling: BlockTextStyling
-    let isFocused: Bool
-    let cursorRequest: EditorViewModel.CursorRequest?
+    let isFocused: () -> Bool
+    let cursorRequest: () -> EditorViewModel.CursorRequest?
     var onEvent: (BlockTextEvent) -> Void
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
     /// Keyboard events may arrive before a structural edit reaches UIKit.
     var onPendingInput: (String, UUID?) -> Bool = { _, _ in false }
-    var onPendingSourceReplacement: (NSRange, String) -> Bool = { _, _ in false }
+    var onPendingSourceReplacement: (NSRange, String, String, UUID?) -> Bool = { _, _, _, _ in false }
     var hasPendingSelection: (UUID?) -> Bool = { _ in false }
     /// Pre-resolved link-menu titles, passed down from the SwiftUI layer (which
     /// owns `LocalizationStore`). The coordinator never sees the store — it just
@@ -364,27 +364,35 @@ struct BlockTextView: UIViewRepresentable {
 
     func updateUIView(_ uiView: EditorUITextView, context: Context) {
         context.coordinator.parent = self
+        reconcile(uiView, coordinator: context.coordinator)
+    }
+
+    fileprivate func reconcile(_ uiView: EditorUITextView, coordinator: Coordinator) {
+        // Observation can reenter before a delegate's model write finishes.
+        // Keep text and its cursor token together until that publication ends.
+        guard coordinator.textChangeDepth == 0 else { return }
 
         var needsRestyle = false
         let currentText = text()
         if uiView.text != currentText {
-            context.coordinator.isApplyingModelChange = true
+            coordinator.isApplyingModelChange = true
             uiView.text = currentText
-            context.coordinator.isApplyingModelChange = false
+            coordinator.isApplyingModelChange = false
             needsRestyle = true
         }
-        if context.coordinator.appliedStyling != styling {
+        if coordinator.appliedStyling != styling {
             applyStyling(to: uiView)
-            context.coordinator.appliedStyling = styling
+            coordinator.appliedStyling = styling
             needsRestyle = true
         }
         if needsRestyle {
-            restyleInlineMarkdown(in: uiView, coordinator: context.coordinator)
+            restyleInlineMarkdown(in: uiView, coordinator: coordinator)
             uiView.invalidateIntrinsicContentSize()
         }
 
-        syncFocus(on: uiView, coordinator: context.coordinator)
-        consumeCursorRequest(on: uiView, coordinator: context.coordinator)
+        syncFocus(on: uiView, coordinator: coordinator)
+        consumeCursorRequest(on: uiView, coordinator: coordinator)
+        coordinator.hasUnreconciledSourceReplacement = false
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: EditorUITextView, context: Context) -> CGSize? {
@@ -424,11 +432,12 @@ struct BlockTextView: UIViewRepresentable {
     /// steal focus back after the user has already moved on. Delegate echoes
     /// of programmatic changes are suppressed via `isApplyingModelChange`.
     private func syncFocus(on uiView: EditorUITextView, coordinator: Coordinator) {
-        if isFocused, !uiView.isFirstResponder, uiView.window != nil {
+        let focused = isFocused()
+        if focused, !uiView.isFirstResponder, uiView.window != nil {
             coordinator.isApplyingModelChange = true
             uiView.becomeFirstResponder()
             coordinator.isApplyingModelChange = false
-        } else if !isFocused, uiView.isFirstResponder {
+        } else if !focused, uiView.isFirstResponder {
             coordinator.isApplyingModelChange = true
             uiView.resignFirstResponder()
             coordinator.isApplyingModelChange = false
@@ -436,7 +445,7 @@ struct BlockTextView: UIViewRepresentable {
     }
 
     private func consumeCursorRequest(on uiView: EditorUITextView, coordinator: Coordinator) {
-        guard let request = cursorRequest, coordinator.consumedCursorToken != request.token else { return }
+        guard let request = cursorRequest(), coordinator.consumedCursorToken != request.token else { return }
         coordinator.consumedCursorToken = request.token
         let textLength = ((uiView.text ?? "") as NSString).length
         let offset = min(max(0, request.offset), textLength)
@@ -460,6 +469,8 @@ struct BlockTextView: UIViewRepresentable {
         var appliedStyling: BlockTextStyling?
         var consumedCursorToken: UUID?
         var isApplyingModelChange = false
+        var textChangeDepth = 0
+        var hasUnreconciledSourceReplacement = false
         private var editMenuInteraction: UIEditMenuInteraction?
         private var menuSpan: InlineLinkSpan?
 
@@ -524,10 +535,18 @@ struct BlockTextView: UIViewRepresentable {
             {
                 return false
             }
-            if textView.markedTextRange == nil, range != textView.selectedRange,
-                parent.onPendingSourceReplacement(range, text)
-            {
-                return false
+            if textView.markedTextRange == nil, range != textView.selectedRange {
+                let sourceText = textView.text ?? ""
+                // A handled correction changes the model without changing this
+                // old buffer. Even a matching repeated prefix has stale offsets.
+                if hasUnreconciledSourceReplacement, sourceText != parent.text() { return false }
+                hasUnreconciledSourceReplacement = false
+                if parent.onPendingSourceReplacement(range, text, sourceText, consumedCursorToken) {
+                    // Set after publication: a reentrant update may still have
+                    // read the model before that correction finished writing.
+                    hasUnreconciledSourceReplacement = true
+                    return false
+                }
             }
             guard !parent.styling.allowsNewlines else { return true }
             let current = (textView.text ?? "") as NSString
@@ -559,6 +578,13 @@ struct BlockTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingModelChange else { return }
+            textChangeDepth += 1
+            defer {
+                textChangeDepth -= 1
+                if textChangeDepth == 0, let editor = textView as? EditorUITextView {
+                    parent.reconcile(editor, coordinator: self)
+                }
+            }
             // Attribute edits/layout can reenter UIKit and deliver a queued row
             // update. Publish this captured buffer before that update can read
             // the previous model value and overwrite the latest keystroke.

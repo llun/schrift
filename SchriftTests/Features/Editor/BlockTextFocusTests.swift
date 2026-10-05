@@ -21,8 +21,8 @@ final class BlockTextFocusTests: XCTestCase {
             BlockTextView(
                 text: { fixture.text },
                 styling: blockTextStyling(for: EditorBlock(kind: .paragraph, text: fixture.text)),
-                isFocused: fixture.isFocused,
-                cursorRequest: fixture.request,
+                isFocused: { fixture.isFocused },
+                cursorRequest: { fixture.request },
                 onEvent: { event in
                     if case .textChanged(let text) = event { fixture.text = text }
                     switch event {
@@ -254,6 +254,67 @@ final class BlockTextFocusTests: XCTestCase {
         }
     }
 
+    func testPendingPrefixCorrectionUsesCoordinatesAfterConsumedSyntax() async throws {
+        try await withRow(text: "[]teh") { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 2, length: 0)
+            self.type(" ", in: text)
+            // Recreate the older UIKit snapshot while a fresh caret token is
+            // unapplied; publication reconciliation may already have run here.
+            vm.cursorRequest = .init(blockID: vm.blocks[0].id, offset: 0)
+            let coordinator = try XCTUnwrap(text.delegate as? BlockTextView.Coordinator)
+            coordinator.consumedCursorToken = nil
+            text.text = "[] teh"
+            text.selectedRange = NSRange(location: 0, length: 0)
+            XCTAssertEqual(vm.blocks[0].text, "teh")
+            XCTAssertEqual(vm.focusedBlockID, vm.blocks[0].id)
+            XCTAssertNotEqual(vm.cursorRequest?.token, coordinator.consumedCursorToken)
+            let range = NSRange(location: 3, length: 3)
+            let allowed = text.delegate?.textView?(text, shouldChangeTextIn: range, replacementText: "the") ?? true
+            if allowed {
+                text.text = (text.text as NSString).replacingCharacters(in: range, with: "the")
+                text.delegate?.textViewDidChange?(text)
+            }
+            XCTAssertEqual(vm.blocks[0].kind, .checklistItem(checked: false))
+            XCTAssertEqual(vm.blocks[0].text, "the")
+            XCTAssertEqual(vm.cursorRequest?.offset, 0)
+            XCTAssertEqual(vm.currentMarkdown(), "- [ ] the\n")
+        }
+    }
+
+    func testConsecutiveSourceCorrectionsRejectObsoleteCoordinates() async throws {
+        try await withRow(text: "cant adn") { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 8, length: 0)
+            self.type("\n", in: text)
+            XCTAssertEqual(
+                text.delegate?.textView?(
+                    text, shouldChangeTextIn: NSRange(location: 0, length: 4), replacementText: "can't"), false)
+            // The rejected UIKit edit leaves the old buffer's offsets intact.
+            // A second old-coordinate correction must not edit the shifted model.
+            XCTAssertEqual(
+                text.delegate?.textView?(
+                    text, shouldChangeTextIn: NSRange(location: 5, length: 3), replacementText: "and"), false)
+            XCTAssertEqual(vm.blocks.map(\.text), ["can't adn", ""])
+            XCTAssertEqual(vm.cursorRequest?.offset, 0)
+        }
+    }
+
+    func testShorteningRepeatedSourceTextInvalidatesOlderCorrectionCoordinates() async throws {
+        try await withRow(text: "aaaa tail") { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            XCTAssertEqual(
+                text.delegate?.textView?(
+                    text, shouldChangeTextIn: NSRange(location: 0, length: 1), replacementText: ""), false)
+            // Keep the still-pending UIKit snapshot. Its prefix happens to match
+            // the shortened model even though its later offsets are obsolete.
+            text.text = "aaaa tail"
+            XCTAssertEqual(
+                text.delegate?.textView?(
+                    text, shouldChangeTextIn: NSRange(location: 2, length: 1), replacementText: "x"), false)
+            XCTAssertEqual(vm.blocks.map(\.text), ["aaa", " tail"])
+        }
+    }
+
     func testTypedTextIsPublishedBeforeStylingCanReenterModelUpdates() async throws {
         try await withRow(text: "a") { vm, _, text, _ in
             text.selectedRange = NSRange(location: 1, length: 0)
@@ -277,6 +338,31 @@ final class BlockTextFocusTests: XCTestCase {
         }
     }
 
+    func testObservationWillSetCannotRestoreOlderTextDuringDelegatePublication() async throws {
+        try await withRow(text: "a") { vm, host, text, row in
+            text.selectedRange = NSRange(location: 1, length: 0)
+            let observed = Fixture()
+            observed.focusEvents = 0
+            withObservationTracking {
+                _ = vm.blocks[0].text
+            } onChange: {
+                MainActor.assumeIsolated {
+                    observed.focusEvents += 1
+                    // Observation notifies before the model write finishes. UIKit
+                    // can run this queued row update during that notification.
+                    host.rootView = AnyView(row.environment(LocalizationStore()))
+                    _ = host.sizeThatFits(in: CGSize(width: 370, height: 200))
+                }
+            }
+            self.type("f", in: text)
+            XCTAssertEqual(observed.focusEvents, 1)
+            XCTAssertTrue(self.textView(in: host.view) === text)
+            XCTAssertEqual(vm.blocks[0].text, "af")
+            XCTAssertEqual(text.text, "af")
+            XCTAssertEqual(text.selectedRange, NSRange(location: 2, length: 0))
+        }
+    }
+
     func testTypingBeforeShortcutCaretUpdateUsesCorrectedOffset() async throws {
         try await withRow(text: "[]") { vm, _, text, _ in
             let id = vm.blocks[0].id
@@ -287,7 +373,7 @@ final class BlockTextFocusTests: XCTestCase {
             XCTAssertEqual(vm.blocks.map(\.id), [id])
             XCTAssertEqual(vm.blocks[0].kind, .checklistItem(checked: false))
             XCTAssertEqual(vm.blocks[0].text, "Task")
-            XCTAssertEqual(vm.cursorRequest?.offset, 4)
+            XCTAssertEqual(text.selectedRange, NSRange(location: 4, length: 0))
             XCTAssertEqual(vm.selection, NSRange(location: 4, length: 0))
             XCTAssertEqual(vm.currentMarkdown(), "- [ ] Task\n")
         }
@@ -312,7 +398,10 @@ final class BlockTextFocusTests: XCTestCase {
     private func type(_ value: String, in text: EditorUITextView) {
         let allowed =
             text.delegate?.textView?(text, shouldChangeTextIn: text.selectedRange, replacementText: value) ?? true
-        if allowed { text.insertText(value) }
+        if allowed {
+            text.insertText(value)
+            text.delegate?.textViewDidChangeSelection?(text)
+        }
     }
 
     private func withRow(
