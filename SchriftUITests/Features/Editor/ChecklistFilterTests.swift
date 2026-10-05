@@ -23,28 +23,24 @@ final class ChecklistFilterTests: XCTestCase {
         add(attachment)
     }
 
-    private func hideCompletedItems(in app: XCUIApplication) {
+    private func enableCompletedFilter(in app: XCUIApplication) -> Bool {
         let toggle = app.switches["checklist.hideCompleted"]
-        // SwiftUI's outer accessibility bounds include the wide label. Target
-        // the nested native switch so a synthesized tap reaches the control.
-        let control = toggle.switches.firstMatch
-        XCTAssertTrue(control.waitForExistence(timeout: 5))
-        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: control)
-        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
-        control.tap()
-        func waitForChange() -> XCTWaiter.Result {
-            let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
-            return XCTWaiter.wait(for: [changed], timeout: 5)
+        XCTAssertEqual(toggle.value as? String, "0")
+        let nativeSwitch = toggle.switches.firstMatch
+        guard nativeSwitch.waitForExistence(timeout: 5), nativeSwitch.isHittable else {
+            XCTFail("The native Hide completed switch must be available for interaction")
+            return false
         }
-        var result = waitForChange()
-        // CI can drop a synthesized touch even at the switch's center. A second
-        // tap is safe only while the observable value is still off; never blindly
-        // double-tap a toggle that may already have changed.
-        if result == .timedOut, toggle.value as? String == "0", control.isEnabled, control.isHittable {
-            control.tap()
-            result = waitForChange()
+        // CI captured a correctly targeted 50ms tap that left the switch off.
+        // Exercise one 200ms stationary press, without retrying or supplying
+        // configured state, and verify it before testing projection/mode changes.
+        nativeSwitch.press(forDuration: 0.2)
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
+        guard XCTWaiter.wait(for: [enabled], timeout: 5) == .completed else {
+            XCTFail("The Hide completed gesture must enable filtering before the flow continues")
+            return false
         }
-        XCTAssertEqual(result, .completed, "The native hide-completed switch must turn on")
+        return true
     }
 
     private func setEditing(_ editing: Bool, in app: XCUIApplication) {
@@ -57,19 +53,16 @@ final class ChecklistFilterTests: XCTestCase {
             let appeared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: next)
             return XCTWaiter.wait(for: [disappeared, appeared], timeout: 5)
         }
-        current.tap()
-        var result = waitForChange()
-        if result == .timedOut, !next.exists, current.exists, current.isEnabled, current.isHittable {
-            current.tap()
-            result = waitForChange()
-        }
+        XCTAssertTrue(current.isEnabled && current.isHittable)
+        current.press(forDuration: 0.2)
+        let result = waitForChange()
         XCTAssertEqual(result, .completed, "The editor must complete the requested mode change")
     }
 
     func testMixedDocumentFilterRevealAndEditingRetainEveryItem() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Finished one"].exists)
-        hideCompletedItems(in: app)
+        guard enableCompletedFilter(in: app) else { return }
         XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Finished one"].exists)
         XCTAssertFalse(app.staticTexts["Finished two"].exists)
@@ -106,7 +99,7 @@ final class ChecklistFilterTests: XCTestCase {
 
     private func verifyAllCompleted(_ arguments: [String]) throws {
         let app = launch(["--all-completed"] + arguments)
-        hideCompletedItems(in: app)
+        guard enableCompletedFilter(in: app) else { return }
         let reveal = app.buttons["checklist.showCompleted"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 5))
         XCTAssertTrue(reveal.isHittable)
@@ -196,8 +189,13 @@ final class ChecklistFilterTests: XCTestCase {
     }
 
     func testFilteredScrollHandoffKeepsADeepVisibleTaskAcrossBothModes() {
-        let app = launch(["--long-checklist"])
-        hideCompletedItems(in: app)
+        // Isolate scroll restoration from synthesized switch activation. The
+        // mixed/all-completed flows exercise the actual toggle and reveal;
+        // this fixture must be filtered before any viewport anchor is measured.
+        let app = launch(["--long-checklist", "--initially-hide-completed"])
+        XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Completed items hidden: 40"].exists)
+        XCTAssertFalse(app.staticTexts["Task 2"].exists)
         let target = app.staticTexts["Task 39"]
         for _ in 0..<12 {
             if target.isHittable { break }
