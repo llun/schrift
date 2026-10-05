@@ -1,0 +1,46 @@
+docs/architecture.md
+  s_2ac06de9a990f9::t_c7a9fcf63c31c6 967-969
+  s_2ac06de9a990f9::t_6f94e16d58aaf9 972
+  s_2ac06de9a990f9::t_e60e5bcecf1796 970-971,973-974
+Schrift/Features/Editor/BlockTextView.swift
+  s_2ac06de9a990f9::t_c7a9fcf63c31c6 319,441-443
+Schrift/Features/Editor/BlockEditorView.swift
+  s_2ac06de9a990f9::t_9c076b6746ff3f 217-218,221
+  s_2ac06de9a990f9::t_6f94e16d58aaf9 219-220
+  s_2ac06de9a990f9::t_0bb38698504858 227-235
+AGENTS.md
+  s_2ac06de9a990f9::t_c7a9fcf63c31c6 3147-3150
+  s_2ac06de9a990f9::t_6f94e16d58aaf9 3152-3153
+SchriftTests/Features/Editor/BlockTextFocusTests.swift
+  s_2ac06de9a990f9::t_9c076b6746ff3f 23
+  s_2ac06de9a990f9::t_0bb38698504858 211-217,222-225
+  s_2ac06de9a990f9::t_fe1adbd098a915 99-101,114-124,126-130
+  s_2ac06de9a990f9::t_3ebc873ab8152e 142-143,199-210,218-221,226-228
+  s_2ac06de9a990f9::t_6f94e16d58aaf9 21-22
+  s_2ac06de9a990f9::t_411770e40f1053 113,125,131-141
+  s_69f35b0cf1b1f5::t_c0cdb76288909a 144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "109bfeeed28d9b86647e31c7bf45fa8575598b9d",
+  "prompts": {},
+  "sessions": {
+    "s_2ac06de9a990f9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10ac4-9071-79b0-9c93-ce939ea58997",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_69f35b0cf1b1f5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d3e34abf-a75d-4da8-b371-1258aa33721a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
