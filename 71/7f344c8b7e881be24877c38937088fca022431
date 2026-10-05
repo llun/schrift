@@ -1,0 +1,29 @@
+SchriftTests/App/LaunchPreferencesTests.swift
+  s_f8060390afb72c::t_3ba2e79dabef95 11,13-14,22,26-31,72
+  s_f8060390afb72c::t_ebf63bbb0709df 104-150
+  s_f8060390afb72c::t_caa5d947f4b58c 1-10,12,15-21,23-25,32-71,73-103,151
+docs/architecture.md
+  s_f8060390afb72c::t_3ba2e79dabef95 887-897
+Schrift/Features/Home/DocumentCacheStore.swift
+  s_f8060390afb72c::t_3ba2e79dabef95 25-29
+AGENTS.md
+  s_f8060390afb72c::t_3ba2e79dabef95 3333-3340
+Schrift/Core/Auth/SessionStore.swift
+  s_f8060390afb72c::t_3ba2e79dabef95 76-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "717f344c8b7e881be24877c38937088fca022431",
+  "prompts": {},
+  "sessions": {
+    "s_f8060390afb72c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c4c-a0ad-7670-b8c1-53185f3c663c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
