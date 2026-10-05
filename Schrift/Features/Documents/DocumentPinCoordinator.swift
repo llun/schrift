@@ -37,9 +37,7 @@ final class DocumentPinCoordinator {
         self.userDefaults = userDefaults
         pending = Dictionary(store.allPins().map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
         for intent in store.allSettled() {
-            settled[intent.key] = Settled(
-                intent: intent, revision: 0,
-                membershipReadBoundary: intent.preservesCachedMembership == true ? -1 : nil)
+            settled[intent.key] = Settled(intent: intent, revision: 0)
             if intent.wasRejected == true { failures.insert(intent.key) }
         }
     }
@@ -95,11 +93,16 @@ final class DocumentPinCoordinator {
     /// Pending intent always wins, even if a fetch happens to agree. Settled intent wins
     /// only over reads issued before settlement; later reads may reflect edits on the web.
     func resolve(
-        pinned: [Document], recent: [Document], ownerUserID: UUID?, fetchedAt: Int, includePending: Bool = true
+        pinned: [Document], recent: [Document], ownerUserID: UUID?, fetchedAt: Int,
+        includePending: Bool = true, fromCache: Bool = false
     ) -> FavoriteOverlay {
         let intents = overrides(ownerUserID: ownerUserID, fetchedAt: fetchedAt, includePending: includePending)
         let membershipIntents = intents.filter {
-            pending[$0.key] != nil || (settled[$0.key]?.membershipReadBoundary.map { fetchedAt < $0 } ?? true)
+            if pending[$0.key] != nil { return true }
+            // Cache freshness is durable; -1 also names never-fetched in-memory surfaces,
+            // so request revision alone cannot identify a current Home cache snapshot.
+            if fromCache && $0.preservesCachedMembership == true { return false }
+            return settled[$0.key]?.membershipReadBoundary.map { fetchedAt < $0 } ?? true
         }
         var result = applyFavoriteOverrides(
             pinned: pinned, recent: recent,

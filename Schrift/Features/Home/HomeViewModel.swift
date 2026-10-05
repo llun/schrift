@@ -29,7 +29,7 @@ final class HomeViewModel {
     private var pinResolvedLists: FavoriteOverlay {
         saveCoordinator.pins.resolve(
             pinned: rawPinnedDocuments, recent: rawRecentDocuments,
-            ownerUserID: signedInUser.userID, fetchedAt: listPinRevision)
+            ownerUserID: signedInUser.userID, fetchedAt: listPinRevision, fromCache: listPinRevision == -1)
     }
     /// What the server (or its cache) last said. **Never contains a locally-created
     /// document** — see `recentDocuments`.

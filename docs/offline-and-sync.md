@@ -2622,7 +2622,9 @@ omit the document or cached subpage metadata still carries its old flag. Each su
 captures the coordinator revision when issuing a read: settlement wins over older reads,
 while newer reads can reflect a pin changed on the web. After Home caches a newer answer,
 the persisted record releases membership protection for those cached pages; it keeps the
-known flag for older metadata and the next toggle's rollback baseline. Deletion removes
+known flag for older metadata and the next toggle's rollback baseline. Home identifies
+cache reads explicitly, so switching to Work Offline and relaunching preserve the same
+partial-page membership without mistaking it for an older screen snapshot. Deletion removes
 these scoped records. This closes success → stale cache overwrite → relaunch without
 vetoing newer server reads or inventing favorites-page membership.
 Fresh Search, Shared and children reads reconcile changed flags for older Options too.

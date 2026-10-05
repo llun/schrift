@@ -791,7 +791,7 @@ final class DocumentPinCoordinatorTests: XCTestCase {
             pins.didCacheFreshLists(pinned: [], recent: [], ownerUserID: owner, fetchedAt: pins.revision)
             let restored = self.pins()
             XCTAssertEqual(restored.value(for: id, fallback: !known, ownerUserID: owner, fetchedAt: -1), known)
-            let shown = restored.resolve(pinned: [], recent: [], ownerUserID: owner, fetchedAt: -1)
+            let shown = restored.resolve(pinned: [], recent: [], ownerUserID: owner, fetchedAt: -1, fromCache: true)
             XCTAssertTrue(shown.pinned.isEmpty, "cached first-page membership remains authoritative")
             XCTAssertTrue(shown.recent.isEmpty)
             _ = stub(status: 403)
@@ -809,6 +809,32 @@ final class DocumentPinCoordinatorTests: XCTestCase {
         await pins.sync(isBlocked: { _ in false })
         pins.didCacheFreshLists(pinned: [row(pinned: true)], recent: [], ownerUserID: owner, fetchedAt: pins.revision)
         XCTAssertTrue(self.pins().value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+    }
+
+    func testWorkOfflineKeepsFreshPartialPageMembershipAndMatchesRelaunch() async {
+        _ = stub()
+        let (coordinator, home, _, _, _) = environment()
+        XCTAssertTrue(queue(coordinator.pins, pinned: true))
+        await coordinator.syncPendingPins()
+        let recent = Self.page([row(pinned: true)])
+        let empty = Self.page([])
+        let user = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            let body = url.hasSuffix("users/me/") ? user : (url.contains("favorite") ? empty : recent)
+            return .init(statusCode: 200, headers: [:], body: body, error: nil)
+        }
+        await home.load()
+        XCTAssertTrue(home.pinnedDocuments.isEmpty)
+        XCTAssertEqual(home.recentDocuments.map(\.id), [id])
+        defaults.set(true, forKey: "schrift.workOffline")
+        await home.load()
+        XCTAssertTrue(home.pinnedDocuments.isEmpty)
+        XCTAssertEqual(home.recentDocuments.map(\.id), [id])
+        let (_, relaunched, options, _, _) = environment()
+        XCTAssertEqual(home.pinnedDocuments, relaunched.pinnedDocuments)
+        XCTAssertEqual(home.recentDocuments, relaunched.recentDocuments)
+        XCTAssertTrue(options.isFavorite)
     }
 
 }

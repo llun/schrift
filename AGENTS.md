@@ -2534,7 +2534,9 @@ markdown write endpoint**. Understand this before touching the save path:
   so an older cache overwrite followed by relaunch cannot undo settlement. Fetch revisions
   protect older responses. A newer Home fetch caches the server answer and releases cached
   membership protection, while the scoped last-known bit remains durable for pagination gaps,
-  older subpage metadata and rollback. Newer reads reconcile changes made on the web. Work Offline queues pins without
+  older subpage metadata and rollback. Home passes an explicit cache-read marker, so live
+  Work Offline reseeding matches relaunch rather than treating current caches as stale reads.
+  Newer reads reconcile changes made on the web. Work Offline queues pins without
   networking; reconnect, foreground, launch, leaving Work Offline and successful re-login
   resume replay, including when a previously unknown identity is learned. Options receives
   the real navigation row, with cache lookup as a fallback. A landed move updates durable
