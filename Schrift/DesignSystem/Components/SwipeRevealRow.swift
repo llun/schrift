@@ -467,30 +467,14 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
     }
 
     private func actionButton(_ action: SwipeRevealAction) -> some View {
-        let style = SwipeActionStyleResolver.style(role: action.role)
-        return Button {
+        Button {
             close()
             action.handler()
         } label: {
-            VStack(spacing: DocsSpacing.space3xs) {
-                MaterialSymbol(action.icon, size: 22)
-                if swipeActionShowsCaption(dynamicTypeSize) {
-                    Text(action.label)
-                        .font(DocsFont.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                }
-            }
-            .foregroundStyle(
-                Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex)
-            )
-            .contentShape(Rectangle())
+            SwipeRevealActionLabel(action: action, showsCaption: swipeActionShowsCaption(dynamicTypeSize))
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func close() {
@@ -501,6 +485,37 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
         state = swipeRevealSettling(state, rowID: id, settle: outcome)
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
             offset = outcome == .open ? -stripWidth : 0
+        }
+    }
+}
+
+/// Captioned swipe actions fill their strip; icon-only actions use the shared 44pt circle.
+struct SwipeRevealActionLabel: View {
+    let action: SwipeRevealAction
+    let showsCaption: Bool
+
+    var body: some View {
+        let style = SwipeActionStyleResolver.style(role: action.role)
+        let foreground = Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex)
+        let background = Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex)
+        if showsCaption {
+            VStack(spacing: DocsSpacing.space3xs) {
+                MaterialSymbol(action.icon, size: 22)
+                Text(action.label)
+                    .font(DocsFont.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .foregroundStyle(foreground)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(background)
+            .contentShape(Rectangle())
+        } else {
+            MaterialSymbol(action.icon, size: 22, scales: false)
+                .foregroundStyle(foreground)
+                .frame(width: DocsSpacing.rowMinHeight, height: DocsSpacing.rowMinHeight)
+                .background(background, in: Circle())
+                .contentShape(Circle())
         }
     }
 }

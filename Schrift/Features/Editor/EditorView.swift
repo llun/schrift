@@ -366,8 +366,9 @@ struct EditorView: View {
                     Button {
                         isPresentingPagesTree = true
                     } label: {
-                        MaterialSymbol(.account_tree, size: 22)
+                        ToolbarIcon(.account_tree)
                     }
+                    .buttonBorderShape(.circle)
                     .accessibilityLabel(loc[.pages_open])
                     // Hidden here as well as on `mainContent`: toolbar content is
                     // hosted by the navigation bar as its own accessibility
@@ -376,16 +377,23 @@ struct EditorView: View {
                     // drawer is covering.
                     .accessibilityHidden(isPresentingPagesTree)
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    ForEach(
-                        editorToolbarActions(
-                            isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument, isOffline: isOffline),
-                        id: \.self
-                    ) {
-                        action in
-                        toolbarButton(for: action)
+                ToolbarItem(placement: .topBarTrailing) {
+                    toolbarButton(for: viewModel.isEditing ? .done : .edit)
+                        .accessibilityHidden(isPresentingPagesTree)
+                }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                if editorToolbarActions(
+                    isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument, isOffline: isOffline
+                ).contains(.share) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        toolbarButton(for: .share)
                             .accessibilityHidden(isPresentingPagesTree)
                     }
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    toolbarButton(for: .options)
+                        .accessibilityHidden(isPresentingPagesTree)
                 }
             }
             .task(id: viewModel.availability.token) {
@@ -625,15 +633,7 @@ struct EditorView: View {
                 Button {
                     conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
                 } label: {
-                    HStack(spacing: DocsSpacing.space2xs) {
-                        MaterialSymbol(.warning, size: 13)
-                        Text(loc[.editor_conflict_pill])
-                            .font(DocsFont.footnote)
-                    }
-                    .foregroundStyle(DocsColor.danger)
-                    .padding(.horizontal, DocsSpacing.spaceSM)
-                    .padding(.vertical, DocsSpacing.space2xs)
-                    .background(Capsule().fill(DocsColor.gray050))
+                    EditorNoticeLabel(icon: .warning, title: loc[.editor_conflict_pill], foreground: DocsColor.danger)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -646,15 +646,8 @@ struct EditorView: View {
                 Button {
                     viewModel.applyPendingUpdate()
                 } label: {
-                    HStack(spacing: DocsSpacing.space2xs) {
-                        MaterialSymbol(.sync, size: 13)
-                        Text(loc[.editor_update_available])
-                            .font(DocsFont.footnote)
-                    }
-                    .foregroundStyle(DocsColor.textBrand)
-                    .padding(.horizontal, DocsSpacing.spaceSM)
-                    .padding(.vertical, DocsSpacing.space2xs)
-                    .background(Capsule().fill(DocsColor.gray050))
+                    EditorNoticeLabel(
+                        icon: .sync, title: loc[.editor_update_available], foreground: DocsColor.textBrand)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -1285,9 +1278,8 @@ struct EditorView: View {
         }
     }
 
-    /// `MaterialSymbol` renders fine inside a toolbar button (unlike a tab-bar
-    /// label, which needs a `UIImage`), so the app's icon set carries over
-    /// unchanged. Each button states its own label: the glyph is a
+    /// Template images let the native toolbar recognize icon-only actions and
+    /// keep their glass surfaces circular. Each button states its own label: the glyph is a
     /// Private-Use-Area character with no spoken text.
     @ViewBuilder
     private func toolbarButton(for action: EditorToolbarAction) -> some View {
@@ -1297,7 +1289,7 @@ struct EditorView: View {
                 scrollAnchor.snapshotForSwap()
                 viewModel.startEditing()
             } label: {
-                MaterialSymbol(.edit, size: 22)
+                ToolbarIcon(.edit)
             }
             // `startEditing` silently declines without loaded content, and offline with
             // nothing cached that is now the common case — where the load error also
@@ -1307,6 +1299,7 @@ struct EditorView: View {
             // the guard uses, so the two cannot drift; it is keyed to loaded content, not
             // to connectivity — the parameter this resolver dropped.
             .disabled(!viewModel.canStartEditing)
+            .buttonBorderShape(.circle)
             .accessibilityLabel(loc[.editor_action_edit])
 
         case .done:
@@ -1314,8 +1307,9 @@ struct EditorView: View {
                 scrollAnchor.snapshotForSwap()
                 viewModel.finishEditing()
             } label: {
-                MaterialSymbol(.check, size: 22, fill: true)
+                ToolbarIcon(.check, filled: true)
             }
+            .buttonBorderShape(.circle)
             .accessibilityLabel(loc[.editor_action_done])
 
         case .share:
@@ -1323,16 +1317,18 @@ struct EditorView: View {
                 guard !isOffline else { return }
                 isPresentingShareSheet = true
             } label: {
-                MaterialSymbol(.share, size: 22)
+                ToolbarIcon(.share)
             }
+            .buttonBorderShape(.circle)
             .accessibilityLabel(loc[.editor_action_share])
 
         case .options:
             Button {
                 isPresentingOptionsSheet = true
             } label: {
-                MaterialSymbol(.more_horiz, size: 22)
+                ToolbarIcon(.more_horiz)
             }
+            .buttonBorderShape(.circle)
             .accessibilityLabel(loc[.editor_action_options])
         }
     }
@@ -1373,4 +1369,24 @@ struct EditorView: View {
     .environment(DocumentCollaborationManager.inert())
     .environment(AttachmentLoader.inert())
     .environment(ImageLoader.inert())
+}
+
+/// Shared label geometry for the editor's actionable conflict and update notices.
+struct EditorNoticeLabel: View {
+    let icon: MaterialIcon
+    let title: String
+    let foreground: Color
+
+    var body: some View {
+        HStack(spacing: DocsSpacing.space2xs) {
+            MaterialSymbol(icon, size: 13)
+            Text(title).font(DocsFont.footnote)
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, DocsSpacing.spaceSM)
+        .padding(.vertical, DocsSpacing.space2xs)
+        .frame(minHeight: DocsSpacing.rowMinHeight)
+        .background(Capsule().fill(DocsColor.gray050))
+        .contentShape(Capsule())
+    }
 }

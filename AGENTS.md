@@ -1009,11 +1009,12 @@ new code reads like the surrounding code.
   It **scales with Dynamic Type by default** (relative to `.body`), so a glyph
   stays proportionate to the text beside it; pass `scales: false` for a glyph in
   a hard-bounded box that would crop it instead — `IconButton`, whose row of
-  nine in the formatting bar shares a fixed width budget, and `DocIcon`, which
-  scales its glyph and box together from one value.
-  `IconButton(icon:)` takes a `MaterialIcon`; a `ToolbarItem`'s label is a
-  `MaterialSymbol` directly, and UIKit call sites (a `UIMenu` action, a tab-bar
-  label) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
+  nine in the formatting bar scrolls inside a fixed width budget, and `DocIcon`,
+  which scales its glyph and box together from one value.
+  `IconButton(icon:)` takes a `MaterialIcon`; a `ToolbarItem`'s icon-only label
+  uses `ToolbarIcon` (template image) and `.buttonBorderShape(.circle)`, with fixed
+  toolbar spacers between separate glass surfaces. UIKit call sites (a `UIMenu`
+  action, a tab-bar label) use `MaterialIcon.uiImage(pointSize:)`. Adding an icon
   the app doesn't yet bundle means re-subsetting the font (see
   [`docs/design-system.md`](docs/design-system.md)) — you can't just name any
   Material glyph. `MaterialSymbol` is `accessibilityHidden` (the glyph is a
@@ -1042,19 +1043,15 @@ new code reads like the surrounding code.
   instead marked `.accessibilityHidden(true)`.
 - A component view that would shadow a SwiftUI type takes a `Docs` prefix
   (`DocsButton`, `DocsTextField`); everything else keeps the bare name.
-- **A hard minimum size does not compress, and inside a `safeAreaInset` it is not
-  clipped either — it widens the whole screen.** `IconButton` floors its tap
-  target at 44pt; nine of them in `EditorFormattingBar` demanded a fixed 424pt,
-  more than any iPhone's content column (370pt at 402pt wide). That width
-  propagated out of the inset into the editor's outer `VStack`, which laid the
-  entire screen out wider than the display and centred it: the nav bar's back
-  chevron fell off the left edge. The bar therefore passes `minimumTapWidth: 0`
-  and lets its buttons divide the row; the 44pt tap **height** is never
-  negotiable. It had already been overflowing by 8pt with eight buttons — small
-  enough that nobody saw it. `EditorFormattingBarTests` pins the bar to the width
-  it is offered on the narrowest supported devices, so a tenth button fails a
-  test rather than a screen. Measure a row of fixed-minimum controls against the
-  narrowest device before adding to it.
+- **Custom controls share a 44pt minimum height.** `IconButton` is a 44pt
+  circle in every size/variant; its size changes the glyph only. `DocsButton`,
+  `DocsTextField`, custom search fields and the sheet close action share that
+  floor; text controls may grow with Dynamic Type. Native system controls keep
+  their platform metrics, and checklist adornments retain first-line alignment.
+  A hard minimum does not compress: nine square formatting actions cannot fit
+  on a narrow phone. `EditorFormattingBar` therefore scrolls horizontally inside
+  the editor's offered width, preserving 44pt squares and screen geometry.
+  `EditorFormattingBarTests` covers both the width containment and row height.
 - **A 44pt frame is not a 44pt tap target — a plain `Button` hit-tests the shape
   its label *draws*.** So a `Button { HStack { icon; title; Spacer() } }` is
   tappable on the glyphs and nothing else: the `Spacer`, the padding and the rest
@@ -1264,10 +1261,9 @@ new code reads like the surrounding code.
 - **A menu/options sheet is a flat, boxless list under a `SheetHeader`, not a
   grouped card.** The document Options sheet (`OptionsSheetView`) matches the
   handoff `OptionsSheet`: a pinned **`SheetHeader`** (an inline `DocsFont.title2`
-  title + a 30pt **circular close button** — `surfaceMuted` disc,
-  `MaterialIcon.close` glyph 20pt in `textSecondary`, floated to a 44pt tap
-  target) over `ListRow`s rendered **directly on `DocsColor.surfacePage`** — no
-  `ListSection` card, no `ProfileRowDivider`, and **no `NavigationStack`/"Done"
+  title + a 44pt **circular close button** — `surfaceMuted` disc,
+  `MaterialIcon.close` glyph 20pt in `textSecondary`) over `ListRow`s rendered
+  **directly on `DocsColor.surfacePage`** — no `ListSection` card, no `ProfileRowDivider`, and **no `NavigationStack`/"Done"
   toolbar**. Reuse `SheetHeader` for new sheet chrome rather than re-adding a nav
   bar; the grabber is `.presentationDragIndicator(.visible)` and the close button
   is wired to `@Environment(\.dismiss)`. The header pads `16 / 16 / 10` (the

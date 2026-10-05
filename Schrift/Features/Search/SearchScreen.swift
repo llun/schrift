@@ -216,7 +216,7 @@ private struct AvailableSearchField: ViewModifier {
 
 // MARK: - Recent searches wrap-flow
 
-private struct RecentSearchesFlow: View {
+struct RecentSearchesFlow: View {
     let terms: [String]
     var onSelect: (String) -> Void
 
@@ -236,12 +236,14 @@ private struct RecentSearchesFlow: View {
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)
                     .padding(.vertical, 7)
+                    .frame(minHeight: DocsSpacing.rowMinHeight)
                     .background(DocsColor.surfaceSunken)
                     .overlay(
                         RoundedRectangle(cornerRadius: DocsRadius.pill)
                             .stroke(DocsColor.borderDefault, lineWidth: 1)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: DocsRadius.pill))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }

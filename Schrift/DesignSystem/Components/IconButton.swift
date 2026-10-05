@@ -77,14 +77,8 @@ enum IconButtonSize {
     case medium
     case large
 
-    /// Tap-target box size (pt).
-    var box: CGFloat {
-        switch self {
-        case .small: return 32
-        case .medium: return 40
-        case .large: return 44
-        }
-    }
+    /// All sizes share a circular 44pt control; the size axis changes the glyph only.
+    var box: CGFloat { DocsSpacing.rowMinHeight }
 
     /// Glyph point size.
     var glyph: CGFloat {
@@ -104,52 +98,49 @@ struct IconButton: View {
     var size: IconButtonSize = .medium
     var filled: Bool = false
     var isDisabled: Bool = false
-    /// The floor on the tap target's **width**. 44pt by default, per iOS. A row
-    /// of buttons sharing a fixed width — the editor's formatting bar — passes 0
-    /// and lets them divide the space instead: nine 44pt minimums add up to more
-    /// than an iPhone is wide, and a hard minimum does not compress, so the bar
-    /// would silently push its whole screen wider than the display.
-    /// The 44pt *height* is never negotiable.
-    var minimumTapWidth: CGFloat = DocsSpacing.rowMinHeight
     var action: () -> Void
 
     var body: some View {
         let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
         Button(action: action) {
-            // Fixed glyph: the box below is a hard frame and clips, and a row of
-            // these shares a fixed width budget (`minimumTapWidth: 0`), so a
-            // growing glyph would be cropped rather than readable. Icon-only
-            // controls carry their meaning in `.accessibilityLabel`, which
-            // VoiceOver and larger text sizes both reach without the glyph
-            // growing.
+            // A fixed glyph stays centered inside the circular control at every
+            // text size. VoiceOver reads the control's explicit label.
             MaterialSymbol(icon, size: size.glyph, fill: filled, scales: false)
                 .frame(width: size.box, height: size.box)
                 .foregroundStyle(Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex))
                 .background(Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex) ?? .clear)
                 .overlay(
-                    RoundedRectangle(cornerRadius: DocsRadius.md)
+                    Circle()
                         .strokeBorder(
                             Color(lightHex: style.borderLightHex, darkHex: style.borderDarkHex) ?? .clear,
                             lineWidth: style.borderLightHex == nil ? 0 : 1)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
+                .clipShape(Circle())
+                .contentShape(Circle())
         }
-        // Keep the reference's smaller visual box, but never let the tap target
-        // fall below the 44pt iOS minimum (the reference documents this too).
-        .frame(minWidth: minimumTapWidth, minHeight: DocsSpacing.rowMinHeight)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
         .accessibilityLabel(label)
     }
 }
 
-#Preview {
-    HStack(spacing: DocsSpacing.spaceSM) {
-        IconButton(icon: .search, label: "Search", variant: .ghost, color: .neutral, action: {})
-        IconButton(icon: .add, label: "Add", variant: .soft, color: .brand, action: {})
-        IconButton(icon: .delete, label: "Delete", variant: .outline, color: .danger, action: {})
-        IconButton(icon: .more_horiz, label: "More", isDisabled: true, action: {})
+private struct IconButtonPreview: View {
+    var body: some View {
+        VStack(spacing: DocsSpacing.spaceSM) {
+            ForEach([IconButtonSize.small, .medium, .large], id: \.self) { size in
+                HStack(spacing: DocsSpacing.spaceSM) {
+                    IconButton(icon: .search, label: "Search", size: size, action: {})
+                    IconButton(icon: .add, label: "Add", variant: .soft, color: .brand, size: size, action: {})
+                    IconButton(
+                        icon: .delete, label: "Delete", variant: .outline, color: .danger, size: size, action: {})
+                    IconButton(icon: .more_horiz, label: "More", size: size, isDisabled: true, action: {})
+                }
+            }
+        }
+        .padding()
     }
-    .padding()
 }
+
+#Preview("Light") { IconButtonPreview().preferredColorScheme(.light) }
+#Preview("Dark") { IconButtonPreview().preferredColorScheme(.dark) }

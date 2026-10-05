@@ -1,5 +1,19 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-10-05 — circular icon controls.** Every app-authored icon-only
+> action uses a circular 44pt surface. `IconButton` size variants change the glyph
+> (20/24/26pt), while its box stays 44×44pt. Sheet close and search clear use that
+> same component. Text buttons, custom search fields and text-input surfaces use
+> a 44pt minimum height and grow with Dynamic Type. Native toolbar actions use
+> `ToolbarIcon` template images, a circular system border and fixed spacers between
+> separate glass surfaces. Swipe actions also use circles when their captions are
+> hidden at accessibility text sizes. Native toggles,
+> segmented controls and navigation retain system metrics. Document checklist
+> adornments retain their first-line alignment and row-pitch hit targets.
+> The formatting accessory scrolls horizontally on narrow devices rather than
+> compressing its nine actions or widening the editor. The editable Sketch source
+> `/Users/llun/Desktop/Schrift.sketch` uses the same control dimensions and shapes.
+
 > **Living design document.** This covers a design-system refresh handed off from
 > Claude Design (`schrift-ios-design-system.zip`) — the adaptive dark theme,
 > in-app localization, layout-fidelity work, and read-only version history — plus
