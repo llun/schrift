@@ -3326,6 +3326,14 @@ markdown write endpoint**. Understand this before touching the save path:
 
 ### Persistence (`*Store` types)
 
+- **Startup store reconstruction must settle without preferences writes.** SwiftUI
+  may evaluate `@State` initializers again while constructing a view, even when it
+  retains the original object. Writing an unchanged UserDefaults value or removing
+  an absent key can invalidate `@AppStorage`, rebuild the view, and repeat until
+  the scene-create watchdog kills launch. Guard one-time migrations on missing or
+  invalid data; preserve existing valid values without writing them.
+  `LaunchPreferencesTests` covers the session namespace, legacy list cleanup, and
+  a bounded SwiftUI/AppStorage reproduction of the render loop.
 - UserDefaults-backed stores key off `private static let` reverse-DNS constants
   (`dev.llun.Schrift.*`), take `userDefaults: UserDefaults = .standard` as the
   first init parameter, and use `try?` returning a safe empty default — they

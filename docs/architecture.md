@@ -884,6 +884,17 @@ region coverage proves the cleanup code executes rather than being an honest neg
 
 ## Authentication
 
+Launch-time preferences migrations write only when data actually needs migrating.
+`SessionStore.init` preserves a valid image-cache namespace without rewriting it,
+and `DocumentCacheStore.init` removes the retired shared-by-me key only when it
+exists. SwiftUI may reconstruct stores while building a view; redundant defaults
+writes invalidate `@AppStorage` and can feed back into that reconstruction before
+the first scene finishes rendering. The launch regression hosts both stores under
+an observed offline preference with a bounded render counter, alongside tests for
+one-time migration and silent subsequent construction. This fixes the reproducible
+preferences feedback loop matching the 0.63.4 scene-create watchdog reports; the
+original affected physical device still needs verification with the shipped fix.
+
 **WKWebView session-cookie login**, not native OAuth/PKCE. Rationale:
 
 - The Connect screen (per the design handoff) accepts an arbitrary Docs server URL — the app cannot know that server's IdP endpoints in advance, and Docs' own `/api/v1.0/config/` does not expose them.

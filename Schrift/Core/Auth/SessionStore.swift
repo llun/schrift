@@ -73,7 +73,9 @@ final class SessionStore {
             let existing = userDefaults.string(forKey: Self.imageCacheSessionKey).flatMap(UUID.init(uuidString:))
             let namespace = existing ?? UUID()
             imageCacheSessionID = namespace
-            userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey)
+            // State initializers can run again while SwiftUI constructs a view. A redundant
+            // defaults write invalidates AppStorage and can keep the first scene rendering.
+            if existing == nil { userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey) }
             // A session stored by a build that predates the ThisDeviceOnly
             // accessibility class would otherwise keep the weaker one for as long
             // as it stays valid — which is indefinitely, since nothing re-saves
