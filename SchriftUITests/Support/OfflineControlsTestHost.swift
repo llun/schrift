@@ -179,7 +179,23 @@ private final class OfflineFixtureProtocol: URLProtocol, @unchecked Sendable {
                 "id": "11111111-1111-4111-8111-111111111111", "title": "Offline fixture", "content": Self.markdown,
                 "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z",
             ])
-        } else if path.contains("children") || path.contains("accesses") {
+        } else if path.contains("accesses") {
+            body = Data(
+                """
+                [{"id":"33333333-3333-4333-8333-333333333333",
+                  "user":{"id":"22222222-2222-4222-8222-222222222222","email":"camille@example.org",
+                          "full_name":"Camille Moreau","short_name":"Camille"},"role":"administrator"},
+                 {"id":"44444444-4444-4444-8444-444444444444",
+                  "user":{"id":"55555555-5555-4555-8555-555555555555","email":"alex@example.org",
+                          "full_name":"Alex Martin","short_name":"Alex"},"role":"editor"}]
+                """.utf8)
+        } else if path.contains("invitations") {
+            body = Data(
+                """
+                {"count":1,"results":[{"id":"66666666-6666-4666-8666-666666666666",
+                 "email":"new.member@example.org","role":"reader","is_expired":false}]}
+                """.utf8)
+        } else if path.contains("children") {
             body = Data("{\"count\":0,\"results\":[]}".utf8)
         } else if path.contains("versions") {
             body = Data(

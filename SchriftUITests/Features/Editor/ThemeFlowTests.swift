@@ -56,6 +56,10 @@ final class ThemeFlowTests: XCTestCase {
             if theme == "paper" {
                 app.buttons["Share"].tap()
                 XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.staticTexts["Alex Martin"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.staticTexts["Camille Moreau"].exists)
+                XCTAssertTrue(app.staticTexts["new.member@example.org"].exists)
+                XCTAssertFalse(app.staticTexts["Couldn't load members. Pull to refresh to try again."].exists)
                 capture(app, "theme-\(name)-share")
                 app.buttons["Close"].tap()
             }
