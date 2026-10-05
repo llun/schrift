@@ -9,6 +9,7 @@ import SwiftUI
 /// `shouldShowLoadingPlaceholder`), because replacing real content with
 /// placeholders would be a downgrade.
 struct Skeleton: View {
+    @Environment(\.docsTheme) private var theme
     var width: CGFloat? = nil
     var height: CGFloat = 12
     var cornerRadius: CGFloat = DocsRadius.sm
@@ -18,7 +19,7 @@ struct Skeleton: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(DocsColor.surfaceMuted)
+            .fill(theme.colors.surfaceMuted)
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
             .opacity(isPulsing ? 0.45 : 1)
@@ -37,6 +38,7 @@ struct Skeleton: View {
 /// One placeholder document row: leading icon block, a title line, and a
 /// shorter second line — the shape of the rows it stands in for.
 struct SkeletonRow: View {
+    @Environment(\.docsTheme) private var theme
     /// Varies the title width per row so a column of them doesn't read as a
     /// suspiciously uniform block.
     var titleWidthFraction: CGFloat = 0.6
@@ -67,6 +69,7 @@ struct SkeletonRow: View {
 /// the first time. Marked as one accessibility element that announces loading,
 /// since the individual shapes carry nothing to speak.
 struct SkeletonList: View {
+    @Environment(\.docsTheme) private var theme
     var rows: Int = 5
 
     @Environment(LocalizationStore.self) private var loc

@@ -24,9 +24,13 @@ struct IconButtonStyleHex: Equatable {
 enum IconButtonStyleResolver {
     // Disabled is driven by view-level opacity (matching the reference), so the
     // resolver keeps each variant's own colors.
-    static func style(variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false)
+    static func style(
+        variant: IconButtonVariant, color: IconButtonColor, isDisabled: Bool = false, theme: AppTheme = .white
+    )
         -> IconButtonStyleHex
     {
+        let light = DocsPalette(theme: theme, isDark: false)
+        let dark = DocsPalette(theme: theme, isDark: true)
         let foregroundLightHex: UInt32
         let foregroundDarkHex: UInt32
         let softLightHex: UInt32
@@ -34,21 +38,21 @@ enum IconButtonStyleResolver {
 
         switch color {
         case .neutral:
-            foregroundLightHex = DocsColorHex.textSecondary
-            foregroundDarkHex = DocsColorHexDark.textSecondary
-            softLightHex = DocsColorHex.surfaceMuted
-            softDarkHex = DocsColorHexDark.surfaceMuted
+            foregroundLightHex = light.textSecondary
+            foregroundDarkHex = dark.textSecondary
+            softLightHex = light.surfaceMuted
+            softDarkHex = dark.surfaceMuted
         case .brand:
             // Reference IconButton brand hue is --text-brand.
-            foregroundLightHex = DocsColorHex.textBrand
-            foregroundDarkHex = DocsColorHexDark.textBrand
-            softLightHex = DocsColorHex.brandFillSoft
-            softDarkHex = DocsColorHexDark.brandFillSoft
+            foregroundLightHex = light.textBrand
+            foregroundDarkHex = dark.textBrand
+            softLightHex = light.brandFillSoft
+            softDarkHex = dark.brandFillSoft
         case .danger:
-            foregroundLightHex = DocsColorHex.danger
-            foregroundDarkHex = DocsColorHexDark.danger
-            softLightHex = DocsColorHex.dangerSoft
-            softDarkHex = DocsColorHexDark.dangerSoft
+            foregroundLightHex = light.danger
+            foregroundDarkHex = dark.danger
+            softLightHex = light.dangerSoft
+            softDarkHex = dark.dangerSoft
         }
 
         switch variant {
@@ -65,9 +69,9 @@ enum IconButtonStyleResolver {
         case .outline:
             // Reference outline = raised surface fill + neutral hairline border + ink glyph.
             return IconButtonStyleHex(
-                backgroundLightHex: DocsColorHex.surfaceRaised, backgroundDarkHex: DocsColorHexDark.surfaceRaised,
+                backgroundLightHex: light.surfaceRaised, backgroundDarkHex: dark.surfaceRaised,
                 foregroundLightHex: foregroundLightHex, foregroundDarkHex: foregroundDarkHex,
-                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault)
+                borderLightHex: light.borderDefault, borderDarkHex: dark.borderDefault)
         }
     }
 }
@@ -91,6 +95,7 @@ enum IconButtonSize {
 }
 
 struct IconButton: View {
+    @Environment(\.docsTheme) private var theme
     let icon: MaterialIcon
     let label: String
     var variant: IconButtonVariant = .ghost
@@ -101,7 +106,7 @@ struct IconButton: View {
     var action: () -> Void
 
     var body: some View {
-        let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
+        let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled, theme: theme)
         Button(action: action) {
             // A fixed glyph stays centered inside the circular control at every
             // text size. VoiceOver reads the control's explicit label.
@@ -126,6 +131,7 @@ struct IconButton: View {
 }
 
 private struct IconButtonPreview: View {
+    @Environment(\.docsTheme) private var theme
     var body: some View {
         VStack(spacing: DocsSpacing.spaceSM) {
             ForEach([IconButtonSize.small, .medium, .large], id: \.self) { size in

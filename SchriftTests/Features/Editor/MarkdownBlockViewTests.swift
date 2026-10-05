@@ -1,8 +1,25 @@
+import SwiftUI
+import UIKit
 import XCTest
 
 @testable import Schrift
 
 final class MarkdownBlockViewTests: XCTestCase {
+
+    private func assertLinkInk(
+        _ color: Color?, message: String = "", file: StaticString = #filePath, line: UInt = #line
+    ) {
+        guard let color else {
+            XCTFail("Missing link ink. \(message)", file: file, line: line)
+            return
+        }
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            let traits = UITraitCollection(userInterfaceStyle: style)
+            XCTAssertEqual(
+                UIColor(color).resolvedColor(with: traits), UIColor(DocsColor.textBrand).resolvedColor(with: traits),
+                message, file: file, line: line)
+        }
+    }
 
     // MARK: - Bare-URL autolinking
 
@@ -51,7 +68,7 @@ final class MarkdownBlockViewTests: XCTestCase {
 
         XCTAssertEqual(linkRuns.count, 1)
         for run in linkRuns {
-            XCTAssertEqual(run.foregroundColor, DocsColor.textBrand)
+            assertLinkInk(run.foregroundColor)
             XCTAssertEqual(run.underlineStyle, .single)
         }
         // Negative control: the text either side is left alone, so the assertion
@@ -70,7 +87,7 @@ final class MarkdownBlockViewTests: XCTestCase {
 
         XCTAssertEqual(linkRuns.count, 4, "expected three markdown links and one autolinked bare URL")
         for run in linkRuns {
-            XCTAssertEqual(run.foregroundColor, DocsColor.textBrand, "\(String(describing: run.link)) unstyled")
+            assertLinkInk(run.foregroundColor, message: "\(String(describing: run.link)) unstyled")
             XCTAssertEqual(run.underlineStyle, .single, "\(String(describing: run.link)) not underlined")
         }
     }

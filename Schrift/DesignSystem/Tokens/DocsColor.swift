@@ -15,6 +15,8 @@ enum DocsColorHex {
     static let textTertiary: UInt32 = 0x69697D
     static let textDisabled: UInt32 = 0xA9A9BF
     static let textOnBrand: UInt32 = 0xFFFFFF
+    // Ink for solid controls, independent of always-white image overlays.
+    static let textOnFill: UInt32 = 0xFFFFFF
 
     // Surfaces
     static let surfacePage: UInt32 = 0xFFFFFF

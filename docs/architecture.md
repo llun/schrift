@@ -1372,7 +1372,7 @@ belongs anyway — the read side already refuses to engage on one.
 From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views using the DesignSystem components, not copied HTML/JS:
 
 - **Connect** — logo, "Welcome to Docs", server URL `TextField`, recent servers list, "Sign in to {host}" button → WebView login.
-- **Home** — a system large-title navigation bar (subtitle = server host, new-doc toolbar action), `SearchField`, Pinned + Recent sections of `DocRow`s — **each document renders in exactly one of the two**: the recents feed is fetched unfiltered, so `recentsExcludingPinned` subtracts whatever the Pinned section is already drawing (pinned wins, Recent is the residue; keyed on membership of the rendered pinned list, never on the `isFavorite` flag, which paginated favorites responses make disagree — see `AGENTS.md`) — the system `TabView` (Schrift/Shared/Profile, with Profile last). Compact Home pushes Search on its own navigation stack; regular-width Home searches inline in its split sidebar. Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared *with* the user (`GET /documents/?is_creator_me=false`) with an offline metadata cache, each row enriched best-effort with its members' avatars and the sharer's name from that document's `accesses/` (the "shared by me" scope was removed — the list API has no distinct by-me shared query), Profile shows the current user via `GET /users/me/` in a row that pushes the **Account screen** (`AccountScreen`, trimmed to the fields `/users/me/` actually returns; it renders an explicit unavailable state rather than a placeholder name when the user hasn't loaded), with the appearance/language pickers, server + server-version rows, sign-out, and the Work Offline toggle.
+- **Home** — a system large-title navigation bar (subtitle = server host, new-doc toolbar action), `SearchField`, Pinned + Recent sections of `DocRow`s — **each document renders in exactly one of the two**: the recents feed is fetched unfiltered, so `recentsExcludingPinned` subtracts whatever the Pinned section is already drawing (pinned wins, Recent is the residue; keyed on membership of the rendered pinned list, never on the `isFavorite` flag, which paginated favorites responses make disagree — see `AGENTS.md`) — the system `TabView` (Schrift/Shared/Profile, with Profile last). Compact Home pushes Search on its own navigation stack; regular-width Home searches inline in its split sidebar. Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared *with* the user (`GET /documents/?is_creator_me=false`) with an offline metadata cache, each row enriched best-effort with its members' avatars and the sharer's name from that document's `accesses/` (the "shared by me" scope was removed — the list API has no distinct by-me shared query), Profile shows the current user via `GET /users/me/` in a row that pushes the **Account screen** (`AccountScreen`, trimmed to the fields `/users/me/` actually returns; it renders an explicit unavailable state rather than a placeholder name when the user hasn't loaded), with the independent appearance/theme/language pickers, server + server-version rows, sign-out, and the Work Offline toggle.
   - Search results push the same `DocumentEditorRoute` as Home rows. The editor hides the native tab bar; Back restores Search (with its retained query), then Home. Shared and Profile retain their own stacks, including Profile → Account. Search's system field is always exposed in the navigation bar, with its localized prompt; Home's shortcut is one VoiceOver button.
   - The shell retains `SearchViewModel` across pop/re-entry and tab switches (query, in-memory results, recent terms). Search remains server-backed. Shared `OnlineAvailability` reads Work Offline and the live network path: Home's compact shortcut, pushed Search field and iPad inline field disable with a localized explanation while offline. Home shows cached rows instead of treating retained search results as an offline index. Search and Quick Access suppress requests in their view models too; availability/request generations reject late results and errors across reconnect. Query state and the PR #148 navigation structure survive these transitions.
 
@@ -1382,6 +1382,28 @@ From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views usin
 - **Options sheet** — Pin/Unpin, Copy link, Share, Delete, and **Version history** (read-only list + "Restore on the web"; see [`design-system.md`](design-system.md)). Copy as Markdown and Duplicate were removed (the `duplicate/` endpoint with them). *Still deferred to a later iteration*: Download (PDF/Word/ODT — no mobile-appropriate endpoint investigated yet), Present.
 
 **iPad**: the same `TabView` shell, whose documents tab hosts a `NavigationSplitView` (document list sidebar + detail/editor pane) instead of the iPhone single-column stack — extrapolated from the design's tokens/components since the handoff only mocked iPhone (390×844) layouts. iOS layout constants (status bar 54px, nav bar 44px, tab bar 49px, home indicator 34px, row min-height 44px, gutters 16/20px) are implemented as native safe-area-driven layout, not hardcoded pixel values, since real devices vary.
+
+## Personal themes
+
+White, Mist and Paper are local app-wide palettes, persisted independently of
+System/Light/Dark appearance. `ThemeStore` defaults to White for new and existing
+installs, reads without startup writes, and ignores unchanged selections.
+`SchriftApp` owns the store and publishes a defaulted `AppTheme` environment value.
+Views use `theme.colors`; pure component and editor resolvers receive the same theme
+explicitly through `DocsPalette`, preserving semantic token identity even when two
+legacy hex numbers coincide. Adaptive colors resolve system appearance through
+native traits, with no global mutable palette.
+
+Theme changes retain screen/navigation/view-model identity. The UIKit editor includes
+the theme in `BlockTextStyling` and repaints the existing text view and link attributes;
+it does not replace the source buffer, caret, focus or scroll state. Theme selection
+never marks a document dirty, schedules a save, modifies authored content/exports,
+writes server preferences or changes collaborator awareness colors. Profile and Account
+use open sections rather than enclosing cards. The iPad sidebar uses the deeper neutral
+surface while the full-width editor stays on the page surface. Native system materials,
+authentication web content and keyboards keep platform behavior. See
+[`design-system.md`](design-system.md) for the palettes, contrast adjustments and native
+fixture verification.
 
 ## Design tokens
 

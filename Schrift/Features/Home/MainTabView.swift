@@ -23,6 +23,7 @@ enum HomeRoute: Hashable {
 /// Home owns compact-width Search, so opening a result and going back preserves the query.
 /// Regular-width Home keeps its split view and inline sidebar search.
 struct MainTabView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
@@ -88,7 +89,7 @@ struct MainTabView: View {
                 tabLabel(loc[.common_profile], icon: .account_circle)
             }
         }
-        .tint(DocsColor.brandFill)
+        .tint(theme.colors.brandFill)
         .tabBarMinimizeBehavior(.onScrollDown)
     }
 
@@ -236,6 +237,7 @@ struct MainTabView: View {
     )
     .environment(LocalizationStore())
     .environment(AppearanceStore())
+    .environment(ThemeStore())
     .environment(AttachmentLoader.inert())
     .environment(ImageLoader.inert())
 }

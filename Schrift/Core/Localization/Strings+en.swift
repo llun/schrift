@@ -300,6 +300,15 @@ enum Strings_en {
         .profile_prefs: "Preferences",
         .profile_prefs_footer:
             "When on, documents you've opened stay available to read and edit on this device without a connection.",
+        .profile_theme: "Theme",
+        .theme_white: "White",
+        .theme_mist: "Mist",
+        .theme_paper: "Paper",
+        .theme_white_description: "Crisp and familiar",
+        .theme_mist_description: "A cool, softer canvas",
+        .theme_paper_description: "Warm ivory and charcoal",
+        .theme_footer:
+            "Applies throughout Schrift, with light and dark palettes. Your documents and exports stay the same.",
         .profile_appearance: "Appearance",
         .profile_language: "Language",
         .profile_notifications: "Notifications",

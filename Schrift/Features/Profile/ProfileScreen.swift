@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ProfileScreen: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: ProfileViewModel
     let serverHost: String
     var isOffline: Bool = false
@@ -24,6 +25,7 @@ struct ProfileScreen: View {
     @State private var isConfirmingDisconnect = false
     @State private var showAppearanceSheet = false
     @State private var showLanguageSheet = false
+    @State private var showThemeSheet = false
     /// The Appearance sheet is a fitted detent sized to its three rows. It has to
     /// grow with the text inside it, or the last option falls below the fold at
     /// larger sizes with no way to reach it.
@@ -31,6 +33,7 @@ struct ProfileScreen: View {
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(AppearanceStore.self) private var appearance
+    @Environment(ThemeStore.self) private var themeStore
 
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -39,7 +42,7 @@ struct ProfileScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
+                VStack(spacing: DocsSpacing.spaceLG) {
                     userSection
                     preferencesSection
                     serverSection
@@ -51,14 +54,10 @@ struct ProfileScreen: View {
                 .padding(.bottom, DocsSpacing.spaceMD)
             }
         }
-        // The handoff puts Profile on the plain page surface (white in light mode),
-        // like the other three tabs — with the grouped cards defined by their
-        // hairline border, not by a sunken grey backdrop. (The old iOS-grouped
-        // grey came from the pre-redesign Profile/Account screens.)
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .navigationTitle(loc[.profile_title])
         // Keyed on the session, not just on appearing. The re-login sheet is presented
         // *over* this screen, so a plain `.task` never re-runs after it is answered — and
@@ -69,6 +68,11 @@ struct ProfileScreen: View {
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
                 .presentationDetents([.height(appearanceSheetHeight)])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showThemeSheet) {
+            ThemePickerSheet()
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showLanguageSheet) {
@@ -91,12 +95,28 @@ struct ProfileScreen: View {
     private var userSection: some View {
         ListSection(header: loc[.profile_user]) {
             NavigationLink(value: ProfileRoute.account) {
-                ProfileTrailingRow(icon: .account_circle, title: accountRowEmail(viewModel.user) ?? "—") {
+                HStack(spacing: DocsSpacing.spaceSM) {
+                    Avatar(name: accountDisplayName(viewModel.user) ?? "—", size: 48)
+                    VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                        Text(accountDisplayName(viewModel.user) ?? "—")
+                            .font(DocsFont.headline)
+                            .foregroundStyle(theme.colors.textPrimary)
+                        if let email = accountRowEmail(viewModel.user) {
+                            Text(email)
+                                .font(DocsFont.footnote)
+                                .foregroundStyle(theme.colors.textSecondary)
+                        }
+                    }
+                    Spacer(minLength: 0)
                     MaterialSymbol(.chevron_right, size: 18)
-                        .foregroundStyle(DocsColor.gray300)
+                        .foregroundStyle(theme.colors.textSecondary)
                 }
+                .padding(.vertical, DocsSpacing.spaceSM)
+                .frame(minHeight: DocsSpacing.rowMinHeight)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("profile.account")
             // Enabled exactly when the detail screen has something to render, which is
             // `accountDisplayName` — the predicate `AccountScreen` itself branches on.
             // Asking `user == nil` instead lets an id-only response (no name, no email)
@@ -124,6 +144,14 @@ struct ProfileScreen: View {
                 showsChevron: true,
                 action: { showAppearanceSheet = true }
             )
+            ListRow(
+                icon: .contrast,
+                title: loc[.profile_theme],
+                value: loc[themeValueKey(themeStore.selected)],
+                showsChevron: true,
+                action: { showThemeSheet = true }
+            )
+            .accessibilityIdentifier("profile.theme")
             ListRow(
                 icon: .translate,
                 title: loc[.profile_language],
@@ -167,7 +195,7 @@ struct ProfileScreen: View {
                             dot: true
                         )
                         MaterialSymbol(.chevron_right, size: 18)
-                            .foregroundStyle(DocsColor.gray300)
+                            .foregroundStyle(theme.colors.gray300)
                     }
                 }
             }
@@ -206,4 +234,5 @@ struct ProfileScreen: View {
     )
     .environment(LocalizationStore())
     .environment(AppearanceStore())
+    .environment(ThemeStore())
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SearchField: View {
+    @Environment(\.docsTheme) private var theme
     @Binding var text: String
     var placeholder: String = "Search"
     var icon: MaterialIcon = .search
@@ -14,7 +15,7 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: DocsSpacing.spaceXS) {
             MaterialSymbol(icon, size: 20)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
             TextField(placeholder, text: $text)
                 .font(DocsFont.callout)
                 .focused($isFocused)
@@ -26,7 +27,7 @@ struct SearchField: View {
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
         .frame(minHeight: DocsSpacing.rowMinHeight)
-        .background(DocsColor.surfaceSunken)
+        .background(theme.colors.surfaceSunken)
         .clipShape(Capsule())
         .onAppear {
             // Defer off the current run loop so the field is in the responder

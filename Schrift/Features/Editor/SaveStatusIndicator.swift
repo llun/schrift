@@ -58,6 +58,7 @@ func saveStatusDisplay(
 }
 
 struct SaveStatusIndicator: View {
+    @Environment(\.docsTheme) private var theme
     let display: SaveStatusDisplay
     var onTap: () -> Void
 
@@ -72,7 +73,7 @@ struct SaveStatusIndicator: View {
             Button(action: onTap) {
                 Text(loc[.editor_save])
                     .font(DocsFont.footnote.weight(.semibold))
-                    .foregroundStyle(DocsColor.textBrand)
+                    .foregroundStyle(theme.colors.textBrand)
                     // Reach the tap target before taking the tap shape. A footnote
                     // line is ~19pt tall, less than half the 44pt target on its
                     // own. The floor is this label's own — *not* `maxHeight:
@@ -108,7 +109,7 @@ struct SaveStatusIndicator: View {
                     .controlSize(.small)
                 Text(loc[.editor_saving])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
             // The passive states carry the same floor as the two tappable ones —
             // they need no tap target, but sized to their own text the canvas
@@ -125,7 +126,7 @@ struct SaveStatusIndicator: View {
                 Text(loc[.editor_saved])
                     .font(DocsFont.footnote)
             }
-            .foregroundStyle(DocsColor.textTertiary)
+            .foregroundStyle(theme.colors.textTertiary)
             // The shared floor, as in `.saving`.
             .frame(minHeight: DocsSpacing.rowMinHeight)
 
@@ -140,7 +141,7 @@ struct SaveStatusIndicator: View {
                 Text(loc[.editor_sync_saved_on_device])
                     .font(DocsFont.footnote)
             }
-            .foregroundStyle(DocsColor.textTertiary)
+            .foregroundStyle(theme.colors.textTertiary)
             // The shared floor, as in `.saving`.
             .frame(minHeight: DocsSpacing.rowMinHeight)
 
@@ -151,7 +152,7 @@ struct SaveStatusIndicator: View {
                     Text(loc[.editor_save_failed])
                         .font(DocsFont.footnote.weight(.semibold))
                 }
-                .foregroundStyle(DocsColor.danger)
+                .foregroundStyle(theme.colors.danger)
                 // The only retry affordance there is while editing, and the only
                 // thing that unpins a document whose revalidations `reconcileDraft`
                 // no-ops. It has to be reachable — floored here rather than left

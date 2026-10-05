@@ -24,6 +24,7 @@ enum PagesTreeLayout {
 /// depth. Levels load lazily and cache-first, so a document you have already
 /// opened has its level available offline.
 struct PagesTreeDrawer: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: PagesTreeViewModel
     let rootTitle: String
     var onOpen: (Document) -> Void
@@ -63,14 +64,14 @@ struct PagesTreeDrawer: View {
                     .accessibilityAction { onClose() }
             }
         }
-        .background(DocsColor.surfaceScrim.ignoresSafeArea())
+        .background(theme.colors.surfaceScrim.ignoresSafeArea())
         .transition(.opacity)
     }
 
     private func panel(width: CGFloat) -> some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(DocsColor.borderDefault)
+            Divider().overlay(theme.colors.borderDefault)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -81,13 +82,13 @@ struct PagesTreeDrawer: View {
                     if let errorKey = viewModel.errorKey {
                         Text(loc[errorKey])
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.danger)
+                            .foregroundStyle(theme.colors.danger)
                             .padding(.horizontal, DocsSpacing.spaceSM)
                             .padding(.top, DocsSpacing.spaceXS)
                     } else if viewModel.rows.isEmpty && !viewModel.loading.contains(viewModel.rootID) {
                         Text(loc[.pages_empty])
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, DocsSpacing.spaceSM)
                             .padding(.top, DocsSpacing.spaceXS)
@@ -104,9 +105,9 @@ struct PagesTreeDrawer: View {
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .overlay(alignment: .trailing) {
-            Rectangle().fill(DocsColor.borderDefault).frame(width: 0.5)
+            Rectangle().fill(theme.colors.borderDefault).frame(width: 0.5)
         }
         .transition(.move(edge: .leading))
     }
@@ -115,7 +116,7 @@ struct PagesTreeDrawer: View {
         HStack {
             Text(loc[.pages_title])
                 .font(DocsFont.headline)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
             Spacer()
             IconButton(icon: .left_panel_close, label: loc[.pages_close], action: onClose)
         }
@@ -131,14 +132,14 @@ struct PagesTreeDrawer: View {
             DocIcon(size: 18)
             Text(rootTitle)
                 .font(DocsFont.subhead.weight(.semibold))
-                .foregroundStyle(DocsColor.textBrand)
+                .foregroundStyle(theme.colors.textBrand)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
         .padding(.vertical, DocsSpacing.spaceXS)
         .frame(minHeight: DocsSpacing.rowMinHeight)
-        .background(DocsColor.brandFillSubtle, in: RoundedRectangle(cornerRadius: DocsRadius.md))
+        .background(theme.colors.brandFillSubtle, in: RoundedRectangle(cornerRadius: DocsRadius.md))
         .padding(.bottom, DocsSpacing.space3xs)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isSelected)
@@ -192,14 +193,14 @@ struct PagesTreeDrawer: View {
                         // row would keep drawing as an ordinary page while tapping it popped
                         // an undo alert about a deletion nothing on screen had announced.
                         .foregroundStyle(
-                            isDeletePending(row) ? DocsColor.textTertiary : DocsColor.textPrimary
+                            isDeletePending(row) ? theme.colors.textTertiary : theme.colors.textPrimary
                         )
                         .strikethrough(isDeletePending(row))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if isDeletePending(row) {
                         MaterialSymbol(.delete, size: 14)
-                            .foregroundStyle(DocsColor.gray350)
+                            .foregroundStyle(theme.colors.gray350)
                     }
                 }
                 // Fill the row's height before taking the tap shape: a label is
@@ -248,7 +249,7 @@ struct PagesTreeDrawer: View {
                         ProgressView().controlSize(.mini)
                     } else {
                         MaterialSymbol(.chevron_right, size: 18)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                             .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
                     }
                 }
@@ -274,7 +275,7 @@ struct PagesTreeDrawer: View {
         // mints locally in both cases, and the replay POSTs a parent before the page that
         // names it.
         VStack(spacing: 0) {
-            Divider().overlay(DocsColor.borderDefault)
+            Divider().overlay(theme.colors.borderDefault)
             Button {
                 Task {
                     if let created = await viewModel.addPage(under: viewModel.rootID) {
@@ -288,7 +289,7 @@ struct PagesTreeDrawer: View {
                         .font(DocsFont.subhead.weight(.semibold))
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(DocsColor.textBrand)
+                .foregroundStyle(theme.colors.textBrand)
                 .padding(.horizontal, DocsSpacing.spaceSM)
                 .padding(.vertical, DocsSpacing.spaceSM)
                 .contentShape(Rectangle())

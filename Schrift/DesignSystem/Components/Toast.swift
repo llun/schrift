@@ -10,12 +10,13 @@ import SwiftUI
 ///
 /// Presented with `.toast(_:)` rather than constructed directly.
 struct Toast: View {
+    @Environment(\.docsTheme) private var theme
     let message: String
 
     var body: some View {
         Text(message)
             .font(DocsFont.footnote.weight(.semibold))
-            .foregroundStyle(DocsColor.textPrimary)
+            .foregroundStyle(theme.colors.textPrimary)
             .padding(.horizontal, DocsSpacing.spaceBase)
             .padding(.vertical, DocsSpacing.spaceSM)
             // Floats over content, so it is glass — same rule as the editor's
@@ -54,6 +55,7 @@ extension View {
 }
 
 private struct ToastPresenter: ViewModifier {
+    @Environment(\.docsTheme) private var theme
     @Binding var message: ToastMessage?
     let bottomInset: CGFloat
 

@@ -60,25 +60,27 @@ struct SwipeActionStyleHex: Equatable {
 }
 
 enum SwipeActionStyleResolver {
-    static func style(role: SwipeActionRole) -> SwipeActionStyleHex {
+    static func style(role: SwipeActionRole, theme: AppTheme = .white) -> SwipeActionStyleHex {
+        let light = DocsPalette(theme: theme, isDark: false)
+        let dark = DocsPalette(theme: theme, isDark: true)
         switch role {
         case .neutral:
             return SwipeActionStyleHex(
-                backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
-                foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary)
+                backgroundLightHex: light.surfaceMuted, backgroundDarkHex: dark.surfaceMuted,
+                foregroundLightHex: light.textSecondary, foregroundDarkHex: dark.textSecondary)
         case .brand:
             return SwipeActionStyleHex(
-                backgroundLightHex: DocsColorHex.brandFill, backgroundDarkHex: DocsColorHexDark.brandFill,
-                foregroundLightHex: DocsColorHex.textOnBrand, foregroundDarkHex: DocsColorHexDark.textOnBrand)
+                backgroundLightHex: light.brandFill, backgroundDarkHex: dark.brandFill,
+                foregroundLightHex: light.textOnFill, foregroundDarkHex: dark.textOnFill)
         case .destructive:
             // The dark half deliberately does **not** pair `danger` with white.
-            // `DocsColorHexDark.danger` is a light salmon — the fill has to lift off a
+            // `dark.danger` is a light salmon — the fill has to lift off a
             // near-black page — so white on it reads at ~2.3:1. Dark inverts the pairing
             // instead: the same salmon with the page's own near-black as ink, ~8:1.
             // See `SwipeActionStyleResolverTests` for the full reasoning.
             return SwipeActionStyleHex(
-                backgroundLightHex: DocsColorHex.danger, backgroundDarkHex: DocsColorHexDark.danger,
-                foregroundLightHex: DocsColorHex.textOnBrand, foregroundDarkHex: DocsColorHexDark.surfacePage)
+                backgroundLightHex: light.danger, backgroundDarkHex: dark.danger,
+                foregroundLightHex: light.textOnFill, foregroundDarkHex: dark.surfacePage)
         }
     }
 }
@@ -287,6 +289,8 @@ struct SwipeRevealAction: Identifiable {
 /// and can still fire on touch-up *after* a swipe, and there is no declarative way to cancel
 /// it from here — so convert such a row to the tap-gesture model before wrapping it.
 struct SwipeRevealRow<ID: Hashable, Content: View>: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.docsCanvasRole) private var canvasRole
     let id: ID
     @Binding var state: SwipeRevealState<ID>
     let actions: [SwipeRevealAction]
@@ -340,7 +344,7 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
         // row and contributes nothing back. Same lesson as `SaveStatusIndicator`'s, from the
         // other direction. Pinned by `SwipeRevealRowGeometryTests`.
         content()
-            .background(DocsColor.surfacePage)
+            .background(canvasRole == .sidebar ? theme.colors.surfaceSunken : theme.colors.surfacePage)
             .overlay {
                 // Present only while open or mid-swipe, so a *closed* row behaves exactly as
                 // it did before this wrapper existed — which is what makes adopting it safe
@@ -491,11 +495,12 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
 
 /// Captioned swipe actions fill their strip; icon-only actions use the shared 44pt circle.
 struct SwipeRevealActionLabel: View {
+    @Environment(\.docsTheme) private var theme
     let action: SwipeRevealAction
     let showsCaption: Bool
 
     var body: some View {
-        let style = SwipeActionStyleResolver.style(role: action.role)
+        let style = SwipeActionStyleResolver.style(role: action.role, theme: theme)
         let foreground = Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex)
         let background = Color(lightHex: style.backgroundLightHex, darkHex: style.backgroundDarkHex)
         if showsCaption {
@@ -523,6 +528,7 @@ struct SwipeRevealActionLabel: View {
 // MARK: - Preview
 
 private struct SwipeRevealRowPreview: View {
+    @Environment(\.docsTheme) private var theme
     @State private var state = SwipeRevealState<String>()
 
     private let rows = ["Q3 Planning", "Roadmap", "Meeting notes"]

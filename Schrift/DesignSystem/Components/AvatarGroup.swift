@@ -36,6 +36,7 @@ func avatarGroupMetrics(size: CGFloat, scale: CGFloat) -> AvatarGroupMetrics {
 }
 
 struct AvatarGroup: View {
+    @Environment(\.docsTheme) private var theme
     let names: [String]
     var size: CGFloat = 32
     var max: Int = 4
@@ -52,18 +53,18 @@ struct AvatarGroup: View {
         HStack(spacing: metrics.overlap) {
             ForEach(Array(layout.visibleNames.enumerated()), id: \.offset) { _, name in
                 Avatar(name: name, size: size, scaleOverride: scale)
-                    .overlay(Circle().stroke(DocsColor.surfacePage, lineWidth: 2))
+                    .overlay(Circle().stroke(theme.colors.surfacePage, lineWidth: 2))
             }
             if layout.overflowCount > 0 {
                 Circle()
-                    .fill(DocsColor.surfaceMuted)
+                    .fill(theme.colors.surfaceMuted)
                     .frame(width: metrics.diameter, height: metrics.diameter)
                     .overlay(
                         Text("+\(layout.overflowCount)")
                             .font(.system(size: metrics.overflowFontSize, weight: .semibold))
-                            .foregroundStyle(DocsColor.textSecondary)
+                            .foregroundStyle(theme.colors.textSecondary)
                     )
-                    .overlay(Circle().stroke(DocsColor.surfacePage, lineWidth: 2))
+                    .overlay(Circle().stroke(theme.colors.surfacePage, lineWidth: 2))
             }
         }
     }

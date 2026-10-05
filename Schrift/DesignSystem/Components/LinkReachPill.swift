@@ -17,38 +17,41 @@ struct LinkReachPillStyleHex: Equatable {
 }
 
 enum LinkReachPillStyleResolver {
-    static func style(reach: LinkReach) -> LinkReachPillStyleHex {
+    static func style(reach: LinkReach, theme: AppTheme = .white) -> LinkReachPillStyleHex {
+        let light = DocsPalette(theme: theme, isDark: false)
+        let dark = DocsPalette(theme: theme, isDark: true)
         switch reach {
         case .restricted:
             return LinkReachPillStyleHex(
-                backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
-                foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
+                backgroundLightHex: light.surfaceMuted, backgroundDarkHex: dark.surfaceMuted,
+                foregroundLightHex: light.textSecondary, foregroundDarkHex: dark.textSecondary,
                 icon: .lock, labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted)
         case .authenticated:
             // Reference uses `vpn_lock` (a lock over a globe) for the org-gated state.
             return LinkReachPillStyleHex(
-                backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
-                foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
+                backgroundLightHex: light.infoSoft, backgroundDarkHex: dark.infoSoft,
+                foregroundLightHex: light.info650, foregroundDarkHex: dark.info650,
                 icon: .vpn_lock, labelKey: .reach_connected,
                 hintKey: .linkreach_hint_authenticated)
         case .public:
             return LinkReachPillStyleHex(
-                backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
-                foregroundLightHex: DocsColorHex.textBrandSecondary,
-                foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
+                backgroundLightHex: light.brandFillSoft, backgroundDarkHex: dark.brandFillSoft,
+                foregroundLightHex: light.textBrandSecondary,
+                foregroundDarkHex: dark.textBrandSecondary,
                 icon: .public, labelKey: .reach_public, hintKey: .linkreach_hint_public)
         }
     }
 }
 
 struct LinkReachPill: View {
+    @Environment(\.docsTheme) private var theme
     let reach: LinkReach
     var showsHint: Bool = false
 
     @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
-        let style = LinkReachPillStyleResolver.style(reach: reach)
+        let style = LinkReachPillStyleResolver.style(reach: reach, theme: theme)
         HStack(spacing: DocsSpacing.space2xs) {
             MaterialSymbol(style.icon, size: 18)
             VStack(alignment: .leading, spacing: 0) {

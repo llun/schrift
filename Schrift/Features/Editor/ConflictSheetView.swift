@@ -29,11 +29,12 @@ struct IdentifiedSyncConflict: Identifiable {
 /// no CRDT), so the user picks a single winner.
 ///
 /// Flat, boxless `SheetHeader` chrome per the design system (see AGENTS.md): the
-/// two choices are `ListRow`s drawn directly on `DocsColor.surfacePage`, no
+/// two choices are `ListRow`s drawn directly on `theme.colors.surfacePage`, no
 /// `NavigationStack`/"Done" and no `ListSection` card. "Keep the server version"
 /// discards the queued local edit, so it is destructive and goes through a
 /// confirmation. Both choices dismiss the sheet before handing off to the caller.
 struct ConflictSheetView: View {
+    @Environment(\.docsTheme) private var theme
     /// The detected conflict — its `serverUpdatedAt` tells the user *when* the other
     /// copy changed, which is the one fact they need to choose a winner. It carries
     /// no server markdown by design: "keep the server version" re-fetches.
@@ -63,14 +64,14 @@ struct ConflictSheetView: View {
                     VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                         Text(loc[.editor_conflict_body])
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textSecondary)
+                            .foregroundStyle(theme.colors.textSecondary)
                         Text(
                             loc.format(
                                 .editor_conflict_server_changed,
                                 conflictServerChangedDate(conflict.serverUpdatedAt, now: Date(), locale: locale))
                         )
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -93,7 +94,7 @@ struct ConflictSheetView: View {
 
                     Text(loc[.editor_conflict_restore_hint])
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, DocsSpacing.gutter)
                         .padding(.top, DocsSpacing.spaceXS)
@@ -103,7 +104,7 @@ struct ConflictSheetView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .alert(loc[.editor_conflict_keep_server], isPresented: $isConfirmingKeepServer) {
             Button(loc[.common_cancel], role: .cancel) {}
             Button(loc[.editor_conflict_keep_server], role: .destructive) {

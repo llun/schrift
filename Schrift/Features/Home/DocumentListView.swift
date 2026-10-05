@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct DocumentListView: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.docsCanvasRole) private var canvasRole
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
     var onSelect: (Document) -> Void
@@ -41,11 +43,11 @@ struct DocumentListView: View {
                             VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                                 Text(loc[errorKey])
                                     .font(DocsFont.footnote)
-                                    .foregroundStyle(DocsColor.danger)
+                                    .foregroundStyle(theme.colors.danger)
                                 if let errorDetail = viewModel.errorDetail {
                                     Text(errorDetail)
                                         .font(DocsFont.footnote)
-                                        .foregroundStyle(DocsColor.textSecondary)
+                                        .foregroundStyle(theme.colors.textSecondary)
                                 }
                             }
                             Spacer(minLength: 0)
@@ -82,7 +84,7 @@ struct DocumentListView: View {
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
-        .background(DocsColor.surfacePage)
+        .background(canvasRole == .sidebar ? theme.colors.surfaceSunken : theme.colors.surfacePage)
         .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
             viewModel.undoPendingDelete(document)
         }
@@ -131,15 +133,15 @@ struct DocumentListView: View {
                 Button(action: onSearchTap) {
                     HStack(spacing: DocsSpacing.spaceXS) {
                         MaterialSymbol(.search, size: 20)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                         Text(loc.format(.home_search_placeholder, serverHost))
                             .font(DocsFont.callout)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                         Spacer()
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)
                     .frame(minHeight: DocsSpacing.rowMinHeight)
-                    .background(DocsColor.surfaceSunken)
+                    .background(theme.colors.surfaceSunken)
                     .clipShape(Capsule())
                     .contentShape(Capsule())
                 }
@@ -156,7 +158,7 @@ struct DocumentListView: View {
             if viewModel.availability.isOffline {
                 Text(loc[.search_offline_explanation])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textSecondary)
+                    .foregroundStyle(theme.colors.textSecondary)
             }
         }
     }
@@ -224,12 +226,12 @@ struct DocumentListView: View {
                 HStack(spacing: DocsSpacing.space3xs + 1) {
                     if let icon {
                         MaterialSymbol(icon, size: 15, fill: filled)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                     }
                     Text(title.uppercased())
                         .font(DocsFont.footnote.weight(.semibold))
                         .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                 }
                 .padding(.horizontal, DocsSpacing.spaceXS)
                 .padding(.bottom, DocsSpacing.space3xs)
@@ -308,6 +310,8 @@ struct DocumentListView: View {
 /// A template image lets the system toolbar recognize an icon-only action,
 /// rather than sizing the Material Symbols text glyph as a wider text button.
 struct NewDocumentToolbarButton: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.docsCanvasRole) private var canvasRole
     var action: () -> Void
 
     @Environment(LocalizationStore.self) private var loc

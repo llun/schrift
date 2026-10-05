@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SharedScreen: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: SharedViewModel
     let serverHost: String
     var onOpenDocument: (Document) -> Void
@@ -27,7 +28,7 @@ struct SharedScreen: View {
                     if let errorKey = viewModel.errorKey {
                         Text(loc[errorKey])
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.danger)
+                            .foregroundStyle(theme.colors.danger)
                             .padding(.horizontal, DocsSpacing.gutter)
                     }
 
@@ -55,7 +56,7 @@ struct SharedScreen: View {
                                 .uppercased()
                             )
                             .font(DocsFont.footnote.weight(.semibold))
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                             .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
                             .padding(.horizontal, DocsSpacing.spaceXS)
                             .padding(.bottom, DocsSpacing.space3xs)
@@ -87,7 +88,7 @@ struct SharedScreen: View {
 
                     Text(loc[.shared_footer_with])
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                         .padding(.horizontal, DocsSpacing.gutterGrouped)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -101,7 +102,7 @@ struct SharedScreen: View {
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
             viewModel.undoPendingDelete(document)
         }

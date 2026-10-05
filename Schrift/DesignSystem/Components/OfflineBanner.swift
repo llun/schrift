@@ -8,6 +8,7 @@ import SwiftUI
 /// (usually `loc[.offline_note]`) so this component doesn't need to guess a
 /// caller-appropriate default from inside an environment-less initializer.
 struct OfflineBanner: View {
+    @Environment(\.docsTheme) private var theme
     var note: String
 
     @Environment(LocalizationStore.self) private var loc
@@ -15,26 +16,26 @@ struct OfflineBanner: View {
     var body: some View {
         HStack(spacing: DocsSpacing.space2xs) {
             MaterialSymbol(.cloud_done, size: 17, fill: true)
-                .foregroundStyle(DocsColor.gray450)
+                .foregroundStyle(theme.colors.gray450)
             Text(loc[.offline_status])
                 .font(DocsFont.caption.weight(.semibold))
                 .docsTracking(DocsTypographySpec.caption, DocsTracking.wide)
-                .foregroundStyle(DocsColor.textSecondary)
+                .foregroundStyle(theme.colors.textSecondary)
             Circle()
-                .fill(DocsColor.gray300)
+                .fill(theme.colors.gray300)
                 .frame(width: 3, height: 3)
             Text(note)
                 .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, DocsSpacing.gutter)
         .padding(.vertical, DocsSpacing.spaceXS)
-        .background(DocsColor.gray050)
+        .background(theme.colors.gray050)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(DocsColor.borderDefault)
+                .fill(theme.colors.borderDefault)
                 .frame(height: 0.5)
         }
         .accessibilityElement(children: .combine)

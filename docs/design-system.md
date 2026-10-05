@@ -1,5 +1,53 @@
 # iOS design update — tab pages, dark mode, localization
 
+
+> **Revised: 2026-10-05 — Quiet, Unboxed personal themes.** White, Mist and Paper
+> apply to every app-owned surface, including editor text, links, sheets and the
+> iPad sidebar. Profile and Account use open `ListSection` composition: sentence-case
+> labels, 32pt section spacing and ordinary rows, with no enclosing fill, stroke or
+> rounded clip. Purposeful shapes remain for inputs, selected controls, attachment
+> objects and native floating chrome. The editor keeps the available pane width and
+> its normal 16pt body inset; no centered paper card or outer decorative gutter.
+>
+> Theme (`schrift.theme`) is independent of Appearance (`schrift.appearance`,
+> System/Light/Dark). Both new and existing installs default to White. White retains
+> the established native neutral/indigo palette, rather than adopting the browser
+> concept's slightly different White numbers. Mist uses light `#F2F3F6` / dark
+> `#1C2028`; Paper uses light `#F6F1E7` / dark `#25231F`. Secondary light ink was
+> darkened from the proposal to `#616676` (Mist) and `#666057` (Paper), so it clears
+> 4.5:1 even on control/secondary fills. Feedback and identity hues retain their
+> meaning. `textOnFill` is white in light appearance and dark canvas ink in dark
+> appearance: this intentionally fixes White's previous low-contrast white labels
+> on pale dark-mode primary controls. `textOnBrand` remains always-white for media
+> overlays and is a separate semantic role.
+>
+> `ThemeStore` reads preferences without startup writes and skips unchanged writes.
+> `SchriftApp` publishes the selected `AppTheme` through the defaulted `docsTheme`
+> environment value. Each view consumes `theme.colors`; pure component resolvers,
+> `blockTextAppearance` and inline link styling take an explicit theme argument
+> (White by default). `DocsPalette` resolves semantic roles, never raw-number
+> replacement: `#FFFFFF` can mean a page or an image-overlay label. Each adaptive
+> `Color` captures its own value palette and resolves light/dark via native traits;
+> there is no mutable process-wide theme. `DocsColor` remains the White compatibility
+> wrapper for fixed preview specimens; live views use `DocsColors`.
+>
+> The editor row observes `docsTheme` and includes it in `BlockTextStyling`, so the
+> existing coordinator restyles the same `UITextView` and inline link attributes.
+> Theme selection never calls a document intent, dirty/save funnel, collaboration
+> broadcast or navigation reset. No `.id(theme)` is used. Native navigation, tabs,
+> keyboards, alerts, authentication web content and Liquid Glass keep their native
+> behavior. Avatar identity colors also stay stable for collaboration awareness.
+>
+> Profile's Theme sheet shows paired samples, remains open to compare selections,
+> and announces the selected row to VoiceOver. Its English copy uses the existing
+> catalog fallback until a reviewed translation pass. `ThemeCatalogPreview` supplies
+> six isolated component specimens. `ThemeStoreTests`, `DocsThemePaletteTests` and
+> `EditorThemeTests` cover persistence, contrast and mounted editor continuity;
+> `ThemeFlowTests` exercises the production screens and exports native screenshots
+> through the test-only host. `--theme-audit`, `--theme-white/mist/paper`,
+> `--theme-dark` and `--theme-accessibility` belong only to that host. They add no
+> shipping-app launch arguments or backend/theme synchronization.
+
 > **Revised: 2026-10-05 — circular icon controls.** Every app-authored icon-only
 > action uses a circular 44pt surface. `IconButton` size variants change the glyph
 > (20/24/26pt), while its box stays 44×44pt. Sheet close and search clear use that
@@ -592,8 +640,9 @@ derived from the Cunningham gray/brand ramps the tokens already come from.
   Backed by `UIColor(dynamicProvider:)` reading
   `traitCollection.userInterfaceStyle`. `hexColorComponents(_:)` stays the pure,
   tested primitive; the dynamic provider reuses it.
-- `DocsColor.*` become **adaptive**: each token pairs its `DocsColorHex.<name>`
-  with `DocsColorHexDark.<name>`. Because nearly the entire app consumes
+- The White `DocsColor.*` compatibility colors pair `DocsColorHex.<name>`
+  with `DocsColorHexDark.<name>`. Live app views now use `theme.colors` from
+  `DocsColors` and the matching `DocsPalette` roles; the original specimens used
   `DocsColor.*` directly (`ListRow`, `NavBar`, `TabBar`, `SearchField`, `DocRow`,
   every screen), this delivers dark mode with **zero call-site changes** there.
 
@@ -614,7 +663,7 @@ struct BadgeStyleHex: Equatable {
 }
 ```
 
-The resolver fills both (light from `DocsColorHex`, dark from `DocsColorHexDark`);
+The resolver fills both from `DocsPalette(theme:isDark:)` using the explicit theme;
 the view renders `Color(lightHex:darkHex:)`. This keeps the convention — resolver
 returns `Equatable` raw values, view converts to `Color` at render — and stays
 unit-testable without SwiftUI. Existing resolver tests extend to assert the dark
@@ -950,7 +999,7 @@ hairline between rows, inset **52pt** when the row has a leading icon, else
 So after this change no tab screen draws inter-row hairlines. This is a
 deliberate match to the design system and the screenshots; it is reversible by a
 single `divided:` flag if a later review prefers iOS-style separators.
-`ListSection` card styling (surface-raised, 1pt border, `radius-lg`, header
+The original `ListSection` card styling (surface-raised, 1pt border, `radius-lg`, header
 padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved (still
 used by the Shared and Profile tab screens). (The **Options, Share, and
 Version-history sheets** were later flattened to boxless, dividerless menus under

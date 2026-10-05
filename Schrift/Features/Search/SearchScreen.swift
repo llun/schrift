@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SearchScreen: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: SearchViewModel
     let serverHost: String
     var onOpenDocument: (Document) -> Void
@@ -30,7 +31,7 @@ struct SearchScreen: View {
                         // Cached documents remain reachable from Home.
                         Text(loc[.search_offline_explanation])
                             .font(DocsFont.subhead)
-                            .foregroundStyle(DocsColor.textSecondary)
+                            .foregroundStyle(theme.colors.textSecondary)
                     } else if trimmedQuery.isEmpty {
                         emptyQueryContent
                     } else {
@@ -49,7 +50,7 @@ struct SearchScreen: View {
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
             viewModel.undoPendingDelete(document)
         }
@@ -93,7 +94,7 @@ struct SearchScreen: View {
             if viewModel.quickAccess.isEmpty {
                 Text(loc[.search_quick_empty])
                     .font(DocsFont.subhead)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             } else {
                 documentList(viewModel.quickAccess)
             }
@@ -115,7 +116,7 @@ struct SearchScreen: View {
             // A failed request isn't "no matches" — surface the error instead.
             Text(loc[errorKey])
                 .font(DocsFont.subhead)
-                .foregroundStyle(DocsColor.danger)
+                .foregroundStyle(theme.colors.danger)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DocsSpacing.spaceLG)
@@ -138,13 +139,13 @@ struct SearchScreen: View {
     private var emptyState: some View {
         VStack(spacing: DocsSpacing.space2xs) {
             MaterialSymbol(.search_off, size: 44)
-                .foregroundStyle(DocsColor.gray300)
+                .foregroundStyle(theme.colors.gray300)
             Text(loc[.search_empty_title])
                 .font(DocsFont.headline)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
             Text(loc.format(.search_empty_body, trimmedQuery))
                 .font(DocsFont.subhead)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -185,7 +186,7 @@ struct SearchScreen: View {
                 .font(DocsFont.footnote.weight(.semibold))
                 .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
         }
-        .foregroundStyle(DocsColor.textTertiary)
+        .foregroundStyle(theme.colors.textTertiary)
         .padding(.horizontal, DocsSpacing.spaceXS)
         // Carry a ~4pt gap to the rows below, matching Home's documentSection
         // and the reference (the wrapping VStacks use spacing 0).
@@ -200,6 +201,7 @@ private struct SearchRequestID: Hashable {
 
 /// Only the field is unavailable; navigation and the system Back button stay usable.
 private struct AvailableSearchField: ViewModifier {
+    @Environment(\.docsTheme) private var theme
     @Binding var query: String
     let isOffline: Bool
     let prompt: String
@@ -217,6 +219,7 @@ private struct AvailableSearchField: ViewModifier {
 // MARK: - Recent searches wrap-flow
 
 struct RecentSearchesFlow: View {
+    @Environment(\.docsTheme) private var theme
     let terms: [String]
     var onSelect: (String) -> Void
 
@@ -228,19 +231,19 @@ struct RecentSearchesFlow: View {
                 } label: {
                     HStack(spacing: DocsSpacing.space2xs) {
                         MaterialSymbol(.history, size: 16)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                         Text(term)
                             .font(DocsFont.subhead)
-                            .foregroundStyle(DocsColor.textSecondary)
+                            .foregroundStyle(theme.colors.textSecondary)
                             .lineLimit(1)
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)
                     .padding(.vertical, 7)
                     .frame(minHeight: DocsSpacing.rowMinHeight)
-                    .background(DocsColor.surfaceSunken)
+                    .background(theme.colors.surfaceSunken)
                     .overlay(
                         RoundedRectangle(cornerRadius: DocsRadius.pill)
-                            .stroke(DocsColor.borderDefault, lineWidth: 1)
+                            .stroke(theme.colors.borderDefault, lineWidth: 1)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: DocsRadius.pill))
                     .contentShape(Capsule())

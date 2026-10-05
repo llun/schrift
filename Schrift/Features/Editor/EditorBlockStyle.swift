@@ -153,22 +153,24 @@ struct BlockTextAppearance: Equatable {
     let colorDarkHex: UInt32
 }
 
-func blockTextAppearance(for kind: BlockKind, text: String) -> BlockTextAppearance {
+func blockTextAppearance(for kind: BlockKind, text: String, theme: AppTheme = .white) -> BlockTextAppearance {
+    let light = DocsPalette(theme: theme, isDark: false)
+    let dark = DocsPalette(theme: theme, isDark: true)
     switch kind {
     case .heading(let level):
         return BlockTextAppearance(
             spec: headingSpec(level: level), design: nil, isItalic: false, isStruckThrough: false,
-            colorLightHex: DocsColorHex.textPrimary, colorDarkHex: DocsColorHexDark.textPrimary)
+            colorLightHex: light.textPrimary, colorDarkHex: dark.textPrimary)
 
     case .quote:
         return BlockTextAppearance(
             spec: DocsTypographySpec.body, design: nil, isItalic: true, isStruckThrough: false,
-            colorLightHex: DocsColorHex.textSecondary, colorDarkHex: DocsColorHexDark.textSecondary)
+            colorLightHex: light.textSecondary, colorDarkHex: dark.textSecondary)
 
     case .checklistItem(let checked):
         return BlockTextAppearance(
             spec: DocsTypographySpec.body, design: nil, isItalic: false, isStruckThrough: checked,
-            colorLightHex: DocsColorHex.textPrimary, colorDarkHex: DocsColorHexDark.textPrimary)
+            colorLightHex: light.textPrimary, colorDarkHex: dark.textPrimary)
 
     case .codeBlock, .unknown:
         // The `.unknown` branch is why this takes the text: a prose `.unknown`
@@ -177,14 +179,14 @@ func blockTextAppearance(for kind: BlockKind, text: String) -> BlockTextAppearan
         return BlockTextAppearance(
             spec: monospaced ? DocsTypographySpec.code : DocsTypographySpec.body,
             design: monospaced ? .monospaced : nil, isItalic: false, isStruckThrough: false,
-            colorLightHex: DocsColorHex.textPrimary, colorDarkHex: DocsColorHexDark.textPrimary)
+            colorLightHex: light.textPrimary, colorDarkHex: dark.textPrimary)
 
     case .paragraph, .bulletItem, .numberedItem, .divider, .image, .attachment:
         // `.divider`/`.image`/`.attachment` are leaves that host no text at all;
         // grouped here only to keep the switch exhaustive with a sane default.
         return BlockTextAppearance(
             spec: DocsTypographySpec.body, design: nil, isItalic: false, isStruckThrough: false,
-            colorLightHex: DocsColorHex.textPrimary, colorDarkHex: DocsColorHexDark.textPrimary)
+            colorLightHex: light.textPrimary, colorDarkHex: dark.textPrimary)
     }
 }
 
@@ -265,6 +267,7 @@ extension View {
 /// content is conditional, and the text view is a sibling of it — its identity
 /// in the modifier chain is unchanged.
 private struct EditorBlockDecorationModifier: ViewModifier {
+    @Environment(\.docsTheme) private var theme
     let decoration: EditorBlockDecoration
 
     func body(content: Content) -> some View {
@@ -282,7 +285,7 @@ private struct EditorBlockDecorationModifier: ViewModifier {
             .overlay(alignment: .leading) {
                 if decoration == .quote {
                     RoundedRectangle(cornerRadius: DocsRadius.xs)
-                        .fill(DocsColor.brandFill)
+                        .fill(theme.colors.brandFill)
                         .frame(width: EditorBlockMetrics.quoteBarWidth)
                 }
             }
@@ -311,7 +314,7 @@ private struct EditorBlockDecorationModifier: ViewModifier {
     }
 
     private var background: Color {
-        decoration == .none ? .clear : DocsColor.surfaceSunken
+        decoration == .none ? .clear : theme.colors.surfaceSunken
     }
 
     private var cornerRadius: CGFloat {
@@ -370,6 +373,7 @@ private func checkboxCenterAboveBaseline(checked: Bool, size: CGFloat) -> CGFloa
 /// both production surfaces. Reading has a separate text tap to enter editing.
 /// Callers without a toggle callback get a plain glyph.
 struct EditorBlockAdornment: View {
+    @Environment(\.docsTheme) private var theme
     let kind: BlockKind
     let numberedIndex: Int
     /// Non-nil makes the checkbox a button. The bullet and the number are never
@@ -384,13 +388,13 @@ struct EditorBlockAdornment: View {
         case .bulletItem:
             Text("•")
                 .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
 
         case .numberedItem:
             Text("\(numberedIndex).")
                 .font(DocsFont.body)
                 .monospacedDigit()
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
 
         case .checklistItem(let checked):
             if let onToggleChecklist {
@@ -423,7 +427,7 @@ struct EditorBlockAdornment: View {
     private func checkbox(checked: Bool) -> some View {
         let glyphCenter = checkboxCenterAboveBaseline(checked: checked, size: checkboxSize)
         return MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
-            .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
+            .foregroundStyle(checked ? theme.colors.brandFill : theme.colors.textTertiary)
             .alignmentGuide(.checklistFirstLine) {
                 $0[.firstTextBaseline] - glyphCenter
             }

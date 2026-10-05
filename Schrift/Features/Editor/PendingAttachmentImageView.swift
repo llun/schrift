@@ -16,6 +16,7 @@ import SwiftUI
 /// so the card must claim nothing and offer **no** button — Remove would destroy the only copy
 /// of the photo over a condition that heals by itself. See `PendingAttachmentDisplay`.
 struct PendingAttachmentImageView: View {
+    @Environment(\.docsTheme) private var theme
     let alt: String
     let display: PendingAttachmentDisplay
     let onRetry: () -> Void
@@ -45,7 +46,7 @@ struct PendingAttachmentImageView: View {
             }
             .padding(DocsSpacing.spaceSM)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfaceMuted)
+            .background(theme.colors.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
             // Pre-existing gap, closed while adding the sibling below rather than left as the
             // odd one out: this is the card whose button is destructive, so it is the last one
@@ -61,7 +62,7 @@ struct PendingAttachmentImageView: View {
             }
             .padding(DocsSpacing.spaceSM)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfaceMuted)
+            .background(theme.colors.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
             .accessibilityElement(children: .contain)
             .accessibilityLabel(label(loc[.editor_attachment_unattributable]))
@@ -93,7 +94,7 @@ struct PendingAttachmentImageView: View {
             Text(loc[.editor_attachment_pending])
                 .font(DocsFont.caption)
         }
-        .foregroundStyle(DocsColor.textOnBrand)
+        .foregroundStyle(theme.colors.textOnBrand)
         .padding(.horizontal, DocsSpacing.spaceXS)
         .padding(.vertical, DocsSpacing.space3xs)
         // Pinned to the light-scheme ink in *both* schemes: this scrim sits on the user's photo,
@@ -113,15 +114,15 @@ struct PendingAttachmentImageView: View {
             Text(text)
                 .font(DocsFont.footnote)
         }
-        .foregroundStyle(DocsColor.textSecondary)
+        .foregroundStyle(theme.colors.textSecondary)
     }
 
     private func actions(showsRetry: Bool) -> some View {
         HStack(spacing: DocsSpacing.spaceSM) {
             if showsRetry {
-                actionButton(loc[.editor_attachment_retry], tint: DocsColor.brandFill, action: onRetry)
+                actionButton(loc[.editor_attachment_retry], tint: theme.colors.brandFill, action: onRetry)
             }
-            actionButton(loc[.editor_attachment_remove], tint: DocsColor.danger, action: onRemove)
+            actionButton(loc[.editor_attachment_remove], tint: theme.colors.danger, action: onRemove)
         }
     }
 

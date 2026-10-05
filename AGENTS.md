@@ -600,8 +600,8 @@ new code reads like the surrounding code.
 `Core/Localization/` (the catalog + `LocalizationStore`) and
 `App/AppAppearance.swift` (`AppAppearance` + `AppearanceStore`):
 
-- **Both are `@MainActor @Observable` stores injected once at the app root**
-  (`SchriftApp`) via `.environment(appearanceStore)` / `.environment(localizationStore)`,
+- **Appearance, Theme and Localization are `@MainActor @Observable` stores injected once at the app root**
+  (`SchriftApp`) via `.environment(appearanceStore)` / `.environment(themeStore)` / `.environment(localizationStore)`,
   plus `.preferredColorScheme(appearanceStore.selected.colorScheme)` and
   `.environment(\.locale, localizationStore.locale)` so date/relative-time
   formatting re-localizes too. Screens read them with
@@ -663,7 +663,7 @@ new code reads like the surrounding code.
   **Document content is never translated** — server-authored titles/body render
   exactly as authored; localization covers app chrome only.
 - `AppAppearance` (`system`/`light`/`dark`) persists as `schrift.appearance`;
-  `.preferredColorScheme(nil)` for `.system` lets the OS decide. Both stores
+  `.preferredColorScheme(nil)` for `.system` lets the OS decide. These preference stores
   follow the `schrift.` `@AppStorage`-prefix convention from
   [Persistence](#persistence-store-types) even though they're hand-rolled
   `UserDefaults` stores, not `@AppStorage`, because they need `@Observable` +
@@ -907,6 +907,20 @@ new code reads like the surrounding code.
   hex-only. Add a value assertion in `DocsColorHexTests` (tokens added after
   the original spec currently lack assertions — extend the tests when you
   touch them).
+- **Personal themes preserve semantic token identity.** `ThemeStore` persists only
+  `schrift.theme`, independently of Appearance, with White as the fallback for both
+  new and existing installs. Initialization is read-only; unchanged selection does
+  not write. The app root publishes the defaulted `docsTheme` environment value.
+  Live views read `@Environment(\.docsTheme)` and use `theme.colors`; pure style
+  resolvers receive `theme: AppTheme = .white` explicitly and use `DocsPalette`.
+  Never remap raw hex numbers globally (page and on-brand can both be white), use a
+  mutable global palette, or reset identity with `.id(theme)`. The UIKit editor row
+  passes its theme into the shared block/inline resolvers and `BlockTextStyling`,
+  restyling in place without dirty/save/content/selection changes. Identity avatar
+  colors and white media overlays keep their independent roles. `textOnFill` is
+  the contrasting solid-control ink; do not substitute `textOnBrand` in dark fills.
+  Any Profile/Theme-picker preview also injects `ThemeStore`; ordinary palette
+  component previews rely on the EnvironmentKey's isolated White default.
 - **Every color is adaptive — there is no light-only token.** `DocsColor.*`
   pairs each `DocsColorHex.<name>` with its `DocsColorHexDark.<name>` via
   `Color(lightHex:darkHex:)` (`HexColor.swift`), backed by
@@ -1251,10 +1265,11 @@ new code reads like the surrounding code.
   `footnote`/`textTertiary`, e.g. a `sectionLabel` helper) and spacing, not from
   boxes or hairlines. This holds for **every** list-bearing sheet today — Options,
   Share, Version history, Appearance, Language — and for any new one: a sheet that
-  shows a list flattens it. **Grouped `ListSection` cards are reserved for the tab
-  screens** (Profile's User/Preferences/Server/About/Sign-out sections, Shared's
-  document list), where the handoff uses them — that is the only place a boxed list
-  belongs. Sheets with **no** list (the re-login and link-editor form sheets, the
+  shows a list flattens it. **Tab/detail lists are unboxed too.** `ListSection`
+  is open composition: sentence-case labels and spacing, with no enclosing fill,
+  stroke or rounded clip. Profile and Account own the outer gutter and publish
+  `docsRowGutter = 0` to their rows; ordinary sheet rows retain the default gutter.
+  Purposeful input, selection and attachment boundaries remain. Sheets with **no** list (the re-login and link-editor form sheets, the
   web-login sheet) are exempt: they have nothing to flatten and keep their form
   chrome (a `Cancel`/`Save` toolbar is fine there — `SheetHeader`'s title+close is
   for *menu/list* sheets).

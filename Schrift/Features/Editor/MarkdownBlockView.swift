@@ -8,11 +8,11 @@ import SwiftUI
 /// data detector over the rendered characters afterwards and attach a link
 /// only where one isn't already present, so bare URLs become tappable without
 /// double-linking the target of an existing markdown link.
-func markdownInlineText(_ text: String) -> AttributedString {
+func markdownInlineText(_ text: String, theme: AppTheme = .white) -> AttributedString {
     var attributed =
         (try? AttributedString(markdown: text, options: inlineMarkdownOptions)) ?? AttributedString(text)
     autolinkBareURLs(in: &attributed)
-    styleLinks(in: &attributed)
+    styleLinks(in: &attributed, theme: theme)
     return attributed
 }
 
@@ -64,10 +64,10 @@ private func autolinkBareURLs(in attributed: inout AttributedString) {
 /// only guaranteed valid against the value it was taken from. Two links in one
 /// paragraph is all it takes to reach that. (Same reason `autolinkBareURLs`
 /// above collects its matches from a plain `String` snapshot first.)
-private func styleLinks(in attributed: inout AttributedString) {
+private func styleLinks(in attributed: inout AttributedString, theme: AppTheme) {
     let linkRanges = attributed.runs.filter { $0.link != nil }.map(\.range)
     for range in linkRanges {
-        attributed[range].foregroundColor = DocsColor.textBrand
+        attributed[range].foregroundColor = theme.colors.textBrand
         attributed[range].underlineStyle = .single
     }
 }
@@ -106,12 +106,13 @@ func unknownRendersAsProse(_ text: String) -> Bool {
 ///
 /// That catches a token that changes what a leaf row *occupies* — a font, a
 /// padding — and nothing else. A **colour** is invisible to a height
-/// measurement, so `DocsColor.borderDefault` on the divider (the only token that
-/// arm names directly) and `DocsColor.textPrimary` on the two text fallbacks are
+/// measurement, so `theme.colors.borderDefault` on the divider (the only token that
+/// arm names directly) and `theme.colors.textPrimary` on the two text fallbacks are
 /// held by inspection alone. Said plainly because the previous version of this
 /// sentence claimed a drifting token "fails rather than ships", which a height
 /// comparison cannot deliver.
 struct MarkdownBlockView: View {
+    @Environment(\.docsTheme) private var theme
     let block: EditorBlock
     /// Origin the embedded image gate compares against (`imageLoadPolicy`), and
     /// the one an attachment link must be on to render as a card at all.
@@ -133,7 +134,7 @@ struct MarkdownBlockView: View {
             // Labelled, like the editing surface's divider: a rule the eye reads
             // as structure was silent to VoiceOver on this surface alone.
             Rectangle()
-                .fill(DocsColor.borderDefault)
+                .fill(theme.colors.borderDefault)
                 .frame(height: 1)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, EditorBlockMetrics.dividerVerticalPadding)
@@ -145,7 +146,7 @@ struct MarkdownBlockView: View {
             } else {
                 Text("![\(alt)](\(url))")
                     .font(DocsFont.code)
-                    .foregroundStyle(DocsColor.textPrimary)
+                    .foregroundStyle(theme.colors.textPrimary)
             }
 
         case .attachment(let name, let url):
@@ -159,9 +160,9 @@ struct MarkdownBlockView: View {
             if let display = parseAttachmentLink("[\(name)](\(url))", serverOrigin: serverOrigin) {
                 AttachmentCardView(display: display, isOffline: isOffline)
             } else {
-                Text(markdownInlineText("[\(name)](\(url))"))
+                Text(markdownInlineText("[\(name)](\(url))", theme: theme))
                     .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
+                    .foregroundStyle(theme.colors.textPrimary)
             }
 
         default:
@@ -195,12 +196,12 @@ struct MarkdownBlockView: View {
 
     @ViewBuilder private var blockText: some View {
         let textSize = dynamicTypeSize
-        let appearance = blockTextAppearance(for: block.kind, text: block.text)
+        let appearance = blockTextAppearance(for: block.kind, text: block.text, theme: theme)
         // A verbatim block's text is literal — running it through the markdown
         // parser would promise formatting its own panel says is not applied.
         let content =
             blockRendersVerbatim(block.kind, text: block.text)
-            ? AttributedString(block.text) : markdownInlineText(block.text)
+            ? AttributedString(block.text) : markdownInlineText(block.text, theme: theme)
         let text =
             Text(content)
             .font(appearance.font)
@@ -246,6 +247,7 @@ struct MarkdownBlockView: View {
 }
 
 private struct MarkdownBlockCatalog: View {
+    @Environment(\.docsTheme) private var theme
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {

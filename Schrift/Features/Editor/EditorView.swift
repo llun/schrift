@@ -119,6 +119,7 @@ func syncCaption(
 /// rather than `L10nKey`s, which keeps it free of `LocalizationStore` and makes
 /// it hostable with nothing injected.
 struct SyncCaptionLabel: View {
+    @Environment(\.docsTheme) private var theme
     let offersRetry: Bool
     let text: String
     let retryAccessibilityLabel: String
@@ -129,7 +130,7 @@ struct SyncCaptionLabel: View {
             Button(action: onRetry) {
                 Text(text)
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textBrand)
+                    .foregroundStyle(theme.colors.textBrand)
                     // The floor and the shape go on the **label**, exactly as
                     // `SaveStatusIndicator` puts them on its own. A plain
                     // `Button` hit-tests the shape its label draws, and a `Text`
@@ -147,7 +148,7 @@ struct SyncCaptionLabel: View {
             // its own so the slot's height does not move when the state changes.
             Text(text)
                 .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
         }
     }
 }
@@ -198,6 +199,7 @@ func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
 }
 
 struct EditorView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
     let serverHost: String
@@ -343,7 +345,7 @@ struct EditorView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
-            .background(DocsColor.surfacePage)
+            .background(theme.colors.surfacePage)
             // While editing, clear the formatting bar the canvas floats at the
             // same edge — Copy Link is reachable from the toolbar mid-edit, so
             // the two genuinely collide.
@@ -634,7 +636,8 @@ struct EditorView: View {
                 Button {
                     conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
                 } label: {
-                    EditorNoticeLabel(icon: .warning, title: loc[.editor_conflict_pill], foreground: DocsColor.danger)
+                    EditorNoticeLabel(
+                        icon: .warning, title: loc[.editor_conflict_pill], foreground: theme.colors.danger)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -648,7 +651,7 @@ struct EditorView: View {
                     viewModel.applyPendingUpdate()
                 } label: {
                     EditorNoticeLabel(
-                        icon: .sync, title: loc[.editor_update_available], foreground: DocsColor.textBrand)
+                        icon: .sync, title: loc[.editor_update_available], foreground: theme.colors.textBrand)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, DocsSpacing.gutter)
@@ -669,11 +672,11 @@ struct EditorView: View {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(loc[errorKey])
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.danger)
+                        .foregroundStyle(theme.colors.danger)
                     if let errorDetail = viewModel.errorDetail {
                         Text(errorDetail)
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textSecondary)
+                            .foregroundStyle(theme.colors.textSecondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -716,7 +719,7 @@ struct EditorView: View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
             Text(loc[.editor_pending_delete])
                 .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textSecondary)
+                .foregroundStyle(theme.colors.textSecondary)
             DocsButton(title: loc[.pending_delete_undo], variant: .secondary, size: .medium) {
                 viewModel.undoPendingDeleteForThisDocument()
                 Task { await viewModel.load() }
@@ -870,7 +873,7 @@ struct EditorView: View {
             ProgressView()
             Text(message)
                 .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textSecondary)
+                .foregroundStyle(theme.colors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DocsSpacing.spaceSM)
@@ -1101,7 +1104,7 @@ struct EditorView: View {
                 viewModel.startEditing()
             }
             .font(DocsFont.body)
-            .foregroundStyle(DocsColor.textBrand)
+            .foregroundStyle(theme.colors.textBrand)
         }
         .padding(.top, DocsSpacing.spaceLG)
     }
@@ -1226,7 +1229,7 @@ struct EditorView: View {
         // 40pt above the rule, 16pt below it before the header (reference spacing).
         VStack(alignment: .leading, spacing: 0) {
             Rectangle()
-                .fill(DocsColor.borderDefault)
+                .fill(theme.colors.borderDefault)
                 .frame(height: 1)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -1242,7 +1245,7 @@ struct EditorView: View {
                     .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
                 }
                 .textCase(.uppercase)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .padding(.horizontal, DocsSpacing.spaceXS)
                 // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
                 .padding(.bottom, DocsSpacing.space3xs)
@@ -1251,7 +1254,7 @@ struct EditorView: View {
                     if subpages.isEmpty {
                         Text(loc[.editor_subpages_empty])
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                             .padding(.horizontal, DocsSpacing.spaceXS)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
@@ -1281,7 +1284,7 @@ struct EditorView: View {
                         Text(loc[.editor_add_subpage])
                             .docsScaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
                     }
-                    .foregroundStyle(DocsColor.textBrand)
+                    .foregroundStyle(theme.colors.textBrand)
                     .padding(.horizontal, DocsSpacing.spaceXS)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1418,6 +1421,7 @@ struct EditorView: View {
 
 /// Shared label geometry for the editor's actionable conflict and update notices.
 struct EditorNoticeLabel: View {
+    @Environment(\.docsTheme) private var theme
     let icon: MaterialIcon
     let title: String
     let foreground: Color
@@ -1431,7 +1435,7 @@ struct EditorNoticeLabel: View {
         .padding(.horizontal, DocsSpacing.spaceSM)
         .padding(.vertical, DocsSpacing.space2xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
-        .background(Capsule().fill(DocsColor.gray050))
+        .background(Capsule().fill(theme.colors.gray050))
         .contentShape(Capsule())
     }
 }

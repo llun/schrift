@@ -20,6 +20,7 @@ func appearanceValueKey(_ appearance: AppAppearance) -> L10nKey {
 /// to `AppearanceStore` and dismisses. Presented by `ProfileScreen` with a
 /// fitted `.presentationDetents([.height(280)])`.
 struct AppearancePickerSheet: View {
+    @Environment(\.docsTheme) private var theme
     @Environment(AppearanceStore.self) private var store
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.dismiss) private var dismiss
@@ -44,7 +45,7 @@ struct AppearancePickerSheet: View {
                             ProfileTrailingRow(icon: option.icon, title: loc[appearanceValueKey(option)]) {
                                 if option == store.selected {
                                     MaterialSymbol(.check, size: 17)
-                                        .foregroundStyle(DocsColor.brandFill)
+                                        .foregroundStyle(theme.colors.brandFill)
                                         // The glyph carries no meaning to VoiceOver; the
                                         // row's .isSelected trait announces the state.
                                         .accessibilityHidden(true)
@@ -59,12 +60,14 @@ struct AppearancePickerSheet: View {
             }
         }
         // White page surface (like the restyled Profile), matching the handoff.
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
+        .presentationBackground(theme.colors.surfacePage)
     }
 }
 
 #Preview {
     AppearancePickerSheet()
         .environment(AppearanceStore())
+        .environment(ThemeStore())
         .environment(LocalizationStore())
 }

@@ -6,6 +6,7 @@ import SwiftUI
 /// (`onSearchTap` stays nil), because the list is permanently on screen next to
 /// the editor — there is nothing to navigate away from.
 struct HomeSplitView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: HomeViewModel
     let serverHost: String
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
@@ -34,6 +35,7 @@ struct HomeSplitView: View {
                     }
                 }
             )
+            .environment(\.docsCanvasRole, DocsCanvasRole.sidebar)
         } detail: {
             if let selectedRoute {
                 let selectedDocument = selectedRoute.document
@@ -67,7 +69,7 @@ struct HomeSplitView: View {
                         MaterialSymbol(.description, size: 52)
                     }
                 }
-                .background(DocsColor.surfacePage)
+                .background(theme.colors.surfacePage)
             }
         }
     }

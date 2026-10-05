@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct Switch: View {
+    @Environment(\.docsTheme) private var theme
     @Binding var isOn: Bool
     var isDisabled: Bool = false
 
@@ -8,7 +9,7 @@ struct Switch: View {
         Toggle("", isOn: $isOn)
             .labelsHidden()
             .toggleStyle(.switch)
-            .tint(DocsColor.brandFill)
+            .tint(theme.colors.brandFill)
             .disabled(isDisabled)
     }
 }

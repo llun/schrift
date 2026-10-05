@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ComponentCatalogPreview: View {
+    @Environment(\.docsTheme) private var theme
     @State private var isSwitchOn = true
     @State private var searchText = ""
     @State private var textFieldValue = ""
@@ -119,7 +120,7 @@ struct ComponentCatalogPreview: View {
             }
             .padding(DocsSpacing.spaceBase)
         }
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
     }
 
     @ViewBuilder
@@ -127,7 +128,7 @@ struct ComponentCatalogPreview: View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
             Text(title)
                 .font(DocsFont.title2)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
             content()
         }
     }
@@ -136,6 +137,7 @@ struct ComponentCatalogPreview: View {
 /// The swipe rows need a live `SwipeRevealState` to coordinate "only one open at a time",
 /// which a `@ViewBuilder` closure cannot hold — hence a small view of its own.
 private struct SwipeRevealRowCatalogSample: View {
+    @Environment(\.docsTheme) private var theme
     @State private var state = SwipeRevealState<String>()
 
     var body: some View {

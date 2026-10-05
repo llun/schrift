@@ -9,6 +9,7 @@ import SwiftUI
 /// The document header is injected rather than built here: it is the *same*
 /// view on both surfaces, and only its status slot differs.
 struct BlockEditorView<Header: View>: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: EditorViewModel
     /// Threaded to reach the image leaf's off-origin load gate
     /// (`imageLoadPolicy`) and the attachment leaf's card; every other row kind
@@ -131,6 +132,7 @@ struct BlockEditorView<Header: View>: View {
 /// what a block actually occupies — a shared style table proves the two read the
 /// same values, not that the two frameworks then lay them out the same way.
 struct BlockEditorRow: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: EditorViewModel
     let block: EditorBlock
     let index: Int
@@ -153,7 +155,7 @@ struct BlockEditorRow: View {
     var body: some View {
         if case .divider = block.kind {
             Rectangle()
-                .fill(DocsColor.borderDefault)
+                .fill(theme.colors.borderDefault)
                 .frame(height: 1)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, EditorBlockMetrics.dividerVerticalPadding)
@@ -181,7 +183,7 @@ struct BlockEditorRow: View {
             // Both the spacing and the decoration come from `EditorBlockStyle`,
             // the table `MarkdownBlockView` reads, so this row and the reading
             // row it replaces occupy the same space.
-            let checklistFont = blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize).font
+            let checklistFont = blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize, theme: theme).font
             HStack(
                 alignment: blockRowAlignment(block.kind),
                 spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
@@ -208,9 +210,9 @@ struct BlockEditorRow: View {
             // after switching servers) falls back to link text rather than a
             // card that could never load — the same rendering the reading
             // surface uses, so the two agree.
-            Text(markdownInlineText("[\(name)](\(url))"))
+            Text(markdownInlineText("[\(name)](\(url))", theme: theme))
                 .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
         }
     }
 
@@ -232,7 +234,7 @@ struct BlockEditorRow: View {
         } else {
             Text("![\(alt)](\(url))")
                 .font(DocsFont.code)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
         }
     }
 
@@ -262,7 +264,7 @@ struct BlockEditorRow: View {
             // Resolve by identity when UIKit updates, beyond SwiftUI's cached
             // row and Binding values. All writes already go through onEvent.
             text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
-            styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
+            styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize, theme: theme),
             isFocused: {
                 viewModel.focusedBlockID == block.id
                     && (inputRowID == nil || viewModel.inputRowID(for: block.id) == inputRowID)
@@ -338,6 +340,7 @@ struct BlockEditorRow: View {
 }
 
 private struct ChecklistCatalog: View {
+    @Environment(\.docsTheme) private var theme
     @State private var viewModel: EditorViewModel = {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] })
         let model = EditorViewModel(

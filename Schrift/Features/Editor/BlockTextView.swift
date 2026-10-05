@@ -17,7 +17,9 @@ enum BlockTextEvent {
 
 struct BlockTextStyling: Equatable {
     let font: UIFont
+    var theme: AppTheme = .white
     let textColor: UIColor
+    var tintColor: UIColor { UIColor(theme.colors.brandFill) }
     /// A completed to-do's text is struck through, exactly as the reading
     /// surface strikes it (`BlockTextAppearance.isStruckThrough`). Applied over
     /// the whole buffer under the inline marks, so a `~~span~~` inside a checked
@@ -63,8 +65,10 @@ struct BlockTextStyling: Equatable {
 /// parser's fallback; the reflow it replaced happened on every tap, on every
 /// such block. Neither is free; this one is rarer and it is the one the reading
 /// surface has always had.
-func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large) -> BlockTextStyling {
-    let appearance = blockTextAppearance(for: block.kind, text: block.text)
+func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large, theme: AppTheme = .white)
+    -> BlockTextStyling
+{
+    let appearance = blockTextAppearance(for: block.kind, text: block.text, theme: theme)
     let isLiteral: Bool
     let allowsNewlines: Bool
     switch block.kind {
@@ -79,6 +83,7 @@ func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize =
     }
     return BlockTextStyling(
         font: appearance.uiFont(dynamicTypeSize: dynamicTypeSize),
+        theme: theme,
         textColor: appearance.uiColor,
         isStruckThrough: appearance.isStruckThrough,
         isCodeLike: isLiteral,
@@ -266,7 +271,8 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         textStorage.beginEditing()
         textStorage.setAttributes(baseTextAttributes(for: styling), range: full)
         for span in layout.spans {
-            textStorage.addAttributes(inlineTextAttributes(for: span.marks, base: font), range: span.range)
+            textStorage.addAttributes(
+                inlineTextAttributes(for: span.marks, base: font, theme: styling.theme), range: span.range)
         }
         textStorage.endEditing()
 
@@ -488,6 +494,7 @@ struct BlockTextView: UIViewRepresentable {
         let styling = override ?? styling
         view.font = styling.font
         view.textColor = styling.textColor
+        view.tintColor = styling.tintColor
         view.typingAttributes = baseTextAttributes(for: styling)
         if styling.isCodeLike {
             view.autocorrectionType = .no

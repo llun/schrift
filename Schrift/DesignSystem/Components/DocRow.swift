@@ -65,6 +65,7 @@ func rowUsesStackedLayout(_ dynamicTypeSize: DynamicTypeSize) -> Bool {
 }
 
 struct DocRow: View {
+    @Environment(\.docsTheme) private var theme
     var emoji: String? = nil
     var title: String = "Untitled document"
     var pinned: Bool = false
@@ -141,13 +142,13 @@ struct DocRow: View {
         HStack(spacing: DocsSpacing.space2xs) {
             Text(title)
                 .font(DocsFont.body)
-                .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                .foregroundStyle(pendingDelete ? theme.colors.textTertiary : theme.colors.textPrimary)
                 .strikethrough(pendingDelete)
                 .lineLimit(isStacked ? 3 : 1)
 
             if let indicatorIcon = docRowReachIndicatorIcon(reach: reach) {
                 MaterialSymbol(indicatorIcon, size: 16)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
         }
     }
@@ -156,15 +157,15 @@ struct DocRow: View {
     private var offlineIndicator: some View {
         if pendingDelete {
             MaterialSymbol(.delete, size: 16)
-                .foregroundStyle(DocsColor.gray350)
+                .foregroundStyle(theme.colors.gray350)
                 .accessibilityLabel(loc[.docrow_pending_delete])
         } else if pendingSync {
             MaterialSymbol(.cloud_off, size: 16)
-                .foregroundStyle(DocsColor.gray350)
+                .foregroundStyle(theme.colors.gray350)
                 .accessibilityLabel(loc[.docrow_on_this_device])
         } else if offlineAvailable {
             MaterialSymbol(.cloud_done, size: 16)
-                .foregroundStyle(DocsColor.gray350)
+                .foregroundStyle(theme.colors.gray350)
                 .accessibilityLabel(loc[.docrow_available_offline])
         }
     }
@@ -174,7 +175,7 @@ struct DocRow: View {
         if !date.isEmpty {
             Text(date)
                 .font(DocsFont.footnote)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .lineLimit(1)
                 .layoutPriority(isStacked ? 0 : 1)
         }
