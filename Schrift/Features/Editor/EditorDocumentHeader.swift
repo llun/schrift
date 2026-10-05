@@ -7,6 +7,7 @@ import SwiftUI
 /// block's.
 enum EditorScrollTarget: Hashable {
     case header
+    /// Reading uses model block IDs; editing resolves them to native input row IDs.
     case block(UUID)
     /// The tap-to-append space below the last block.
     case trailer

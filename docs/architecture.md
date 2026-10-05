@@ -1018,8 +1018,10 @@ including repeated prefixes whose characters still match after their offsets cha
 IME input can begin immediately after Return, before the destination row has
 reconciled. The model's stable block IDs remain unchanged; a separate session-local
 input row identity transfers the existing native text view to the destination on
-split/merge. The retained source gets its own native row, and model block IDs still
-name scroll anchors. Before `setMarkedText` starts, the coordinator prepares the
+split/merge. The retained source gets its own native row. Stored scroll anchors and
+recorded frames retain model block IDs; the editing canvas translates them to the
+input row ID attached directly to each lazy row, keeping the caret reachable while
+preserving its native view. Before `setMarkedText` starts, the coordinator prepares the
 destination's current text, styling, and UTF-16 selection and resolves its callback
 configuration by that captured ID. This semantic binding survives native commit and
 immediate corrections until SwiftUI adopts the destination. It prevents both suffix

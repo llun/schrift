@@ -46,7 +46,9 @@ struct BlockEditorView<Header: View>: View {
                             viewModel: viewModel, block: row.block, index: row.index, serverOrigin: serverOrigin,
                             isOffline: isOffline, inputRowID: row.rowID
                         )
-                        .background(Color.clear.id(EditorScrollTarget.block(row.block.id)))
+                        // Target the lazy row itself without changing the
+                        // native view's identity when it moves to another block.
+                        .id(EditorScrollTarget.block(row.rowID))
                         .recordingEditorBlockFrame(row.block.id)
                     }
 
@@ -84,7 +86,7 @@ struct BlockEditorView<Header: View>: View {
             .onAppear {
                 if let blockID = scrollAnchor.consumePendingBlock() {
                     if viewModel.blocks.contains(where: { $0.id == blockID }) {
-                        proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
+                        proxy.scrollTo(EditorScrollTarget.block(viewModel.inputRowID(for: blockID)), anchor: .top)
                     } else {
                         scrollPosition.scrollTo(y: 0)
                     }
@@ -114,7 +116,7 @@ struct BlockEditorView<Header: View>: View {
             .onChange(of: viewModel.focusedBlockID) { _, focusedID in
                 guard let focusedID else { return }
                 withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(EditorScrollTarget.block(focusedID), anchor: .center)
+                    proxy.scrollTo(EditorScrollTarget.block(viewModel.inputRowID(for: focusedID)), anchor: .center)
                 }
             }
         }

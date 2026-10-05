@@ -3232,7 +3232,9 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Marked input after a row transition belongs to the destination.** Keep model
   block IDs stable. The canvas uses session-local input row IDs so a split or
   merge can give the destination the existing native keyboard view; the retained
-  source receives a separate row. Scroll anchors still name model block IDs.
+  source receives a separate row. Stored scroll anchors and recorded frames still
+  name model block IDs; the editing canvas resolves them to direct input-row scroll
+  targets so lazy rows remain reachable without replacing the native text view.
   Before native `setMarkedText`, prepare the pending destination's buffer, styling,
   and UTF-16 selection, then bind all callbacks to that destination until SwiftUI
   adopts it. Keep this binding through commit and immediate corrections; restoring
