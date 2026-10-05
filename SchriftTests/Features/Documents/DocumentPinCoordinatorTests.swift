@@ -361,7 +361,8 @@ final class DocumentPinCoordinatorTests: XCTestCase {
             restored.resolve(pinned: [], recent: [row()], ownerUserID: owner, fetchedAt: -1).pinned.map(\.id), [id])
         XCTAssertTrue(restored.resolve(pinned: [], recent: [row()], ownerUserID: UUID(), fetchedAt: -1).pinned.isEmpty)
         restored.didCacheFreshLists(pinned: [], recent: [row()], ownerUserID: owner, fetchedAt: restored.revision)
-        XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).allSettled().isEmpty)
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allSettled().count, 1)
+        XCTAssertFalse(self.pins().value(for: id, fallback: true, ownerUserID: owner, fetchedAt: -1))
         XCTAssertFalse(
             restored.value(for: id, fallback: true, ownerUserID: owner, fetchedAt: -1),
             "a fresh web unpin reaches older screens")
@@ -778,6 +779,35 @@ final class DocumentPinCoordinatorTests: XCTestCase {
         XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
         SignedInUserStore(userDefaults: defaults).remember(UUID())
         pins.didReadFlags([row()], ownerUserID: owner, fetchedAt: pins.revision)
+        XCTAssertTrue(self.pins().value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+    }
+
+    func testHomePartialPagesPreserveKnownStateAndRollbackAfterRelaunch() async {
+        for known in [true, false] {
+            _ = stub()
+            let pins = pins()
+            XCTAssertTrue(queue(pins, pinned: known, row: row(pinned: !known)))
+            await pins.sync(isBlocked: { _ in false })
+            pins.didCacheFreshLists(pinned: [], recent: [], ownerUserID: owner, fetchedAt: pins.revision)
+            let restored = self.pins()
+            XCTAssertEqual(restored.value(for: id, fallback: !known, ownerUserID: owner, fetchedAt: -1), known)
+            let shown = restored.resolve(pinned: [], recent: [], ownerUserID: owner, fetchedAt: -1)
+            XCTAssertTrue(shown.pinned.isEmpty, "cached first-page membership remains authoritative")
+            XCTAssertTrue(shown.recent.isEmpty)
+            _ = stub(status: 403)
+            XCTAssertTrue(queue(restored, pinned: !known, row: row(pinned: !known)))
+            await restored.sync(isBlocked: { _ in false })
+            XCTAssertEqual(restored.value(for: id, fallback: !known, ownerUserID: owner, fetchedAt: -1), known)
+            restored.remove(documentID: id)
+        }
+    }
+
+    func testHomeKnownRowStillProtectsOlderSubpageMetadataOnRelaunch() async {
+        _ = stub()
+        let pins = pins()
+        XCTAssertTrue(queue(pins, pinned: true))
+        await pins.sync(isBlocked: { _ in false })
+        pins.didCacheFreshLists(pinned: [row(pinned: true)], recent: [], ownerUserID: owner, fetchedAt: pins.revision)
         XCTAssertTrue(self.pins().value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
     }
 

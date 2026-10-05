@@ -934,7 +934,9 @@ projects it over Home/Options/Shared/Search immediately and replays after deleti
 through the existing sync triggers. Local UUIDs and pending deletes never reach a
 favorite mutation. Retryable failures remain pending; terminal rejections restore the
 last server state with pin wording. Settled projections and read revisions protect
-stale responses and relaunch without vetoing newer server reads. Fresh favorites-page
+stale responses and relaunch without vetoing newer server reads. Scoped known bits remain
+durable for pagination gaps and older subpage metadata after Home releases cached
+membership protection. Fresh favorites-page
 membership is independent of metadata flags. Navigation retains real row metadata for
 Options; landed moves update durable fallback placement without changing pin intent.
 Fresh Search/Shared/children flags update older Options and rollback baselines without

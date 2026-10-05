@@ -15,6 +15,8 @@ struct PendingDocumentPin: Codable, Equatable, Sendable {
     var wasRejected: Bool? = nil
     /// A landed filing disables synthetic Recent insertion, even across relaunch.
     var allowsRecentFallback: Bool? = nil
+    /// A newer Home snapshot owns cached membership; retain this bit for older metadata.
+    var preservesCachedMembership: Bool? = nil
 
     var key: String { Self.key(documentID: documentID, serverOrigin: serverOrigin, ownerUserID: ownerUserID) }
 
@@ -69,8 +71,8 @@ final class PendingDocumentPinStore {
         return Array(all.values)
     }
 
-    /// Retain the settled projection until a later Home fetch has written a newer raw
-    /// snapshot. This closes the success → stale cache overwrite → relaunch window.
+    /// Retain the scoped last-known bit across relaunch. Home can release membership
+    /// protection while older subpage metadata still needs the known pin state.
     @discardableResult
     func saveSettled(_ intent: PendingDocumentPin) -> Bool {
         var all = Dictionary(allSettled().map { ($0.key, $0) }, uniquingKeysWith: { _, b in b })

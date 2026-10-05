@@ -2617,17 +2617,18 @@ deletion clears it and its settled projection.
 
 Success and terminal rejection write a **scoped settled projection before removing the
 pending intent**, then update existing list caches without fabricating never-fetched
-lists. This small projection survives relaunch until a newer Home fetch has cached its
-raw server answer. It closes the race where a successful pin is followed by an older
-list response that overwrites the cache. Each surface captures the coordinator revision
-when issuing a read: settlement wins over older reads, while newer reads can reflect a
-pin changed on the web. Home retires the durable settled projection only after its new
-cache writes; in-memory revisions still protect older snapshots held by other screens.
-Fresh Search, Shared and children reads also reconcile changed flags for older Options
-and the next toggle's rollback baseline, retaining the observed bit across relaunch until
-Home caches a newer answer. They capture both account and pin revision before the read;
-old responses and account changes cannot replace newer scoped observations. All projections
-observe identity invalidation even if the account was unknown at their first render.
+lists. The scoped last-known bit survives relaunch, including when partial Home pages
+omit the document or cached subpage metadata still carries its old flag. Each surface
+captures the coordinator revision when issuing a read: settlement wins over older reads,
+while newer reads can reflect a pin changed on the web. After Home caches a newer answer,
+the persisted record releases membership protection for those cached pages; it keeps the
+known flag for older metadata and the next toggle's rollback baseline. Deletion removes
+these scoped records. This closes success → stale cache overwrite → relaunch without
+vetoing newer server reads or inventing favorites-page membership.
+Fresh Search, Shared and children reads reconcile changed flags for older Options too.
+They capture both account and pin revision before the read; old responses and account
+changes cannot replace newer scoped observations. All projections observe identity
+invalidation even if the account was unknown at their first render.
 Fresh favorites-page membership stays independent of metadata flags: a favorite beyond
 page one can remain in Recent, while absence from both pages cannot prove an unpin.
 A landed move records whether synthetic Recent fallback is allowed in the pin record,

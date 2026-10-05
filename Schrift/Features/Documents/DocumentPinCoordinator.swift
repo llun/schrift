@@ -23,7 +23,6 @@ final class DocumentPinCoordinator {
         let revision: Int
         /// Fresh pages own membership; older pages still need the observed bit.
         var membershipReadBoundary: Int? = nil
-        var isDurable = true
     }
 
     init(
@@ -38,7 +37,9 @@ final class DocumentPinCoordinator {
         self.userDefaults = userDefaults
         pending = Dictionary(store.allPins().map { ($0.key, $0) }, uniquingKeysWith: { _, latest in latest })
         for intent in store.allSettled() {
-            settled[intent.key] = Settled(intent: intent, revision: 0)
+            settled[intent.key] = Settled(
+                intent: intent, revision: 0,
+                membershipReadBoundary: intent.preservesCachedMembership == true ? -1 : nil)
             if intent.wasRejected == true { failures.insert(intent.key) }
         }
     }
@@ -237,8 +238,9 @@ final class DocumentPinCoordinator {
             var observed = completed.intent
             observed.isPinned = row.isFavorite
             observed.row = row
-            // Home's raw caches may still be old. Keep this newer server bit across relaunch
-            // until Home has cached a subsequent answer of its own.
+            observed.preservesCachedMembership = nil
+            // Home's raw caches may still be old. This newer server bit protects membership
+            // across relaunch until Home has cached a subsequent answer of its own.
             guard store.saveSettled(observed) else { continue }
             revision += 1
             settled[observed.key] = Settled(
@@ -248,7 +250,8 @@ final class DocumentPinCoordinator {
     }
 
     /// Only after the raw caches have been written by a fetch issued after settlement.
-    /// Keep the in-memory revision for older reads still held by another screen.
+    /// Release their membership protection, retaining scoped flags for older subpage metadata
+    /// and pagination gaps. In-memory revisions still protect older reads on other screens.
     func didCacheFreshLists(pinned: [Document], recent: [Document], ownerUserID: UUID?, fetchedAt: Int) {
         guard let ownerUserID, signedInUser.userID == ownerUserID else { return }
         let fresh = settled.values.filter {
@@ -256,7 +259,6 @@ final class DocumentPinCoordinator {
                 && $0.revision <= fetchedAt && pending[$0.intent.key] == nil
         }
         for completed in fresh {
-            store.removeSettled(completed.intent)
             let pinnedRow = pinned.first { $0.id == completed.intent.documentID }
             let recentRow = recent.first { $0.id == completed.intent.documentID }
             var observed = completed.intent
@@ -264,9 +266,11 @@ final class DocumentPinCoordinator {
             // absence from two paginated first pages proves neither.
             observed.isPinned = pinnedRow != nil ? true : (recentRow?.isFavorite ?? observed.isPinned)
             observed.row = pinnedRow ?? recentRow ?? observed.row
+            observed.preservesCachedMembership = true
+            guard store.saveSettled(observed) else { continue }
             revision += 1
             settled[observed.key] = Settled(
-                intent: observed, revision: revision, membershipReadBoundary: fetchedAt, isDurable: false)
+                intent: observed, revision: revision, membershipReadBoundary: fetchedAt)
         }
     }
 
@@ -286,11 +290,10 @@ final class DocumentPinCoordinator {
             else { continue }
             var updated = completed.intent
             updated.allowsRecentFallback = newParentID == nil
-            // Home may have retired the durable record; do not revive it for a move.
-            if completed.isDurable && !store.saveSettled(updated) { continue }
+            guard store.saveSettled(updated) else { continue }
             completed = Settled(
                 intent: updated, revision: completed.revision,
-                membershipReadBoundary: completed.membershipReadBoundary, isDurable: completed.isDurable)
+                membershipReadBoundary: completed.membershipReadBoundary)
             settled[key] = completed
         }
         revision += 1
