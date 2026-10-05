@@ -2584,7 +2584,8 @@ key remain unchanged; all user-facing error copy says pin.
 `PendingDocumentPinStore` uses a composite **server origin + account UUID + document UUID**
 key, so repeated toggles overwrite only that account's intent for that document. Each
 write gets a unique intent UUID; a delayed response cannot remove a newer toggle. The
-record also holds the previous server bit and an optional real metadata row, so a pin
+record also holds the previous server bit and an optional real metadata row passed
+from navigation through the editor into Options (with a cache fallback), so a pin
 from Search or a cached subpage can appear in Home without inventing document metadata.
 The store is backup-included and survives sign-out. Foreign server/account records remain
 dormant; an unknown account cannot create offline pin work. Corrupt pending bytes are
@@ -2599,7 +2600,8 @@ A stale or agreeing fetch cannot consume an unsent intent.
 
 Replay runs after deletions inside the existing launch/foreground/reconnect funnel, and
 an online toggle can also start the serialized pin replay. Work Offline sends nothing;
-leaving Work Offline or completing reauthentication resumes pins. Before mutation,
+leaving Work Offline or completing reauthentication resumes pins. Learning a previously
+unknown account at launch or reconnect resumes the queue too. Before mutation,
 `/users/me/` must match the remembered owner. Every awaited response rechecks owner,
 intent identity and deletion holds. A local create UUID is rejected at the action layer
 and held at replay; no favorite endpoint ever addresses it. A pending deletion holds
@@ -2621,11 +2623,18 @@ list response that overwrites the cache. Each surface captures the coordinator r
 when issuing a read: settlement wins over older reads, while newer reads can reflect a
 pin changed on the web. Home retires the durable settled projection only after its new
 cache writes; in-memory revisions still protect older snapshots held by other screens.
+Fresh favorites-page membership stays independent of metadata flags: a favorite beyond
+page one can remain in Recent, while absence from both pages cannot prove an unpin.
+A landed move records whether synthetic Recent fallback is allowed in the pin record,
+so an unpin cannot reinsert a filed row even after relaunch or an in-flight settlement.
+Real future feed rows remain authoritative, including servers that list subpages.
 
 Tests cover offline pin/unpin, coalescing, relaunch before and after settlement, stale
 and agreeing reads, cross-screen membership, account/server isolation, real replay
 through Home, Work Offline, auth/transient/terminal failures, superseded completions,
-local-document guards, deletion holds/undo and deletion during replay.
+local-document guards, deletion holds/undo, deletion during replay, unknown identity
+recovery, pagination disagreements and moves during unpin. Race tests use explicit
+`MockURLProtocol.ResponseGate` delivery ordering.
 
 ## A photo queued on this device (2026-08-07, in progress)
 

@@ -2535,7 +2535,11 @@ markdown write endpoint**. Understand this before touching the save path:
   protect older responses; a newer Home fetch caches the server answer and retires the durable
   settled projection, allowing changes made on the web. Work Offline queues pins without
   networking; reconnect, foreground, launch, leaving Work Offline and successful re-login
-  resume replay. The favorites list's version-compatible routing remains in `DocumentEndpoints`.
+  resume replay, including when a previously unknown identity is learned. Options receives
+  the real navigation row, with cache lookup as a fallback. A landed move updates durable
+  Recent fallback placement, so an outstanding unpin cannot reinsert a filed row. Fresh
+  favorites-page membership remains independent of propagated flags; paginated absence
+  cannot prove an unpin. The favorites list's version-compatible routing remains in `DocumentEndpoints`.
   Unattributed/preview callers retain the awaited online path and cannot queue offline work.
 - **Each Home document renders in exactly one section: Pinned wins, Recent is the residue.**
   The feed is fetched *unfiltered* (`isFavorite: nil`), so the server returns a pinned
@@ -2557,11 +2561,9 @@ markdown write endpoint**. Understand this before touching the save path:
   pinning a stale `searchResults` row against a feed the server already flags, where without
   the conjunct that row renders in *both* sections, i.e. the bug this whole bullet is about;
   `removeAll` returns one for an id the feed lacks, harmlessly, the filtered answer being the
-  same either way. The **worst** case is `load()`'s
-  Work Offline branch, which assigns the pinned list unconditionally while guarding the
-  recents one behind `if let cachedRecents`: a fresh install whose only row arrived from a
-  migration and was pinned here loses it from *every* section on the next reseed
-  (`testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`). **Accepted residual:** Home
+  same either way. Work Offline reseeding must also retain durable pending pins
+  (`testAPendingPinSurvivesAWorkOfflineReseed`); rendered membership still belongs in the
+  memo key when raw arrays are value-equal. **Accepted residual:** Home
   has no pagination, so Recent is subtracted from and never topped up — a user whose whole
   first page is pinned sees no Recent section while their other documents sit on a page Home
   never requests. Note what this does *not* change: Home's top row was already

@@ -934,7 +934,10 @@ projects it over Home/Options/Shared/Search immediately and replays after deleti
 through the existing sync triggers. Local UUIDs and pending deletes never reach a
 favorite mutation. Retryable failures remain pending; terminal rejections restore the
 last server state with pin wording. Settled projections and read revisions protect
-stale responses and relaunch without vetoing newer server reads. See
+stale responses and relaunch without vetoing newer server reads. Fresh favorites-page
+membership is independent of metadata flags. Navigation retains real row metadata for
+Options; landed moves update durable fallback placement without changing pin intent.
+Successful identity recovery resumes retained pin work. See
 [`offline-and-sync.md`](offline-and-sync.md#offline-pin-and-unpin).
 
 Favorites routing reads `config/`'s `RELEASE_VERSION` and compares numeric release

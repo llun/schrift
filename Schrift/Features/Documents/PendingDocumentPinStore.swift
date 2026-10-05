@@ -13,6 +13,8 @@ struct PendingDocumentPin: Codable, Equatable, Sendable {
     let intentID: UUID
     let requestedAt: Date
     var wasRejected: Bool? = nil
+    /// A landed filing disables synthetic Recent insertion, even across relaunch.
+    var allowsRecentFallback: Bool? = nil
 
     var key: String { Self.key(documentID: documentID, serverOrigin: serverOrigin, ownerUserID: ownerUserID) }
 

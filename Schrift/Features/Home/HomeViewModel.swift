@@ -66,22 +66,8 @@ final class HomeViewModel {
         // **And so is the pinned list, in both halves.** The *read* registers the `@Observable`
         // dependency and sits above the early return so it happens on every call, which is what
         // moves a row between sections on the pin rather than at the next fetch. The *key* is
-        // load-bearing too, at every writer that moves `pinnedDocuments` without moving
-        // `fetchedRecentDocuments` — note that includes writers that *assign* the recents array
-        // a **value-equal** copy, since `applyingFavoriteFlag` returns one whenever the row's
-        // flag already matches (`applyFavoriteChange` reached from a stale `searchResults` row),
-        // and `removeAll` is a no-op for an id the feed does not carry. The one where it costs a
-        // document is `load()`'s **Work Offline** branch, which assigns `pinnedDocuments`
-        // unconditionally while guarding the recents array behind `if let cachedRecents`,
-        // deliberately, so a nil cache cannot clobber a just-migrated row. Reach it with a fresh install whose only row
-        // arrived in memory from a migration and was then pinned here: `setFavorite` fabricates
-        // no pinned cache, so the reseed empties `pinnedDocuments` while `fetched` stands still,
-        // and a memo without this conjunct hits and keeps filtering the row out. It is then in
-        // **no section at all** — `showsPinnedSection` is false and Recent has dropped it — with
-        // the "No documents yet" state drawn over a document that exists. Pinned by
-        // `testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`. Ids alone:
-        // `applyingFavoriteFlag` rewrites a pinned row's *contents* on every toggle, and the
-        // filtered answer depends on nothing but identity.
+        // needed even when raw rows are value-equal: pending pins can change membership,
+        // and Work Offline reseeding must preserve the durable overlay.
         let version = saveCoordinator.pendingCreatesVersion + saveCoordinator.pins.revision
         let owner = signedInUser.userID
         let pinnedIDs = pinnedDocuments.map(\.id)
@@ -533,12 +519,17 @@ final class HomeViewModel {
     /// conservative direction — the *send* half re-checks against a live `/users/me/` anyway.
     func refreshSignedInUser() async {
         guard let user = try? await client.currentUser() else { return }
+        let previousOwner = signedInUser.userID
         signedInUser.remember(user.id)
+        if previousOwner != user.id { saveCoordinator.pins.sessionIdentityDidChange() }
         // Same response, one more consumer: Profile shows this account from disk when there is
         // no network, and a user who never opens Profile while online would otherwise have
         // nothing cached to show. `ProfileViewModel` also write-throughs on its own fetch;
         // both are idempotent.
         cachedUser.remember(user)
+        // A launch/reconnect may have skipped replay while identity was unknown.
+        // Learning it is the trigger that resumes the account-scoped pin queue.
+        await saveCoordinator.syncPendingPins()
     }
 
     /// Ask who this session belongs to, but only when nothing on the device knows. Returns

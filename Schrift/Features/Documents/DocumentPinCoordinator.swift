@@ -21,6 +21,8 @@ final class DocumentPinCoordinator {
     private struct Settled {
         let intent: PendingDocumentPin
         let revision: Int
+        /// Fresh pages own membership; older pages still need the observed bit.
+        var membershipReadBoundary: Int? = nil
     }
 
     init(
@@ -47,9 +49,10 @@ final class DocumentPinCoordinator {
         let intent = PendingDocumentPin(
             documentID: documentID, serverOrigin: serverOrigin, ownerUserID: ownerUserID,
             isPinned: isPinned,
-            previousValue: pending[key]?.previousValue ?? row?.isFavorite ?? settled[key]?.intent.isPinned ?? !isPinned,
+            previousValue: pending[key]?.previousValue ?? settled[key]?.intent.isPinned ?? row?.isFavorite ?? !isPinned,
             row: row ?? pending[key]?.row ?? settled[key]?.intent.row,
-            intentID: UUID(), requestedAt: Date())
+            intentID: UUID(), requestedAt: Date(),
+            allowsRecentFallback: pending[key]?.allowsRecentFallback ?? settled[key]?.intent.allowsRecentFallback)
         // Write ahead of both the observable state and the request.
         guard store.save(intent) else { return false }
         pending[key] = intent
@@ -76,6 +79,10 @@ final class DocumentPinCoordinator {
 
     func clearFailures() { failures.removeAll() }
 
+    /// The identity store is not observable; invalidate dependent surfaces after learning
+    /// a new account, even when a transport failure leaves all pin records untouched.
+    func sessionIdentityDidChange() { revision += 1 }
+
     var hasFailure: Bool {
         guard let owner = signedInUser.userID else { return false }
         return failures.contains { $0.hasPrefix("\(serverOrigin)|\(owner.uuidString)|") }
@@ -87,23 +94,30 @@ final class DocumentPinCoordinator {
         pinned: [Document], recent: [Document], ownerUserID: UUID?, fetchedAt: Int, includePending: Bool = true
     ) -> FavoriteOverlay {
         let intents = overrides(ownerUserID: ownerUserID, fetchedAt: fetchedAt, includePending: includePending)
+        let membershipIntents = intents.filter {
+            pending[$0.key] != nil || (settled[$0.key]?.membershipReadBoundary.map { fetchedAt < $0 } ?? true)
+        }
         var result = applyFavoriteOverrides(
             pinned: pinned, recent: recent,
-            overrides: Dictionary(intents.map { ($0.documentID, $0.isPinned) }, uniquingKeysWith: { _, b in b }))
-        for intent in intents {
+            overrides: Dictionary(
+                membershipIntents.map { ($0.documentID, $0.isPinned) }, uniquingKeysWith: { _, b in b }))
+        for intent in membershipIntents {
             // Metadata may come from Search or an editor's cached subpage rather than the
             // root feed. Keep that real row available through an offline pin and unpin.
             if intent.isPinned, !result.pinned.contains(where: { $0.id == intent.documentID }), var row = intent.row {
                 row.isFavorite = true
                 result.pinned.insert(row, at: 0)
             }
-            if !intent.isPinned, !result.recent.contains(where: { $0.id == intent.documentID }),
+            if !intent.isPinned, intent.allowsRecentFallback != false,
+                !result.recent.contains(where: { $0.id == intent.documentID }),
                 var row = recent.first(where: { $0.id == intent.documentID })
                     ?? pinned.first(where: { $0.id == intent.documentID }) ?? intent.row
             {
                 row.isFavorite = false
                 result.recent.insert(row, at: 0)
             }
+        }
+        for intent in intents {
             result.pinned = applyingFavoriteFlag(
                 result.pinned, documentID: intent.documentID, isFavorite: intent.isPinned)
             result.recent = applyingFavoriteFlag(
@@ -183,7 +197,8 @@ final class DocumentPinCoordinator {
                     needsAnotherPass = true
                     continue
                 }
-                var completed = sent
+                // Placement metadata may have changed during the request without a new toggle.
+                var completed = latest
                 if failure != nil {
                     completed.isPinned = sent.previousValue
                     completed.wasRejected = true
@@ -211,15 +226,42 @@ final class DocumentPinCoordinator {
         }
         for completed in fresh {
             store.removeSettled(completed.intent)
-            let row =
-                recent.first { $0.id == completed.intent.documentID }
-                ?? pinned.first { $0.id == completed.intent.documentID }
+            let pinnedRow = pinned.first { $0.id == completed.intent.documentID }
+            let recentRow = recent.first { $0.id == completed.intent.documentID }
             var observed = completed.intent
-            observed.isPinned = row?.isFavorite ?? pinned.contains { $0.id == observed.documentID }
-            observed.row = row
+            // Favorites membership proves true. Recent metadata can prove either bit;
+            // absence from two paginated first pages proves neither.
+            observed.isPinned = pinnedRow != nil ? true : (recentRow?.isFavorite ?? observed.isPinned)
+            observed.row = pinnedRow ?? recentRow ?? observed.row
             revision += 1
-            settled[observed.key] = Settled(intent: observed, revision: revision)
+            settled[observed.key] = Settled(intent: observed, revision: revision, membershipReadBoundary: fetchedAt)
         }
+    }
+
+    /// Placement is independent of pin state. A landed filing must not be undone by
+    /// the metadata fallback of an outstanding unpin; real future feed rows still win.
+    func documentMoved(documentID: UUID, newParentID: UUID?) {
+        for key in Array(pending.keys) {
+            guard var intent = pending[key], intent.documentID == documentID,
+                intent.serverOrigin == serverOrigin
+            else { continue }
+            intent.allowsRecentFallback = newParentID == nil
+            if store.save(intent) { pending[key] = intent }
+        }
+        for key in Array(settled.keys) {
+            guard var completed = settled[key], completed.intent.documentID == documentID,
+                completed.intent.serverOrigin == serverOrigin
+            else { continue }
+            var updated = completed.intent
+            updated.allowsRecentFallback = newParentID == nil
+            // Observed flags have already retired their durable settlement; do not revive it.
+            if completed.membershipReadBoundary == nil && !store.saveSettled(updated) { continue }
+            completed = Settled(
+                intent: updated, revision: completed.revision,
+                membershipReadBoundary: completed.membershipReadBoundary)
+            settled[key] = completed
+        }
+        revision += 1
     }
 
     /// A completed deletion supersedes this session's pin. A queued deletion merely holds
@@ -230,10 +272,13 @@ final class DocumentPinCoordinator {
             if let intent = pending[key] { store.remove(intent) }
             pending[key] = nil
         }
-        for completed in settled.values where completed.intent.documentID == documentID {
+        for completed in settled.values
+        where completed.intent.documentID == documentID && completed.intent.serverOrigin == serverOrigin {
             store.removeSettled(completed.intent)
         }
-        settled = settled.filter { $0.value.intent.documentID != documentID }
+        settled = settled.filter {
+            $0.value.intent.documentID != documentID || $0.value.intent.serverOrigin != serverOrigin
+        }
         revision += 1
     }
 }

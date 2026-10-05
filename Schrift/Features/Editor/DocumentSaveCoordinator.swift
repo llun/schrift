@@ -2769,6 +2769,7 @@ final class DocumentSaveCoordinator {
     /// and the server already holds the truth, so a death part-way through is healed by the
     /// next ordinary fetch.
     func completeDocumentMove(documentID: UUID, row: Document?, newParentID: UUID?) {
+        pins.documentMoved(documentID: documentID, newParentID: newParentID)
         // **A checkpointed record's `parentID` is not quite inert after all.** The POST has
         // landed, so nothing re-files the document from it — but the pending *migration* still
         // reads it twice: `insertIntoListCaches` would write this document back into the

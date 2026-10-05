@@ -20,6 +20,7 @@ struct EditorScreen: View {
     /// Retained past `init` because the Pages drawer reads the same store the
     /// view model writes; a test that isolates one must isolate both.
     private let childrenCache: DocumentChildrenCacheStore
+    private let pinRow: Document?
 
     init(
         client: DocsAPIClient,
@@ -36,6 +37,7 @@ struct EditorScreen: View {
         serverOrigin: String,
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
+        pinRow: Document? = nil,
         isOffline: Bool = false,
         onDeleted: (() -> Void)? = nil,
         onOpenDocument: ((Document) -> Void)? = nil,
@@ -60,6 +62,7 @@ struct EditorScreen: View {
         self.serverOrigin = serverOrigin
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
+        self.pinRow = pinRow
         self.isOffline = isOffline
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
@@ -75,6 +78,7 @@ struct EditorScreen: View {
             childrenCache: childrenCache,
             linkRole: linkRole,
             initialIsFavorite: initialIsFavorite,
+            pinRow: pinRow,
             isOffline: isOffline,
             onDeleted: onDeleted,
             onOpenDocument: onOpenDocument,

@@ -35,6 +35,7 @@ final class OptionsViewModel {
     private(set) var didQueueDelete = false
 
     private let documentID: UUID
+    private let pinRow: Document?
 
     /// The delete/pin ladder itself, shared with every list surface that offers the same two
     /// verbs from a swipe. This view model keeps only the translation into screen state —
@@ -45,9 +46,11 @@ final class OptionsViewModel {
     init(
         client: DocsAPIClient, documentID: UUID, isFavorite: Bool,
         saveCoordinator: DocumentSaveCoordinator? = nil,
-        signedInUser: SignedInUserStore = SignedInUserStore()
+        signedInUser: SignedInUserStore = SignedInUserStore(),
+        pinRow: Document? = nil
     ) {
         self.documentID = documentID
+        self.pinRow = pinRow?.id == documentID ? pinRow : nil
         self.originalIsFavorite = isFavorite
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
@@ -57,7 +60,9 @@ final class OptionsViewModel {
 
     func toggleFavorite(isOffline: Bool = false) async {
         errorKey = nil
-        switch await actions.setFavorite(documentID: documentID, isFavorite: !isFavorite, isOffline: isOffline) {
+        switch await actions.setFavorite(
+            documentID: documentID, isFavorite: !isFavorite, row: pinRow, isOffline: isOffline)
+        {
         case .changed(let value): isFavorite = value
         case .queued: break
         case .failed: errorKey = .options_error_toggle_favorite

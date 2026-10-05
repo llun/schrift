@@ -44,7 +44,9 @@ final class DocumentPinCoordinatorTests: XCTestCase {
             signedInUser: SignedInUserStore(userDefaults: defaults), userDefaults: defaults)
     }
 
-    private func stub(status: Int = 204, error: Error? = nil, delay: TimeInterval = 0, user: UUID? = nil)
+    private func stub(
+        status: Int = 204, error: Error? = nil, gate: MockURLProtocol.ResponseGate? = nil, user: UUID? = nil
+    )
         -> RequestRecorder
     {
         let log = RequestRecorder()
@@ -56,7 +58,7 @@ final class DocumentPinCoordinatorTests: XCTestCase {
             }
             return .init(
                 statusCode: status, headers: ["Content-Type": "application/json"], body: Data(), error: error,
-                delay: delay)
+                releasedBy: gate)
         }
         return log
     }
@@ -131,12 +133,15 @@ final class DocumentPinCoordinatorTests: XCTestCase {
     }
 
     func testOldMutationSuccessCannotSettleANewerToggle() async {
-        let log = stub(delay: 0.15)
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        let log = stub(gate: gate)
         let pins = pins()
         XCTAssertTrue(queue(pins, pinned: true))
         let syncing = Task { await pins.sync(isBlocked: { _ in false }) }
-        await waitUntil { log.count(ofMethod: "POST", urlContaining: "/favorite/") == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         XCTAssertTrue(queue(pins, pinned: false))
+        gate.open()
         await syncing.value
         XCTAssertEqual(log.count(ofMethod: "DELETE", urlContaining: "/favorite/"), 1)
         XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).allPins().isEmpty)
@@ -215,13 +220,16 @@ final class DocumentPinCoordinatorTests: XCTestCase {
     }
 
     func testAccountChangeDuringReplayCannotSettleOrPublishOldIntent() async {
-        let log = stub(delay: 0.15)
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        let log = stub(gate: gate)
         let pins = pins()
         XCTAssertTrue(queue(pins, pinned: true))
         let syncing = Task { await pins.sync(isBlocked: { _ in false }) }
-        await waitUntil { log.count(ofMethod: "POST") == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         let other = UUID()
         SignedInUserStore(userDefaults: defaults).remember(other)
+        gate.open()
         await syncing.value
         XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
         XCTAssertTrue(pins.resolve(pinned: [], recent: [row()], ownerUserID: other, fetchedAt: -1).pinned.isEmpty)
@@ -359,20 +367,24 @@ final class DocumentPinCoordinatorTests: XCTestCase {
     }
 
     func testSupersededSuccessThenLatestRejectionRestoresWhatActuallyLanded() async {
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
         let log = RequestRecorder()
         let userBody = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             if request.httpMethod == "GET" { return .init(statusCode: 200, headers: [:], body: userBody, error: nil) }
             return .init(
-                statusCode: request.httpMethod == "POST" ? 204 : 403, headers: [:], body: Data(), error: nil, delay: 0.1
+                statusCode: request.httpMethod == "POST" ? 204 : 403, headers: [:], body: Data(), error: nil,
+                releasedBy: gate
             )
         }
         let pins = pins()
         XCTAssertTrue(queue(pins, pinned: true))
         let syncing = Task { await pins.sync(isBlocked: { _ in false }) }
-        await waitUntil { log.count(ofMethod: "POST") == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         XCTAssertTrue(queue(pins, pinned: false))
+        gate.open()
         await syncing.value
         XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
         XCTAssertEqual(pins.failure(for: id, ownerUserID: owner), .options_error_toggle_favorite)
@@ -403,11 +415,14 @@ final class DocumentPinCoordinatorTests: XCTestCase {
     }
 
     func testDeleteCompletingDuringPinRequestCannotResurrectTheRowOrIntent() async {
-        let log = stub(delay: 0.15)
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        let log = stub(gate: gate)
         let (coordinator, home, _, _, _) = environment()
         await home.toggleFavorite(row())
-        await waitUntil { log.count(ofMethod: "POST") == 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
         coordinator.completeImmediateDelete(documentID: id)
+        gate.open()
         await coordinator.syncPendingPins()
         await waitUntil { !coordinator.pins.isSyncing }
         XCTAssertTrue(home.pinnedDocuments.isEmpty)
@@ -426,6 +441,8 @@ final class DocumentPinCoordinatorTests: XCTestCase {
     }
 
     func testPendingPinSurvivesAnActualStaleHomeFetchAndAnAgreeingFetchCannotSettleIt() async {
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
         defaults.set(true, forKey: "schrift.workOffline")
         let (coordinator, home, _, _, _) = environment()
         home.fetchedRecentDocuments = [row()]
@@ -439,15 +456,17 @@ final class DocumentPinCoordinatorTests: XCTestCase {
             if url.hasSuffix("users/me/") { return .init(statusCode: 200, headers: [:], body: user, error: nil) }
             if request.httpMethod == "POST" { return .init(statusCode: 503, headers: [:], body: Data(), error: nil) }
             return .init(
-                statusCode: 200, headers: [:], body: url.contains("favorite") ? empty : oldPage, error: nil, delay: 0.15
+                statusCode: 200, headers: [:], body: url.contains("favorite") ? empty : oldPage, error: nil,
+                releasedBy: url.contains("/documents/") ? gate : nil
             )
         }
         defaults.set(false, forKey: "schrift.workOffline")
         let loading = Task { await home.load() }
-        await waitUntil { log.count(ofMethod: "GET", urlContaining: "/documents/") >= 1 }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 2 }
         let actions = DocumentActions(
             client: client(), saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: defaults))
         _ = await actions.setFavorite(documentID: id, isFavorite: true, row: row(), isOffline: true)
+        gate.open()
         await loading.value
         XCTAssertEqual(home.pinnedDocuments.map(\.id), [id])
         XCTAssertTrue(home.recentDocuments.isEmpty)
@@ -456,6 +475,175 @@ final class DocumentPinCoordinatorTests: XCTestCase {
         let agreeing = Self.page([row(pinned: true)])
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: agreeing, error: nil) }
         await home.load()
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
+    }
+
+    func testSettledValueWinsOverStaleMetadataForTerminalRollback() async {
+        _ = stub()
+        let pins = pins()
+        XCTAssertTrue(queue(pins, pinned: true))
+        await pins.sync(isBlocked: { _ in false })
+        _ = stub(status: 403)
+        XCTAssertTrue(queue(pins, pinned: false, row: row(pinned: false)))
+        await pins.sync(isBlocked: { _ in false })
+        XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+    }
+
+    func testFreshMembershipIsIndependentOfRecentFlagsInBothDirections() async {
+        for included in [true, false] {
+            _ = stub()
+            let pins = pins()
+            XCTAssertTrue(queue(pins, pinned: true))
+            await pins.sync(isBlocked: { _ in false })
+            let revision = pins.revision
+            let favorites = included ? [row(pinned: true)] : []
+            let recent = [row(pinned: !included)]
+            pins.didCacheFreshLists(pinned: favorites, recent: recent, ownerUserID: owner, fetchedAt: revision)
+            let shown = pins.resolve(pinned: favorites, recent: recent, ownerUserID: owner, fetchedAt: revision)
+            XCTAssertEqual(shown.pinned.map(\.id), included ? [id] : [])
+            XCTAssertEqual(
+                recentsExcludingPinned(recent: shown.recent, pinned: shown.pinned).map(\.id), included ? [] : [id])
+            XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+        }
+    }
+
+    func testAbsenceFromBothFirstPagesDoesNotUnpinOlderScreens() async {
+        _ = stub()
+        let pins = pins()
+        XCTAssertTrue(queue(pins, pinned: true))
+        await pins.sync(isBlocked: { _ in false })
+        let revision = pins.revision
+        pins.didCacheFreshLists(pinned: [], recent: [], ownerUserID: owner, fetchedAt: revision)
+        XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+        XCTAssertTrue(pins.resolve(pinned: [], recent: [], ownerUserID: owner, fetchedAt: revision).pinned.isEmpty)
+    }
+
+    func testDeletionDoesNotClearAnotherServersSameUUIDSettlement() async {
+        _ = stub()
+        let other = self.pins(origin: "https://other.example.org")
+        XCTAssertTrue(queue(other, pinned: true))
+        await other.sync(isBlocked: { _ in false })
+        let local = pins()
+        XCTAssertTrue(queue(local, pinned: true))
+        await local.sync(isBlocked: { _ in false })
+        local.remove(documentID: id)
+        XCTAssertEqual(
+            PendingDocumentPinStore(userDefaults: defaults).allSettled().map(\.serverOrigin),
+            ["https://other.example.org"])
+        XCTAssertTrue(
+            self.pins(origin: "https://other.example.org").value(
+                for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+    }
+
+    func testUnknownIdentityRecoveryResumesPendingReplayOnLaunchAndReconnect() async {
+        for reconnect in [false, true] {
+            defaults.set(true, forKey: "schrift.workOffline")
+            let (_, home, _, _, _) = environment()
+            await home.toggleFavorite(row())
+            SignedInUserStore(userDefaults: defaults).clear()
+            let log = stub()
+            defaults.set(false, forKey: "schrift.workOffline")
+            if reconnect { await home.syncPendingDrafts() } else { await home.refreshSignedInUser() }
+            XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "/favorite/"), 1)
+            XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).allPins().isEmpty)
+        }
+    }
+
+    func testPendingAndSettledUnpinCannotUndoLandedMoveEvenAfterRelaunch() async {
+        for settled in [false, true] {
+            defaults.set(true, forKey: "schrift.workOffline")
+            let (coordinator, home, _, _, _) = environment()
+            home.pinnedDocuments = [row(pinned: true)]
+            await home.toggleFavorite(row(pinned: true))
+            if settled {
+                _ = stub()
+                defaults.set(false, forKey: "schrift.workOffline")
+                await coordinator.syncPendingPins()
+                defaults.set(true, forKey: "schrift.workOffline")
+            }
+            coordinator.completeDocumentMove(documentID: id, row: row(), newParentID: UUID())
+            XCTAssertTrue(home.recentDocuments.isEmpty)
+            let (_, relaunched, _, _, _) = environment()
+            XCTAssertTrue(relaunched.recentDocuments.isEmpty)
+            coordinator.completeDocumentMove(documentID: id, row: row(), newParentID: nil)
+            XCTAssertEqual(home.recentDocuments.map(\.id), [id])
+            coordinator.completeImmediateDelete(documentID: id)
+        }
+    }
+
+    func testOptionsCarriesUncachedSearchMetadataIntoHomeAndQuickAccess() async {
+        defaults.set(true, forKey: "schrift.workOffline")
+        let (coordinator, home, _, _, search) = environment()
+        let options = OptionsViewModel(
+            client: client(), documentID: id, isFavorite: false,
+            saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: defaults), pinRow: row())
+        await options.toggleFavorite(isOffline: true)
+        XCTAssertTrue(options.isFavorite)
+        XCTAssertEqual(home.pinnedDocuments.map(\.id), [id])
+        XCTAssertEqual(search.quickAccess.map(\.id), [id])
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().first?.row?.title, "Document")
+        XCTAssertNil(DocumentCacheStore(userDefaults: defaults).loadRecentDocuments())
+        let (_, restored, _, _, _) = environment()
+        XCTAssertEqual(restored.pinnedDocuments.map(\.id), [id])
+    }
+
+    func testMoveDuringUnpinRequestSurvivesSettlementAndRelaunch() async {
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        _ = stub(gate: gate)
+        defaults.set(true, forKey: "schrift.workOffline")
+        let (coordinator, home, _, _, _) = environment()
+        home.pinnedDocuments = [row(pinned: true)]
+        await home.toggleFavorite(row(pinned: true))
+        defaults.set(false, forKey: "schrift.workOffline")
+        let syncing = Task { await coordinator.syncPendingPins() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        coordinator.completeDocumentMove(documentID: id, row: row(), newParentID: UUID())
+        gate.open()
+        await syncing.value
+        XCTAssertTrue(home.recentDocuments.isEmpty)
+        let (_, restored, _, _, _) = environment()
+        XCTAssertTrue(restored.recentDocuments.isEmpty)
+        XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).allPins().isEmpty)
+    }
+
+    func testLaterServerFeedCanIncludeFiledUnpinnedDocument() async {
+        defaults.set(true, forKey: "schrift.workOffline")
+        let (coordinator, home, _, _, _) = environment()
+        home.pinnedDocuments = [row(pinned: true)]
+        await home.toggleFavorite(row(pinned: true))
+        coordinator.completeDocumentMove(documentID: id, row: row(), newParentID: UUID())
+        // Placement only prohibits synthetic fallback. A future server may include subpages.
+        home.fetchedRecentDocuments = [row()]
+        XCTAssertEqual(home.recentDocuments.map(\.id), [id])
+    }
+
+    func testFreshWebUnpinUpdatesOlderQuickAccessMembership() async {
+        _ = stub()
+        let (coordinator, home, _, _, search) = environment()
+        await home.toggleFavorite(row())
+        await waitUntil {
+            !coordinator.pins.isSyncing && PendingDocumentPinStore(userDefaults: self.defaults).allPins().isEmpty
+        }
+        search.quickAccess = [row(pinned: true)]
+        let revision = coordinator.pins.revision
+        coordinator.pins.didCacheFreshLists(pinned: [], recent: [row()], ownerUserID: owner, fetchedAt: revision)
+        XCTAssertTrue(search.quickAccess.isEmpty)
+        XCTAssertFalse(search.results.contains { $0.isFavorite })
+    }
+
+    func testLearningIdentityInvalidatesProjectionEvenWhenReplayRemainsOffline() async {
+        defaults.set(true, forKey: "schrift.workOffline")
+        let (coordinator, home, _, _, _) = environment()
+        await home.toggleFavorite(row())
+        SignedInUserStore(userDefaults: defaults).clear()
+        XCTAssertTrue(home.pinnedDocuments.isEmpty)
+        let revision = coordinator.pins.revision
+        _ = stub(status: 503)
+        defaults.set(false, forKey: "schrift.workOffline")
+        await home.refreshSignedInUser()
+        XCTAssertGreaterThan(coordinator.pins.revision, revision, "identity must invalidate observable list membership")
+        XCTAssertEqual(home.pinnedDocuments.map(\.id), [id])
         XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
     }
 
