@@ -1,0 +1,24 @@
+Schrift/Features/Editor/EditorView.swift
+  s_1d960a697ac45d::t_78334d5d84cdb8 635,648-649,1372-1390
+  s_1d960a697ac45d::t_665824471e615c 1391
+SchriftTests/DesignSystem/Components/ControlGeometryTests.swift
+  s_1d960a697ac45d::t_78334d5d84cdb8 76-84
+Schrift/Features/Search/SearchScreen.swift
+  s_1d960a697ac45d::t_78334d5d84cdb8 219,239,246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2074af96bb6251ba1de80bb97038683ce5d75b0f",
+  "prompts": {},
+  "sessions": {
+    "s_1d960a697ac45d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c0d-5e12-7b82-bdbb-a3ccfaacca20",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
