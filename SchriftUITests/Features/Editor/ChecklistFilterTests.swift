@@ -32,8 +32,38 @@ final class ChecklistFilterTests: XCTestCase {
         let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: control)
         XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
         control.tap()
-        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        func waitForChange() -> XCTWaiter.Result {
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
+            return XCTWaiter.wait(for: [changed], timeout: 5)
+        }
+        var result = waitForChange()
+        // CI can drop a synthesized touch even at the switch's center. A second
+        // tap is safe only while the observable value is still off; never blindly
+        // double-tap a toggle that may already have changed.
+        if result == .timedOut, toggle.value as? String == "0", control.isEnabled, control.isHittable {
+            control.tap()
+            result = waitForChange()
+        }
+        XCTAssertEqual(result, .completed, "The native hide-completed switch must turn on")
+    }
+
+    private func setEditing(_ editing: Bool, in app: XCUIApplication) {
+        let current = app.buttons[editing ? "Edit" : "Done"]
+        let next = app.buttons[editing ? "Done" : "Edit"]
+        XCTAssertTrue(current.waitForExistence(timeout: 5))
+        func waitForChange() -> XCTWaiter.Result {
+            let disappeared = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: current)
+            let appeared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: next)
+            return XCTWaiter.wait(for: [disappeared, appeared], timeout: 5)
+        }
+        current.tap()
+        var result = waitForChange()
+        if result == .timedOut, !next.exists, current.exists, current.isEnabled, current.isHittable {
+            current.tap()
+            result = waitForChange()
+        }
+        XCTAssertEqual(result, .completed, "The editor must complete the requested mode change")
     }
 
     func testMixedDocumentFilterRevealAndEditingRetainEveryItem() {
@@ -50,12 +80,12 @@ final class ChecklistFilterTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Tail paragraph"].exists)
         XCTAssertTrue(app.staticTexts["Completed items hidden: 2"].exists)
         capture(app, "mixed-filtered")
-        app.buttons["Edit"].tap()
+        setEditing(true, in: app)
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.switches["checklist.hideCompleted"].exists)
         XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Finished one")).firstMatch.exists)
         XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Finished two")).firstMatch.exists)
-        app.buttons["Done"].tap()
+        setEditing(false, in: app)
         XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Finished one"].exists)
         app.buttons["checklist.showCompleted"].tap()
@@ -86,11 +116,11 @@ final class ChecklistFilterTests: XCTestCase {
         XCTAssertFalse(app.buttons["Start writing"].exists)
         XCTAssertFalse(app.staticTexts["Finished one"].exists)
         capture(app, arguments.isEmpty ? "all-completed-default" : "all-completed-accessibility")
-        app.buttons["Edit"].tap()
+        setEditing(true, in: app)
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Finished one")).firstMatch.exists)
         XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Finished two")).firstMatch.exists)
-        app.buttons["Done"].tap()
+        setEditing(false, in: app)
         XCTAssertTrue(reveal.waitForExistence(timeout: 5))
         reveal.tap()
         XCTAssertTrue(app.staticTexts["Finished one"].waitForExistence(timeout: 5))
@@ -110,9 +140,9 @@ final class ChecklistFilterTests: XCTestCase {
         app.buttons["fixture.remoteChange"].tap()
         XCTAssertTrue(app.staticTexts["Reopened remotely"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Completed items hidden: 1"].exists)
-        app.buttons["Edit"].tap()
+        setEditing(true, in: app)
         XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Reopened remotely")).firstMatch.exists)
-        app.buttons["Done"].tap()
+        setEditing(false, in: app)
         XCTAssertTrue(app.staticTexts["Reopened remotely"].waitForExistence(timeout: 5))
         app.buttons["checklist.showCompleted"].tap()
         XCTAssertTrue(app.staticTexts["Finished two"].waitForExistence(timeout: 5))
@@ -181,12 +211,12 @@ final class ChecklistFilterTests: XCTestCase {
         capture(app, "filtered-deep-reading")
         // Toolbar Edit carries the measured viewport anchor; it cannot rely on
         // focusedBlockID scrolling, since this action requests no caret.
-        app.buttons["Edit"].tap()
+        setEditing(true, in: app)
         let editor = app.textViews.matching(NSPredicate(format: "value == %@", anchorLabel)).firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertTrue(editor.isHittable)
         capture(app, "full-deep-editing")
-        app.buttons["Done"].tap()
+        setEditing(false, in: app)
         let restored = app.staticTexts[anchorLabel]
         XCTAssertTrue(restored.waitForExistence(timeout: 5))
         XCTAssertTrue(restored.isHittable)

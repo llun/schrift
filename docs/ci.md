@@ -47,6 +47,11 @@ the push run is the post-merge verification of the real `main` history
    switch value and photo-button hittability before checking their results; a tap
    at the center of a wide accessibility label or a swipe confined to the leftmost
    44pt toolbar button can miss the actual control without exercising app behavior.
+   A checklist test allows one additional real tap only after its state-change
+   wait times out and the old enabled/hittable control is still present in the
+   unchanged state. Mode swaps require the old toolbar action to disappear and
+   the new action to appear. This bounds dropped CI touches without blind double
+   toggles or replacing the downstream content, accessibility, and geometry checks.
    Simulator builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
    don't disable code signing — the Keychain tests need the test host's
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
