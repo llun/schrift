@@ -313,12 +313,15 @@ final class PagesTreeViewModel {
         defer { loading.remove(parentID) }
 
         let mutation = mutations[parentID] ?? 0
+        let pinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
         do {
             let fetched = try await client.listChildren(documentID: parentID).results
             // A create landed while this was in flight, so this snapshot
             // predates the new child: dropping it keeps the child on screen.
             guard mutation == mutations[parentID] ?? 0 else { return }
             children[parentID] = fetched
+            saveCoordinator?.pins.didReadFlags(fetched, ownerUserID: pinOwner, fetchedAt: pinRevision)
             cache.save(fetched, for: parentID)
             failedLoads.remove(parentID)
         } catch {

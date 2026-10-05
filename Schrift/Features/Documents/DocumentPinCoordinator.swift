@@ -23,6 +23,7 @@ final class DocumentPinCoordinator {
         let revision: Int
         /// Fresh pages own membership; older pages still need the observed bit.
         var membershipReadBoundary: Int? = nil
+        var isDurable = true
     }
 
     init(
@@ -73,6 +74,7 @@ final class DocumentPinCoordinator {
     }
 
     func failure(for documentID: UUID, ownerUserID: UUID?) -> L10nKey? {
+        _ = revision
         guard let ownerUserID, failures.contains(key(documentID, ownerUserID)) else { return nil }
         return .options_error_toggle_favorite
     }
@@ -84,6 +86,7 @@ final class DocumentPinCoordinator {
     func sessionIdentityDidChange() { revision += 1 }
 
     var hasFailure: Bool {
+        _ = revision
         guard let owner = signedInUser.userID else { return false }
         return failures.contains { $0.hasPrefix("\(serverOrigin)|\(owner.uuidString)|") }
     }
@@ -135,6 +138,8 @@ final class DocumentPinCoordinator {
     }
 
     private func overrides(ownerUserID: UUID?, fetchedAt: Int, includePending: Bool = true) -> [PendingDocumentPin] {
+        // Register even when identity is unknown and no dictionary has been read yet.
+        _ = revision
         guard let ownerUserID else { return [] }
         let queued = pending.values.filter {
             includePending && $0.serverOrigin == serverOrigin && $0.ownerUserID == ownerUserID
@@ -216,10 +221,36 @@ final class DocumentPinCoordinator {
         } while needsAnotherPass
     }
 
+    /// A fresh flag from Search/Shared is authoritative for older surfaces and the
+    /// next toggle's rollback baseline. It must not consume unsent intent or a newer
+    /// observation, nor alter membership of favorites pages issued at the same revision.
+    func didReadFlags(_ rows: [Document], ownerUserID: UUID?, fetchedAt: Int) {
+        guard let ownerUserID, signedInUser.userID == ownerUserID else { return }
+        let fresh = settled.values.filter {
+            $0.intent.ownerUserID == ownerUserID && $0.intent.serverOrigin == serverOrigin
+                && $0.revision <= fetchedAt && pending[$0.intent.key] == nil
+        }
+        for completed in fresh {
+            guard let row = rows.first(where: { $0.id == completed.intent.documentID }),
+                row.isFavorite != completed.intent.isPinned
+            else { continue }
+            var observed = completed.intent
+            observed.isPinned = row.isFavorite
+            observed.row = row
+            // Home's raw caches may still be old. Keep this newer server bit across relaunch
+            // until Home has cached a subsequent answer of its own.
+            guard store.saveSettled(observed) else { continue }
+            revision += 1
+            settled[observed.key] = Settled(
+                intent: observed, revision: revision,
+                membershipReadBoundary: fetchedAt)
+        }
+    }
+
     /// Only after the raw caches have been written by a fetch issued after settlement.
     /// Keep the in-memory revision for older reads still held by another screen.
     func didCacheFreshLists(pinned: [Document], recent: [Document], ownerUserID: UUID?, fetchedAt: Int) {
-        guard let ownerUserID else { return }
+        guard let ownerUserID, signedInUser.userID == ownerUserID else { return }
         let fresh = settled.values.filter {
             $0.intent.ownerUserID == ownerUserID && $0.intent.serverOrigin == serverOrigin
                 && $0.revision <= fetchedAt && pending[$0.intent.key] == nil
@@ -234,7 +265,8 @@ final class DocumentPinCoordinator {
             observed.isPinned = pinnedRow != nil ? true : (recentRow?.isFavorite ?? observed.isPinned)
             observed.row = pinnedRow ?? recentRow ?? observed.row
             revision += 1
-            settled[observed.key] = Settled(intent: observed, revision: revision, membershipReadBoundary: fetchedAt)
+            settled[observed.key] = Settled(
+                intent: observed, revision: revision, membershipReadBoundary: fetchedAt, isDurable: false)
         }
     }
 
@@ -254,11 +286,11 @@ final class DocumentPinCoordinator {
             else { continue }
             var updated = completed.intent
             updated.allowsRecentFallback = newParentID == nil
-            // Observed flags have already retired their durable settlement; do not revive it.
-            if completed.membershipReadBoundary == nil && !store.saveSettled(updated) { continue }
+            // Home may have retired the durable record; do not revive it for a move.
+            if completed.isDurable && !store.saveSettled(updated) { continue }
             completed = Settled(
                 intent: updated, revision: completed.revision,
-                membershipReadBoundary: completed.membershipReadBoundary)
+                membershipReadBoundary: completed.membershipReadBoundary, isDurable: completed.isDurable)
             settled[key] = completed
         }
         revision += 1

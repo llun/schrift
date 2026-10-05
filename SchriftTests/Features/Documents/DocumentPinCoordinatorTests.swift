@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 
 @testable import Schrift
@@ -645,6 +646,139 @@ final class DocumentPinCoordinatorTests: XCTestCase {
         XCTAssertGreaterThan(coordinator.pins.revision, revision, "identity must invalidate observable list membership")
         XCTAssertEqual(home.pinnedDocuments.map(\.id), [id])
         XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
+    }
+
+    func testFreshSearchAndSharedFlagsReachOptionsAndTerminalRollback() async {
+        for surface in ["Search", "Home search", "Shared", "Subpages", "Pages drawer"] {
+            _ = stub()
+            let (coordinator, home, _, shared, search) = environment()
+            XCTAssertTrue(queue(coordinator.pins, pinned: true))
+            await coordinator.syncPendingPins()
+            let body = Self.page([row()])
+            let user = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
+            MockURLProtocol.stubHandler = { request in
+                if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                    return .init(statusCode: 200, headers: [:], body: user, error: nil)
+                }
+                return .init(
+                    statusCode: request.httpMethod == "GET" ? 200 : 403,
+                    headers: [:], body: body, error: nil)
+            }
+            let fresh: Document
+            switch surface {
+            case "Search":
+                search.query = "Document"
+                await search.search()
+                fresh = search.results[0]
+            case "Home search":
+                home.searchQuery = "Document"
+                await home.search()
+                fresh = home.searchResults[0]
+            case "Shared":
+                await shared.load()
+                fresh = shared.documents[0]
+            case "Subpages":
+                let editor = EditorViewModel(
+                    client: client(), documentID: UUID(), title: "Parent",
+                    saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: defaults),
+                    childrenCache: DocumentChildrenCacheStore(userDefaults: defaults))
+                await editor.loadChildren()
+                fresh = editor.subpages![0]
+            default:
+                let parent = UUID()
+                let tree = PagesTreeViewModel(
+                    rootID: parent, client: client(),
+                    cache: DocumentChildrenCacheStore(userDefaults: defaults), userDefaults: defaults,
+                    saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: defaults))
+                await tree.loadRoot()
+                fresh = tree.children[parent]![0]
+            }
+            XCTAssertFalse(fresh.isFavorite, surface)
+            let options = OptionsViewModel(
+                client: client(), documentID: id, isFavorite: fresh.isFavorite,
+                saveCoordinator: coordinator, signedInUser: SignedInUserStore(userDefaults: defaults), pinRow: fresh)
+            XCTAssertFalse(options.isFavorite, surface)
+            await home.toggleFavorite(fresh)
+            await waitUntil {
+                !coordinator.pins.isSyncing && PendingDocumentPinStore(userDefaults: self.defaults).allPins().isEmpty
+            }
+            XCTAssertFalse(options.isFavorite, surface)
+            XCTAssertTrue(home.pinnedDocuments.isEmpty, surface)
+            XCTAssertEqual(options.errorKey, .options_error_toggle_favorite, surface)
+            coordinator.completeImmediateDelete(documentID: id)
+        }
+    }
+
+    func testIdentityRecoveryInvalidatesEveryPreviouslyHiddenProjection() async {
+        defaults.set(true, forKey: "schrift.workOffline")
+        let (coordinator, home, options, shared, search) = environment()
+        home.fetchedRecentDocuments = [row()]
+        shared.documents = [row()]
+        search.results = [row()]
+        await home.toggleFavorite(row())
+        SignedInUserStore(userDefaults: defaults).clear()
+        let changes = (0..<5).map { _ in Counter() }
+        withObservationTracking {
+            _ = home.pinnedDocuments
+        } onChange: {
+            _ = changes[0].next()
+        }
+        withObservationTracking {
+            _ = options.isFavorite
+        } onChange: {
+            _ = changes[1].next()
+        }
+        withObservationTracking {
+            _ = shared.documents
+        } onChange: {
+            _ = changes[2].next()
+        }
+        withObservationTracking {
+            _ = search.results
+        } onChange: {
+            _ = changes[3].next()
+        }
+        withObservationTracking {
+            _ = search.quickAccess
+        } onChange: {
+            _ = changes[4].next()
+        }
+        _ = stub(status: 503)
+        defaults.set(false, forKey: "schrift.workOffline")
+        await home.refreshSignedInUser()
+        XCTAssertEqual(changes.map(\.current), [1, 1, 1, 1, 1])
+        XCTAssertTrue(options.isFavorite)
+        XCTAssertTrue(shared.documents[0].isFavorite)
+        XCTAssertTrue(search.results[0].isFavorite)
+        XCTAssertEqual(search.quickAccess.map(\.id), [id])
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
+    }
+
+    func testFreshFlagObservationIsDurableAndFilingRetainsItsPlacement() async {
+        _ = stub()
+        let pins = pins()
+        XCTAssertTrue(queue(pins, pinned: true))
+        await pins.sync(isBlocked: { _ in false })
+        pins.didReadFlags([row()], ownerUserID: owner, fetchedAt: pins.revision)
+        XCTAssertFalse(self.pins().value(for: id, fallback: true, ownerUserID: owner, fetchedAt: -1))
+        pins.documentMoved(documentID: id, newParentID: UUID())
+        XCTAssertTrue(self.pins().resolve(pinned: [], recent: [], ownerUserID: owner, fetchedAt: -1).recent.isEmpty)
+    }
+
+    func testFlagObservationsCannotConsumePendingIntentOrUndoNewerSettlement() async {
+        _ = stub()
+        let pins = pins()
+        let oldRead = pins.revision
+        XCTAssertTrue(queue(pins, pinned: true))
+        pins.didReadFlags([row()], ownerUserID: owner, fetchedAt: pins.revision)
+        XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 1)
+        await pins.sync(isBlocked: { _ in false })
+        pins.didReadFlags([row()], ownerUserID: owner, fetchedAt: oldRead)
+        XCTAssertTrue(pins.value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
+        SignedInUserStore(userDefaults: defaults).remember(UUID())
+        pins.didReadFlags([row()], ownerUserID: owner, fetchedAt: pins.revision)
+        XCTAssertTrue(self.pins().value(for: id, fallback: false, ownerUserID: owner, fetchedAt: -1))
     }
 
 }

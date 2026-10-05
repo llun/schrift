@@ -110,6 +110,7 @@ final class SearchViewModel {
         quickAccessGeneration += 1
         let generation = quickAccessGeneration
         let pinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
         guard !availability.isOffline else { return }
         let token = availability.token
         do {
@@ -118,6 +119,13 @@ final class SearchViewModel {
             else { return }
             quickPinRevision = pinRevision
             rawQuickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            // Membership in this endpoint proves pinned even when the serializer omits the flag.
+            let pinnedRows = rawQuickAccess.map { row in
+                var row = row
+                row.isFavorite = true
+                return row
+            }
+            saveCoordinator?.pins.didReadFlags(pinnedRows, ownerUserID: pinOwner, fetchedAt: pinRevision)
         } catch {
             guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled
             else { return }
@@ -129,6 +137,7 @@ final class SearchViewModel {
         searchGeneration += 1
         let generation = searchGeneration
         let pinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
         isSearching = false
         guard !availability.isOffline else { return }
         let token = availability.token
@@ -156,6 +165,7 @@ final class SearchViewModel {
             else { return }
             resultsPinRevision = pinRevision
             rawResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: pinOwner, fetchedAt: pinRevision)
         } catch {
             if generation == searchGeneration { isSearching = false }
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,

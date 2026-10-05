@@ -1546,6 +1546,8 @@ final class EditorViewModel {
         guard !isLocalDocument else { return }
         childrenGeneration += 1
         let generation = childrenGeneration
+        let pinRevision = saveCoordinator.pins.revision
+        let pinOwner = signedInUser.userID
         guard let results = try? await client.listChildren(documentID: documentID) else { return }
         // Superseded by a newer fetch or a createChild while in flight: a
         // pre-create snapshot must not overwrite (and durably cache) a list
@@ -1554,6 +1556,7 @@ final class EditorViewModel {
             !Task.isCancelled
         else { return }
         subpages = results.results
+        saveCoordinator.pins.didReadFlags(results.results, ownerUserID: pinOwner, fetchedAt: pinRevision)
         childrenCache.save(results.results, for: documentID)
     }
 

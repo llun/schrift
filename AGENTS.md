@@ -2539,7 +2539,10 @@ markdown write endpoint**. Understand this before touching the save path:
   the real navigation row, with cache lookup as a fallback. A landed move updates durable
   Recent fallback placement, so an outstanding unpin cannot reinsert a filed row. Fresh
   favorites-page membership remains independent of propagated flags; paginated absence
-  cannot prove an unpin. The favorites list's version-compatible routing remains in `DocumentEndpoints`.
+  cannot prove an unpin. Fresh Search/Shared/children flags reconcile settled observations,
+  scoped to the owner and revision captured before the request. Projection helpers read
+  revision before the unknown-owner guard so identity recovery invalidates every surface.
+  The favorites list's version-compatible routing remains in `DocumentEndpoints`.
   Unattributed/preview callers retain the awaited online path and cannot queue offline work.
 - **Each Home document renders in exactly one section: Pinned wins, Recent is the residue.**
   The feed is fetched *unfiltered* (`isFavorite: nil`), so the server returns a pinned

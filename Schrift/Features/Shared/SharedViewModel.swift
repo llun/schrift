@@ -128,6 +128,7 @@ final class SharedViewModel {
         loadGeneration += 1
         let generation = loadGeneration
         let fetchedPinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
 
         // "Work offline" (Profile > Preferences): serve cache, never hit the network.
         if userDefaults.bool(forKey: "schrift.workOffline") {
@@ -166,6 +167,7 @@ final class SharedViewModel {
         let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
         pinRevision = fetchedPinRevision
         rawDocuments = surviving
+        saveCoordinator?.pins.didReadFlags(surviving, ownerUserID: pinOwner, fetchedAt: fetchedPinRevision)
         cache.saveSharedWithMeDocuments(
             saveCoordinator?.pins.applyingFlags(
                 surviving, ownerUserID: signedInUser.userID, fetchedAt: fetchedPinRevision, includePending: false)

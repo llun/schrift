@@ -296,6 +296,7 @@ final class HomeViewModel {
         loadGeneration += 1
         let generation = loadGeneration
         let pinRevision = saveCoordinator.pins.revision
+        let pinOwner = signedInUser.userID
 
         // "Work offline" preference (Profile > Preferences): serve cached
         // documents and never hit the network.
@@ -372,7 +373,7 @@ final class HomeViewModel {
             cache.savePinnedDocuments(cacheProjection.pinned)
             cache.saveRecentDocuments(cacheProjection.recent)
             saveCoordinator.pins.didCacheFreshLists(
-                pinned: overlaid.pinned, recent: moved.recent, ownerUserID: signedInUser.userID, fetchedAt: pinRevision)
+                pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true
             loadFailedOffline = false
         } catch {
@@ -473,6 +474,7 @@ final class HomeViewModel {
         searchGeneration += 1
         let generation = searchGeneration
         let pinRevision = saveCoordinator.pins.revision
+        let pinOwner = signedInUser.userID
         guard !availability.isOffline else { return }
         let availabilityToken = availability.token
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -496,6 +498,9 @@ final class HomeViewModel {
             }
             searchPinRevision = pinRevision
             rawSearchResults = results
+            saveCoordinator.pins.didReadFlags(
+                page.results.filter { !deletedSinceLoad.contains($0.id) }, ownerUserID: pinOwner, fetchedAt: pinRevision
+            )
         } catch {
             guard generation == searchGeneration, availability.permitsResponse(for: availabilityToken),
                 !Task.isCancelled, searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed

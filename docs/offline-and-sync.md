@@ -2623,6 +2623,11 @@ list response that overwrites the cache. Each surface captures the coordinator r
 when issuing a read: settlement wins over older reads, while newer reads can reflect a
 pin changed on the web. Home retires the durable settled projection only after its new
 cache writes; in-memory revisions still protect older snapshots held by other screens.
+Fresh Search, Shared and children reads also reconcile changed flags for older Options
+and the next toggle's rollback baseline, retaining the observed bit across relaunch until
+Home caches a newer answer. They capture both account and pin revision before the read;
+old responses and account changes cannot replace newer scoped observations. All projections
+observe identity invalidation even if the account was unknown at their first render.
 Fresh favorites-page membership stays independent of metadata flags: a favorite beyond
 page one can remain in Recent, while absence from both pages cannot prove an unpin.
 A landed move records whether synthetic Recent fallback is allowed in the pin record,

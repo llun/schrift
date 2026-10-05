@@ -937,7 +937,9 @@ last server state with pin wording. Settled projections and read revisions prote
 stale responses and relaunch without vetoing newer server reads. Fresh favorites-page
 membership is independent of metadata flags. Navigation retains real row metadata for
 Options; landed moves update durable fallback placement without changing pin intent.
-Successful identity recovery resumes retained pin work. See
+Fresh Search/Shared/children flags update older Options and rollback baselines without
+consuming pending work. Successful identity recovery resumes retained pin work and
+invalidates previously hidden projections. See
 [`offline-and-sync.md`](offline-and-sync.md#offline-pin-and-unpin).
 
 Favorites routing reads `config/`'s `RELEASE_VERSION` and compares numeric release
