@@ -125,9 +125,12 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// Invoked when backspace is pressed with the caret at the very start and
     /// nothing selected. Returning true swallows the key.
     var onDeleteAtStart: (@MainActor () -> Bool)?
+    var onPendingDeleteBackward: (@MainActor () -> Bool)?
     /// Invoked when the user taps a link's visible label. The view is passed
     /// back rather than captured, so the stored closure cannot retain it.
     var onLinkTapped: (@MainActor (EditorUITextView, InlineLinkSpan, CGPoint) -> Void)?
+    /// A lazy row can receive its last model update before joining a window.
+    var onWindowAttached: (@MainActor (EditorUITextView) -> Void)?
 
     /// Source ranges drawn at zero width. Read by the glyph-suppression delegate
     /// on every layout pass, so it must be set before glyphs are invalidated.
@@ -157,6 +160,11 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         recognizer.delegate = view
         view.addGestureRecognizer(recognizer)
         return view
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { onWindowAttached?(self) }
     }
 
     // MARK: - Glyph suppression
@@ -236,6 +244,7 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     // MARK: - Caret rules
 
     override func deleteBackward() {
+        if markedTextRange == nil, onPendingDeleteBackward?() == true { return }
         // Never delete a character the user cannot see: skipping the hidden run
         // first turns "backspace past a link" into "delete the label's last
         // letter" rather than "delete the closing paren and reveal the URL".
@@ -302,12 +311,18 @@ extension EditorUITextView: UIGestureRecognizerDelegate {
 /// reporting, model-driven focus and caret placement, and inline markdown
 /// rendered as rich text over its own markdown source.
 struct BlockTextView: UIViewRepresentable {
-    @Binding var text: String
+    /// Resolve at UIKit update time: SwiftUI can cache a Binding's read value
+    /// before a newer keyboard delegate event reaches the model.
+    var text: () -> String
     let styling: BlockTextStyling
     let isFocused: Bool
     let cursorRequest: EditorViewModel.CursorRequest?
     var onEvent: (BlockTextEvent) -> Void
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
+    /// Keyboard events may arrive before a structural edit reaches UIKit.
+    var onPendingInput: (String, UUID?) -> Bool = { _, _ in false }
+    var onPendingSourceReplacement: (NSRange, String) -> Bool = { _, _ in false }
+    var hasPendingSelection: (UUID?) -> Bool = { _ in false }
     /// Pre-resolved link-menu titles, passed down from the SwiftUI layer (which
     /// owns `LocalizationStore`). The coordinator never sees the store — it just
     /// reads these plain strings when building the `UIEditMenuInteraction` menu.
@@ -330,11 +345,19 @@ struct BlockTextView: UIViewRepresentable {
         view.onDeleteAtStart = { [weak coordinator = context.coordinator] in
             coordinator?.handleDeleteAtStart() ?? false
         }
+        view.onPendingDeleteBackward = { [weak coordinator = context.coordinator] in
+            guard let coordinator else { return false }
+            return coordinator.parent.onPendingInput("", coordinator.consumedCursorToken)
+        }
         view.onLinkTapped = { [weak coordinator = context.coordinator] view, span, point in
             coordinator?.presentLinkMenu(in: view, for: span, at: point)
         }
+        view.onWindowAttached = { [weak coordinator = context.coordinator] view in
+            guard let coordinator else { return }
+            coordinator.parent.syncFocus(on: view, coordinator: coordinator)
+        }
         applyStyling(to: view)
-        view.text = text
+        view.text = text()
         restyleInlineMarkdown(in: view, coordinator: context.coordinator)
         return view
     }
@@ -343,9 +366,10 @@ struct BlockTextView: UIViewRepresentable {
         context.coordinator.parent = self
 
         var needsRestyle = false
-        if uiView.text != text {
+        let currentText = text()
+        if uiView.text != currentText {
             context.coordinator.isApplyingModelChange = true
-            uiView.text = text
+            uiView.text = currentText
             context.coordinator.isApplyingModelChange = false
             needsRestyle = true
         }
@@ -493,6 +517,18 @@ struct BlockTextView: UIViewRepresentable {
         // MARK: UITextViewDelegate
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            // A correction names a range in the source row; it is not a key
+            // typed at the pending destination. Composing input stays in UIKit.
+            if textView.markedTextRange == nil, range == textView.selectedRange,
+                parent.onPendingInput(text, consumedCursorToken)
+            {
+                return false
+            }
+            if textView.markedTextRange == nil, range != textView.selectedRange,
+                parent.onPendingSourceReplacement(range, text)
+            {
+                return false
+            }
             guard !parent.styling.allowsNewlines else { return true }
             let current = (textView.text ?? "") as NSString
 
@@ -523,6 +559,10 @@ struct BlockTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingModelChange else { return }
+            // Attribute edits/layout can reenter UIKit and deliver a queued row
+            // update. Publish this captured buffer before that update can read
+            // the previous model value and overwrite the latest keystroke.
+            parent.onEvent(.textChanged(textView.text ?? ""))
             // Only blocks that render inline markdown need a per-keystroke
             // restyle. Code and `.unknown` blocks style nothing and hide nothing,
             // yet they are the only ones that grow unbounded (`allowsNewlines`),
@@ -538,11 +578,11 @@ struct BlockTextView: UIViewRepresentable {
                 parent.restyleInlineMarkdown(in: editor, coordinator: self)
             }
             textView.invalidateIntrinsicContentSize()
-            parent.onEvent(.textChanged(textView.text ?? ""))
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard !isApplyingModelChange else { return }
+            guard !parent.hasPendingSelection(consumedCursorToken) else { return }
             guard let editor = textView as? EditorUITextView else { return }
             // Re-entrant by design: assigning `selectedRange` fires this again,
             // and the second pass finds the selection already snapped.

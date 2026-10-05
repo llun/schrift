@@ -3163,6 +3163,25 @@ markdown write endpoint**. Understand this before touching the save path:
   caret back over a hidden run so backspace deletes the label's last letter
   rather than a lone `)`. Its sibling `snappedSelection` keeps the caret out of
   the interior of a hidden run and stops a selection bisecting one.
+- **Focus must be retried when a block's text view joins a window.** A lazy row
+  can consume its cursor request and finish both model updates while detached.
+  `EditorUITextView.didMoveToWindow` rechecks the coordinator's latest focus
+  intent synchronously, with delegate echoes suppressed by the existing focus
+  funnel. Do not rely on cursor-request clearing to cause an update after
+  attachment, or defer a captured focus intent that could steal focus later.
+  The row's text reader must resolve the current block by ID during UIKit updates,
+  bypassing SwiftUI's cached Binding value as well as its captured
+  `EditorBlock` value: a queued row snapshot can otherwise overwrite a newer
+  keystroke and move the caret backward. Return and prefix shortcuts can also
+  move the model caret before UIKit applies it: pending keyboard deltas go
+  through `applyPendingKeyboardInput` to the current block/selection, gated by
+  stable identity and the coordinator's consumed cursor token. Never forward
+  the old row's whole buffer to the new block. Ignore obsolete selection echoes
+  until the pending token is applied. Ranged source corrections must remain
+  deltas against the retained source block, never restoring a moved suffix.
+  Publish typed text before restyling, whose UIKit layout may reenter queued
+  model updates. `BlockTextFocusTests` covers these races,
+  cancellation, repeated Return/backspace, identity, Unicode, and caret retention.
 - **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
   block's source into visible `spans` (styled) and hidden `syntax` (the
   complement of the spans, so the two cannot drift), plus its `links`.

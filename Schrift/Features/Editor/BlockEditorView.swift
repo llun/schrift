@@ -219,10 +219,9 @@ struct BlockEditorRow: View {
 
     private var textView: some View {
         BlockTextView(
-            text: Binding(
-                get: { block.text },
-                set: { viewModel.updateText(blockID: block.id, text: $0) }
-            ),
+            // Resolve by identity when UIKit updates, beyond SwiftUI's cached
+            // row and Binding values. All writes already go through onEvent.
+            text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
             styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
             isFocused: viewModel.focusedBlockID == block.id,
             cursorRequest: viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil,
@@ -233,6 +232,16 @@ struct BlockEditorRow: View {
                 if viewModel.cursorRequest?.token == token {
                     viewModel.cursorRequest = nil
                 }
+            },
+            onPendingInput: { text, token in
+                viewModel.applyPendingKeyboardInput(from: block.id, text: text, consumedCursorToken: token)
+            },
+            onPendingSourceReplacement: { range, text in
+                viewModel.applyPendingSourceReplacement(blockID: block.id, range: range, text: text)
+            },
+            hasPendingSelection: { token in
+                guard let request = viewModel.cursorRequest, request.blockID == block.id else { return false }
+                return request.token != token
             },
             editLinkTitle: loc[.editor_link_edit_title],
             removeLinkTitle: loc[.editor_link_remove]

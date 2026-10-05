@@ -957,6 +957,26 @@ replaces the default without first deleting it. Selection alone never dirties th
 Consumption is shared with the route so screen recreation, refresh, reconnect, and a changed
 server identity cannot replay entry; the separate focus request belongs to the editing session.
 
+Block focus is also synchronized when an `EditorUITextView` joins a window. The lazy
+editing canvas may consume the new row's caret request before attachment, leaving no
+later model update to acquire keyboard focus. The attachment callback checks the
+coordinator's current focus intent through the same synchronous, delegate-suppressed
+funnel used by model updates; it leaves block IDs, source offsets, and saving unchanged.
+The row resolves text from the current view-model block by that same stable ID during
+UIKit updates, bypassing SwiftUI's cached Binding value, so a
+queued row snapshot cannot overwrite text entered since the snapshot was captured or
+move the caret backward. Keyboard events that arrive between a structural edit
+and UIKit reconciliation are applied as deltas to the model's current block and
+pending source selection through `applyPendingKeyboardInput`. Stable block IDs
+and the coordinator's consumed cursor token gate this handoff; ordinary input
+continues through UIKit. The intent reuses the existing text/split/merge methods,
+retains shortcut-corrected carets, and preserves hidden-syntax and composed-character
+backspace rules. Ranged corrections still address the retained source block;
+`applyPendingSourceReplacement` prevents the old UIKit buffer from duplicating a
+suffix moved by Return or restoring removed leaf syntax. The coordinator publishes
+typed text before restyling, because attribute edits/layout can reenter UIKit and
+run a queued model update.
+
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).

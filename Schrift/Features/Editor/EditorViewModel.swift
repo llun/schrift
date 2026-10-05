@@ -1818,6 +1818,83 @@ final class EditorViewModel {
         markDirty()
     }
 
+    /// A Return or prefix shortcut can move the caret before UIKit realizes that
+    /// change. Apply only those in-flight keystrokes to the authoritative target;
+    /// the old row's buffer and replacement range still describe the source block.
+    func applyPendingKeyboardInput(from sourceID: UUID, text input: String, consumedCursorToken: UUID?) -> Bool {
+        guard mode == .blocks, let targetID = focusedBlockID, let index = blockIndex(targetID) else { return false }
+        let request = cursorRequest?.blockID == targetID ? cursorRequest : nil
+        guard targetID != sourceID || (request != nil && request?.token != consumedCursorToken) else { return false }
+        let block = blocks[index]
+        switch block.kind {
+        case .divider, .image, .attachment: return false
+        default: break
+        }
+        let source = block.text as NSString
+        let hidden = rendersInlineMarkdown(block.kind) ? InlineMarkdown.layout(of: block.text).syntax : []
+        let requested =
+            request.map { NSRange(location: $0.offset, length: $0.length) } ?? selection
+            ?? NSRange(location: 0, length: 0)
+        let offset = min(max(0, requested.location), source.length)
+        var range = snappedSelection(
+            NSRange(location: offset, length: min(max(0, requested.length), source.length - offset)), hidden: hidden)
+        if input.isEmpty, range.length == 0 {
+            let caret = caretBeforeBackspace(from: range.location, hidden: hidden)
+            if caret == 0 {
+                mergeBlockWithPrevious(blockID: targetID)
+                return true
+            }
+            range = source.rangeOfComposedCharacterSequence(at: caret - 1)
+        }
+        let allowsNewlines: Bool
+        switch block.kind {
+        case .codeBlock, .unknown: allowsNewlines = true
+        default: allowsNewlines = false
+        }
+        if input == "\n", !allowsNewlines {
+            if range.length > 0 { updateText(blockID: targetID, text: source.replacingCharacters(in: range, with: "")) }
+            splitBlock(blockID: targetID, at: range.location)
+            return true
+        }
+        let replacement = allowsNewlines ? input : input.replacingOccurrences(of: "\n", with: " ")
+        let previousToken = cursorRequest?.token
+        updateText(blockID: targetID, text: source.replacingCharacters(in: range, with: replacement))
+        // A newly recognized prefix owns its corrected caret; otherwise advance
+        // the pending target and issue a token no older acknowledgement can clear.
+        if cursorRequest?.token == previousToken {
+            focusBlock(targetID, cursorAt: range.location + (replacement as NSString).length)
+        }
+        return true
+    }
+
+    /// Autocorrection still addresses the old row, even after Return has moved
+    /// its suffix to a new block. Replace only the retained source range; never
+    /// copy the old UIKit buffer (or removed leaf syntax) back into the model.
+    func applyPendingSourceReplacement(blockID: UUID, range: NSRange, text: String) -> Bool {
+        guard mode == .blocks, let focusedBlockID, focusedBlockID != blockID, let index = blockIndex(blockID) else {
+            return false
+        }
+        switch blocks[index].kind {
+        case .divider, .image, .attachment: return true
+        default: break
+        }
+        let source = blocks[index].text as NSString
+        guard range.location >= 0, range.location <= source.length, range.length >= 0,
+            range.length <= source.length - range.location
+        else { return true }  // The correction addresses text already moved out of this row.
+        let replacement: String
+        switch blocks[index].kind {
+        case .codeBlock, .unknown: replacement = text
+        default: replacement = text.replacingOccurrences(of: "\n", with: " ")
+        }
+        let updated = source.replacingCharacters(in: range, with: replacement)
+        if updated != blocks[index].text {
+            blocks[index].text = updated
+            markDirty()
+        }
+        return true
+    }
+
     func splitBlock(blockID: UUID, at offset: Int) {
         guard let index = blockIndex(blockID) else { return }
         let block = blocks[index]
