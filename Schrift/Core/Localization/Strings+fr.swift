@@ -113,7 +113,7 @@ enum Strings_fr {
         .options_delete_confirm_title: "Supprimer ce document ?",
         .options_delete_confirm_subpages: "Les sous-pages enregistrées sur cet appareil seront supprimées avec lui.",
         .options_delete: "Supprimer",
-        .options_error_toggle_favorite: "Impossible de mettre à jour le favori. Veuillez réessayer.",
+        .options_error_toggle_favorite: "Impossible de mettre à jour l’épingle. Veuillez réessayer.",
         .options_error_delete: "Impossible de supprimer le document. Veuillez réessayer.",
         .options_move: "Déplacer",
         .move_title: "Déplacer vers",

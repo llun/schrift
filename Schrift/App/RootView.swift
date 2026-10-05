@@ -111,8 +111,9 @@ private struct AuthenticatedHomeContainer: View {
             // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
             signInGeneration: sessionStore.signInGeneration, onSignOut: onSignOut
         )
-        .onChange(of: workOffline) { _, _ in
+        .onChange(of: workOffline) { _, isOffline in
             viewModel.availability.preferencesChanged()
+            if !isOffline { Task { await viewModel.saveCoordinator.syncPendingPins() } }
         }
         .sheet(
             isPresented: Binding(
@@ -132,6 +133,7 @@ private struct AuthenticatedHomeContainer: View {
                         // this session belongs to before anything reads it. A stale id would
                         // list the previous user's unsynced documents to the new one.
                         await homeViewModel.refreshSignedInUser()
+                        await homeViewModel.saveCoordinator.syncPendingPins()
                         await homeViewModel.load()
                     }
                 },

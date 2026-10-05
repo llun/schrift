@@ -87,7 +87,7 @@ struct OptionsSheetView: View {
                             icon: .push_pin,
                             title: viewModel.isFavorite ? loc[.options_unpin] : loc[.options_pin],
                             value: viewModel.isFavorite ? loc[.options_pinned] : nil,
-                            action: { Task { await viewModel.toggleFavorite() } }
+                            action: { Task { await viewModel.toggleFavorite(isOffline: availability.isOffline) } }
                         )
 
                         ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })

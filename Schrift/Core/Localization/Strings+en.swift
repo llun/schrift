@@ -109,7 +109,7 @@ enum Strings_en {
         .options_delete_confirm_title: "Delete this document?",
         .options_delete_confirm_subpages: "Subpages saved on this device will be deleted with it.",
         .options_delete: "Delete",
-        .options_error_toggle_favorite: "Couldn't update favorite. Please try again.",
+        .options_error_toggle_favorite: "Couldn't update pin. Please try again.",
         .options_error_delete: "Couldn't delete document. Please try again.",
         .options_move: "Move",
         .move_title: "Move to",

@@ -9,7 +9,7 @@ final class DocumentCacheStore {
     private static let recentKey = "dev.llun.Schrift.cachedRecentDocuments"
     private static let sharedWithMeKey = "dev.llun.Schrift.cachedSharedWithMeDocuments"
 
-    private let userDefaults: UserDefaults
+    let userDefaults: UserDefaults
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -48,6 +48,11 @@ final class DocumentCacheStore {
 
     func saveSharedWithMeDocuments(_ documents: [Document]) {
         save(documents, forKey: Self.sharedWithMeKey)
+    }
+
+    func document(for documentID: UUID) -> Document? {
+        (loadPinnedDocuments() + (loadRecentDocuments() ?? []) + (loadSharedWithMeDocuments() ?? []))
+            .first { $0.id == documentID }
     }
 
     /// Strip a document from every cached list — what a landed deletion owes the lists that

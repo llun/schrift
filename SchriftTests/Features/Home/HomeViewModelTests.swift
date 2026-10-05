@@ -307,7 +307,7 @@ final class HomeViewModelTests: XCTestCase {
     /// pinned documents rather than the fetch filtering them out server-side.
     ///
     /// **This test also holds the memo's `pinnedIDs` key** — it and
-    /// `testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent` are the two that fail when the
+    /// `testAPendingPinSurvivesAWorkOfflineReseed` are the two that fail when the
     /// conjunct is dropped. The read between the two assignments primes the memo while nothing
     /// is pinned, so the pin that follows changes `pinnedDocuments` **without** touching
     /// `fetchedRecentDocuments` — and that conjunct is then the only thing that can invalidate
@@ -333,22 +333,8 @@ final class HomeViewModelTests: XCTestCase {
             "otherwise the row is in no section until the next successful fetch")
     }
 
-    /// **The memo's `pinnedIDs` key, at the case where dropping it loses a document entirely.**
-    /// It is not the only place the key bites: a writer that assigns `fetchedRecentDocuments` a
-    /// *value-equal* copy leaves the older `fetched` conjunct satisfied too — which
-    /// `applyingFavoriteFlag` does whenever the row's flag already matches (a pin from a stale
-    /// `searchResults` row against a feed the server already flags, which without the conjunct
-    /// renders that row in **both** sections, the very bug this PR fixes), and `removeAll` does
-    /// for an id the feed does not carry (there genuinely harmless, since the filtered answer is
-    /// the same either way). What is specific to this test is the *severity*: `load()`'s Work
-    /// Offline branch assigns the pinned list unconditionally while guarding the recents one
-    /// behind `if let cachedRecents` (so a nil cache cannot clobber a just-migrated row), and
-    /// there the row is lost from every section rather than shown twice. Reached exactly as it
-    /// is in life: a fresh install whose only row arrived in
-    /// memory from a migration, pinned on the device — `setFavorite` fabricates no pinned cache,
-    /// so the reseed empties `pinnedDocuments` while `fetched` stands still. With a stale memo
-    /// the row is in **no section at all** and the "No documents yet" state draws over it.
-    func testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent() async {
+    /// Durable intent survives a Work Offline reseed even when no pinned cache exists.
+    func testAPendingPinSurvivesAWorkOfflineReseed() async {
         let cache = makeCache()
         let viewModel = makeViewModel(cache: cache, signedInUser: makeSignedInUser())
         let id = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
@@ -364,10 +350,8 @@ final class HomeViewModelTests: XCTestCase {
         preferences.set(true, forKey: "schrift.workOffline")
         await viewModel.load()
 
-        XCTAssertTrue(viewModel.pinnedDocuments.isEmpty, "the reseed found no cached pinned list")
-        XCTAssertEqual(
-            viewModel.recentDocuments.map(\.id), [id],
-            "a stale memo would leave the row in NO section, under the empty state")
+        XCTAssertEqual(viewModel.pinnedDocuments.map(\.id), [id], "the durable intent supplies the real row")
+        XCTAssertTrue(viewModel.recentDocuments.isEmpty, "the row remains in exactly one section")
     }
 
     /// A document created here is never a favorite, so the filter can never swallow the one row

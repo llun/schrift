@@ -7,9 +7,23 @@ func documentShareURL(serverHost: String, documentID: UUID) -> URL? {
 @MainActor
 @Observable
 final class OptionsViewModel {
-    var isFavorite: Bool
+    private var originalIsFavorite: Bool
+    private let saveCoordinator: DocumentSaveCoordinator?
+    private let signedInUser: SignedInUserStore
+    var isFavorite: Bool {
+        get {
+            saveCoordinator?.pins.value(
+                for: documentID, fallback: originalIsFavorite, ownerUserID: signedInUser.userID, fetchedAt: -1)
+                ?? originalIsFavorite
+        }
+        set { originalIsFavorite = newValue }
+    }
     var isDeleting = false
-    var errorKey: L10nKey?
+    private var actionErrorKey: L10nKey?
+    var errorKey: L10nKey? {
+        get { actionErrorKey ?? saveCoordinator?.pins.failure(for: documentID, ownerUserID: signedInUser.userID) }
+        set { actionErrorKey = newValue }
+    }
     private(set) var didDelete = false
 
     /// Whether the deletion `didDelete` reports was **queued** rather than made.
@@ -34,15 +48,18 @@ final class OptionsViewModel {
         signedInUser: SignedInUserStore = SignedInUserStore()
     ) {
         self.documentID = documentID
-        self.isFavorite = isFavorite
+        self.originalIsFavorite = isFavorite
+        self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
         self.actions = DocumentActions(
             client: client, saveCoordinator: saveCoordinator, signedInUser: signedInUser)
     }
 
-    func toggleFavorite() async {
+    func toggleFavorite(isOffline: Bool = false) async {
         errorKey = nil
-        switch await actions.setFavorite(documentID: documentID, isFavorite: !isFavorite) {
+        switch await actions.setFavorite(documentID: documentID, isFavorite: !isFavorite, isOffline: isOffline) {
         case .changed(let value): isFavorite = value
+        case .queued: break
         case .failed: errorKey = .options_error_toggle_favorite
         }
     }

@@ -89,6 +89,7 @@ final class DocumentSaveCoordinator {
     private let draftStore: PendingDraftStore
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
+    let pins: DocumentPinCoordinator
     private let deleteStore: PendingDocumentDeleteStore
     /// Photos queued on this device, with their bytes. Mirrored like `pendingCreates` so the
     /// hot predicates never decode UserDefaults.
@@ -385,6 +386,7 @@ final class DocumentSaveCoordinator {
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         createStore: PendingDocumentCreateStore = PendingDocumentCreateStore(),
         deleteStore: PendingDocumentDeleteStore = PendingDocumentDeleteStore(),
+        pinStore: PendingDocumentPinStore? = nil,
         attachmentStore: PendingAttachmentStore = PendingAttachmentStore(),
         listCache: DocumentCacheStore = DocumentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
@@ -395,6 +397,10 @@ final class DocumentSaveCoordinator {
         backgroundTasks: BackgroundTaskProvider = .uiApplication
     ) {
         self.client = client
+        self.pins = DocumentPinCoordinator(
+            client: client, store: pinStore ?? PendingDocumentPinStore(userDefaults: listCache.userDefaults),
+            cache: listCache, serverOrigin: client.serverOrigin,
+            signedInUser: SignedInUserStore(userDefaults: listCache.userDefaults), userDefaults: listCache.userDefaults)
         self.draftStore = draftStore
         self.contentCache = contentCache
         self.createStore = createStore
@@ -2552,6 +2558,7 @@ final class DocumentSaveCoordinator {
             // triggers could overlap, and two passes sending the same DELETE would report a
             // 404 to the second, which is indistinguishable from a co-author's delete.
             await runDeletePass()
+            await syncPendingPins()
             await runCreatePass()
             // Between the two: a queued photo's upload is what *releases* the attachment hold,
             // so running it here lets the same pass upload, rewrite, and push. It also has to
@@ -2560,6 +2567,16 @@ final class DocumentSaveCoordinator {
             await runAttachmentPass()
             await runSyncPass(isLaunchRecovery: launchPass)
         } while needsAnotherSyncPass
+    }
+
+    func syncPendingPins() async {
+        await pins.sync { [self] documentID in
+            isPendingCreate(documentID: documentID) || isPendingDelete(documentID: documentID)
+        }
+    }
+
+    func cachedPinRow(for documentID: UUID) -> Document? {
+        listCache.document(for: documentID) ?? childrenCache.document(for: documentID)
     }
 
     // MARK: - Delete replay
@@ -2921,6 +2938,7 @@ final class DocumentSaveCoordinator {
     /// Everything keyed by a server id that no longer names a document. Shared by the
     /// completion and the revive, which differ only in whether the content is carried over.
     private func purgeLocalTraces(documentID: UUID) {
+        pins.remove(documentID: documentID)
         discardPendingWork(documentID: documentID)
         contentCache.remove(documentID: documentID)
         childrenCache.remove(parentID: documentID)

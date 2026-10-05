@@ -44,6 +44,10 @@ final class DocumentChildrenCacheStore {
         loadEntries()[parentID]?.documents
     }
 
+    func document(for documentID: UUID) -> Document? {
+        loadEntries().values.flatMap(\.documents).first { $0.id == documentID }
+    }
+
     func save(_ documents: [Document], for parentID: UUID) {
         var entries = loadEntries()
         entries[parentID] = CachedChildrenEntry(documents: documents, syncedAt: now())

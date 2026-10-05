@@ -295,41 +295,56 @@ final class DocumentActionsTests: XCTestCase {
         XCTAssertFalse(env.actions.isLocalDocument(documentID))
     }
 
-    // MARK: - Favorite
+    // MARK: - Pin
 
-    func testPinningPostsAndReportsTheNewState() async {
-        let log = RequestRecorder()
+    private func stubPinReplay(_ log: RequestRecorder, status: Int = 204) {
+        let userBody = Data("{\"id\":\"\(ownerID.uuidString)\"}".utf8)
         MockURLProtocol.stubHandler = { request in
             log.record(request)
-            return .init(statusCode: 201, headers: [:], body: Data(), error: nil)
+            if request.url?.absoluteString.hasSuffix("users/me/") == true {
+                return .init(statusCode: 200, headers: [:], body: userBody, error: nil)
+            }
+            return .init(statusCode: status, headers: [:], body: Data(), error: nil)
         }
-        let env = makeEnvironment()
-        let outcome = await env.actions.setFavorite(documentID: documentID, isFavorite: true)
-        XCTAssertEqual(outcome, .changed(isFavorite: true))
-        XCTAssertEqual(
-            log.count(ofMethod: "POST", urlContaining: "\(documentID.uuidString.lowercased())/favorite/"), 1)
     }
 
-    func testUnpinningSendsADelete() async {
+    func testPinningQueuesThenPostsTheNewState() async {
         let log = RequestRecorder()
-        MockURLProtocol.stubHandler = { request in
-            log.record(request)
-            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        stubPinReplay(log)
+        let env = makeEnvironment()
+        let outcome = await env.actions.setFavorite(documentID: documentID, isFavorite: true)
+        XCTAssertEqual(outcome, .queued(isFavorite: true))
+        await env.coordinator.syncPendingPins()
+        await waitUntil {
+            log.count(ofMethod: "POST", urlContaining: "\(documentID.uuidString.lowercased())/favorite/") == 1
         }
+        await waitUntil { !env.coordinator.pins.isSyncing }
+        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+    }
+
+    func testUnpinningQueuesThenSendsADelete() async {
+        let log = RequestRecorder()
+        stubPinReplay(log)
         let env = makeEnvironment()
         let outcome = await env.actions.setFavorite(documentID: documentID, isFavorite: false)
-        XCTAssertEqual(outcome, .changed(isFavorite: false))
-        XCTAssertEqual(
-            log.count(ofMethod: "DELETE", urlContaining: "\(documentID.uuidString.lowercased())/favorite/"), 1)
+        XCTAssertEqual(outcome, .queued(isFavorite: false))
+        await env.coordinator.syncPendingPins()
+        await waitUntil {
+            log.count(ofMethod: "DELETE", urlContaining: "\(documentID.uuidString.lowercased())/favorite/") == 1
+        }
+        await waitUntil { !env.coordinator.pins.isSyncing }
+        XCTAssertEqual(log.count(ofMethod: "DELETE"), 1)
     }
 
-    /// There is no offline queue for favorites, so a failure is reported rather than
-    /// optimistically applied and rolled back.
-    func testAFailedFavoriteReportsFailure() async {
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+    func testARetryablePinFailureKeepsDurableIntent() async {
+        let log = RequestRecorder()
+        stubPinReplay(log, status: 500)
         let env = makeEnvironment()
         let outcome = await env.actions.setFavorite(documentID: documentID, isFavorite: true)
-        XCTAssertEqual(outcome, .failed)
+        XCTAssertEqual(outcome, .queued(isFavorite: true))
+        await env.coordinator.syncPendingPins()
+        await waitUntil { log.count(ofMethod: "POST") >= 1 && !env.coordinator.pins.isSyncing }
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: env.defaults).allPins().map(\.documentID), [documentID])
     }
 
     // MARK: - Every made deletion announces, on every branch
@@ -499,7 +514,7 @@ final class DocumentActionsTests: XCTestCase {
         XCTAssertEqual(json?["target_document_id"], siblingRootID.uuidString.lowercased())
     }
 
-    /// There is no offline queue for a move — the `setFavorite` posture. A failure must leave
+    /// There is no offline queue for a move. A failure must leave
     /// the device exactly as it was rather than recording anything a replay would act on.
     func testAFailedMoveQueuesNothingAndChangesNothing() async {
         MockURLProtocol.stubHandler = { _ in
