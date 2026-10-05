@@ -1015,6 +1015,23 @@ translation, and corrections with obsolete correspondence are ignored. A handled
 source correction invalidates further old-buffer ranges until UIKit reconciliation,
 including repeated prefixes whose characters still match after their offsets changed.
 
+IME input can begin immediately after Return, before the destination row has
+reconciled. The model's stable block IDs remain unchanged; a separate session-local
+input row identity transfers the existing native text view to the destination on
+split/merge. The retained source gets its own native row, and model block IDs still
+name scroll anchors. Before `setMarkedText` starts, the coordinator prepares the
+destination's current text, styling, and UTF-16 selection and resolves its callback
+configuration by that captured ID. This semantic binding survives native commit and
+immediate corrections until SwiftUI adopts the destination. It prevents both suffix
+duplication and old-source correction coordinates after a committed composition.
+UIKit retains control of marked characters, attributes, and selection throughout
+composition; reconciliation only checks current focus while marking remains active.
+Commit processes markdown shortcuts and slash queries even when provisional and
+committed characters are identical. Input row overrides remain reserved during the
+session so a remotely reintroduced model ID cannot collide with an inherited native
+identity; installing replacement content resets them. Discarded row configurations
+cannot acquire focus or publish changes for a model ID they no longer own.
+
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).

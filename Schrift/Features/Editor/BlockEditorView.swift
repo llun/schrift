@@ -37,13 +37,17 @@ struct BlockEditorView<Header: View>: View {
                         .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
                         .id(EditorScrollTarget.header)
 
-                    ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
+                    ForEach(
+                        Array(viewModel.blocks.enumerated()).map { index, block in
+                            (rowID: viewModel.inputRowID(for: block.id), index: index, block: block)
+                        }, id: \.rowID
+                    ) { row in
                         BlockEditorRow(
-                            viewModel: viewModel, block: block, index: index, serverOrigin: serverOrigin,
-                            isOffline: isOffline
+                            viewModel: viewModel, block: row.block, index: row.index, serverOrigin: serverOrigin,
+                            isOffline: isOffline, inputRowID: row.rowID
                         )
-                        .id(EditorScrollTarget.block(block.id))
-                        .recordingEditorBlockFrame(block.id)
+                        .background(Color.clear.id(EditorScrollTarget.block(row.block.id)))
+                        .recordingEditorBlockFrame(row.block.id)
                     }
 
                     // Tapping the empty canvas below the last block starts a
@@ -130,6 +134,7 @@ struct BlockEditorRow: View {
     let index: Int
     let serverOrigin: String
     let isOffline: Bool
+    var inputRowID: UUID? = nil
 
     @Environment(LocalizationStore.self) private var loc
     /// Passed into `blockTextStyling` rather than left to the ambient trait
@@ -229,17 +234,37 @@ struct BlockEditorRow: View {
         }
     }
 
-    private var textView: some View {
+    private var textView: BlockTextView {
+        makeTextView(for: block, inputRowID: inputRowID)
+    }
+
+    private func makeTextView(for block: EditorBlock, inputRowID: UUID?) -> BlockTextView {
         // Register SwiftUI dependencies here; the escaping readers below still
         // resolve the latest values when UIKit actually consumes the update.
         _ = viewModel.focusedBlockID
         _ = viewModel.cursorRequest
         return BlockTextView(
+            blockID: block.id,
+            resolveInputTarget: { targetID in
+                guard viewModel.mode == .blocks, let target = viewModel.blocks.first(where: { $0.id == targetID })
+                else { return nil }
+                return makeTextView(for: target, inputRowID: viewModel.inputRowID(for: targetID))
+            },
+            pendingComposition: { token in
+                viewModel.pendingComposition(from: block.id, consumedCursorToken: token)
+            },
+            compositionStyling: { blockTextStyling(for: $0, dynamicTypeSize: dynamicTypeSize) },
+            onCompositionChange: { targetID, text, selection, isMarked in
+                viewModel.updateComposition(blockID: targetID, text: text, selection: selection, isMarked: isMarked)
+            },
             // Resolve by identity when UIKit updates, beyond SwiftUI's cached
             // row and Binding values. All writes already go through onEvent.
             text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
             styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
-            isFocused: { viewModel.focusedBlockID == block.id },
+            isFocused: {
+                viewModel.focusedBlockID == block.id
+                    && (inputRowID == nil || viewModel.inputRowID(for: block.id) == inputRowID)
+            },
             hasPendingFocusTarget: {
                 guard viewModel.mode == .blocks,
                     let target = viewModel.blocks.first(where: { $0.id == viewModel.focusedBlockID })
@@ -249,9 +274,12 @@ struct BlockEditorRow: View {
                 default: return true
                 }
             },
-            cursorRequest: { viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil },
+            cursorRequest: {
+                guard inputRowID == nil || viewModel.inputRowID(for: block.id) == inputRowID else { return nil }
+                return viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil
+            },
             onEvent: { event in
-                handle(event)
+                handle(event, blockID: block.id, inputRowID: inputRowID)
             },
             onCursorRequestHandled: { token in
                 if viewModel.cursorRequest?.token == token {
@@ -274,32 +302,35 @@ struct BlockEditorRow: View {
         )
     }
 
-    private func handle(_ event: BlockTextEvent) {
+    private func handle(_ event: BlockTextEvent, blockID: UUID, inputRowID: UUID?) {
+        // A discarded sibling can end editing after its model ID has become
+        // the destination of a merge. Its native identity no longer owns that ID.
+        if let inputRowID, viewModel.inputRowID(for: blockID) != inputRowID { return }
         switch event {
         case .textChanged(let text):
-            viewModel.updateText(blockID: block.id, text: text)
+            viewModel.updateText(blockID: blockID, text: text)
         case .insertNewline(let cursorOffset):
-            viewModel.splitBlock(blockID: block.id, at: cursorOffset)
+            viewModel.splitBlock(blockID: blockID, at: cursorOffset)
         case .deleteAtStart:
-            viewModel.mergeBlockWithPrevious(blockID: block.id)
+            viewModel.mergeBlockWithPrevious(blockID: blockID)
         case .selectionChanged(let range):
-            if viewModel.focusedBlockID == block.id {
+            if viewModel.focusedBlockID == blockID {
                 viewModel.selection = range
             }
         case .beganEditing:
-            if viewModel.focusedBlockID != block.id {
-                viewModel.focusedBlockID = block.id
+            if viewModel.focusedBlockID != blockID {
+                viewModel.focusedBlockID = blockID
                 viewModel.slashQueryText = nil
             }
         case .endedEditing:
-            if viewModel.focusedBlockID == block.id {
+            if viewModel.focusedBlockID == blockID {
                 viewModel.focusedBlockID = nil
                 viewModel.slashQueryText = nil
             }
         case .editLink(let span):
-            viewModel.beginLinkEditing(blockID: block.id, span: span)
+            viewModel.beginLinkEditing(blockID: blockID, span: span)
         case .removeLink(let span):
-            viewModel.removeLink(blockID: block.id, span: span)
+            viewModel.removeLink(blockID: blockID, span: span)
         }
     }
 }

@@ -35,6 +35,11 @@ final class EditorViewModel {
         }
     }
 
+    struct PendingComposition {
+        let block: EditorBlock
+        let selection: NSRange
+    }
+
     enum DisplaySource: Equatable {
         case none, pendingSave, draft, clean
     }
@@ -86,6 +91,9 @@ final class EditorViewModel {
     var focusedBlockID: UUID?
     var cursorRequest: CursorRequest?
     var selection: NSRange?
+    /// Native keyboard identity can continue in another model block after a split/merge.
+    private var inputRowIDs: [UUID: UUID] = [:]
+
     var slashQueryText: String?
     var lastSyncedAt: Date? = nil
     var hasLocalCopy = false
@@ -1323,6 +1331,7 @@ final class EditorViewModel {
         savedTitle = title
         rawMarkdown = markdown
         blocks = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
+        inputRowIDs = [:]
         // Every block gets a fresh identity here, so any caret state still
         // pointing into the outgoing blocks is now dangling. Clearing it in the
         // one funnel every content swap routes through makes that unrepresentable
@@ -1808,9 +1817,66 @@ final class EditorViewModel {
 
     // MARK: - Block mutations
 
-    func updateText(blockID: UUID, text: String) {
+    func inputRowID(for blockID: UUID) -> UUID {
+        inputRowIDs[blockID] ?? blockID
+    }
+
+    private func transferInputRow(from sourceID: UUID, to targetID: UUID) {
+        let retainedID = inputRowID(for: sourceID)
+        // Retain retired IDs until content is replaced: a remote reintroduction
+        // must not reclaim an identity that another live block inherited.
+        var updated = inputRowIDs
+        updated[sourceID] = UUID()
+        updated[targetID] = retainedID
+        inputRowIDs = updated
+    }
+
+    func pendingComposition(from sourceID: UUID, consumedCursorToken: UUID?) -> PendingComposition? {
+        guard mode == .blocks, let targetID = focusedBlockID, let index = blockIndex(targetID) else { return nil }
+        let request = cursorRequest?.blockID == targetID ? cursorRequest : nil
+        guard targetID != sourceID || (request != nil && request?.token != consumedCursorToken) else { return nil }
+        let block = blocks[index]
+        switch block.kind {
+        case .divider, .image, .attachment: return nil
+        default: break
+        }
+        let length = (block.text as NSString).length
+        let requested =
+            request.map { NSRange(location: $0.offset, length: $0.length) } ?? selection
+            ?? NSRange(location: 0, length: 0)
+        let offset = min(max(0, requested.location), length)
+        let range = NSRange(location: offset, length: min(max(0, requested.length), length - offset))
+        let hidden = rendersInlineMarkdown(block.kind) ? InlineMarkdown.layout(of: block.text).syntax : []
+        return PendingComposition(block: block, selection: snappedSelection(range, hidden: hidden))
+    }
+
+    func updateComposition(blockID: UUID, text: String, selection range: NSRange, isMarked: Bool) {
+        guard mode == .blocks, let index = blockIndex(blockID) else { return }
+        switch blocks[index].kind {
+        case .divider, .image, .attachment: return
+        default: break
+        }
+        if focusedBlockID == blockID {
+            let length = (text as NSString).length
+            let offset = min(max(0, range.location), length)
+            let selection = NSRange(location: offset, length: min(max(0, range.length), length - offset))
+            self.selection = selection
+            cursorRequest = CursorRequest(blockID: blockID, offset: selection.location, length: selection.length)
+        }
+        if isMarked {
+            if blocks[index].text != text {
+                blocks[index].text = text
+                markDirty()
+            }
+        } else {
+            updateText(blockID: blockID, text: text, committingComposition: true)
+        }
+    }
+
+    func updateText(blockID: UUID, text: String, committingComposition: Bool = false) {
         guard let index = blockIndex(blockID) else { return }
-        guard blocks[index].text != text else { return }
+        let charactersChanged = blocks[index].text != text
+        guard charactersChanged || committingComposition else { return }
 
         // Markdown typing shortcuts convert a paragraph as soon as its prefix lands.
         if blocks[index].kind == .paragraph, let match = detectMarkdownShortcut(text: text) {
@@ -1829,7 +1895,7 @@ final class EditorViewModel {
 
         blocks[index].text = text
         slashQueryText = focusedBlockID == blockID ? slashQuery(text: text, kind: blocks[index].kind) : nil
-        markDirty()
+        if charactersChanged { markDirty() }
     }
 
     /// A Return or prefix shortcut can move the caret before UIKit realizes that
@@ -1949,6 +2015,7 @@ final class EditorViewModel {
             blocks[index].text = match.remainderText
             if match.kind == .divider {
                 let newBlock = EditorBlock(kind: .paragraph)
+                transferInputRow(from: blockID, to: newBlock.id)
                 blocks.insert(newBlock, at: index + 1)
                 focusBlock(newBlock.id, cursorAt: 0)
             } else {
@@ -1973,6 +2040,7 @@ final class EditorViewModel {
             kind: continuationKind(after: block.kind),
             text: text.substring(from: splitOffset)
         )
+        transferInputRow(from: blockID, to: newBlock.id)
         blocks.insert(newBlock, at: index + 1)
         focusBlock(newBlock.id, cursorAt: 0)
         markDirty()
@@ -2005,12 +2073,14 @@ final class EditorViewModel {
             if !block.text.isEmpty {
                 blocks[index - 1].text += previous.text.isEmpty ? block.text : "\n" + block.text
             }
+            transferInputRow(from: blockID, to: previous.id)
             blocks.remove(at: index)
             focusBlock(previous.id, cursorAt: caret)
             markDirty()
         default:
             let caret = (previous.text as NSString).length
             blocks[index - 1].text += block.text
+            transferInputRow(from: blockID, to: previous.id)
             blocks.remove(at: index)
             focusBlock(previous.id, cursorAt: caret)
             markDirty()
