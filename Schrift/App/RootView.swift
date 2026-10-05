@@ -83,11 +83,11 @@ private struct AuthenticatedHomeContainer: View {
         // be on screen in more than one place, and one owner is what gives
         // in-flight de-duplication and a single authority over the disk cache.
         _attachments = State(initialValue: AttachmentLoader(client: client, serverOrigin: origin))
-        let imageClient = ImageDataClient()
         _images = State(
-            initialValue: ImageLoader(
-                serverOrigin: origin, scopeProvider: { sessionStore.imageCacheScope },
-                fetch: { url, origin in try await imageClient.data(for: url, serverOrigin: origin) }))
+            initialValue: ImageLoader(scopeProvider: {
+                guard sessionStore.isAuthenticated, let namespace = sessionStore.imageCacheSessionID else { return nil }
+                return ImageCacheScope(serverOrigin: origin, sessionID: namespace)
+            }))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
@@ -202,6 +202,7 @@ struct RootView: View {
                     // are re-downloadable, so they go with the session for the
                     // same reason.
                     AttachmentCacheStore().removeAll()
+                    ImageCacheStore().removeAll()
                     // The account id goes with the session. Pending-create records
                     // deliberately survive — for a document that exists nowhere else the
                     // record and its draft are the only copies — and what keeps that safe is

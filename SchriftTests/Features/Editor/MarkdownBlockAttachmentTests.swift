@@ -58,7 +58,8 @@ final class MarkdownBlockAttachmentTests: XCTestCase {
                 block: block, serverOrigin: serverOrigin, isOffline: isOffline
             )
             .environment(english())
-            .environment(AttachmentLoader.inert()))
+            .environment(AttachmentLoader.inert())
+            .environment(ImageLoader.inert()))
         return host.sizeThatFits(in: proposal).height
     }
 

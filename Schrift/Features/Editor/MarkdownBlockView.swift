@@ -118,8 +118,8 @@ struct MarkdownBlockView: View {
     /// Required (no default) so a new render site can't silently skip the gate.
     let serverOrigin: String
     var numberedIndex: Int = 1
-    /// Offline withholds image/attachment downloads while still consulting disk;
-    /// cached bytes remain available in either document surface.
+    /// Chrome only: it changes what an *uncached* attachment card says, never
+    /// whether a cached one opens.
     var isOffline: Bool = false
     var onToggleChecklist: (() -> Void)? = nil
     var onTapText: (() -> Void)? = nil
@@ -237,130 +237,6 @@ struct MarkdownBlockView: View {
     private var checklistStateDescription: String? {
         guard case .checklistItem(let checked) = block.kind else { return nil }
         return checked ? loc[.editor_checklist_state_done_a11y] : loc[.editor_checklist_state_not_done_a11y]
-    }
-}
-
-/// Renders the same persistent image in reading and editing. The app-scoped loader
-/// owns disk lookup and downloads; offline suppresses requests, never cache reads.
-/// Same-server images load automatically, while an uncached external image requires
-/// exact-URL, authenticated-scope consent. Failed loads keep an image card and its URL.
-/// `ImageDataClient` supplies credentials only to applicable server requests and blocks
-/// redirects away from the initial origin, including for consented external images.
-struct MarkdownImageView: View {
-    let alt: String
-    let url: URL
-    let serverOrigin: String
-    var isOffline: Bool = false
-
-    @Environment(LocalizationStore.self) private var loc
-    @Environment(ImageLoader.self) private var loader
-    @State private var approvedURL: URL?
-    @State private var approvedScope: String?
-
-    private struct LoadIdentity: Hashable {
-        let url: URL
-        let scope: String?
-        let offline: Bool
-        let approval: URL?
-    }
-
-    private var approval: URL? { approvedScope == loader.scope ? approvedURL : nil }
-
-    var body: some View {
-        Group {
-            switch loader.state(for: url) {
-            case .cached(let file):
-                if let image = imageThumbnail(at: file) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-                        .accessibilityLabel(alt.isEmpty ? loc[.editor_image_a11y] : alt)
-                } else {
-                    unavailable(offline: isOffline)
-                }
-            case .requiresConsent:
-                tapToLoad
-            case .unavailableOffline:
-                unavailable(offline: true)
-            case .failed:
-                unavailable(offline: isOffline)
-            case .loading:
-                placeholder
-            case nil:
-                if isOffline || loader.scope == nil {
-                    unavailable(offline: true)
-                } else if imageLoadPolicy(for: url, serverOrigin: serverOrigin) == .confirm {
-                    tapToLoad
-                } else {
-                    placeholder
-                }
-            }
-        }
-        .task(id: LoadIdentity(url: url, scope: loader.scope, offline: isOffline, approval: approval)) {
-            await loader.loadIfNeeded(url, allowsNetwork: !isOffline, approvedURL: approval)
-        }
-    }
-
-    private var tapToLoad: some View {
-        Button {
-            approvedScope = loader.scope
-            approvedURL = url
-        } label: {
-            imageCard(title: loc[.editor_image_external], detail: url.host ?? url.absoluteString)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(loc.format(.editor_image_external_a11y, url.host ?? url.absoluteString))
-    }
-
-    private func unavailable(offline: Bool) -> some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-            imageCard(
-                title: loc[offline ? .editor_image_offline : .editor_image_failed],
-                detail: alt.isEmpty ? url.absoluteString : alt)
-            HStack {
-                Link(loc[.editor_image_open], destination: url)
-                if !offline {
-                    Button(loc[.editor_image_retry]) {
-                        Task {
-                            await loader.loadIfNeeded(
-                                url, allowsNetwork: !isOffline, approvedURL: approval, retry: true)
-                        }
-                    }
-                }
-            }
-            .font(DocsFont.footnote)
-            .padding(.horizontal, DocsSpacing.spaceSM)
-        }
-    }
-
-    private func imageCard(title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
-            MaterialSymbol(.image, size: 16)
-                .foregroundStyle(DocsColor.textTertiary)
-            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                Text(title).foregroundStyle(DocsColor.textPrimary)
-                Text(detail).foregroundStyle(DocsColor.textTertiary)
-                    .lineLimit(2).truncationMode(.middle)
-            }
-            Spacer(minLength: 0)
-        }
-        .font(DocsFont.footnote)
-        .padding(DocsSpacing.spaceSM)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DocsColor.surfaceSunken)
-        .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
-    }
-
-    private var placeholder: some View {
-        RoundedRectangle(cornerRadius: DocsRadius.md)
-            .fill(DocsColor.surfaceSunken)
-            .frame(maxWidth: .infinity)
-            .frame(height: 160)
-            .overlay { ProgressView() }
-            .accessibilityLabel(
-                alt.isEmpty ? loc[.editor_image_loading_a11y] : loc.format(.editor_image_loading_named_a11y, alt))
     }
 }
 

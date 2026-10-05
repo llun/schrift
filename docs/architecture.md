@@ -39,11 +39,9 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
   (every `/media/…` attachment) auto-loads; one hosted anywhere else renders a
   tap-to-load placeholder and fetches nothing until the reader taps it, closing a
   render-time IP/User-Agent/timing disclosure to a host the document's author
-  chose (`imageLoadPolicy`). Both surfaces share `ImageLoader` and a persistent,
-  bounded `ImageCacheStore`: viewed bytes survive mode changes, reopen and cold
-  offline launch. Image redirects may stay only on their initial origin.
-  A failed download keeps an image card and its URL, rather than drawing just a
-  link; image parsing/serialization and pending-photo replay are unchanged. **Generic file
+  chose (`imageLoadPolicy`). Displayed image bytes persist across mode switches and
+  offline relaunch in a bounded session-scoped cache; image redirects stay on the
+  requested origin. **Generic file
   attachments** (PDF, docx, …) that the web editor added render as inline cards
   that download once and preview full-screen through QuickLook, and stay
   readable offline from a disk cache — see
@@ -972,31 +970,65 @@ This is the part with no direct backend support, so it's called out explicitly:
 
 **Known limitation:** this is a full-document overwrite with no conflict detection (no ETag/version check in v1). If someone edits the same document live in the web app concurrently, the loser's changes are silently overwritten. This is an explicit, accepted trade-off of choosing non-realtime editing — not hidden from the user; the Editor screen should make clear this isn't live-collaborative.
 
-## Displayed images
+## Displayed document images
 
-`MarkdownBlockView` (reading) and `BlockEditorRow` (editing) both render
-`MarkdownImageView`. Its former `AsyncImage.failure` link explained how entering
-editing could *look* like an image-to-link conversion while `BlockKind.image`
-remained intact. Parsing stays conservative and unchanged. Both surfaces now use
-one app-scoped `ImageLoader`: cache lookup precedes connectivity and consent,
-concurrent callers join an owned download, and a surface swap cannot cancel it.
-Cached, loading, unavailable-offline, failed and external-consent states are explicit.
-Failures retain alt text and the URL, with Open image URL and deliberate retry.
+`MarkdownImageView` is shared by reading and editing. Its former `AsyncImage`
+failed-load branch drew a link; entering editing destroyed the first view and
+started another request. The parser already produced an `.image` leaf on both
+surfaces. A regression test covers mode entry/exit and exact URL preservation;
+this fixture needs no parser or Yjs encoding change; a differently shaped reported
+image would require its own source/reproduction before changing classification.
 
-`ImageDataClient` is deliberately separate from the authenticated REST client:
-an ephemeral session has no automatic cookies, credential storage or URL cache.
-Only a same-server URL receives the applicable server cookies; external URLs
-require exact-URL, view-local consent, scoped to the authenticated session, and
-receive no app credentials. A task delegate blocks redirects away from the
-initial origin (for both server and external requests), embedded URL credentials,
-and HTTP authentication. Same-origin redirects strip inherited credentials
-and re-select cookies applicable to the destination path. TLS uses system trust. Streaming stops at 12 MiB,
-including responses without a declared length; non-2xx bodies are never cached.
+`ImageLoader` is app-scoped in `AuthenticatedHomeContainer`, injected through the
+view environment alongside `AttachmentLoader`. It owns requests across view
+teardown and joins duplicates by full URL and `ImageCacheScope`. Every appearance
+checks disk first, including offline and previously failed loads. Failures remain
+image cards with a status, original URL, explicit Retry when online, and a
+secondary Open image URL action. ImageIO decodes thumbnails at most 2048 pixels
+on the long edge; shared metadata validation rejects sources above 48 megapixels
+before decoding, on both downloaded bytes and cold disk reads. Invalid image
+bytes are never cached. Disk reads and thumbnail
+preparation run asynchronously, with a decoded-image NSCache limited to 12 entries /
+48 MiB of bitmap cost. Each live leaf retains its prepared image for its URL and
+scope so unrelated load completions never re-decode its pixels in SwiftUI body.
+The coalesced task returns the prepared pixels directly to each waiter; NSCache
+is only for reuse and cannot evict a result before its leaf receives it.
 
-See [image-byte persistence](offline-and-sync.md#displayed-image-bytes-imagecachestore)
-for disk bounds, scope rotation, eviction and cold-launch behavior. This loader
-never handles `schrift-attachment://`: pending-photo rendering still branches
-before it in both surfaces and its backup-included bytes/replay remain unchanged.
+`ImageTransport` is a small facade over the existing `ImageDataClient`, the
+intentional networking seam for absolute document image
+URLs, including explicitly approved external URLs. Its ephemeral URLSession has
+no cookie storage, credential storage, or URLCache. Same-origin requests receive
+only a snapshot of cookies applicable to that URL; external requests receive none.
+No CSRF, Authorization, or Referer header is added. Same-origin redirects
+reselect only eligible cookies from that immutable snapshot for their destination
+percent-encoded path, and HTTP authentication challenges cannot consult a credential store. Every redirect must retain the
+initial scheme, host, and port; userinfo URLs and non-http(s) schemes are refused.
+An image download stops at 12 MiB, with or without Content-Length, and cancelling
+the stream task stops any remaining transfer. TLS validation stays standard.
+
+External consent is memory-only, scoped to the exact URL and session namespace,
+and survives reading/editing switches within that loader. A changed URL, a new
+loader after relaunch, or a cookie handover cannot reuse it. Previously cached
+external bytes can display without renewed consent because no request is made;
+if those bytes are evicted, a cold reopen requires another tap before fetching.
+Neither Retry nor an offline-to-online transition bypasses consent.
+
+`SessionStore.imageCacheSessionID` is an opaque random identifier, not an account
+id or credential. It persists across authenticated launches and rotates at
+`forgetSignedInIdentity` (cookie replacement, sign-in, sign-out), rather than
+waiting for `/users/me/`. Handover namespaces remain memory-only until signIn
+successfully saves the replacement cookies; the old persisted namespace is removed
+at handover. Failed confirmation or a failed Keychain cookie write therefore cannot
+pair B's cached images with A's restored cookies on relaunch. A mere expiry or
+cancelled login before cookie replacement retains the namespace. Observable
+scope reads immediately hide old loaded images in a surviving editor, and every
+request completion checks its captured scope before writing disk or publishing.
+The full cache is cleared at every cookie handover, sign-in and sign-out through
+SessionStore's injected clearImageCache callback, preserving the existing main
+behavior. RootView also clears it on sign-out. Pending photos
+still branch ahead of this loader at both surfaces, and their owner-scoped store,
+placeholder URLs, insertion guards, upload replay, and save holds are unchanged.
+See [image storage](offline-and-sync.md#8-displayed-image-bytes-imagecachestore).
 
 ## File attachments (read side)
 
@@ -1121,10 +1153,11 @@ rendered in its own origin. The rule keys on the **extension**, not the
 routinely. Such a card renders inert with "Can't be previewed here" rather than
 disappearing: the document does link that file, and saying so is honest.
 
-**Accepted residuals.** (1) `URLSession` follows redirects, so a same-origin path
-the trusted server 302s off-origin still leaks for file attachments. Images now
-use `ImageDataClient` and block this; extending that guard to attachments remains
-separate work. (2) QuickLook previews
+**Accepted residuals.** (1) File attachment requests still use the API client's
+`URLSession` and follow redirects, so a same-origin attachment path that the
+trusted server 302s off-origin can still leak. Displayed images now use the
+separate origin-pinned `ImageTransport`; migrating file attachments is a separate
+change. (2) QuickLook previews
 co-author-controlled bytes for the types it *does* handle; that is the same
 exposure Mail and Files accept (QuickLook renders out-of-process). (3) There is
 no per-file read-side size cap and the whole file is buffered in memory
