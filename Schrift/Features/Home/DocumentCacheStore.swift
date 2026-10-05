@@ -22,8 +22,11 @@ final class DocumentCacheStore {
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
         // The shared-by-me list was removed; drop any entry a previous app
-        // version left stranded so it doesn't linger unread in UserDefaults.
-        userDefaults.removeObject(forKey: "dev.llun.Schrift.cachedSharedByMeDocuments")
+        // version left stranded so it doesn't linger unread in UserDefaults. Only write
+        // when migration is needed: even removing an absent key invalidates AppStorage,
+        // which can reconstruct this store and prevent the first scene from settling.
+        let legacyKey = "dev.llun.Schrift.cachedSharedByMeDocuments"
+        if userDefaults.object(forKey: legacyKey) != nil { userDefaults.removeObject(forKey: legacyKey) }
     }
 
     func loadPinnedDocuments() -> [Document] {
