@@ -55,8 +55,8 @@
 > was already exercised whenever connectivity dropped *mid-session*; all that
 > was missing was a way to *enter* an editing session offline. So the three
 > reading-surface edit gates are gone — the block tap, "Start writing", and the
-> toolbar's Edit action (`editorToolbarActions` no longer takes `isOffline` at
-> all, so the gate cannot quietly return). What still guards Edit on a document
+> toolbar's Edit action (`editorToolbarActions` now reads `isOffline` only to
+> hide Share; Edit/Done never use it as an editing gate). What still guards Edit on a document
 > whose content never loaded is `startEditing`'s `hasLoadedContent`, exactly as
 > it already did online. **Within the editor's surfaces the dividing line is
 > whether the action POSTs**, and it now cuts through the editing surface
@@ -70,33 +70,16 @@
 > landed 2026-08-02, and those buttons now fall back to a local document rather than
 > gating on `isOffline`. See "Documents created on this device". That rule describes the
 > editor, **not the whole app**: Home's `+` now creates locally when the network cannot take the POST, and
-> the Options/Share sheets stay reachable offline throughout. Both predate this
-> change. Two decisions ride along:
-> the editor's `isOffline` stays a **chrome-only** signal derived from the Home
-> list's last fetch outcome (`ConnectivityMonitor` remains "a sync trigger
-> only"; every consequential outcome comes from a real request result, so a
-> stale flag degrades gracefully in both directions), and **Work Offline does
-> not hold saves** — the write-ahead draft is the durability guarantee, and
-> holding writes would only widen the divergence window and manufacture
-> conflicts. That costs more than a cosmetic wrinkle, and it is worth naming:
-> Work Offline is a strict no-network contract on every *read* path, but a save
-> PATCHes regardless — so with the toggle on and the network up, a preference
-> named "Work offline" emits traffic while the banner claims otherwise. The
-> asymmetry predates this change; a cold offline open now leading straight into
-> editing is what makes it routine. And one
-> interaction recorded rather than fixed: whenever `isOffline` is true while the
-> network is actually up — Work Offline on, or *any* non-401 failure of the list
-> fetch, since that is all `isOffline` tracks — a save parked at `.pendingSync`
-> by a **server-side** failure offers no manual retry (`syncCaption` suppresses
-> it while `isOffline`) and no reconnect edge can fire, since connectivity never
-> changed. Recovery is a foreground cycle (`syncPendingDrafts` reads no
-> `workOffline` gate), or one more keystroke, which turns the editing surface's
-> indicator back into a tappable **Save**. This was already reachable — an
-> already-open session was never gated by `isOffline`, so an online edit against
-> a server that then began failing landed here — but a *cold offline open* could
-> not reach it, and now can. Fixing it means deciding whether that retry rule
-> should key off real reachability instead of this flag, which would reopen the
-> ConnectivityMonitor decision above.
+> the Options sheet's local actions remain reachable offline. Share is now hidden
+> in the toolbar and Options, and Version history is disabled with an explanation.
+> `OnlineAvailability` combines Work Offline and the current network path for
+> these controls and Home's search surfaces, independent of Home's last fetch.
+> Work Offline still does **not** hold saves: the write-ahead draft and conflict
+> checks remain the durability guarantee. Reads are withheld; save/replay behavior
+> is unchanged. A satisfied network path does not promise a usable server, so
+> server, authentication and permission errors retain their existing handling.
+> Switching offline stops loading without clearing an earlier server/authentication
+> error; reconnect retries the read without erasing unrelated action or save errors.
 >
 > Worth knowing about the durability posture this shifts: full document bodies
 > now sit in `PendingDraftStore` for whole offline sessions rather than the
@@ -2778,9 +2761,30 @@ delete / 404 / 403 ──▶ remove cache entry        sign-out ──▶ remove
   — a user-requested refresh never fails silently.
 - `.notFound`/`.forbidden` on revalidate → terminal "This document is no longer
   available." state with the cache entry purged (§2).
-- No local content (source 4) and fetch fails → existing
-  `"Couldn't load this document. Pull to refresh to try again."` error, unchanged
-  (and still truthful, because `refresh()` awaits and surfaces errors).
+- No local content and unavailable connectivity/Work Offline (or a transport
+  failure) → "Not available offline" plus "Open this document online first to
+  save a copy on this device." This is an explanatory state, not a generic load
+  error, and it never presents Empty document or Start writing. A genuinely empty
+  cached document still has loaded content and remains editable. A transport
+  failure on a still-reachable path offers Retry, since no reconnect edge need occur.
+- `EditorViewModel.load` restores drafts/cache before withholding unavailable
+  reads. Reconnect revalidates the same model without reinstalling a disk copy
+  over editing or clearing unrelated action/save errors. Physical disconnect or
+  Work Offline immediately ends an uncached spinner. The load's tail is guarded
+  so an old response cannot stop a newer reconnect spinner.
+- Home's iPhone search shortcut, pushed Search field and iPad inline field are
+  unavailable offline with visible and accessibility explanations. Search is
+  server-backed: retained results/recent terms are not an offline index. Home
+  continues to show its cached document list while inline search is withheld.
+  Search/Quick Access/Version history also suppress requests at the VM boundary.
+- Shared `OnlineAvailability.Token` captures network-path and Work Offline
+  revisions. Response guards combine that token with request generations, so
+  stale results/content/errors cannot land across offline → reconnect, including
+  when the request implementation ignores cancellation. Share/history sheets
+  already presented are dismissed when offline; Options remains open and reactive.
+- Non-transport failures without a local copy keep their friendly load errors;
+  `.sessionExpired` also presents reauthentication, and `.forbidden`/`.notFound`
+  preserve terminal cache-purge behavior. Conflict and save errors are unchanged.
 - Cache read/write failures are non-fatal (`try?`), degrading to today's
   network-only behavior.
 
@@ -2798,7 +2802,7 @@ XCTest, mirroring the source tree. New/updated:
     network call resolves (delayed/failing `MockURLProtocol` stub);
   - no cache → `isLoading` toggles true then false; content cached afterward;
   - offline (fetch throws) with cache → content stays, no `errorMessage`,
-    `hasLocalCopy == true`; offline with no cache → `errorMessage` set;
+    `hasLocalCopy == true`; offline with no cache → open-online explanation;
   - cached markdown that fails byte round-trip (e.g. `*` bullets) → opening and
     closing the editor without an edit enqueues **no** save (the `savedMarkdown`
     baseline equals `serializeMarkdown(blocks)`), both on cached open and after

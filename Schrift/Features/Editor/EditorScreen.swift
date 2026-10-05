@@ -30,6 +30,7 @@ struct EditorScreen: View {
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         diagnostics: APIDiagnosticsLog? = nil,
+        availability: OnlineAvailability = OnlineAvailability(),
         reach: LinkReach,
         serverHost: String,
         serverOrigin: String,
@@ -50,7 +51,8 @@ struct EditorScreen: View {
                 serverOrigin: serverOrigin,
                 contentCache: contentCache,
                 childrenCache: childrenCache,
-                diagnostics: diagnostics
+                diagnostics: diagnostics,
+                availability: availability
             ))
         self.childrenCache = childrenCache
         self.reach = reach

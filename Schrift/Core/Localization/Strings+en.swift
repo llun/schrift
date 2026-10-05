@@ -5,6 +5,7 @@ import Foundation
 enum Strings_en {
     static let table: [L10nKey: String] = [
         .common_cancel: "Cancel",
+        .common_retry: "Retry",
         .common_close: "Close",
         .common_untitled: "Untitled document",
         .common_profile: "Profile",
@@ -42,6 +43,10 @@ enum Strings_en {
         .search_quick_empty: "Pinned documents will appear here.",
         .search_empty_title: "No documents found",
         .search_empty_body: "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword.",
+        .search_offline_explanation: "Search is available when online.",
+        .versions_offline_explanation: "Version history is available when online.",
+        .editor_offline_unavailable_title: "Not available offline",
+        .editor_offline_open_online: "Open this document online first to save a copy on this device.",
         .search_error_quick: "Couldn't load quick access. Please try again.",
         .search_error_search: "Search failed. Please try again.",
 

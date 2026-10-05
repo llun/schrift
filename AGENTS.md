@@ -108,6 +108,10 @@ names the section with the details.
   isolated stores. It needs no login or remote document and adds no test launch
   arguments to the shipping app. For focused hit-target checks, use
   `-only-testing:SchriftChecklistUITests`; the full command runs both bundles.
+- `SchriftChecklistUITests/OfflineControlsTests` also hosts the production Home,
+  pushed Search, split-sidebar Search, editor and Options using disposable local
+  fixtures (`--offline-controls` belongs only to the test host). Run it on both
+  an iPhone and iPad for control availability, uncached messaging and reconnect.
 - **Running the app in the iOS Simulator — the "Offline" quirk.** When you launch
   the app in the Simulator it often shows **"Offline"** even though the network is
   fine. This is a **Simulator-only** networking quirk — an HTTP/3 (QUIC) stall
@@ -565,7 +569,8 @@ new code reads like the surrounding code.
     results and recent terms survive navigation and tab switches.
   - Search uses `.searchable` with `.navigationBarDrawer(displayMode: .always)`;
     do not rely on a search-role tab to reveal its field. Home's shortcut remains
-    one localized accessibility button; the regular-width field remains editable.
+    one localized accessibility button; both it and the regular-width field disable
+    offline with an explanation and recover on reconnect.
   - Home (including Search) and Shared share one `editorScreen(for:path:)`
     builder. `.toolbar(.hidden, for: .tabBar)` hides the native bar while an
     editor is pushed and restores it on pop. Keep Profile's account destination.
@@ -2319,7 +2324,7 @@ markdown write endpoint**. Understand this before touching the save path:
   would strike user A's document through user B's list and offer B a button cancelling A's
   deletion. It reads `pendingDeletesVersion` first, which is what makes a row strike (and
   un-strike on undo) without a list fetch.
-  **Queue time never reads `isOffline`** (derived from Home's last *list* fetch, so wrong
+  **Queue time never reads `isOffline`** (a read/control availability signal, so wrong
   in both directions): `retryableSaveFailure` plus a known `ownerUserID` queues, anything
   else keeps the error, and an unattributable deletion errors rather than silently going
   nowhere. Both server-addressed branches take the split — note the *common* checkpointed
@@ -2930,8 +2935,8 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Offline is editable, and since the create UI landed a document can be created
   offline too.** The three reading-surface edit gates (the block tap,
   "Start writing", and the toolbar's Edit action) were lifted 2026-08-01;
-  `editorToolbarActions(isEditing:isLocal:)` deliberately no longer *takes* `isOffline`,
-  so the gate cannot quietly return. What makes this safe is that the save
+  `editorToolbarActions(isEditing:isLocal:isOffline:)` gates only Share on availability;
+  Edit/Done stay reachable offline when content has loaded. What makes this safe is that the save
   pipeline was already built for it: `enqueue` persists the draft **before** it
   attempts the PATCH, `retryableSaveFailure` routes a transport failure to
   `.pendingSync` rather than `.failed`, and `syncPendingDrafts` replays through
@@ -2946,8 +2951,7 @@ markdown write endpoint**. Understand this before touching the save path:
   `canOfferPhotoInsertion`), and dropped from the slash menu by the pure
   `filteredSlashItems(query:isOffline:isLocalDocument:)`. Offering it would open the picker and
   re-encode the chosen image only to fail. **Photo now also gates on
-  `isLocalDocument`** at both entry points, because `isOffline` is derived from Home's
-  last *list* fetch rather than reachability — a create that 500s with the network fine
+  `isLocalDocument`** at both entry points: a create that 500s with the network fine
   mints a local document while `isOffline` reads false, and the upload would POST a
   client-minted id for a 404 and an impossible retry.
   The editor's two **create** buttons are **ungated** — neither on `isOffline` (a failed
@@ -2966,10 +2970,10 @@ markdown write endpoint**. Understand this before touching the save path:
   deliberately ungated: Home's **`+`** now creates *locally* under Work Offline or on a
   retryable failure, and errors with `home_error_create` only on a rejection the server
   actually made (or when no account id is known). Also the Options
-  and Share sheets' actions (pin, delete, invite, role changes), which stay
-  reachable offline because `editorToolbarActions` never gated `.share` or
-  `.options`. All of that predates offline editing; it is listed here so the
-  paragraph above isn't mistaken for a complete one.
+  sheet's local actions (including queued Delete), which remain reachable offline.
+  Share is hidden in the toolbar and Options while offline; Version history is
+  disabled with a localized explanation. An already-presented Share/history sheet
+  is dismissed when availability disappears.
   Two decisions ride with this. (a) **`isOffline` never gates durability or a save
   decision** — it gates chrome (the banner, the `.pendingSync` retry affordance,
   and the document header's `PresenceBar`, via `headerPeers`/`presentedPeerCount`
@@ -2977,36 +2981,31 @@ markdown write endpoint**. Understand this before touching the save path:
   both surfaces a bar, and note the gate now reaches the reading surface too)
   plus the one POST-only affordance above that still reads it (photo).
   Nothing about whether an edit is kept, queued, or replayed reads it.
-  It stays derived from `HomeViewModel`'s last list-fetch outcome — note that is
-  *any* failure but `.sessionExpired`, so a 5xx, a 429, or a decoding bug on the
-  **list** endpoint sets it with the network perfectly healthy. It is deliberately
-  *not* wired to `ConnectivityMonitor`, whose own doc comment records that it is
-  "a sync trigger only" (a satisfied `NWPath` is not a usable server — see the
-  Simulator HTTP/3 stall); every consequential outcome comes from a real request
-  result, so a stale flag degrades gracefully both ways. (b) `schrift.workOffline`
-  does **not** hold saves: the write-ahead draft is the durability guarantee, and
-  holding writes would only widen the divergence window and manufacture conflicts
-  against co-authors. Note what that costs, which is more than cosmetic: Work
-  Offline is a strict no-network contract on every *read* path (`HomeViewModel`,
-  `SharedViewModel` and `PagesTreeViewModel` all return before touching the
-  network), but a save PATCHes regardless — so a preference named "Work offline"
-  does emit traffic, and the offline banner shows while that save quietly
-  succeeds. The asymmetry predates this change; what is new is that a cold
-  offline open now leads straight into editing, which makes it routine.
-  **One interaction to know about, which this change makes easy to reach.**
-  Whenever `isOffline` is true but the network is actually **up** — Work Offline
-  on, or any non-401 failure of the *list* fetch — a save parked at `.pendingSync`
-  by a server-side reason (a 5xx, a rate limit) offers no manual retry, because
-  `syncCaption` suppresses it while `isOffline`, and no reconnect edge can fire,
-  because connectivity never changed. It is not a dead end: a foreground cycle
-  re-runs `syncPendingDrafts` (which reads no `workOffline` gate), and one more
-  keystroke turns the editing surface's indicator back into a tappable **Save**.
-  It was reachable before this change — an already-open session was never gated,
-  so an online edit against a server that then started failing landed in exactly
-  this state — but a *cold offline open* could not reach it, and now can. Fixing
-  it properly means deciding whether that retry rule should key off real
-  reachability rather than this flag; deliberately left alone here, since that
-  would overturn the "`ConnectivityMonitor` is a sync trigger only" decision.
+  **Availability for editor/Home search controls uses one injected
+  `OnlineAvailability`**, reading Work Offline and the live `ConnectivityMonitor`
+  path. A satisfied path does not promise a usable server: 401/authentication,
+  403/permission, conflicts, save failures, 429 and 5xx keep their existing error
+  paths; they never disable controls by pretending the network is offline.
+  Home may report a transport load failure through its own offline banner, but
+  this historical fetch outcome is not the control-availability signal.
+  Cache/draft restoration precedes the editor's read guard. Uncached offline
+  content explains that it must first be opened online; never show Empty document
+  or Start writing without `hasLoadedContent`. A cached empty body is valid content.
+  Search is server-backed, so disable both Home's compact shortcut and iPad inline
+  field with visible/accessibility explanations. Keep PR #148's pushed Home Search
+  route and retain its model/query. Search and Quick Access reads are withheld at
+  the VM boundary too; do not rely on a disabled view to suppress requests.
+  Reads capture an availability token (path and preference revisions) alongside
+  their load/query generations. A response crossing offline/reconnect cannot
+  install content/results/errors, even if availability has returned before it lands.
+  Unavailable transitions stop an uncached editor's spinner immediately, and a
+  superseded load cannot stop a newer spinner. Reconnect reloads the same editor
+  without clearing unrelated action/save errors or replacing local work.
+  **Work Offline still does not hold saves**: write-ahead persistence, conflict
+  decisions and replay remain in the save coordinator, independent of read/control
+  availability. With that preference on, a save may PATCH successfully while reads
+  are withheld. The pending-sync retry caption stays passive under Work Offline;
+  foreground/reconnect replay and the editing Save action retain their behavior.
 - **A clean copy always ends up showing the server's body.** `apply` takes no
   "user initiated" flag: passive `load()` and pull-to-refresh apply identical
   content rules, and `refresh()` differs only in surfacing failures (and in its

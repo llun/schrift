@@ -2,6 +2,7 @@
 enum Strings_zhHant {
     static let table: [L10nKey: String] = [
         .common_cancel: "取消",
+        .common_retry: "重試",
         .common_close: "關閉",
         .common_untitled: "未命名文件",
         .common_profile: "個人檔案",
@@ -39,6 +40,10 @@ enum Strings_zhHant {
         .search_quick_empty: "已釘選的文件會顯示在這裡。",
         .search_empty_title: "找不到文件",
         .search_empty_body: "沒有符合 \u{201C}%@\u{201D} 的項目。請嘗試其他標題或關鍵字。",
+        .search_offline_explanation: "連線時可以搜尋。",
+        .versions_offline_explanation: "連線時可以查看版本記錄。",
+        .editor_offline_unavailable_title: "離線時無法使用",
+        .editor_offline_open_online: "請先連線開啟此文件，以在此裝置上儲存副本。",
         .search_error_quick: "無法載入快速存取。請再試一次。",
         .search_error_search: "搜尋失敗。請再試一次。",
 

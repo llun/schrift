@@ -115,8 +115,9 @@ struct DocumentListView: View {
                 }
             }
         }
-        .task {
+        .task(id: viewModel.availability.token) {
             await viewModel.load()
+            await viewModel.search()
         }
         .onChange(of: viewModel.searchQuery) {
             Task { await viewModel.search() }
@@ -125,18 +126,38 @@ struct DocumentListView: View {
 
     @ViewBuilder
     private var searchField: some View {
-        if let onSearchTap {
-            Button(action: onSearchTap) {
-                SearchField(text: .constant(""), placeholder: loc.format(.home_search_placeholder, serverHost))
-                    .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            if let onSearchTap {
+                Button(action: onSearchTap) {
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        MaterialSymbol(.search, size: 20)
+                            .foregroundStyle(DocsColor.textTertiary)
+                        Text(loc.format(.home_search_placeholder, serverHost))
+                            .font(DocsFont.callout)
+                            .foregroundStyle(DocsColor.textTertiary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, DocsSpacing.spaceSM)
+                    .frame(minHeight: 40)
+                    .background(DocsColor.surfaceSunken)
+                    .clipShape(Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                // The native button combines its text label; an accessibility wrapper
+                // here would expose a second nested button on iPhone.
+                .accessibilityHint(viewModel.availability.isOffline ? loc[.search_offline_explanation] : "")
+                .disabled(viewModel.availability.isOffline)
+            } else {
+                SearchField(text: $viewModel.searchQuery, placeholder: loc[.home_search_documents])
+                    .disabled(viewModel.availability.isOffline)
+                    .accessibilityHint(viewModel.availability.isOffline ? loc[.search_offline_explanation] : "")
             }
-            .buttonStyle(.plain)
-            // Announce one actionable button, not the inert editable field inside.
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(loc.format(.home_search_placeholder, serverHost))
-            .accessibilityAddTraits(.isButton)
-        } else {
-            SearchField(text: $viewModel.searchQuery, placeholder: loc[.home_search_documents])
+            if viewModel.availability.isOffline {
+                Text(loc[.search_offline_explanation])
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textSecondary)
+            }
         }
     }
 
@@ -151,7 +172,9 @@ struct DocumentListView: View {
             // tab uses off the same gate — the handoff's rule is no spinners on
             // lists. No gutter here: the enclosing stack already applies it.
             SkeletonList()
-        } else if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        } else if !viewModel.availability.isOffline,
+            !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
             if viewModel.searchResults.isEmpty {
                 if viewModel.errorKey == nil {
                     ContentUnavailableView.search(text: viewModel.searchQuery)

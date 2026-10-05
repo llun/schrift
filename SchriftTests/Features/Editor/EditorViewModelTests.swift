@@ -784,7 +784,9 @@ final class EditorViewModelTests: XCTestCase {
 
         await viewModel.load()
 
-        XCTAssertEqual(viewModel.errorKey, .editor_error_load)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertTrue(viewModel.needsOnlineContent)
+        XCTAssertFalse(viewModel.canStartEditing)
         XCTAssertFalse(viewModel.hasLocalCopy)
     }
 

@@ -11,6 +11,7 @@ struct ProfileScreen: View {
     /// covers SwiftUI plumbing. Make it a compile error instead.
     let signInGeneration: Int
     var onSignOut: () -> Void
+    var onWorkOfflineChanged: (() -> Void)? = nil
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
@@ -134,7 +135,13 @@ struct ProfileScreen: View {
                 Switch(isOn: $notificationsEnabled)
             }
             ProfileTrailingRow(icon: .cloud_off, title: loc[.profile_work_offline]) {
-                Switch(isOn: $workOffline)
+                Switch(
+                    isOn: Binding(
+                        get: { workOffline },
+                        set: {
+                            workOffline = $0
+                            onWorkOfflineChanged?()
+                        }))
             }
             ProfileTrailingRow(icon: .group, title: loc[.profile_live_collaboration]) {
                 Switch(isOn: $liveCollaboration)

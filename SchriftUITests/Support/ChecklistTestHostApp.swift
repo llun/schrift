@@ -37,24 +37,28 @@ struct ChecklistTestHostApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ScrollView {
-                VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
-                    ForEach(Array(model.blocks.enumerated()), id: \.element.id) { index, block in
-                        BlockEditorRow(
-                            viewModel: model, block: block, index: index,
-                            serverOrigin: "https://docs.example.org", isOffline: true)
+            if ProcessInfo.processInfo.arguments.contains("--offline-controls") {
+                OfflineControlsTestHost()
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                        ForEach(Array(model.blocks.enumerated()), id: \.element.id) { index, block in
+                            BlockEditorRow(
+                                viewModel: model, block: block, index: index,
+                                serverOrigin: "https://docs.example.org", isOffline: true)
+                        }
                     }
+                    .padding(20)
                 }
-                .padding(20)
+                .environment(loc)
+                .environment(AttachmentLoader.inert())
+                .environment(ImageLoader.inert())
+                .environment(
+                    \.dynamicTypeSize,
+                    ProcessInfo.processInfo.arguments.contains("--accessibility") ? .accessibility3 : .large
+                )
+                .preferredColorScheme(.light)
             }
-            .environment(loc)
-            .environment(AttachmentLoader.inert())
-            .environment(ImageLoader.inert())
-            .environment(
-                \.dynamicTypeSize,
-                ProcessInfo.processInfo.arguments.contains("--accessibility") ? .accessibility3 : .large
-            )
-            .preferredColorScheme(.light)
         }
     }
 }

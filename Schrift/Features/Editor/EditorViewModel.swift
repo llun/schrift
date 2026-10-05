@@ -60,6 +60,13 @@ final class EditorViewModel {
     var subpages: [Document]? = nil
     var mode: Mode = .reading
     var isLoading = false
+    let availability: OnlineAvailability
+    private var loadFailedOffline = false
+    var needsOnlineContent: Bool {
+        !hasLoadedContent && !isUnavailable && !isDocumentPendingDelete
+            && (availability.isOffline || loadFailedOffline)
+    }
+
     var errorKey: L10nKey?
     /// The server's own words about the failure behind `errorKey`, when it had any.
     /// Every 404 maps to `.notFound` and reads as "deleted", so a missing route or a proxy
@@ -218,9 +225,11 @@ final class EditorViewModel {
         autosaveInterval: Duration = .seconds(10),
         mediaCheckRetryInterval: Duration = .seconds(1),
         remoteChangeDebounce: Duration = .milliseconds(600),
-        diagnostics: APIDiagnosticsLog? = nil
+        diagnostics: APIDiagnosticsLog? = nil,
+        availability: OnlineAvailability = OnlineAvailability()
     ) {
         self.client = client
+        self.availability = availability
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
@@ -406,6 +415,7 @@ final class EditorViewModel {
     }
 
     func load() async {
+        loadFailedOffline = false
         // **A document waiting to be deleted is not opened.** Say so and stop — before the
         // local phase, which would otherwise render the body from the draft the undo is
         // holding and let the user edit a document they have thrown away, and before any
@@ -426,7 +436,9 @@ final class EditorViewModel {
         // The terminal 404/403 message survives until a fetch actually puts content
         // back on screen (`markAvailableAgain`). Clearing it here would leave the
         // user staring at revoked content — or at nothing — with no warning.
-        if !isUnavailable { clearError() }
+        // Entering offline mode is not a successful retry of an earlier server or
+        // authentication error. Keep that evidence until an online load retries it.
+        if !isUnavailable && !availability.isOffline { clearError() }
         // The local phase runs once per installed document: load() re-fires
         // on pop-back (.task) — reinstalling would clobber a dirty editing
         // session with the cached copy. After the first install, load() is
@@ -455,8 +467,28 @@ final class EditorViewModel {
             }
         }
         revalidationGeneration += 1
-        await revalidate(generation: revalidationGeneration)
+        let generation = revalidationGeneration
+        await revalidate(generation: generation)
+        if generation == revalidationGeneration { isLoading = false }
+    }
+
+    func pauseLoadingWhileOffline() {
+        guard availability.isOffline else { return }
+        revalidationGeneration += 1
+        childrenGeneration += 1
         isLoading = false
+    }
+
+    /// Reconnect revalidates without clearing an unrelated save/action error or replacing
+    /// a loaded editing session with its disk copy.
+    func reloadAfterReconnect() async {
+        guard !availability.isOffline else { return }
+        if !hasLoadedContent {
+            await load()
+        } else {
+            revalidationGeneration += 1
+            await revalidate(generation: revalidationGeneration)
+        }
     }
 
     /// Local phase: synchronous, no network, no spinner. Chooses the display
@@ -496,6 +528,8 @@ final class EditorViewModel {
     /// 404/proxy hiccup, or a co-author's own permission flap) and must never eject
     /// an active editing session over another user's activity.
     private func revalidate(generation: Int, terminalOnUnavailable: Bool = true) async {
+        guard !availability.isOffline else { return }
+        let availabilityToken = availability.token
         // A client-minted id 404s, and this is the path whose catch calls `becomeUnavailable`.
         guard !isLocalDocument else { return }
         // And a document queued for deletion is one we are deliberately not asking about — a
@@ -508,7 +542,9 @@ final class EditorViewModel {
             // time can tell us whether the response might predate our own save.
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
-            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled,
+                availability.permitsResponse(for: availabilityToken)
+            else { return }
             apply(
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
@@ -520,7 +556,9 @@ final class EditorViewModel {
             enterNewDocumentIfReady()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
-            guard generation == revalidationGeneration else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled,
+                availability.permitsResponse(for: availabilityToken)
+            else { return }
             // A background remote-change prompt never tears the screen down: a
             // transient 404/403 here would eject an editing session over a peer's
             // activity. A genuine deletion still surfaces on the next open, pull-to
@@ -531,7 +569,9 @@ final class EditorViewModel {
             // not have, or a proxy hiccup. Say what the server actually answered.
             errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
-            guard generation == revalidationGeneration else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled,
+                availability.permitsResponse(for: availabilityToken)
+            else { return }
             // Transient (.network, .routeNotFound, .server, .rateLimited, .sessionExpired —
             // cookie expiry must not purge the cache): keep the local copy.
             // For .sessionExpired specifically, the shared client's
@@ -547,7 +587,11 @@ final class EditorViewModel {
             if isUnavailable {
                 showError(unavailableMessageKey, detail: detail)
             } else if displaySource == .none {
-                showError(.editor_error_load, detail: detail)
+                if case .network = error as? DocsAPIError {
+                    loadFailedOffline = true
+                } else {
+                    showError(.editor_error_load, detail: detail)
+                }
             }
         }
     }
@@ -586,6 +630,8 @@ final class EditorViewModel {
     /// server body — and differs only in that it surfaces failures instead of
     /// swallowing them (the user asked, so silence would read as a no-op).
     func refresh() async {
+        guard !availability.isOffline else { return }
+        let availabilityToken = availability.token
         guard hasLoadedContent else {
             await load()  // error-state retry: full initial flow, as today
             return
@@ -602,7 +648,9 @@ final class EditorViewModel {
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let formatted = try await client.formattedContent(documentID: documentID)
-            guard generation == revalidationGeneration, !Task.isCancelled else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled,
+                availability.permitsResponse(for: availabilityToken)
+            else { return }
             apply(
                 formatted: formatted,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
@@ -615,11 +663,15 @@ final class EditorViewModel {
             markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
-            guard generation == revalidationGeneration else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled,
+                availability.permitsResponse(for: availabilityToken)
+            else { return }
             becomeUnavailable()
             errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
         } catch {
-            guard generation == revalidationGeneration else { return }
+            guard generation == revalidationGeneration, !Task.isCancelled,
+                availability.permitsResponse(for: availabilityToken)
+            else { return }
             showError(
                 .editor_error_refresh,
                 detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics))
@@ -1486,6 +1538,8 @@ final class EditorViewModel {
     }
 
     func loadChildren() async {
+        guard !availability.isOffline else { return }
+        let availabilityToken = availability.token
         // A local document has no children on the server to list — and cannot, since the server
         // has never heard of the id. Sub-pages created under it live in the create records and
         // reach the screen through `mergedSubpages`, which reports that level as known-empty.
@@ -1496,7 +1550,9 @@ final class EditorViewModel {
         // Superseded by a newer fetch or a createChild while in flight: a
         // pre-create snapshot must not overwrite (and durably cache) a list
         // missing the just-added child.
-        guard generation == childrenGeneration else { return }
+        guard generation == childrenGeneration, availability.permitsResponse(for: availabilityToken),
+            !Task.isCancelled
+        else { return }
         subpages = results.results
         childrenCache.save(results.results, for: documentID)
     }
@@ -2090,8 +2146,8 @@ final class EditorViewModel {
     /// - **Anything else** — the server rejected this photo on its merits, or the session
     ///   expired. Friendly copy, nothing inserted, exactly as before.
     ///
-    /// `isOffline` comes from the view rather than being held here: it is derived from Home's
-    /// last *list* fetch, so it selects a **path**, never durability. Every route ends with the
+    /// `isOffline` comes from the view's current path/Work Offline availability:
+    /// it selects a **path**, never durability. Every route ends with the
     /// photo either in the document or reported — none of them can silently drop it.
     func insertPhoto(isOffline: Bool = false, loadingData: @Sendable () async throws -> Data?) async {
         guard canInsertPhoto else { return }

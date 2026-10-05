@@ -25,17 +25,17 @@ struct NetworkPathMonitoring: Sendable {
 
 /// Observes network reachability for the app.
 ///
-/// It is a **sync trigger only** — it deliberately does *not* replace the inferred
-/// `isOffline` state or the `workOffline` toggle. Those also catch server-down /
-/// HTTP-3-stall states that a satisfied `NWPath` misses (the documented Simulator
-/// quirk in AGENTS.md), so reachability here answers "can the OS see a network",
-/// not "is the server usable". Reachability starts optimistic (`true`) so nothing
-/// reads offline before the first path update, and every change is delivered on
-/// the main actor **in order**.
+/// Reachability drives reconnect sync and `OnlineAvailability` for server-read
+/// controls. A satisfied path does not establish server health: HTTP errors and
+/// save decisions still come from their actual requests. Reachability starts
+/// optimistic until the first OS callback; changes arrive on the main actor in order.
 @MainActor
 @Observable
 final class ConnectivityMonitor {
     private(set) var isReachable = true
+    /// Invalidates requests across a disconnect/reconnect, even when the final path
+    /// is reachable again by the time their old response arrives.
+    private(set) var revision = 0
     // The cancel closure lives in a box whose own `deinit` fires it. The box is
     // initialized at declaration (before the `[weak self]` capture below), which
     // both satisfies definite-initialization and keeps the teardown off
@@ -62,7 +62,11 @@ final class ConnectivityMonitor {
         }
         Task { [weak self] in
             for await reachable in stream {
-                self?.isReachable = reachable
+                guard let self else { return }
+                if self.isReachable != reachable {
+                    self.isReachable = reachable
+                    self.revision += 1
+                }
             }
         }
     }

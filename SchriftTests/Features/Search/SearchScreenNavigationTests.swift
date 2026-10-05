@@ -97,9 +97,13 @@ final class SearchScreenNavigationTests: XCTestCase {
         XCTAssertEqual(navigation.path.count, 2)
         navigation.path.removeLast()
         await waitUntil { controller.viewControllers.count == 2 }
+        await waitUntil { controller.transitionCoordinator == nil }
         XCTAssertEqual(viewModel.query, "Roadmap")
         navigation.path.removeLast()
         await waitUntil { controller.viewControllers.count == 1 }
+        // UIKit removes the popped controller before its animation completes.
+        // Re-pushing during that transition can be dropped by NavigationStack.
+        await waitUntil { controller.transitionCoordinator == nil }
         navigation.path.append(HomeRoute.search)
         await waitUntil { controller.topViewController?.navigationItem.searchController != nil }
         XCTAssertEqual(controller.topViewController?.navigationItem.searchController?.searchBar.text, "Roadmap")

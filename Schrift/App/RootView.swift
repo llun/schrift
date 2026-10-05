@@ -43,8 +43,10 @@ private struct AuthenticatedHomeContainer: View {
 
     @Environment(ConnectivityMonitor.self) private var connectivity
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("schrift.workOffline") private var workOffline = false
 
-    init(serverURL: URL, sessionStore: SessionStore, onSignOut: @escaping () -> Void) {
+    init(serverURL: URL, sessionStore: SessionStore, connectivity: ConnectivityMonitor, onSignOut: @escaping () -> Void)
+    {
         // The one client every feature shares: its onSessionExpired hook is
         // what turns any real 401 into the re-login sheet below (idempotent —
         // concurrent 401s just re-set the same flag). Its onRequestFailure hook
@@ -58,7 +60,9 @@ private struct AuthenticatedHomeContainer: View {
         )
         let origin = siteOrigin(for: serverURL) ?? ""
         _viewModel = State(
-            initialValue: HomeViewModel(client: client, serverOrigin: origin, diagnostics: diagnostics))
+            initialValue: HomeViewModel(
+                client: client, serverOrigin: origin, diagnostics: diagnostics,
+                availability: OnlineAvailability(connectivity: connectivity)))
         // The app-scoped live-collaboration manager. Built once per authenticated
         // server session (it needs the server origin + cookies); dormant until the
         // `schrift.liveCollaboration` toggle is on AND the server advertises the
@@ -107,6 +111,9 @@ private struct AuthenticatedHomeContainer: View {
             // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
             signInGeneration: sessionStore.signInGeneration, onSignOut: onSignOut
         )
+        .onChange(of: workOffline) { _, _ in
+            viewModel.availability.preferencesChanged()
+        }
         .sheet(
             isPresented: Binding(
                 get: { sessionStore.needsReauthentication },
@@ -182,6 +189,7 @@ private struct AuthenticatedHomeContainer: View {
 }
 
 struct RootView: View {
+    @Environment(ConnectivityMonitor.self) private var connectivity
     @State private var sessionStore = SessionStore()
     @State private var recentServers = RecentServersStore()
 
@@ -190,6 +198,7 @@ struct RootView: View {
             AuthenticatedHomeContainer(
                 serverURL: serverURL,
                 sessionStore: sessionStore,
+                connectivity: connectivity,
                 onSignOut: {
                     // Full document bodies must not survive sign-out on disk. The
                     // metadata caches (DocumentCacheStore's document lists and

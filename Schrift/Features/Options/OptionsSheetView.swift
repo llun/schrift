@@ -3,6 +3,7 @@ import SwiftUI
 struct OptionsSheetView: View {
     @Bindable var viewModel: OptionsViewModel
     let shareURL: URL?
+    let availability: OnlineAvailability
     var onShare: (() -> Void)? = nil
     /// Called once the deletion has been made **or queued**, with `queued: true` for the
     /// latter. The presenter needs the distinction: a completed delete purges every local
@@ -30,18 +31,20 @@ struct OptionsSheetView: View {
         shareURL: URL?,
         saveCoordinator: DocumentSaveCoordinator? = nil,
         signedInUser: SignedInUserStore = SignedInUserStore(),
+        availability: OnlineAvailability = OnlineAvailability(),
         onLinkCopied: (() -> Void)? = nil,
         onShare: (() -> Void)? = nil,
         onDeleted: ((_ queued: Bool) -> Void)? = nil
     ) {
         self.viewModel = viewModel
+        self.availability = availability
         self.shareURL = shareURL
         self.onLinkCopied = onLinkCopied
         self.onShare = onShare
         self.onDeleted = onDeleted
         self.restoreURL = documentShareURL(serverHost: serverHost, documentID: documentID)
         _versionHistoryViewModel = State(
-            initialValue: VersionHistoryViewModel(client: client, documentID: documentID))
+            initialValue: VersionHistoryViewModel(client: client, documentID: documentID, availability: availability))
         // No `row:` — this screen holds an id and a title, not the `Document` a list draws. The
         // move still lands; the destination simply picks the document up on its next fetch
         // rather than being handed a row with an invented `depth`/`path`.
@@ -89,18 +92,27 @@ struct OptionsSheetView: View {
 
                         ListRow(icon: .link, title: loc[.options_copy_link], action: { copyLink() })
 
-                        if onShare != nil {
+                        if onShare != nil && !availability.isOffline {
                             ListRow(
                                 icon: .group, title: loc[.options_share], showsChevron: true,
                                 action: {
+                                    guard !availability.isOffline else { return }
                                     onShare?()
                                     dismiss()
                                 })
                         }
 
                         ListRow(
-                            icon: .history, title: loc[.versions_title], showsChevron: true,
-                            action: { isPresentingVersionHistory = true })
+                            icon: .history, title: loc[.versions_title],
+                            subtitle: availability.isOffline ? loc[.versions_offline_explanation] : nil,
+                            showsChevron: !availability.isOffline,
+                            action: {
+                                guard !availability.isOffline else { return }
+                                isPresentingVersionHistory = true
+                            }
+                        )
+                        .disabled(availability.isOffline)
+                        .accessibilityHint(availability.isOffline ? loc[.versions_offline_explanation] : "")
                     }
 
                     // **Outside** the block above, like Delete: a locally-created document can
@@ -137,6 +149,9 @@ struct OptionsSheetView: View {
             if viewModel.hasLocalSubpages {
                 Text(loc[.options_delete_confirm_subpages])
             }
+        }
+        .onChange(of: availability.token) { _, _ in
+            if availability.isOffline { isPresentingVersionHistory = false }
         }
         .sheet(isPresented: $isPresentingVersionHistory) {
             VersionHistorySheetView(viewModel: versionHistoryViewModel, restoreURL: restoreURL)

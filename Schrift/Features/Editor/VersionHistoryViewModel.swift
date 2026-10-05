@@ -11,21 +11,36 @@ final class VersionHistoryViewModel {
     var isLoading = false
     var errorKey: L10nKey?
 
+    let availability: OnlineAvailability
+    private var loadGeneration = 0
+
     private let client: DocsAPIClient
     private let documentID: UUID
 
-    init(client: DocsAPIClient, documentID: UUID) {
+    init(client: DocsAPIClient, documentID: UUID, availability: OnlineAvailability = OnlineAvailability()) {
+        self.availability = availability
         self.client = client
         self.documentID = documentID
     }
 
     func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        isLoading = false
+        guard !availability.isOffline else { return }
+        let token = availability.token
         isLoading = true
         errorKey = nil
-        defer { isLoading = false }
         do {
-            versions = try await client.documentVersions(documentID: documentID)
+            let fetched = try await client.documentVersions(documentID: documentID)
+            guard generation == loadGeneration else { return }
+            isLoading = false
+            guard availability.permitsResponse(for: token), !Task.isCancelled else { return }
+            versions = fetched
         } catch {
+            guard generation == loadGeneration else { return }
+            isLoading = false
+            guard availability.permitsResponse(for: token), !Task.isCancelled else { return }
             versions = []
             errorKey = .versions_error
         }
