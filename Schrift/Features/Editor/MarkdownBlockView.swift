@@ -125,6 +125,7 @@ struct MarkdownBlockView: View {
     var onTapText: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         switch block.kind {
@@ -173,7 +174,7 @@ struct MarkdownBlockView: View {
     /// `BlockEditorRow`'s editable row.
     private var textRow: some View {
         HStack(
-            alignment: .top,
+            alignment: blockRowAlignment(block.kind),
             spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
         ) {
             EditorBlockAdornment(
@@ -193,6 +194,7 @@ struct MarkdownBlockView: View {
     }
 
     @ViewBuilder private var blockText: some View {
+        let textSize = dynamicTypeSize
         let appearance = blockTextAppearance(for: block.kind, text: block.text)
         // A verbatim block's text is literal — running it through the markdown
         // parser would promise formatting its own panel says is not applied.
@@ -204,6 +206,9 @@ struct MarkdownBlockView: View {
             .font(appearance.font)
             .foregroundStyle(appearance.color)
             .strikethrough(appearance.isStruckThrough)
+            .alignmentGuide(.checklistFirstLine) { dimensions in
+                EditorChecklistAlignment.reading(in: dimensions, dynamicTypeSize: textSize)
+            }
 
         // Branched rather than handing every kind an empty value: VoiceOver
         // skips an empty one, so it misbehaves either way, but stating an

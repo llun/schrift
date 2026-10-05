@@ -85,6 +85,7 @@ targets:
     scheme:
       testTargets:
         - SchriftTests
+        - SchriftChecklistUITests
       gatherCoverageData: true
   SchriftTests:
     type: bundle.unit-test
@@ -96,4 +97,41 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.Tests
+        GENERATE_INFOPLIST_FILE: true
+  # A test-only app hosts the actual production rows without login, remote
+  # documents, or launch-argument branches in the shipping application.
+  SchriftChecklistTestHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: Schrift
+        excludes:
+          - App/SchriftApp.swift
+      - path: SchriftUITests/Support/ChecklistTestHostApp.swift
+    info:
+      path: Generated/ChecklistTestHost-Info.plist
+      properties:
+        UIAppFonts:
+          - MaterialSymbolsOutlined-Icons.ttf
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.ChecklistTestHost
+        PRODUCT_MODULE_NAME: SchriftChecklistTestHost
+        # Production's self-module qualifiers resolve to this test-only module.
+        OTHER_SWIFT_FLAGS: "$(inherited) -module-alias Schrift=SchriftChecklistTestHost"
+        GENERATE_INFOPLIST_FILE: true
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  SchriftChecklistUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: SchriftUITests/Features
+    dependencies:
+      - target: SchriftChecklistTestHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.ChecklistUITests
         GENERATE_INFOPLIST_FILE: true

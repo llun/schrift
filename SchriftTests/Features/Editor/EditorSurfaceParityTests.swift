@@ -236,40 +236,18 @@ final class EditorSurfaceParityTests: XCTestCase {
         XCTAssertGreaterThan(EditorBlockMetrics.checkboxSize, 20)
     }
 
-    /// The padded box the `contentShape` is taken from clears the 44pt floor —
-    /// **in isolation**, which is the honest scope of this measurement.
-    ///
-    /// Two things it does not say. It is a **reproduction** of the shipped
-    /// modifier chain, not the shipped view: `EditorBlockAdornment` follows the
-    /// padding with `.contentShape(Rectangle())` and a matching *negative*
-    /// padding, so the real adornment's layout box is the bare glyph again and
-    /// `sizeThatFits` can never see the shape at all (the same reason
-    /// `PagesTreeDrawerTests` measures a replica — keep this one in step with
-    /// `checkbox(checked:)`). And in a *checklist*, consecutive rows sit
-    /// `blockSpacing` apart, so each row's shape overlaps its neighbours' and the
-    /// unambiguous per-checkbox target is bounded by the row pitch — glyph +
-    /// gap ≈ 35pt, not 47. That is still well over the ~22pt pitch these rows
-    /// had before, which is the improvement being claimed; 44pt on a dense list
-    /// would need a taller row, and the row is shared with the reading
-    /// surface.
-    ///
-    /// **Measured, not computed**, and the history is the argument. This began
-    /// as `checkboxSize + 2 * checkboxHitPadding == rowMinHeight`, with the
-    /// padding *defined* as `(rowMinHeight - checkboxSize) / 2` — which
-    /// substitutes to `rowMinHeight == rowMinHeight`, true for every value of
-    /// both symbols, so the assertion could not fail for any change to either.
-    /// Hosting the padded glyph asks the question that can, and it answered
-    /// **43pt**: a `MaterialSymbol` is a `Text`, so it occupies its glyph's
-    /// typographic box (23pt for a 24pt symbol), not its point size, and the
-    /// arithmetic was a point short of the floor it was written to guarantee.
-    /// `checkboxHitPadding` is a token with headroom now.
-    func testTheCheckboxHitRectReachesTheRowMinimum() {
+    /// A replica of the positive padding, before the real adornment gives it
+    /// back to layout. This measures target dimensions, not taps: the shape's
+    /// width clears 44pt and its height fits the row pitch, so adjacent dense
+    /// checklist targets do not overlap. Actual first-line positions are
+    /// measured separately by `ChecklistPresentationTests`.
+    func testTheCheckboxTargetGrowsHorizontallyAndFitsTheRowPitch() {
         let padded = UIHostingController(
             rootView: MaterialSymbol(.check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
-                .padding(EditorBlockMetrics.checkboxHitPadding)
+                .padding(.horizontal, EditorBlockMetrics.checkboxHitPadding)
+                .padding(.vertical, EditorBlockMetrics.checkboxVerticalHitPadding)
         ).sizeThatFits(in: CGSize(width: 300, height: 300))
 
-        XCTAssertGreaterThanOrEqual(padded.height, DocsSpacing.rowMinHeight)
         XCTAssertGreaterThanOrEqual(padded.width, DocsSpacing.rowMinHeight)
 
         // Negative control: the padding is doing the work — the bare glyph is
@@ -278,6 +256,8 @@ final class EditorSurfaceParityTests: XCTestCase {
             rootView: MaterialSymbol(.check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
         ).sizeThatFits(in: CGSize(width: 300, height: 300))
         XCTAssertLessThan(bare.height, DocsSpacing.rowMinHeight)
+        XCTAssertGreaterThan(padded.height, bare.height)
+        XCTAssertLessThanOrEqual(padded.height, bare.height + EditorBlockMetrics.blockSpacing + 0.5)
     }
 
     /// Wrapping the glyph in the editing surface's toggle button adds nothing to
