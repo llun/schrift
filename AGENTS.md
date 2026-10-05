@@ -2502,8 +2502,8 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Home's move override retires on *fetch ordering*, not on what the fetch says — and that is
   the one place `applyFavoriteOverrides`' shape must not be copied.** `applyMoveOverrides`
   (`Features/Home/MoveOverlay.swift`) folds a move into a recents fetch that predates it, by the
-  usual rule (filter, never bump `loadGeneration`). But a pin is *directly observable* in
-  the favorites action, so the pin overlay can retire on agreement, whereas **placement is not
+  usual rule (filter, never bump `loadGeneration`). A settled pin can be observed in the
+  favorites action, but an unsent pin remains durable even when a fetch agrees; **placement is not
   observable here**: `Document` carries no parent id, and Home's feed is fetched without a
   parent filter, so whether it lists sub-pages is the server's answer to give. Retiring on
   content therefore reads an ambiguous signal as proof and wedges both ways — a filed document
@@ -2517,20 +2517,38 @@ markdown write endpoint**. Understand this before touching the save path:
   it says and the override is spent. It exists only to protect fetches already in flight.
   The deletion observer additionally drops the override outright, for the window in which one
   is still live.
-- **A pin made on a list row is folded into fetches that predate it, and the override is
-  *retired* — unlike `deletedSinceLoad`, which never is.** `load()` assigns both arrays
-  wholesale, so a fetch issued before a pin resolves after it and visibly reverts it (the
-  whole Pinned section appears or disappears). Same race as the deletion path, same answer:
-  **filter, never bump `loadGeneration`** — bumping is self-cancelling, because `load()`
-  captures its generation, kicks `recoverDrafts()`, then awaits, so a mutation landing in
-  that window cancels the very load it fired from and leaves `isLoading` stuck true. But a
-  favorite is a bit that can be flipped back from anywhere, so an override kept past the
-  point the server agrees with it would veto the next change made from the web for the life
-  of the process. `applyFavoriteOverrides` therefore also reports `confirmed`, retired inside
-  the winning generation's guard, and applies to *membership* of the pinned list, not only
-  to the flag — a just-pinned document is simply absent from a favorites response that predates
-  the POST. `DocumentCacheStore.setFavorite` write-throughs and, like `removeDocument`,
-  **never fabricates** a list that was never cached.
+- **Pin/unpin is durable per server, account and document.** `DocumentActions.setFavorite`
+  rejects client-only UUIDs and pending-delete ids before any request. An attributed session
+  writes `PendingDocumentPinStore` before publishing its latest intent; repeated toggles
+  coalesce by composite key and each receives a unique intent id. `DocumentPinCoordinator`
+  belongs to the app-scoped save coordinator, and Home, Options, Shared and Search read its
+  scoped overlay instead of writing optimistic flags into the unscoped metadata caches.
+  A fetch agreeing with an **unsent** intent must never remove it. The normal sync funnel
+  runs pins after deletions; deletion holds replay, undo releases it, and completed deletion
+  removes pending and settled pin projections. Replay verifies `/users/me/` against the
+  remembered owner and rechecks owner, deletion holds and intent after every await. An owner
+  change or failed verification must honor a coalesced trigger by starting the requested pass
+  with the current identity; never discard it through an early return. Transport,
+  auth, rate-limit and 5xx errors remain pending; permission, missing endpoint/object and other
+  4xx rejections restore the last known server bit and surface the existing pin error key.
+  A superseded success advances the latest intent's rollback baseline, never removes it.
+  Success/rejection persists a **scoped settled projection** before dropping pending work,
+  so an older cache overwrite followed by relaunch cannot undo settlement. Fetch revisions
+  protect older responses. A newer Home fetch caches the server answer and releases cached
+  membership protection, while the scoped last-known bit remains durable for pagination gaps,
+  older subpage metadata and rollback. Home passes an explicit cache-read marker, so live
+  Work Offline reseeding matches relaunch rather than treating current caches as stale reads.
+  Newer reads reconcile changes made on the web. Work Offline queues pins without
+  networking; reconnect, foreground, launch, leaving Work Offline and successful re-login
+  resume replay, including when a previously unknown identity is learned. Options receives
+  the real navigation row, with cache lookup as a fallback. A landed move updates durable
+  Recent fallback placement, so an outstanding unpin cannot reinsert a filed row. Fresh
+  favorites-page membership remains independent of propagated flags; paginated absence
+  cannot prove an unpin. Fresh Search/Shared/children flags reconcile settled observations,
+  scoped to the owner and revision captured before the request. Projection helpers read
+  revision before the unknown-owner guard so identity recovery invalidates every surface.
+  The favorites list's version-compatible routing remains in `DocumentEndpoints`.
+  Unattributed/preview callers retain the awaited online path and cannot queue offline work.
 - **Each Home document renders in exactly one section: Pinned wins, Recent is the residue.**
   The feed is fetched *unfiltered* (`isFavorite: nil`), so the server returns a pinned
   document in both responses and it used to draw twice on one screen.
@@ -2551,11 +2569,9 @@ markdown write endpoint**. Understand this before touching the save path:
   pinning a stale `searchResults` row against a feed the server already flags, where without
   the conjunct that row renders in *both* sections, i.e. the bug this whole bullet is about;
   `removeAll` returns one for an id the feed lacks, harmlessly, the filtered answer being the
-  same either way. The **worst** case is `load()`'s
-  Work Offline branch, which assigns the pinned list unconditionally while guarding the
-  recents one behind `if let cachedRecents`: a fresh install whose only row arrived from a
-  migration and was pinned here loses it from *every* section on the next reseed
-  (`testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`). **Accepted residual:** Home
+  same either way. Work Offline reseeding must also retain durable pending pins
+  (`testAPendingPinSurvivesAWorkOfflineReseed`); rendered membership still belongs in the
+  memo key when raw arrays are value-equal. **Accepted residual:** Home
   has no pagination, so Recent is subtracted from and never topped up — a user whose whole
   first page is pinned sees no Recent section while their other documents sit on a page Home
   never requests. Note what this does *not* change: Home's top row was already

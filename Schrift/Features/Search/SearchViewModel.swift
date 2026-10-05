@@ -4,8 +4,25 @@ import Foundation
 @Observable
 final class SearchViewModel {
     var query: String = ""
-    var results: [Document] = []
-    var quickAccess: [Document] = []
+    private var rawResults: [Document] = []
+    private var resultsPinRevision = -1
+    var results: [Document] {
+        get {
+            saveCoordinator?.pins.applyingFlags(
+                rawResults, ownerUserID: signedInUser.userID, fetchedAt: resultsPinRevision) ?? rawResults
+        }
+        set { rawResults = newValue }
+    }
+    private var rawQuickAccess: [Document] = []
+    private var quickPinRevision = -1
+    var quickAccess: [Document] {
+        get {
+            saveCoordinator?.pins.resolve(
+                pinned: rawQuickAccess, recent: [], ownerUserID: signedInUser.userID, fetchedAt: quickPinRevision
+            ).pinned ?? rawQuickAccess
+        }
+        set { rawQuickAccess = newValue }
+    }
     var recentSearches: [String] = []
     var isSearching = false
     var errorKey: L10nKey?
@@ -56,8 +73,8 @@ final class SearchViewModel {
     }
 
     private func dropDeletedDocument(_ documentID: UUID) {
-        results.removeAll { $0.id == documentID }
-        quickAccess.removeAll { $0.id == documentID }
+        rawResults.removeAll { $0.id == documentID }
+        rawQuickAccess.removeAll { $0.id == documentID }
         deletedSinceLoad.insert(documentID)
     }
     /// Search caches nothing, so there is no durable resurrection to prevent — but an
@@ -92,13 +109,23 @@ final class SearchViewModel {
     func loadQuickAccess() async {
         quickAccessGeneration += 1
         let generation = quickAccessGeneration
+        let pinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
         guard !availability.isOffline else { return }
         let token = availability.token
         do {
             let page = try await client.favoriteDocuments()
             guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled
             else { return }
-            quickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            quickPinRevision = pinRevision
+            rawQuickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            // Membership in this endpoint proves pinned even when the serializer omits the flag.
+            let pinnedRows = rawQuickAccess.map { row in
+                var row = row
+                row.isFavorite = true
+                return row
+            }
+            saveCoordinator?.pins.didReadFlags(pinnedRows, ownerUserID: pinOwner, fetchedAt: pinRevision)
         } catch {
             guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled
             else { return }
@@ -109,6 +136,8 @@ final class SearchViewModel {
     func search() async {
         searchGeneration += 1
         let generation = searchGeneration
+        let pinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
         isSearching = false
         guard !availability.isOffline else { return }
         let token = availability.token
@@ -134,7 +163,9 @@ final class SearchViewModel {
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
                 query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
             else { return }
-            results = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            resultsPinRevision = pinRevision
+            rawResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: pinOwner, fetchedAt: pinRevision)
         } catch {
             if generation == searchGeneration { isSearching = false }
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,

@@ -112,7 +112,7 @@ enum Strings_it {
         .options_delete_confirm_title: "Eliminare questo documento?",
         .options_delete_confirm_subpages: "Le sottopagine salvate su questo dispositivo verranno eliminate con esso.",
         .options_delete: "Elimina",
-        .options_error_toggle_favorite: "Impossibile aggiornare il preferito. Riprova.",
+        .options_error_toggle_favorite: "Impossibile aggiornare il blocco. Riprova.",
         .options_error_delete: "Impossibile eliminare il documento. Riprova.",
         .options_move: "Sposta",
         .move_title: "Sposta in",

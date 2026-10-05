@@ -198,6 +198,7 @@ struct MainTabView: View {
             serverOrigin: serverOrigin,
             linkRole: document.linkRole,
             initialIsFavorite: document.isFavorite,
+            pinRow: document,
             onDeleted: {
                 pop(path)
                 Task { await viewModel.load() }

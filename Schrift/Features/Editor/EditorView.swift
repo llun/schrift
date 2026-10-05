@@ -274,6 +274,7 @@ struct EditorView: View {
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         linkRole: LinkRole? = nil,
         initialIsFavorite: Bool = false,
+        pinRow: Document? = nil,
         isOffline: Bool = false,
         onDeleted: (() -> Void)? = nil,
         onOpenDocument: ((Document) -> Void)? = nil,
@@ -294,7 +295,7 @@ struct EditorView: View {
                 client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
                 // So Delete can tell a document that exists only here from one the replay has
                 // already POSTed, and issue the server DELETE for the latter.
-                saveCoordinator: viewModel.saveCoordinator))
+                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser, pinRow: pinRow))
         _shareViewModel = State(
             initialValue: ShareViewModel(
                 client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))

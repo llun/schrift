@@ -109,7 +109,7 @@ enum Strings_zhHans {
         .options_delete_confirm_title: "删除此文档？",
         .options_delete_confirm_subpages: "保存在此设备上的子页面将一并删除。",
         .options_delete: "删除",
-        .options_error_toggle_favorite: "无法更新收藏。请重试。",
+        .options_error_toggle_favorite: "无法更新置顶。请重试。",
         .options_error_delete: "无法删除文档。请重试。",
         .options_move: "移动",
         .move_title: "移动到",

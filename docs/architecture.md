@@ -60,7 +60,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Goals
 
-- Browse, search, pin/favorite documents from docs.llun.dev on iPhone and iPad.
+- Browse, search, pin documents from docs.llun.dev on iPhone and iPad.
 - View a document's rendered content natively.
 - Edit a document's text and save changes back to the server.
 - View and manage sharing: member roles and link visibility.
@@ -115,7 +115,7 @@ Schrift/                  (originally planned as "DocsIOS/"; renamed 2026-07-01)
 │   └── Yjs/              — the Yjs layer, two halves: the on-device Markdown→BlockNote→Yjs *encoder* (hand-written lib0/Yjs-v1 wire format) that builds the base64 content payload for saves, and the *CRDT core* (lib0 decoder, update decoder, struct store + YATA integration, the B3 store encoder `YStateEncoder`, and the B5 replica→editor projection `YBlockProjection`/`InlineMarkdownWriter`) — see "The Yjs CRDT core"
 ├── Features/
 │   ├── Connect/          — server URL entry, recent servers, WebLoginView (WKWebView OIDC login sheet), session-expiry re-login sheet
-│   ├── Home/             — MainTabView (the tab shell), document list: pinned/recent, favorite toggle, offline list cache
+│   ├── Home/             — MainTabView (the tab shell), document list: pinned/recent, pin toggle, offline list cache
 │   ├── Search/ Shared/ Profile/ — Search is pushed from compact Home; Shared and Profile are the other primary tabs
 │   ├── Editor/           — read rendering + edit + save, drafts, content cache
 │   ├── Share/            — Share sheet (members, invite, link reach)
@@ -917,8 +917,8 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 | Soft delete | `DELETE /documents/{id}/` |
 | Children (sub-pages) | `GET/POST /documents/{id}/children/` |
 | Move in the tree | `POST /documents/{id}/move/` — `{target_document_id, position}`; `last-child` files it under the target, a sibling position against a **root** promotes it to the top level. Moves the whole subtree in one atomic transaction; every rejection is a 400 |
-| Favorite toggle | `POST`/`DELETE /documents/{id}/favorite/` |
-| Favorites list | `GET /documents/favorite_list/` before Docs 5.7.0; `GET /documents/favorites/` from 5.7.0 |
+| Pin toggle | `POST`/`DELETE /documents/{id}/favorite/` |
+| Pinned list | `GET /documents/favorite_list/` before Docs 5.7.0; `GET /documents/favorites/` from 5.7.0 |
 | Search | `GET /documents/search/?q=` |
 | Read rendered content | `GET /documents/{id}/formatted-content/?content_format=markdown` |
 | Read raw content *(not used in v1)* | `GET /documents/{id}/content/` |
@@ -927,6 +927,22 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 | Accesses (members) | `GET/POST/PATCH/DELETE /documents/{id}/accesses/` |
 | Invitations | `GET/POST/PATCH/DELETE /documents/{id}/invitations/` |
 | User search (for invite) | `GET /users/?q=&document_id=` |
+
+Pin/unpin persists its latest desired state in `PendingDocumentPinStore`, scoped to
+server origin, account and server document. The app-scoped `DocumentPinCoordinator`
+projects it over Home/Options/Shared/Search immediately and replays after deletions
+through the existing sync triggers. Local UUIDs and pending deletes never reach a
+favorite mutation. Retryable failures remain pending; terminal rejections restore the
+last server state with pin wording. Settled projections and read revisions protect
+stale responses and relaunch without vetoing newer server reads. Scoped known bits remain
+durable for pagination gaps and older subpage metadata after Home releases cached
+membership protection. Fresh favorites-page
+membership is independent of metadata flags. Navigation retains real row metadata for
+Options; landed moves update durable fallback placement without changing pin intent.
+Fresh Search/Shared/children flags update older Options and rollback baselines without
+consuming pending work. Successful identity recovery resumes retained pin work and
+invalidates previously hidden projections. See
+[`offline-and-sync.md`](offline-and-sync.md#offline-pin-and-unpin).
 
 Favorites routing reads `config/`'s `RELEASE_VERSION` and compares numeric release
 components against **5.7.0**, which renamed the action ([upstream #2540](https://github.com/suitenumerique/docs/pull/2540)).

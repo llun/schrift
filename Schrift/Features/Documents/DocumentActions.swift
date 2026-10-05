@@ -15,6 +15,7 @@ enum DocumentDeleteOutcome: Equatable {
 
 enum DocumentFavoriteOutcome: Equatable {
     case changed(isFavorite: Bool)
+    case queued(isFavorite: Bool)
     case failed
 }
 
@@ -210,13 +211,26 @@ struct DocumentActions {
         return .queued(serverID: serverID)
     }
 
-    /// Pin or unpin.
-    ///
-    /// **Awaited before anything local changes, never optimistic.** There is no offline queue
-    /// for favorites — `setFavorite` is the one mutation with no replay — so an optimistic
-    /// flip would have to be rolled back on every failure, and the honest thing is to report
-    /// it instead.
-    func setFavorite(documentID: UUID, isFavorite: Bool) async -> DocumentFavoriteOutcome {
+    /// Persist the latest desired pin state before publishing it or attempting replay.
+    /// Client-only UUIDs and deletion holds are guarded here, below every UI affordance.
+    func setFavorite(
+        documentID: UUID, isFavorite: Bool, row: Document? = nil, isOffline: Bool = false
+    ) async -> DocumentFavoriteOutcome {
+        guard !isLocalDocument(documentID),
+            saveCoordinator?.isPendingDelete(documentID: documentID) != true
+        else { return .failed }
+        if let coordinator = saveCoordinator, let owner = signedInUser.userID {
+            guard
+                coordinator.pins.queue(
+                    documentID: documentID, isPinned: isFavorite,
+                    row: row ?? coordinator.cachedPinRow(for: documentID), ownerUserID: owner)
+            else { return .failed }
+            if !isOffline { Task { await coordinator.syncPendingPins() } }
+            return .queued(isFavorite: isFavorite)
+        }
+        // Previews and callers with no attributed session retain the awaited online path;
+        // an unknown owner may never mint durable work for a future account to replay.
+        guard !isOffline else { return .failed }
         do {
             try await client.setFavorite(documentID: documentID, isFavorite: isFavorite)
             return .changed(isFavorite: isFavorite)

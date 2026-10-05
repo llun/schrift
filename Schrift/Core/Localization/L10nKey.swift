@@ -134,7 +134,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case options_delete_confirm_subpages = "options.delete_confirm_subpages"
     case options_delete = "options.delete"  // "Delete"
     case options_error_toggle_favorite = "options.error.toggle_favorite"
-    // "Couldn't update favorite. Please try again."
+    // "Couldn't update pin. Please try again."
     case options_error_delete = "options.error.delete"  // "Couldn't delete document. Please try again."
 
     // Move sheet. `options_move` is the row and the swipe label both, so the two routes to the

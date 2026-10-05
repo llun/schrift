@@ -111,7 +111,7 @@ enum Strings_th {
         .options_delete_confirm_title: "ลบเอกสารนี้ใช่หรือไม่",
         .options_delete_confirm_subpages: "หน้าย่อยที่บันทึกไว้ในอุปกรณ์นี้จะถูกลบไปด้วย",
         .options_delete: "ลบ",
-        .options_error_toggle_favorite: "อัปเดตรายการโปรดไม่ได้ โปรดลองอีกครั้ง",
+        .options_error_toggle_favorite: "อัปเดตการปักหมุดไม่ได้ โปรดลองอีกครั้ง",
         .options_error_delete: "ลบเอกสารไม่ได้ โปรดลองอีกครั้ง",
         .options_move: "ย้าย",
         .move_title: "ย้ายไปที่",

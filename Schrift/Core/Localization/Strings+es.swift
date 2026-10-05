@@ -115,7 +115,7 @@ enum Strings_es {
         .options_delete_confirm_title: "¿Eliminar este documento?",
         .options_delete_confirm_subpages: "Las subpáginas guardadas en este dispositivo se eliminarán con él.",
         .options_delete: "Eliminar",
-        .options_error_toggle_favorite: "No se pudo actualizar el favorito. Inténtalo de nuevo.",
+        .options_error_toggle_favorite: "No se pudo actualizar la fijación. Inténtalo de nuevo.",
         .options_error_delete: "No se pudo eliminar el documento. Inténtalo de nuevo.",
         .options_move: "Mover",
         .move_title: "Mover a",

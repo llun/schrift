@@ -4,7 +4,15 @@ import Foundation
 @Observable
 final class SharedViewModel {
     /// Documents shared with the current user (newest first).
-    var documents: [Document] = []
+    private var rawDocuments: [Document] = []
+    private var pinRevision = -1
+    var documents: [Document] {
+        get {
+            saveCoordinator?.pins.applyingFlags(rawDocuments, ownerUserID: signedInUser.userID, fetchedAt: pinRevision)
+                ?? rawDocuments
+        }
+        set { rawDocuments = newValue }
+    }
     /// Best-effort per-document members + creator name, resolved from each
     /// document's accesses after the list lands. Absent ⇒ date-only subtitle,
     /// no avatars.
@@ -63,13 +71,13 @@ final class SharedViewModel {
         }
 
         if let withMe = cache.loadSharedWithMeDocuments() {
-            documents = withMe
+            rawDocuments = withMe
             hasLoaded = true
         }
     }
 
     private func dropDeletedDocument(_ documentID: UUID) {
-        documents.removeAll { $0.id == documentID }
+        rawDocuments.removeAll { $0.id == documentID }
         enrichment[documentID] = nil
         // A fetch already in flight was issued before the DELETE and would write the row back,
         // into the cache as well (invariant 0b). Filtered rather than cancelled by a generation
@@ -105,25 +113,28 @@ final class SharedViewModel {
     /// Spinner only while fetching a list that has no local copy yet. A cached
     /// (even empty) list revalidates silently.
     var showsLoadingPlaceholder: Bool {
-        isLoading && !hasLoaded && documents.isEmpty
+        isLoading && !hasLoaded && rawDocuments.isEmpty
     }
 
     /// The list (and "N documents" header) may render once known; a
     /// never-fetched/never-cached list shows neither — the banner/error conveys
     /// state instead of a false "0 documents".
     var showsDocumentList: Bool {
-        hasLoaded || !documents.isEmpty
+        hasLoaded || !rawDocuments.isEmpty
     }
 
     func load(userInitiated: Bool = false) async {
         errorKey = nil
         loadGeneration += 1
         let generation = loadGeneration
+        let fetchedPinRevision = saveCoordinator?.pins.revision ?? -1
+        let pinOwner = signedInUser.userID
 
         // "Work offline" (Profile > Preferences): serve cache, never hit the network.
         if userDefaults.bool(forKey: "schrift.workOffline") {
             if let withMe = cache.loadSharedWithMeDocuments() {
-                documents = withMe
+                pinRevision = -1
+                rawDocuments = withMe
                 hasLoaded = true
             }
             isOffline = true
@@ -154,8 +165,13 @@ final class SharedViewModel {
         // Anything deleted while this was in flight is dropped before it can be applied or
         // cached — the fetch predates the DELETE and cannot know.
         let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
-        documents = surviving
-        cache.saveSharedWithMeDocuments(surviving)
+        pinRevision = fetchedPinRevision
+        rawDocuments = surviving
+        saveCoordinator?.pins.didReadFlags(surviving, ownerUserID: pinOwner, fetchedAt: fetchedPinRevision)
+        cache.saveSharedWithMeDocuments(
+            saveCoordinator?.pins.applyingFlags(
+                surviving, ownerUserID: signedInUser.userID, fetchedAt: fetchedPinRevision, includePending: false)
+                ?? surviving)
         hasLoaded = true
         isOffline = false
         isLoading = false

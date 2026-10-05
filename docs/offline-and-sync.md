@@ -2574,6 +2574,78 @@ old one still point at something gone.
   the user deletes again. Deliberately milder than the create store's equivalent, which
   suppresses destructive branches instead.
 
+## Offline pin and unpin
+
+Pin changes use the existing `POST`/`DELETE /documents/{id}/favorite/` API and the
+version-compatible favorites collection. The internal favorite fields and localization
+key remain unchanged; all user-facing error copy says pin.
+
+`DocumentActions.setFavorite` persists the latest desired state before the UI changes.
+`PendingDocumentPinStore` uses a composite **server origin + account UUID + document UUID**
+key, so repeated toggles overwrite only that account's intent for that document. Each
+write gets a unique intent UUID; a delayed response cannot remove a newer toggle. The
+record also holds the previous server bit and an optional real metadata row passed
+from navigation through the editor into Options (with a cache fallback), so a pin
+from Search or a cached subpage can appear in Home without inventing document metadata.
+The store is backup-included and survives sign-out. Foreign server/account records remain
+dormant; an unknown account cannot create offline pin work. Corrupt pending bytes are
+quarantined before a new intent replaces the live blob.
+
+The app-scoped `DocumentPinCoordinator`, owned by `DocumentSaveCoordinator`, projects
+these records over raw list snapshots. Home uses the projected Pinned membership to
+subtract Recent; an unpin returns a pinned-only row immediately. Options, Shared and
+Search read the same account-scoped state. Pending flags never enter the unscoped
+metadata caches, so an account change cannot inherit another account's optimistic pin.
+A stale or agreeing fetch cannot consume an unsent intent.
+
+Replay runs after deletions inside the existing launch/foreground/reconnect funnel, and
+an online toggle can also start the serialized pin replay. Work Offline sends nothing;
+leaving Work Offline or completing reauthentication resumes pins. Learning a previously
+unknown account at launch or reconnect resumes the queue too. Before mutation,
+`/users/me/` must match the remembered owner. Every awaited response rechecks owner,
+intent identity and deletion holds. A coalesced trigger survives interrupted account
+verification or an owner change inside the replay pass: the next pass re-reads identity
+and candidates instead of losing the new account's reconnect. A local create UUID is rejected at the action layer
+and held at replay; no favorite endpoint ever addresses it. A pending deletion holds
+pin replay and pin affordances; undo releases the old pin intent, while completed
+deletion clears it and its settled projection.
+
+| Replay result | Local result |
+|---|---|
+| 2xx | Settle the sent intent; if superseded, advance the newer intent's rollback baseline and send its desired state |
+| Transport, 401, 429, 5xx, decoding | Keep the desired state pending for a later trigger |
+| 400/403/404/missing route/other terminal 4xx | Restore the last known server bit, drop this intent, show “Couldn't update pin. Please try again.” |
+| Owner changed or deletion started during request | Leave settlement to the matching session or deletion flow; publish nothing into the new session |
+
+Success and terminal rejection write a **scoped settled projection before removing the
+pending intent**, then update existing list caches without fabricating never-fetched
+lists. The scoped last-known bit survives relaunch, including when partial Home pages
+omit the document or cached subpage metadata still carries its old flag. Each surface
+captures the coordinator revision when issuing a read: settlement wins over older reads,
+while newer reads can reflect a pin changed on the web. After Home caches a newer answer,
+the persisted record releases membership protection for those cached pages; it keeps the
+known flag for older metadata and the next toggle's rollback baseline. Home identifies
+cache reads explicitly, so switching to Work Offline and relaunching preserve the same
+partial-page membership without mistaking it for an older screen snapshot. Deletion removes
+these scoped records. This closes success → stale cache overwrite → relaunch without
+vetoing newer server reads or inventing favorites-page membership.
+Fresh Search, Shared and children reads reconcile changed flags for older Options too.
+They capture both account and pin revision before the read; old responses and account
+changes cannot replace newer scoped observations. All projections observe identity
+invalidation even if the account was unknown at their first render.
+Fresh favorites-page membership stays independent of metadata flags: a favorite beyond
+page one can remain in Recent, while absence from both pages cannot prove an unpin.
+A landed move records whether synthetic Recent fallback is allowed in the pin record,
+so an unpin cannot reinsert a filed row even after relaunch or an in-flight settlement.
+Real future feed rows remain authoritative, including servers that list subpages.
+
+Tests cover offline pin/unpin, coalescing, relaunch before and after settlement, stale
+and agreeing reads, cross-screen membership, account/server isolation, real replay
+through Home, Work Offline, auth/transient/terminal failures, superseded completions,
+local-document guards, deletion holds/undo, deletion during replay, unknown identity
+recovery, pagination disagreements and moves during unpin. Race tests use explicit
+`MockURLProtocol.ResponseGate` delivery ordering.
+
 ## A photo queued on this device (2026-08-07, in progress)
 
 **Status: foundation only.** The placeholder vocabulary, the store, and the save hold

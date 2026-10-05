@@ -4,10 +4,36 @@ import Foundation
 @Observable
 final class HomeViewModel {
     var searchQuery: String = ""
-    var pinnedDocuments: [Document] = []
+    private var rawPinnedDocuments: [Document] = []
+    private var listPinRevision = -1
+    private var searchPinRevision = -1
+
+    var pinnedDocuments: [Document] {
+        get { pinResolvedLists.pinned }
+        set { rawPinnedDocuments = newValue }
+    }
+
+    var fetchedRecentDocuments: [Document] {
+        get { pinResolvedLists.recent }
+        set { rawRecentDocuments = newValue }
+    }
+
+    var searchResults: [Document] {
+        get {
+            saveCoordinator.pins.applyingFlags(
+                rawSearchResults, ownerUserID: signedInUser.userID, fetchedAt: searchPinRevision)
+        }
+        set { rawSearchResults = newValue }
+    }
+
+    private var pinResolvedLists: FavoriteOverlay {
+        saveCoordinator.pins.resolve(
+            pinned: rawPinnedDocuments, recent: rawRecentDocuments,
+            ownerUserID: signedInUser.userID, fetchedAt: listPinRevision, fromCache: listPinRevision == -1)
+    }
     /// What the server (or its cache) last said. **Never contains a locally-created
     /// document** — see `recentDocuments`.
-    var fetchedRecentDocuments: [Document] = []
+    private var rawRecentDocuments: [Document] = []
     /// The list the screen renders: the fetched one with this device's unsynced documents
     /// merged in at read time, minus whatever the Pinned section is already showing.
     ///
@@ -40,23 +66,9 @@ final class HomeViewModel {
         // **And so is the pinned list, in both halves.** The *read* registers the `@Observable`
         // dependency and sits above the early return so it happens on every call, which is what
         // moves a row between sections on the pin rather than at the next fetch. The *key* is
-        // load-bearing too, at every writer that moves `pinnedDocuments` without moving
-        // `fetchedRecentDocuments` — note that includes writers that *assign* the recents array
-        // a **value-equal** copy, since `applyingFavoriteFlag` returns one whenever the row's
-        // flag already matches (`applyFavoriteChange` reached from a stale `searchResults` row),
-        // and `removeAll` is a no-op for an id the feed does not carry. The one where it costs a
-        // document is `load()`'s **Work Offline** branch, which assigns `pinnedDocuments`
-        // unconditionally while guarding the recents array behind `if let cachedRecents`,
-        // deliberately, so a nil cache cannot clobber a just-migrated row. Reach it with a fresh install whose only row
-        // arrived in memory from a migration and was then pinned here: `setFavorite` fabricates
-        // no pinned cache, so the reseed empties `pinnedDocuments` while `fetched` stands still,
-        // and a memo without this conjunct hits and keeps filtering the row out. It is then in
-        // **no section at all** — `showsPinnedSection` is false and Recent has dropped it — with
-        // the "No documents yet" state drawn over a document that exists. Pinned by
-        // `testAPinLostToAWorkOfflineReseedHandsTheRowBackToRecent`. Ids alone:
-        // `applyingFavoriteFlag` rewrites a pinned row's *contents* on every toggle, and the
-        // filtered answer depends on nothing but identity.
-        let version = saveCoordinator.pendingCreatesVersion
+        // needed even when raw rows are value-equal: pending pins can change membership,
+        // and Work Offline reseeding must preserve the durable overlay.
+        let version = saveCoordinator.pendingCreatesVersion + saveCoordinator.pins.revision
         let owner = signedInUser.userID
         let pinnedIDs = pinnedDocuments.map(\.id)
         if let cached = mergedRecents, cached.version == version, cached.owner == owner,
@@ -77,9 +89,16 @@ final class HomeViewModel {
     /// not register a mutation and re-invalidate the very view that just read it.
     @ObservationIgnored
     private var mergedRecents: (version: Int, owner: UUID?, pinnedIDs: [UUID], fetched: [Document], merged: [Document])?
-    var searchResults: [Document] = []
+    private var rawSearchResults: [Document] = []
     var isLoading = false
-    var errorKey: L10nKey?
+    private var actionErrorKey: L10nKey?
+    var errorKey: L10nKey? {
+        get { actionErrorKey ?? (saveCoordinator.pins.hasFailure ? .options_error_toggle_favorite : nil) }
+        set {
+            actionErrorKey = newValue
+            if newValue == nil { saveCoordinator.pins.clearFailures() }
+        }
+    }
     /// The server's own words about the failure behind `errorKey`, when it had any —
     /// `DocsAPIError` collapses a CSRF 403, a validation 400, and a decoding bug into the
     /// same sentence, and a self-hoster needs to tell them apart without a debugger.
@@ -204,8 +223,8 @@ final class HomeViewModel {
             // subscriber cannot tell. The divergence is bounded: this is in-memory only and
             // the `load()` on the next line replaces it with the server's own list, so a
             // wrongly-placed sub-page row survives only until the first successful fetch.
-            if let migrated, !self.fetchedRecentDocuments.contains(where: { $0.id == migrated.id }) {
-                self.fetchedRecentDocuments.insert(migrated, at: 0)
+            if let migrated, !self.rawRecentDocuments.contains(where: { $0.id == migrated.id }) {
+                self.rawRecentDocuments.insert(migrated, at: 0)
                 self.hasKnownFetchedList = true
             }
             Task { await self.load() }
@@ -216,10 +235,10 @@ final class HomeViewModel {
         // the row would *un-strike* back into looking like a live document.
         self.saveCoordinator.observeDocumentDeleted(self) { [weak self] documentID in
             guard let self else { return }
-            self.pinnedDocuments.removeAll { $0.id == documentID }
-            self.fetchedRecentDocuments.removeAll { $0.id == documentID }
+            self.rawPinnedDocuments.removeAll { $0.id == documentID }
+            self.rawRecentDocuments.removeAll { $0.id == documentID }
             // The inline search field on this very screen is a third list of server documents.
-            self.searchResults.removeAll { $0.id == documentID }
+            self.rawSearchResults.removeAll { $0.id == documentID }
             // **A list fetch already in flight was issued before the DELETE landed**, so it
             // still names the document and would write it back — into the cache as well
             // (invariant 0b). Bumping `loadGeneration` here is the obvious move and the wrong
@@ -244,11 +263,11 @@ final class HomeViewModel {
             if event.newParentID == nil {
                 // Promoted. Insert the row if the mover had one — `fetchedRecentDocuments` is
                 // a conjunct of `recentDocuments`' memo key, so both branches invalidate it.
-                if let row = event.row, !self.fetchedRecentDocuments.contains(where: { $0.id == row.id }) {
-                    self.fetchedRecentDocuments.insert(row, at: 0)
+                if let row = event.row, !self.rawRecentDocuments.contains(where: { $0.id == row.id }) {
+                    self.rawRecentDocuments.insert(row, at: 0)
                 }
             } else {
-                self.fetchedRecentDocuments.removeAll { $0.id == event.documentID }
+                self.rawRecentDocuments.removeAll { $0.id == event.documentID }
             }
             // **Pinned and search results are deliberately left alone.** A favorite is a
             // per-user annotation the server keeps across a move, so dropping the row would
@@ -261,9 +280,9 @@ final class HomeViewModel {
             self.moveOverrides[event.documentID] = MoveOverride(
                 newParentID: event.newParentID, row: event.row, generation: self.loadGeneration)
         }
-        pinnedDocuments = cache.loadPinnedDocuments()
+        rawPinnedDocuments = cache.loadPinnedDocuments()
         if let recents = cache.loadRecentDocuments() {
-            fetchedRecentDocuments = recents
+            rawRecentDocuments = recents
             hasKnownFetchedList = true
         }
     }
@@ -276,18 +295,21 @@ final class HomeViewModel {
         clearError()
         loadGeneration += 1
         let generation = loadGeneration
+        let pinRevision = saveCoordinator.pins.revision
+        let pinOwner = signedInUser.userID
 
         // "Work offline" preference (Profile > Preferences): serve cached
         // documents and never hit the network.
         if availability.isOffline {
-            pinnedDocuments = cache.loadPinnedDocuments()
+            listPinRevision = -1
+            rawPinnedDocuments = cache.loadPinnedDocuments()
             let cachedRecents = cache.loadRecentDocuments()
             // Don't clobber a just-migrated in-memory row with a nil cache. `runCreatePass`
             // reads no `workOffline` gate, so a replay *does* run in this mode — and on a
             // fresh install `insertIntoListCaches` correctly declines to write a cache that
             // was never fetched, so this assignment would drop the document that just synced
             // out of every list, with no way back while the toggle is on.
-            if let cachedRecents { fetchedRecentDocuments = cachedRecents }
+            if let cachedRecents { rawRecentDocuments = cachedRecents }
             hasKnownFetchedList = cachedRecents != nil
             loadFailedOffline = false
             isLoading = false
@@ -342,10 +364,16 @@ final class HomeViewModel {
             let moved = applyMoveOverrides(
                 recent: overlaid.recent, overrides: moveOverrides, generation: generation)
             for documentID in moved.confirmed { moveOverrides[documentID] = nil }
-            pinnedDocuments = overlaid.pinned
-            fetchedRecentDocuments = moved.recent
-            cache.savePinnedDocuments(overlaid.pinned)
-            cache.saveRecentDocuments(moved.recent)
+            listPinRevision = pinRevision
+            rawPinnedDocuments = overlaid.pinned
+            rawRecentDocuments = moved.recent
+            let cacheProjection = saveCoordinator.pins.resolve(
+                pinned: overlaid.pinned, recent: moved.recent, ownerUserID: signedInUser.userID,
+                fetchedAt: pinRevision, includePending: false)
+            cache.savePinnedDocuments(cacheProjection.pinned)
+            cache.saveRecentDocuments(cacheProjection.recent)
+            saveCoordinator.pins.didCacheFreshLists(
+                pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true
             loadFailedOffline = false
         } catch {
@@ -361,7 +389,7 @@ final class HomeViewModel {
             // The cache already holds the answer; the only reason it was not being read is
             // that the online path re-seeds nowhere but `init`.
             if let cachedRecents = cache.loadRecentDocuments() {
-                fetchedRecentDocuments = cachedRecents
+                rawRecentDocuments = cachedRecents
                 hasKnownFetchedList = true
             }
             // A transport failure can explain this failed load, but HTTP errors
@@ -375,7 +403,7 @@ final class HomeViewModel {
             // Silent when the list has a cached copy to fall back on (offline
             // reading); loud on a true first run — pinned rows are no evidence
             // for it — or an explicit pull-to-refresh.
-            let hasVisibleLocalRows = !pinnedDocuments.isEmpty || !recentDocuments.isEmpty
+            let hasVisibleLocalRows = !rawPinnedDocuments.isEmpty || !recentDocuments.isEmpty
             if failed, userInitiated || (!hasCachedList && !(loadFailedOffline && hasVisibleLocalRows)) {
                 errorKey = .home_error_load
                 errorDetail = requestFailureDetail(after: marker, in: diagnostics)
@@ -445,11 +473,13 @@ final class HomeViewModel {
     func search() async {
         searchGeneration += 1
         let generation = searchGeneration
+        let pinRevision = saveCoordinator.pins.revision
+        let pinOwner = signedInUser.userID
         guard !availability.isOffline else { return }
         let availabilityToken = availability.token
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            searchResults = []
+            rawSearchResults = []
             return
         }
         let marker = diagnostics?.marker()
@@ -466,7 +496,11 @@ final class HomeViewModel {
             for (documentID, isFavorite) in favoriteOverrides {
                 results = applyingFavoriteFlag(results, documentID: documentID, isFavorite: isFavorite)
             }
-            searchResults = results
+            searchPinRevision = pinRevision
+            rawSearchResults = results
+            saveCoordinator.pins.didReadFlags(
+                page.results.filter { !deletedSinceLoad.contains($0.id) }, ownerUserID: pinOwner, fetchedAt: pinRevision
+            )
         } catch {
             guard generation == searchGeneration, availability.permitsResponse(for: availabilityToken),
                 !Task.isCancelled, searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
@@ -490,12 +524,17 @@ final class HomeViewModel {
     /// conservative direction — the *send* half re-checks against a live `/users/me/` anyway.
     func refreshSignedInUser() async {
         guard let user = try? await client.currentUser() else { return }
+        let previousOwner = signedInUser.userID
         signedInUser.remember(user.id)
+        if previousOwner != user.id { saveCoordinator.pins.sessionIdentityDidChange() }
         // Same response, one more consumer: Profile shows this account from disk when there is
         // no network, and a user who never opens Profile while online would otherwise have
         // nothing cached to show. `ProfileViewModel` also write-throughs on its own fetch;
         // both are idempotent.
         cachedUser.remember(user)
+        // A launch/reconnect may have skipped replay while identity was unknown.
+        // Learning it is the trigger that resumes the account-scoped pin queue.
+        await saveCoordinator.syncPendingPins()
     }
 
     /// Ask who this session belongs to, but only when nothing on the device knows. Returns
@@ -643,11 +682,14 @@ final class HomeViewModel {
     func toggleFavorite(_ document: Document) async {
         guard !mutatingDocumentIDs.contains(document.id), !isLocalDocument(document) else { return }
         clearError()
-        mutatingDocumentIDs.insert(document.id)
-        defer { mutatingDocumentIDs.remove(document.id) }
         let marker = diagnostics?.marker()
-        let desired = !document.isFavorite
-        switch await actions.setFavorite(documentID: document.id, isFavorite: desired) {
+        let current = saveCoordinator.pins.desiredValue(
+            for: document.id, fallback: document.isFavorite, ownerUserID: signedInUser.userID)
+        switch await actions.setFavorite(
+            documentID: document.id, isFavorite: !current, row: document, isOffline: availability.isOffline)
+        {
+        case .queued:
+            break  // The shared, scoped overlay already renders this intent everywhere.
         case .changed(let isFavorite):
             applyFavoriteChange(document, isFavorite: isFavorite)
         case .failed:
@@ -668,19 +710,19 @@ final class HomeViewModel {
     /// would not even remove the race, since a slower pre-pin fetch already in flight still
     /// wins. The override below is needed either way, at which point the reload buys nothing.
     private func applyFavoriteChange(_ document: Document, isFavorite: Bool) {
-        fetchedRecentDocuments = applyingFavoriteFlag(
-            fetchedRecentDocuments, documentID: document.id, isFavorite: isFavorite)
-        searchResults = applyingFavoriteFlag(
-            searchResults, documentID: document.id, isFavorite: isFavorite)
+        rawRecentDocuments = applyingFavoriteFlag(
+            rawRecentDocuments, documentID: document.id, isFavorite: isFavorite)
+        rawSearchResults = applyingFavoriteFlag(
+            rawSearchResults, documentID: document.id, isFavorite: isFavorite)
 
         if isFavorite {
-            if !pinnedDocuments.contains(where: { $0.id == document.id }) {
+            if !rawPinnedDocuments.contains(where: { $0.id == document.id }) {
                 var copy = document
                 copy.isFavorite = true
-                pinnedDocuments.insert(copy, at: 0)
+                rawPinnedDocuments.insert(copy, at: 0)
             }
         } else {
-            pinnedDocuments.removeAll { $0.id == document.id }
+            rawPinnedDocuments.removeAll { $0.id == document.id }
         }
         // The recents *order* is deliberately untouched: that list is `-updated_at`, and
         // whether the server bumps `updated_at` on a favorite is its answer to give.

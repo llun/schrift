@@ -50,6 +50,7 @@ struct HomeSplitView: View {
                     serverOrigin: serverOrigin,
                     linkRole: selectedDocument.linkRole,
                     initialIsFavorite: selectedDocument.isFavorite,
+                    pinRow: selectedDocument,
                     onDeleted: {
                         self.selectedRoute = nil
                         Task { await viewModel.load() }
