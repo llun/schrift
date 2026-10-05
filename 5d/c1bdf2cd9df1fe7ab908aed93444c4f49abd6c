@@ -1,0 +1,57 @@
+Schrift/Features/Editor/EditorViewModel.swift
+  s_cda8a11c8519d3::t_06c473ad0bc03d 1876,1878-1879,1898
+  s_cda8a11c8519d3::t_9078297c8fe1b9 38-42,1820-1874
+  s_cda8a11c8519d3::t_14c8718d98d89f 1334
+  s_cda8a11c8519d3::t_fdf00a93138992 94-96,2018,2043,2076,2083
+  s_cda8a11c8519d3::t_f6c104307a84df 1875
+AGENTS.md
+  s_cda8a11c8519d3::t_46fa58331de8ef 3232-3246
+SchriftTests/Features/Editor/BlockTextFocusTests.swift
+  s_cda8a11c8519d3::t_c89c1055267770 204-226
+  s_cda8a11c8519d3::t_455d0c939aaf10 227-276,304,307-309
+  s_cda8a11c8519d3::t_71574426ceec3f 412-413
+  s_cda8a11c8519d3::t_6ada6228bcf2fd 466-482,485-514
+  s_cda8a11c8519d3::t_fcf7aae4955dce 369,421-432,437-462
+  s_cda8a11c8519d3::t_760265b3a1158b 416,483-484
+  s_cda8a11c8519d3::t_d6d5faadb9e9b7 47-51,277-287,290,294-303,305-306,806,839-849
+  s_cda8a11c8519d3::t_5cdd27602ecc47 310-364,371-406,411,414-415,417-420,463-465
+  s_cda8a11c8519d3::t_143deb47bedf2a 288-289,291-293
+  s_cda8a11c8519d3::t_8804c98366283b 365-368,433-436,521-524
+  s_cda8a11c8519d3::t_8cd86515c4eb04 370
+  s_cda8a11c8519d3::t_bdda90cbac2f20 407-410
+  s_cda8a11c8519d3::t_90c322a7f1ef77 515-520,525-534
+Schrift/Features/Editor/BlockTextView.swift
+  s_cda8a11c8519d3::t_bdda90cbac2f20 128,195-199,202,767-771
+  s_cda8a11c8519d3::t_5032d236dd425d 126-127,133,135-136,138-143,145-147,283,285-288,356,358,360,388-390,392-394,449-450,560-561,577,579-581,587-588,593-605,655,705,716-721,740-745
+  s_cda8a11c8519d3::t_aa3ddb1adba666 129-130,132,134,391,574-575
+  s_cda8a11c8519d3::t_14c8718d98d89f 359,439-440,487-488,571-573,586,589-592
+  s_cda8a11c8519d3::t_cf792a9dbcdb8e 125,131,137,144,284,386-387,576,578
+  s_cda8a11c8519d3::t_fcf7aae4955dce 148-154
+  s_cda8a11c8519d3::t_06c473ad0bc03d 357,429-438,441-442,562,582-585,765-766
+  s_cda8a11c8519d3::t_987fde36a5a1c6 451-456
+docs/architecture.md
+  s_cda8a11c8519d3::t_46fa58331de8ef 1018-1034
+Schrift/Features/Editor/BlockEditorView.swift
+  s_cda8a11c8519d3::t_760265b3a1158b 264-267,277-280
+  s_cda8a11c8519d3::t_aa3ddb1adba666 259
+  s_cda8a11c8519d3::t_acf81494bd53f0 237-241,248-252,282,305,308,311,313,315,317,321-322,326,331,333
+  s_cda8a11c8519d3::t_fdf00a93138992 40-44,46,49-50,247,253-255,257-258
+  s_cda8a11c8519d3::t_5519c20dc9c918 47,137,306-307
+  s_cda8a11c8519d3::t_14c8718d98d89f 256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5dc1bdf2cd9df1fe7ab908aed93444c4f49abd6c",
+  "prompts": {},
+  "sessions": {
+    "s_cda8a11c8519d3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cfb-fb15-7b43-a181-a02531be474f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
