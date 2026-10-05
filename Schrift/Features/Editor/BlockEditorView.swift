@@ -218,14 +218,26 @@ struct BlockEditorRow: View {
     }
 
     private var textView: some View {
-        BlockTextView(
-            text: Binding(
-                get: { block.text },
-                set: { viewModel.updateText(blockID: block.id, text: $0) }
-            ),
+        // Register SwiftUI dependencies here; the escaping readers below still
+        // resolve the latest values when UIKit actually consumes the update.
+        _ = viewModel.focusedBlockID
+        _ = viewModel.cursorRequest
+        return BlockTextView(
+            // Resolve by identity when UIKit updates, beyond SwiftUI's cached
+            // row and Binding values. All writes already go through onEvent.
+            text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
             styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize),
-            isFocused: viewModel.focusedBlockID == block.id,
-            cursorRequest: viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil,
+            isFocused: { viewModel.focusedBlockID == block.id },
+            hasPendingFocusTarget: {
+                guard viewModel.mode == .blocks,
+                    let target = viewModel.blocks.first(where: { $0.id == viewModel.focusedBlockID })
+                else { return false }
+                switch target.kind {
+                case .divider, .image, .attachment: return false
+                default: return true
+                }
+            },
+            cursorRequest: { viewModel.cursorRequest?.blockID == block.id ? viewModel.cursorRequest : nil },
             onEvent: { event in
                 handle(event)
             },
@@ -233,6 +245,17 @@ struct BlockEditorRow: View {
                 if viewModel.cursorRequest?.token == token {
                     viewModel.cursorRequest = nil
                 }
+            },
+            onPendingInput: { text, token in
+                viewModel.applyPendingKeyboardInput(from: block.id, text: text, consumedCursorToken: token)
+            },
+            onPendingSourceReplacement: { range, text, source, token in
+                viewModel.applyPendingSourceReplacement(
+                    blockID: block.id, range: range, text: text, sourceText: source, consumedCursorToken: token)
+            },
+            hasPendingSelection: { token in
+                guard let request = viewModel.cursorRequest, request.blockID == block.id else { return false }
+                return request.token != token
             },
             editLinkTitle: loc[.editor_link_edit_title],
             removeLinkTitle: loc[.editor_link_remove]
