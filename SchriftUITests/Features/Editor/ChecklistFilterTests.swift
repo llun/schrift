@@ -121,7 +121,9 @@ final class ChecklistFilterTests: XCTestCase {
         // swaps and scrolling; existing toolbar/offline chrome is outside this audit.
         for filtered in [false, true] {
             if filtered {
-                toggle.tap()
+                // The standalone native switch's AX frame includes its label;
+                // activate the actual trailing switch, not the label's midpoint.
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
                 XCTAssertEqual(toggle.value as? String, "1", "Audit the filtered state, not an unchanged switch")
                 XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
             }
