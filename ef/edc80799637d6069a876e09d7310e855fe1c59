@@ -1,0 +1,19 @@
+docs/ci.md
+  s_cda8a11c8519d3::t_4bd99f48cf6953 58-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "efedc80799637d6069a876e09d7310e855fe1c59",
+  "prompts": {},
+  "sessions": {
+    "s_cda8a11c8519d3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cfb-fb15-7b43-a181-a02531be474f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
