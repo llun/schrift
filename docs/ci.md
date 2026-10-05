@@ -47,7 +47,7 @@ the push run is the post-merge verification of the real `main` history
    reveal available and completed rows absent. This avoids attributing an ignored
    synthesized switch tap to a later projection or scroll-restoration failure.
    Mixed/all-completed flows still exercise real toggle/reveal interactions;
-   configured prerequisites do not replace that coverage. They use one slow swipe
+   configured prerequisites do not replace that coverage. They use one 200ms stationary press
    on the native switch and require its off-to-on value transition before testing
    projection or mode changes. A hosted result captured a correctly targeted 50ms
    tap that left the native switch off; why UIKit ignored it remains unconfirmed.

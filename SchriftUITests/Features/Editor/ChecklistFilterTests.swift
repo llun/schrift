@@ -32,9 +32,9 @@ final class ChecklistFilterTests: XCTestCase {
             return false
         }
         // CI captured a correctly targeted 50ms tap that left the switch off.
-        // Exercise one physical off-to-on gesture, without retrying or supplying
+        // Exercise one 200ms stationary press, without retrying or supplying
         // configured state, and verify it before testing projection/mode changes.
-        nativeSwitch.swipeRight(velocity: .slow)
+        nativeSwitch.press(forDuration: 0.2)
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
         guard XCTWaiter.wait(for: [enabled], timeout: 5) == .completed else {
             XCTFail("The Hide completed gesture must enable filtering before the flow continues")
