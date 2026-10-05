@@ -1,0 +1,102 @@
+Schrift/Core/Networking/ImageDataClient.swift
+  s_b41534c519615d::t_5952e0f2865e56 20,49-51,53,55,57-61,68,83
+  s_b41534c519615d::t_118a541a89e60d 26-47,52,54,56,66-67,71,76-79,94-111
+Schrift/Features/Editor/ImageLoader.swift
+  s_b41534c519615d::t_a38f736480dc74 35-37,47,50-52,55-58,93,95-96,104-106,109-110,112-115,118,120,123-124,128,131-143,147-156,158-164,167,170,175,177-178,180,182,184,186,188,192-194,196
+  s_b41534c519615d::t_dc85b13c77e15c 40,48,65-78,81-87
+  s_b41534c519615d::t_4bd729ac1e9fe8 2-17,20,24-26,29,32,34,38,41,43,46,49,53,60,62,88-92,94,97-103,117,119,121-122,125-126,129-130,168-169,174,176,183,185,187,197
+  s_b41534c519615d::t_eed491d36c2c1f 144-146,171-173
+Schrift/Features/Editor/ImageCacheStore.swift
+  s_b41534c519615d::t_118a541a89e60d 16,22-28
+  s_b41534c519615d::t_4bd729ac1e9fe8 6-7,29-30,101-102,105-106
+  s_b41534c519615d::t_1892429f19bbb9 17-21
+  s_b41534c519615d::t_a0bd42f86029a1 10
+  s_b41534c519615d::t_b65b79594a7754 77
+  s_b41534c519615d::t_dc85b13c77e15c 8-9,11-15,95-100,103-104
+Schrift/Features/Editor/MarkdownImageView.swift
+  s_b41534c519615d::t_b9347f72b5433e 1-10,19-30,39-40,42-62,79-84,86-134,136-151
+  s_b41534c519615d::t_17cbf97d315fb0 11-18,31-38,41,63-78,85,135
+Schrift/App/RootView.swift
+  s_a7418d31ae2421::t_d9bad00176835c 87-90,205
+SchriftTests/Features/Editor/EditorViewModelTests.swift
+  s_b41534c519615d::t_ffabad801133f4 37-51
+SchriftTests/Core/Auth/FakeKeychainStore.swift
+  s_b41534c519615d::t_ff3c9765d5ebfa 6,13
+SchriftTests/Features/Editor/MarkdownBlockAttachmentTests.swift
+  s_a7418d31ae2421::t_a46ccd54da4919 61-62
+AGENTS.md
+  s_b41534c519615d::t_f08db89aa8e6f7 677-679,1719,1734-1738,1740-1741,1744-1745,1747,1755-1758,1839-1840
+  s_b41534c519615d::t_76b9c803be910c 1748-1754
+  s_b41534c519615d::t_db0e28f0e861bc 1739,1742-1743,1746,3306-3308
+SchriftTests/Features/Editor/ImagePersistenceIntegrationTests.swift
+  s_b41534c519615d::t_dc85b13c77e15c 1-85,87-136,138-203
+  s_b41534c519615d::t_ad17980f1212a6 86,137
+SchriftTests/Features/Editor/EditorSurfaceParityTests.swift
+  s_b41534c519615d::t_96fcb3553319be 635-710
+SchriftTests/Core/Auth/SessionStoreTests.swift
+  s_b41534c519615d::t_ffabad801133f4 90-110
+docs/architecture.md
+  s_b41534c519615d::t_f08db89aa8e6f7 42-44,973-978,981-987,999-1001,1005,1008-1018,1024-1025,1029-1031,1156-1160
+  s_b41534c519615d::t_78a75652180057 980,991-995,1019-1023
+  s_b41534c519615d::t_8b5fa1286d3f01 979,988-990,997-998,1002-1004,1006-1007,1026-1028
+  s_b41534c519615d::t_6e0fa518f5f0b3 996
+SchriftTests/Features/Editor/NewDocumentEntryTests.swift
+  s_b41534c519615d::t_0491d8a4fe546e 411
+docs/offline-and-sync.md
+  s_b41534c519615d::t_6632063f0e9728 1112-1115
+  s_b41534c519615d::t_d3024b9141cef2 1101-1104,1116-1117,1131
+  s_b41534c519615d::t_f08db89aa8e6f7 1094-1100,1105-1111,1118-1130
+SchriftTests/Features/Editor/ImageLoaderTests.swift
+  s_b41534c519615d::t_8dbbe98764fbcc 6,8,10,14,19,24-27,30-45,48-49,52-54,58,61-64,66-101,103-109,112-115,118-130,132,134-140,142-149,152,154-155,157-172,175,177-189,332-339
+  s_b41534c519615d::t_7265801a170e73 1,190-219,222-230,232-240,243-247,249-252,255-262,264-280,310-331
+  s_b41534c519615d::t_8310db060218a4 281-303,305-309
+Schrift/Features/Editor/ImageTransport.swift
+  s_b41534c519615d::t_4bd729ac1e9fe8 1-17,20,25,28-29
+  s_b41534c519615d::t_b271ce878b547e 18-19,21-24,26-27
+SchriftTests/Features/Editor/ImageTransportTests.swift
+  s_b41534c519615d::t_d3832233b661ee 44-57
+  s_0f3728a0613c42::t_964c374ab0593b 1-43,58-107
+Schrift/Features/Editor/AttachmentLoader.swift
+  s_b41534c519615d::t_f08db89aa8e6f7 21-22
+SchriftTests/Features/Editor/ImageCacheStoreTests.swift
+  s_b41534c519615d::t_a0d1ccc0ed1ab8 20,23,29,39-41,44,47,50,55,60
+  s_b41534c519615d::t_8dbbe98764fbcc 1-19,21-22,24-28,30-38,42-43,45-46,48-49,51-54,56-59,61-68
+Schrift/Core/Auth/SessionStore.swift
+  s_b41534c519615d::t_0efc9965019ad4 90-93,112-117,170-172,216,218-222
+  s_b41534c519615d::t_dc85b13c77e15c 28,173
+  s_b41534c519615d::t_0f071ee9dff9f1 11,49-51,73-76,168-169,191-192
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_b41534c519615d::t_3c8784802fdb01 121-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c78dcaf93c7e984751b0a9dbcd1e7059094d829a",
+  "prompts": {},
+  "sessions": {
+    "s_0f3728a0613c42": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10869-d93b-7583-a06c-057ebe7fdc27",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_a7418d31ae2421": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f1fd2ae-8211-4deb-ba27-c7a8fdc4df54",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_b41534c519615d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1086a-1fa4-7e72-9c7a-15fa1c927d9c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
