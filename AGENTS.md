@@ -3656,6 +3656,17 @@ markdown write endpoint**. Understand this before touching the save path:
   match the concrete `DocsAPIError` case) — not `XCTAssertThrowsError`.
 - Fixtures are **inline** JSON string literals; use deterministic repeating-digit
   UUIDs. Test method names describe the behavior and its outcome.
+- Checklist projection and filtered-scroll UI tests establish filtering through
+  the test host's `--initially-hide-completed` intent and verify switch value,
+  hidden count, reveal availability and completed-row absence before the action
+  under test. A synthesized switch tap can leave the fixture unfiltered, falsely
+  blaming a later remote update or mode swap. Mixed/all-completed flows retain
+  actual switch and reveal interactions; do not replace their interaction coverage
+  with configured state or weaken scroll-return assertions. These interaction
+  flows use one 200ms stationary press on the native switch and require its off-to-on value
+  transition before continuing. CI captured a correctly targeted 50ms synthesized
+  tap that left the switch off; its underlying UIKit cause is unconfirmed. Do not
+  retry gestures until green or treat an unactivated filter as a mode-swap defect.
 
 ## Docs convention
 

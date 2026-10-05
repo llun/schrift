@@ -42,6 +42,16 @@ the push run is the post-merge verification of the real `main` history
    pushed Search, iPad inline Search, editor and Options fixtures use local
    URLProtocol responses and a driven path monitor, with screenshots attached.
    Run this class on both iPhone and iPad for offline/reconnect UI verification.
+   Checklist remote-projection and filtered-scroll fixtures establish and verify
+   filtering before the action under test: switch enabled, expected hidden count,
+   reveal available and completed rows absent. This avoids attributing an ignored
+   synthesized switch tap to a later projection or scroll-restoration failure.
+   Mixed/all-completed flows still exercise real toggle/reveal interactions;
+   configured prerequisites do not replace that coverage. They use one 200ms stationary press
+   on the native switch and require its off-to-on value transition before testing
+   projection or mode changes. A hosted result captured a correctly targeted 50ms
+   tap that left the native switch off; why UIKit ignored it remains unconfirmed.
+   The tests neither retry the gesture nor bypass the interaction with preset state.
    Simulator builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
    don't disable code signing — the Keychain tests need the test host's
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
