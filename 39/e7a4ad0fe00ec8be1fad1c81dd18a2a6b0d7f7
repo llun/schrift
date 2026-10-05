@@ -1,0 +1,71 @@
+SchriftTests/DesignSystem/Components/ControlGeometryTests.swift
+  s_1d960a697ac45d::t_db21cbf953cb81 1-9,12-18,22-29,49-53,58,61-69,73-82
+  s_1d960a697ac45d::t_2020a9b622b3f4 10-11,19-21,54-57,70-72
+  s_1d960a697ac45d::t_68adf3a0f72d94 30-48
+  s_1d960a697ac45d::t_c82a1654335386 59-60
+Schrift/DesignSystem/Components/SheetHeader.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 28
+Schrift/DesignSystem/Components/SwipeRevealRow.swift
+  s_1d960a697ac45d::t_68adf3a0f72d94 470,474,477,492-518
+  s_1d960a697ac45d::t_dfdcdb3130106a 519-522
+Schrift/DesignSystem/Components/IconButton.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 80-81,106-107,113,118-119,121,128-141,144-146
+Schrift/DesignSystem/Components/Button.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 100,183
+Schrift/DesignSystem/Components/ToolbarIcon.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 1-41
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 42-87,90-91
+Schrift/Features/Editor/EditorView.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 368,370,1295-1296,1306,1316,1324,1326,1334,1336,1343,1345
+  s_1d960a697ac45d::t_506a268c272b02 379-388,391-395
+Schrift/Features/Home/DocumentListView.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 141,317
+SchriftUITests/Features/Editor/OfflineControlsTests.swift
+  s_1d960a697ac45d::t_68adf3a0f72d94 30-53
+  s_1d960a697ac45d::t_2acbe2e977320d 27-29,54-68
+Schrift/DesignSystem/Components/SearchField.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 22-23,28
+Schrift/DesignSystem/Components/TextField.swift
+  s_1d960a697ac45d::t_2020a9b622b3f4 84
+AGENTS.md
+  s_1d960a697ac45d::t_96948534eff880 1012-1017,1046-1054,1264-1266
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_c483ea2fd44bfe::t_bee45a7aa93c44 260-261
+docs/design-system.md
+  s_1d960a697ac45d::t_67b484975fb014 3-16
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_29847b55a4550f::t_28a664f1d4e93a 7-8,56,62,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "39e7a4ad0fe00ec8be1fad1c81dd18a2a6b0d7f7",
+  "prompts": {},
+  "sessions": {
+    "s_1d960a697ac45d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c0d-5e12-7b82-bdbb-a3ccfaacca20",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_29847b55a4550f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c0e-11b6-7962-a972-97a69d4f0908",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_c483ea2fd44bfe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c0d-d009-7312-b2b6-5d35c5bd8711",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
