@@ -42,6 +42,11 @@ the push run is the post-merge verification of the real `main` history
    pushed Search, iPad inline Search, editor and Options fixtures use local
    URLProtocol responses and a driven path monitor, with screenshots attached.
    Run this class on both iPhone and iPad for offline/reconnect UI verification.
+   Synthesized gestures target the native switch inside SwiftUI's labeled toggle
+   and drag across the formatting toolbar's visible interior. Tests wait for the
+   switch value and photo-button hittability before checking their results; a tap
+   at the center of a wide accessibility label or a swipe confined to the leftmost
+   44pt toolbar button can miss the actual control without exercising app behavior.
    Simulator builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
    don't disable code signing — the Keychain tests need the test host's
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a

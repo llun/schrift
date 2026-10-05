@@ -23,10 +23,23 @@ final class ChecklistFilterTests: XCTestCase {
         add(attachment)
     }
 
+    private func hideCompletedItems(in app: XCUIApplication) {
+        let toggle = app.switches["checklist.hideCompleted"]
+        // SwiftUI's outer accessibility bounds include the wide label. Target
+        // the nested native switch so a synthesized tap reaches the control.
+        let control = toggle.switches.firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 5))
+        let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
+        control.tap()
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+    }
+
     func testMixedDocumentFilterRevealAndEditingRetainEveryItem() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Finished one"].exists)
-        app.switches["checklist.hideCompleted"].tap()
+        hideCompletedItems(in: app)
         XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Finished one"].exists)
         XCTAssertFalse(app.staticTexts["Finished two"].exists)
@@ -63,7 +76,7 @@ final class ChecklistFilterTests: XCTestCase {
 
     private func verifyAllCompleted(_ arguments: [String]) throws {
         let app = launch(["--all-completed"] + arguments)
-        app.switches["checklist.hideCompleted"].tap()
+        hideCompletedItems(in: app)
         let reveal = app.buttons["checklist.showCompleted"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 5))
         XCTAssertTrue(reveal.isHittable)
@@ -154,7 +167,7 @@ final class ChecklistFilterTests: XCTestCase {
 
     func testFilteredScrollHandoffKeepsADeepVisibleTaskAcrossBothModes() {
         let app = launch(["--long-checklist"])
-        app.switches["checklist.hideCompleted"].tap()
+        hideCompletedItems(in: app)
         let target = app.staticTexts["Task 39"]
         for _ in 0..<12 {
             if target.isHittable { break }

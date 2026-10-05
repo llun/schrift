@@ -57,9 +57,14 @@ final class OfflineControlsTests: XCTestCase {
         XCTAssertEqual(add.frame.height, 44, accuracy: 1)
         let photo = app.buttons["Insert photo"]
         if !photo.isHittable {
-            add.swipeLeft()
+            // A swipe constrained to the leftmost 44pt button can leave the
+            // toolbar unmoved. Drag across its visible interior instead.
+            let end = add.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let start = end.withOffset(CGVector(dx: app.frame.width / 2, dy: 0))
+            start.press(forDuration: 0.1, thenDragTo: end)
         }
-        XCTAssertTrue(photo.isHittable)
+        let revealed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: photo)
+        XCTAssertEqual(XCTWaiter.wait(for: [revealed], timeout: 5), .completed)
         XCTAssertEqual(photo.frame.width, 44, accuracy: 1)
         XCTAssertEqual(photo.frame.height, 44, accuracy: 1)
         capture(app, "circular-formatting-actions")
