@@ -2526,7 +2526,9 @@ markdown write endpoint**. Understand this before touching the save path:
   A fetch agreeing with an **unsent** intent must never remove it. The normal sync funnel
   runs pins after deletions; deletion holds replay, undo releases it, and completed deletion
   removes pending and settled pin projections. Replay verifies `/users/me/` against the
-  remembered owner and rechecks owner, deletion holds and intent after every await. Transport,
+  remembered owner and rechecks owner, deletion holds and intent after every await. An owner
+  change or failed verification must honor a coalesced trigger by starting the requested pass
+  with the current identity; never discard it through an early return. Transport,
   auth, rate-limit and 5xx errors remain pending; permission, missing endpoint/object and other
   4xx rejections restore the last known server bit and surface the existing pin error key.
   A superseded success advances the latest intent's rollback baseline, never removes it.

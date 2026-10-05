@@ -837,4 +837,66 @@ final class DocumentPinCoordinatorTests: XCTestCase {
         XCTAssertTrue(options.isFavorite)
     }
 
+    func testAccountChangeDuringVerificationPreservesRequestedReplayPass() async {
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        let other = UUID()
+        let users = Counter()
+        let log = RequestRecorder()
+        let first = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
+        let next = Data("{\"id\":\"\(other.uuidString)\"}".utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "GET" {
+                let isFirst = users.next() == 1
+                return .init(
+                    statusCode: 200, headers: [:], body: isFirst ? first : next,
+                    error: nil, releasedBy: isFirst ? gate : nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let pins = pins()
+        XCTAssertTrue(queue(pins, pinned: true))
+        let syncing = Task { await pins.sync(isBlocked: { _ in false }) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        SignedInUserStore(userDefaults: defaults).remember(other)
+        XCTAssertTrue(pins.queue(documentID: id, isPinned: true, row: row(), ownerUserID: other))
+        await pins.sync(isBlocked: { _ in false })
+        gate.open()
+        await syncing.value
+        XCTAssertEqual(log.count(ofMethod: "POST"), 1, "B replays without a further reconnect")
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().map(\.ownerUserID), [owner])
+    }
+
+    func testAccountChangeInsideCandidateLoopPreservesRequestedReplayPass() async {
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        let other = UUID()
+        let users = Counter()
+        let log = RequestRecorder()
+        let first = Data("{\"id\":\"\(owner.uuidString)\"}".utf8)
+        let next = Data("{\"id\":\"\(other.uuidString)\"}".utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "GET" {
+                return .init(statusCode: 200, headers: [:], body: users.next() == 1 ? first : next, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil, releasedBy: gate)
+        }
+        let pins = pins()
+        XCTAssertTrue(queue(pins, pinned: true))
+        let secondID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        XCTAssertTrue(pins.queue(documentID: secondID, isPinned: true, row: nil, ownerUserID: owner))
+        let syncing = Task { await pins.sync(isBlocked: { _ in false }) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        SignedInUserStore(userDefaults: defaults).remember(other)
+        XCTAssertTrue(pins.queue(documentID: id, isPinned: true, row: row(), ownerUserID: other))
+        await pins.sync(isBlocked: { _ in false })
+        gate.open()
+        await syncing.value
+        XCTAssertEqual(log.count(ofMethod: "POST"), 2, "only A's in-flight request and B's new request")
+        XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).allPins().allSatisfy { $0.ownerUserID == owner })
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allPins().count, 2)
+    }
+
 }

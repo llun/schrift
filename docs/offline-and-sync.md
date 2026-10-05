@@ -2603,7 +2603,9 @@ an online toggle can also start the serialized pin replay. Work Offline sends no
 leaving Work Offline or completing reauthentication resumes pins. Learning a previously
 unknown account at launch or reconnect resumes the queue too. Before mutation,
 `/users/me/` must match the remembered owner. Every awaited response rechecks owner,
-intent identity and deletion holds. A local create UUID is rejected at the action layer
+intent identity and deletion holds. A coalesced trigger survives interrupted account
+verification or an owner change inside the replay pass: the next pass re-reads identity
+and candidates instead of losing the new account's reconnect. A local create UUID is rejected at the action layer
 and held at replay; no favorite endpoint ever addresses it. A pending deletion holds
 pin replay and pin affordances; undo releases the old pin intent, while completed
 deletion clears it and its settled projection.

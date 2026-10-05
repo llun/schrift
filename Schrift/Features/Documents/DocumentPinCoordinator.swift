@@ -171,6 +171,7 @@ final class DocumentPinCoordinator {
         defer { isSyncing = false }
         repeat {
             needsAnotherPass = false
+            guard !userDefaults.bool(forKey: "schrift.workOffline") else { return }
             guard let owner = signedInUser.userID else { return }
             let candidates = pending.values.filter {
                 $0.serverOrigin == serverOrigin && $0.ownerUserID == owner && !isBlocked($0.documentID)
@@ -178,9 +179,14 @@ final class DocumentPinCoordinator {
             guard !candidates.isEmpty else { return }
             guard let verifiedOwner = try? await client.currentUser().id,
                 verifiedOwner == owner, signedInUser.userID == owner
-            else { return }
+            else {
+                // A reconnect/re-login arriving during verification still owns a pass,
+                // even if this answer belongs to an account that has since signed out.
+                if needsAnotherPass { continue }
+                return
+            }
             for candidate in candidates {
-                guard signedInUser.userID == owner, !userDefaults.bool(forKey: "schrift.workOffline") else { return }
+                guard signedInUser.userID == owner, !userDefaults.bool(forKey: "schrift.workOffline") else { break }
                 guard let sent = pending[candidate.key], !isBlocked(sent.documentID) else { continue }
                 let failure: DocsAPIError?
                 do {
