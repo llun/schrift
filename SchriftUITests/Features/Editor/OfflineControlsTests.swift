@@ -24,6 +24,48 @@ final class OfflineControlsTests: XCTestCase {
         XCTAssertTrue(app.buttons["Options"].waitForExistence(timeout: 5))
     }
 
+    func testCircularIconControlsAndFormattingActionsRemainReachable() {
+        let app = launch()
+        openDocument(app)
+        XCTAssertTrue(app.staticTexts["Cached readable body"].waitForExistence(timeout: 5))
+        for label in ["Show pages", "Edit", "Options"] {
+            let button = app.buttons[label]
+            XCTAssertTrue(button.exists)
+            XCTAssertTrue(button.isHittable, label)
+            // UIKit accessibility bounds describe the label, not the glass outline.
+            // The screenshot verifies the separate circular system surfaces.
+        }
+        capture(app, "circular-editor-toolbar")
+        app.buttons["Options"].tap()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        // Sheet presentation can scale the whole surface slightly. Logical 44pt
+        // geometry is covered by ControlGeometryTests; its screen bounds stay square.
+        XCTAssertEqual(close.frame.width, close.frame.height, accuracy: 1)
+        XCTAssertGreaterThan(close.frame.width, 40)
+        capture(app, "circular-sheet-close")
+        close.tap()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: close)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        let edit = app.buttons["Edit"]
+        let editable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: edit)
+        XCTAssertEqual(XCTWaiter.wait(for: [editable], timeout: 5), .completed)
+        edit.tap()
+        let add = app.buttons["Add block"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        XCTAssertEqual(add.frame.width, 44, accuracy: 1)
+        XCTAssertEqual(add.frame.height, 44, accuracy: 1)
+        let photo = app.buttons["Insert photo"]
+        if !photo.isHittable {
+            add.swipeLeft()
+        }
+        XCTAssertTrue(photo.isHittable)
+        XCTAssertEqual(photo.frame.width, 44, accuracy: 1)
+        XCTAssertEqual(photo.frame.height, 44, accuracy: 1)
+        capture(app, "circular-formatting-actions")
+        app.terminate()
+    }
+
     func testHomeAndPushedSearchAvailabilityTransitions() {
         let app = launch()
         let shortcut = app.buttons["Search docs.example.org"]

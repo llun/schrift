@@ -4,14 +4,8 @@ import XCTest
 
 @testable import Schrift
 
-/// The formatting bar sits in a `safeAreaInset`, so a width it *insists* on does
-/// not get clipped — it propagates outwards and makes the editor's whole VStack
-/// wider than the screen, dragging the nav bar off the left edge with it.
-///
-/// `IconButton`'s default 44pt minimum width does not compress, so nine of them
-/// demanded a fixed 424pt: 54pt more than an iPhone 17's content column, 81pt
-/// more than a 375pt phone's. These tests pin the bar to whatever width it is
-/// offered, on the narrowest device the app supports.
+/// A scrolling action row must fit the editor's offered width while keeping
+/// each button 44pt square, rather than shrinking icons or widening the screen.
 @MainActor
 final class EditorFormattingBarTests: XCTestCase {
 
@@ -59,17 +53,16 @@ final class EditorFormattingBarTests: XCTestCase {
         XCTAssertLessThanOrEqual(barWidth(viewModel, offered: column), column + roundingSlack)
     }
 
-    /// The 44pt tap *height* is what the buttons must never give up; the width is
-    /// shared. Guards against "fixing" the overflow by shrinking the row.
+    /// The scrolling row keeps a single 44pt control height plus its padding.
     func testTheBarKeepsTheStandardTapHeight() {
         let viewModel = makeViewModel()
         let host = UIHostingController(
             rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
         let height = host.sizeThatFits(in: CGSize(width: 343, height: CGFloat.greatestFiniteMagnitude)).height
-        XCTAssertGreaterThanOrEqual(height, DocsSpacing.rowMinHeight)
+        XCTAssertEqual(height, DocsSpacing.rowMinHeight + 2 * DocsSpacing.space3xs, accuracy: 0.5)
     }
 
-    /// `IconButton`'s default is unchanged — only the bar opts out.
+    /// Standalone and formatting icons share the same square target.
     func testAStandaloneIconButtonKeepsIts44ptMinimumWidth() {
         let host = UIHostingController(
             rootView: IconButton(icon: .link, label: "Link", size: .small, action: {}))

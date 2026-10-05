@@ -19,18 +19,13 @@ struct SearchField: View {
                 .font(DocsFont.callout)
                 .focused($isFocused)
             if !text.isEmpty {
-                Button(action: { text = "" }) {
-                    MaterialSymbol(.cancel, size: 20, fill: true)
-                        .foregroundStyle(DocsColor.textTertiary)
-                        // Keep the 20pt glyph but guarantee the 44pt iOS hit target.
-                        .frame(minWidth: DocsSpacing.rowMinHeight, minHeight: DocsSpacing.rowMinHeight)
-                        .contentShape(Rectangle())
+                IconButton(icon: .cancel, label: loc[.common_clear_search], size: .small, filled: true) {
+                    text = ""
                 }
-                .accessibilityLabel(loc[.common_clear_search])
             }
         }
         .padding(.horizontal, DocsSpacing.spaceSM)
-        .frame(minHeight: 40)
+        .frame(minHeight: DocsSpacing.rowMinHeight)
         .background(DocsColor.surfaceSunken)
         .clipShape(Capsule())
         .onAppear {

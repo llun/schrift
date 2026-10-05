@@ -97,13 +97,7 @@ enum ButtonSize {
     case medium
     case large
 
-    var height: CGFloat {
-        switch self {
-        case .small: return 32
-        case .medium: return 40
-        case .large: return 52
-        }
-    }
+    var height: CGFloat { DocsSpacing.rowMinHeight }
 
     var horizontalPadding: CGFloat {
         switch self {
@@ -186,6 +180,7 @@ struct DocsButton: View {
                     )
             )
             .clipShape(RoundedRectangle(cornerRadius: pill ? DocsRadius.pill : DocsRadius.sm))
+            .contentShape(Rectangle())
         }
         .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)

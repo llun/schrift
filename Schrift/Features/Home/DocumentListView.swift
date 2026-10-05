@@ -138,7 +138,7 @@ struct DocumentListView: View {
                         Spacer()
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)
-                    .frame(minHeight: 40)
+                    .frame(minHeight: DocsSpacing.rowMinHeight)
                     .background(DocsColor.surfaceSunken)
                     .clipShape(Capsule())
                     .contentShape(Capsule())
@@ -314,7 +314,7 @@ struct NewDocumentToolbarButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(uiImage: MaterialIcon.add.uiImage(pointSize: 24) ?? UIImage())
+            ToolbarIcon(.add)
         }
         .buttonBorderShape(.circle)
         .accessibilityLabel(loc[.home_newdoc])

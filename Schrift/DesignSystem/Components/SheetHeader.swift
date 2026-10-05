@@ -25,18 +25,7 @@ struct SheetHeader: View {
             Spacer(minLength: DocsSpacing.spaceSM)
 
             if let onClose {
-                Button(action: onClose) {
-                    MaterialSymbol(.close, size: 20)
-                        .foregroundStyle(DocsColor.textSecondary)
-                        .frame(width: 30, height: 30)
-                        .background(DocsColor.surfaceMuted, in: Circle())
-                        // Keep the handoff's 30pt disc, but float the tap target
-                        // to the 44pt iOS minimum around it.
-                        .frame(width: DocsSpacing.rowMinHeight, height: DocsSpacing.rowMinHeight)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(closeLabel)
+                IconButton(icon: .close, label: closeLabel, variant: .soft, size: .small, action: onClose)
             }
         }
         // The handoff `Sheet` seats the title well clear of the drag indicator:

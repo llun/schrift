@@ -257,7 +257,8 @@ struct PagesTreeDrawer: View {
                 // otherwise a quarter of the area iOS asks for.
                 .frame(width: 22, height: 22)
                 .frame(width: PagesTreeLayout.disclosureWidth, height: DocsSpacing.rowMinHeight)
-                .contentShape(Rectangle())
+                .clipShape(Circle())
+                .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(loc[row.isExpanded ? .pages_collapse : .pages_expand])

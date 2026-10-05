@@ -81,7 +81,7 @@ struct DocsTextField: View {
             .padding(.horizontal, DocsSpacing.spaceSM)
             // minHeight, not height: the field has to grow with Dynamic Type
             // rather than clip the text it exists to show.
-            .frame(minHeight: 40)
+            .frame(minHeight: DocsSpacing.rowMinHeight)
             // Disabled fields sink to the sunken surface (reference); enabled stay white.
             .background(isDisabled ? DocsColor.surfaceSunken : DocsColor.surfacePage)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
