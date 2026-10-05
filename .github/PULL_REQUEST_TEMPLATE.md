@@ -9,7 +9,7 @@
 
 ## Definition of done (see AGENTS.md "Task workflow")
 
-- [ ] `swift format --recursive --in-place Schrift SchriftTests` run
+- [ ] `swift format --recursive --in-place Schrift SchriftTests SchriftUITests` run
 - [ ] Full test suite passes locally (`xcodebuild test -project Schrift.xcodeproj -scheme Schrift …`)
 - [ ] New/changed behavior is covered by tests
 - [ ] Affected docs updated in the same change (docs-lockstep rule)

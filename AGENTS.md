@@ -64,7 +64,7 @@ names the section with the details.
      ([Docs convention](#docs-convention)).
 6. **Definition of done** — a change is finished only when all of these hold
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
-   - `swift format --recursive --in-place Schrift SchriftTests` has been run;
+   - `swift format --recursive --in-place Schrift SchriftTests SchriftUITests` has been run;
    - the full test suite passes locally;
      (in a Claude Code cloud session the test suite cannot run, and the
      formatter only can when a Swift toolchain is available — see
@@ -102,6 +102,12 @@ names the section with the details.
   run a single class or method by appending
   `-only-testing:SchriftTests/<ClassName>` (or `…/<ClassName>/<testMethod>`)
   to the same command; run the full suite before declaring work done.
+- The `Schrift` scheme includes unit/rendering tests and
+  `SchriftChecklistUITests`. The latter launches `SchriftChecklistTestHost`,
+  a test-only app built from the production rows with its own entry point and
+  isolated stores. It needs no login or remote document and adds no test launch
+  arguments to the shipping app. For focused hit-target checks, use
+  `-only-testing:SchriftChecklistUITests`; the full command runs both bundles.
 - **Running the app in the iOS Simulator — the "Offline" quirk.** When you launch
   the app in the Simulator it often shows **"Offline"** even though the network is
   fine. This is a **Simulator-only** networking quirk — an HTTP/3 (QUIC) stall
@@ -138,7 +144,7 @@ names the section with the details.
   configured by [`.swift-format`](.swift-format) at the repo root (4-space
   indent, 120-column lines, defaults otherwise). Format before pushing:
   ```sh
-  swift format --recursive --in-place Schrift SchriftTests
+  swift format --recursive --in-place Schrift SchriftTests SchriftUITests
   ```
   The PR checks fail on any unformatted file. **CI's Xcode-bundled
   swift-format is canonical** — if a runner toolchain bump changes its output,
@@ -158,7 +164,7 @@ names the section with the details.
 - **All checks must pass before a PR is merge-ready.** Work-in-progress pushes
   don't have to run everything locally every time, but a push that makes a PR
   ready for review/merge must arrive with the checks already satisfied: run the
-  formatter (`swift format --recursive --in-place Schrift SchriftTests`) and the
+  formatter (`swift format --recursive --in-place Schrift SchriftTests SchriftUITests`) and the
   full test suite locally first (except in a Claude Code cloud session, where
   the test suite cannot run and the formatter may be unavailable — see
   [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux)),
@@ -287,7 +293,7 @@ session:
   is a deliberate, separate change — don't do it as a side effect.)
 - **Before every push from a cloud session, do what Linux allows:**
   - Formatting: if a Swift 6 toolchain is available, run
-    `swift format --recursive --in-place Schrift SchriftTests` and commit the
+    `swift format --recursive --in-place Schrift SchriftTests SchriftUITests` and commit the
     result — the PR checks fail on any unformatted file. If no toolchain is
     available, match the surrounding style (`.swift-format`: 4-space indent,
     120 columns) and expect the CI formatting gate to be the arbiter.
@@ -442,6 +448,7 @@ Schrift/
 │                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
 SchriftTests/            XCTest suite; mirrors the source tree by directory (see below)
+SchriftUITests/          checklist UI tests + isolated production-row host entry point
 docs/                    living project docs — architecture.md, offline-and-sync.md,
                          design-system.md, ci.md, testflight-setup.md (see docs/README.md);
                          assets/app-icon/ holds the icon's vector masters + export script
@@ -1547,14 +1554,16 @@ that are easy to violate and expensive to discover:
     the keyboard on every `- `/slash/toolbar conversion (the standing rule that
     every editable kind shares one structural shape).
   - `EditorBlockAdornment` — bullet, number, checkbox. The checkbox is a
-    `Button` only where a toggle closure is supplied (editing); the symmetric
-    positive/negative padding pairs grow the target and give every point back, so the
-    plain reading glyph occupies identical space. It is 24pt — larger than either
+    `Button` where a toggle closure is supplied, including both production
+    surfaces; reading has a separate text tap to enter editing. The symmetric
+    positive/negative padding pairs grow the target and give every point back,
+    so callers without a toggle callback occupy identical space. It is 24pt — larger than either
     surface used to draw it, since it is the document's one touchable adornment.
     Horizontal growth uses `checkboxHitPadding`; vertical growth uses
     `checkboxVerticalHitPadding`, half the block gap, so targets fit the row
     pitch without overlap. Check real taps near adjacent-row boundaries, not
-    just the dimensions of an isolated padded glyph.
+    just the dimensions of an isolated padded glyph. The normal scheme includes
+    `SchriftChecklistUITests/ChecklistHitTests` for those actual row-edge taps.
     Checklist rows use `checklistFirstLine`, centering the Material glyph's
     actual font bounds on the first text line's capital-height center. Reading
     uses SwiftUI's first baseline; editing uses the zero-inset text view's

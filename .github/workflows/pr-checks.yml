@@ -36,7 +36,7 @@ jobs:
     # Renaming this job breaks the guard until the ruleset is updated.
     name: Build & Test
     runs-on: macos-latest
-    # Unit tests only — normal runs finish well under this; the cap catches hangs.
+    # Unit/rendering tests and isolated checklist UI tests; the cap catches hangs.
     timeout-minutes: 30
 
     steps:
@@ -60,9 +60,9 @@ jobs:
       - name: Check formatting
         run: |
           swift format --version
-          swift format --recursive --in-place Schrift SchriftTests
+          swift format --recursive --in-place Schrift SchriftTests SchriftUITests
           if ! git diff --exit-code -- '*.swift'; then
-            echo "::error::Swift sources are not formatted. Run: swift format --recursive --in-place Schrift SchriftTests"
+            echo "::error::Swift sources are not formatted. Run: swift format --recursive --in-place Schrift SchriftTests SchriftUITests"
             exit 1
           fi
 

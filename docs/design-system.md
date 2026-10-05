@@ -1231,24 +1231,27 @@ title a Conventional Commit; PR review loop run and threads resolved.
 >   which view is decorated: a structural branch there would recreate the
 >   `UITextView` and drop the keyboard on every block conversion.
 > - `EditorBlockAdornment` — the bullet, the number and the checkbox. The
->   checkbox is a `Button` only where a toggle closure is supplied (editing);
+>   checkbox is a `Button` where a toggle closure is supplied, including both
+>   production surfaces; reading has a separate text tap to enter editing.
 >   positive/negative padding pairs grow the target and give every point back,
->   so the plain reading glyph occupies exactly the same space. Horizontal
+>   so callers without a toggle callback occupy exactly the same space. Horizontal
 >   padding uses `checkboxHitPadding`; vertical padding is half `blockSpacing`.
 >   Larger vertical targets overlapped, and rendered UI taps near a row boundary
 >   could toggle the next item. Capping growth makes adjacent targets meet
 >   without overlap, at the row pitch (41pt default / 75pt Accessibility 3 on
 >   iOS 26.5). Horizontal target overlap with the text column belongs to the text
 >   view. A 44pt vertical target would require taller rows shared with reading.
->   Measure font boxes and real taps rather than deriving a target from the
->   symbol's nominal point size.
+>   `SchriftChecklistUITests/ChecklistHitTests` taps the actual editing rows at
+>   horizontal target edges and adjacent-row boundaries at both sizes, asserting
+>   that only the intended item changes. Measure font boxes and real taps
+>   rather than deriving a target from the symbol's nominal point size.
 >   Checklist rows align the checkbox's actual glyph bounds with the first
 >   text line's capital-height center. Top-aligning their different font boxes
 >   placed the editing checkbox 4pt below that center at the default size and
 >   9.2pt below it at Accessibility 3 (iOS 26.5); reading was 2pt/3pt below.
 >   `EditorChecklistAlignment` uses the reading text's first baseline and the
 >   editing font's ascender, with each font's own cap height. The glyph keeps
->   its natural footprint and padded target without inflating row layout. The real-view pixel
+>   its natural footprint and padded target without a fixed 44pt layout box. The real-view pixel
 >   matrix in `ChecklistPresentationTests` measures checked/unchecked and
 >   single/wrapped rows at both sizes; equal-height tests alone cannot detect
 >   this defect. Completed-item strikethrough still comes from the existing

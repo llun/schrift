@@ -194,6 +194,7 @@ struct MarkdownBlockView: View {
     }
 
     @ViewBuilder private var blockText: some View {
+        let textSize = dynamicTypeSize
         let appearance = blockTextAppearance(for: block.kind, text: block.text)
         // A verbatim block's text is literal — running it through the markdown
         // parser would promise formatting its own panel says is not applied.
@@ -206,7 +207,7 @@ struct MarkdownBlockView: View {
             .foregroundStyle(appearance.color)
             .strikethrough(appearance.isStruckThrough)
             .alignmentGuide(.checklistFirstLine) { dimensions in
-                EditorChecklistAlignment.reading(in: dimensions, dynamicTypeSize: dynamicTypeSize)
+                EditorChecklistAlignment.reading(in: dimensions, dynamicTypeSize: textSize)
             }
 
         // Branched rather than handing every kind an empty value: VoiceOver

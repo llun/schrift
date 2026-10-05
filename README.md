@@ -79,6 +79,10 @@ xcodebuild test -project Schrift.xcodeproj -scheme Schrift -destination 'platfor
 committed. If `iPhone 17` isn't in `xcrun simctl list devices available`,
 substitute any listed iPhone — CI does the same fallback.)
 
+The scheme runs unit/rendering tests and checklist UI tests. The UI tests
+launch a separate test-only host with actual production rows and isolated
+stores, so they require no login or server connection.
+
 CI runs the same suite on every pull request to `main` and on every push to
 `main` ([`pr-checks.yml`](.github/workflows/pr-checks.yml)); the
 **Build & Test** check must pass before merging. See [`docs/ci.md`](docs/ci.md).
@@ -90,7 +94,7 @@ toolchain; config in [`.swift-format`](.swift-format)). CI rejects unformatted
 code, so format before pushing:
 
 ```sh
-swift format --recursive --in-place Schrift SchriftTests
+swift format --recursive --in-place Schrift SchriftTests SchriftUITests
 ```
 
 ## Distribution (TestFlight)

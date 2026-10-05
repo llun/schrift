@@ -162,6 +162,7 @@ struct BlockEditorRow: View {
             // Both the spacing and the decoration come from `EditorBlockStyle`,
             // the table `MarkdownBlockView` reads, so this row and the reading
             // row it replaces occupy the same space.
+            let checklistFont = blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize).font
             HStack(
                 alignment: blockRowAlignment(block.kind),
                 spacing: blockHasAdornment(block.kind) ? EditorBlockMetrics.adornmentSpacing : 0
@@ -171,8 +172,7 @@ struct BlockEditorRow: View {
                     onToggleChecklist: { viewModel.toggleChecklist(blockID: block.id) })
                 textView
                     .alignmentGuide(.checklistFirstLine) { dimensions in
-                        let font = blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize).font
-                        return EditorChecklistAlignment.editing(in: dimensions, font: font)
+                        EditorChecklistAlignment.editing(in: dimensions, font: checklistFont)
                     }
                     .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
             }

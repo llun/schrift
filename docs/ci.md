@@ -25,16 +25,20 @@ the push run is the post-merge verification of the real `main` history
 (`testflight.yml` builds Release but runs no tests). The job is:
 
 1. Formatting gate — runs Apple's `swift-format` (bundled with the Xcode
-   toolchain; config in [`.swift-format`](../.swift-format)) over `Schrift/`
-   and `SchriftTests/` and fails on any resulting diff, prettier-style. Fix
-   locally with `swift format --recursive --in-place Schrift SchriftTests`.
+   toolchain; config in [`.swift-format`](../.swift-format)) over `Schrift/`,
+   `SchriftTests/` and `SchriftUITests/` and fails on any resulting diff. Fix
+   locally with `swift format --recursive --in-place Schrift SchriftTests SchriftUITests`.
 2. `xcodegen generate` — the `.xcodeproj` is generated from `project.yml` and
    not committed, so CI must regenerate it before any `xcodebuild` call.
 3. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
    to the first available iPhone on the runner image (image lineups change).
 4. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
-   simulator — the same suite as the documented local test command. Simulator
-   builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
+   simulator — the same suite as the documented local test command, including
+   unit/rendering tests and `SchriftChecklistUITests`. The UI bundle launches
+   `SchriftChecklistTestHost`, a test-only app compiling the actual production
+   rows with a separate entry point and isolated stores; no login, network
+   document, or test-mode branch in the shipping application is required.
+   Simulator builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
    don't disable code signing — the Keychain tests need the test host's
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
    fully unsigned host.
@@ -61,7 +65,7 @@ tree was last formatted with swift-format 6.3.3. swift-format output can
 change between toolchain releases, so a runner-image Xcode bump can make the
 gate fail on files a PR never touched. The remedy is a standalone tree-wide
 reformat commit (`ci: reformat for swift-format X.Y`): run
-`swift format --recursive --in-place Schrift SchriftTests` with the same
+`swift format --recursive --in-place Schrift SchriftTests SchriftUITests` with the same
 toolchain CI uses (the gate logs `swift format --version` at the top of the
 step) and land it on its own. Local formatting with a different toolchain
 version may disagree with CI — trust the gate's diff output.

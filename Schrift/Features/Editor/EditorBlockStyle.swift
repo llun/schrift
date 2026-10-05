@@ -366,10 +366,9 @@ private func checkboxCenterAboveBaseline(checked: Bool, size: CGFloat) -> CGFloa
 /// A list block's leading adornment — bullet, number, or checkbox.
 ///
 /// Shared by both surfaces so the text column starts at the same x on each. The
-/// checkbox is a real control only where `onToggle` is supplied (the editing
-/// surface); while reading, the whole row's tap enters the editor, so the glyph
-/// is drawn plain and the *state* is spoken instead of implied by a hidden
-/// glyph.
+/// checkbox is a real control where `onToggleChecklist` is supplied, including
+/// both production surfaces. Reading has a separate text tap to enter editing.
+/// Callers without a toggle callback get a plain glyph.
 struct EditorBlockAdornment: View {
     let kind: BlockKind
     let numberedIndex: Int
@@ -414,18 +413,19 @@ struct EditorBlockAdornment: View {
     /// of a first-line-aligned row, so the taller box would move the glyph below
     /// the first line of the text it is meant to sit beside. The pair leaves the
     /// glyph exactly where it is and grows the target — and, because the two
-    /// paddings cancel, the plain reading glyph occupies exactly the same space
-    /// as the editing button.
+    /// paddings cancel, callers without a toggle callback occupy the same space
+    /// as either surface's button.
     ///
     /// Vertical padding consumes half the inter-row gap on each side. The
     /// targets meet without overlapping, so tapping near a row boundary cannot
     /// arm its neighbour. The target's height is the row pitch; enforcing 44pt
     /// would need a taller row shared with the reading surface.
     private func checkbox(checked: Bool) -> some View {
-        MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
+        let glyphCenter = checkboxCenterAboveBaseline(checked: checked, size: checkboxSize)
+        return MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
             .foregroundStyle(checked ? DocsColor.brandFill : DocsColor.textTertiary)
             .alignmentGuide(.checklistFirstLine) {
-                $0[.firstTextBaseline] - checkboxCenterAboveBaseline(checked: checked, size: checkboxSize)
+                $0[.firstTextBaseline] - glyphCenter
             }
             .padding(.horizontal, EditorBlockMetrics.checkboxHitPadding)
             .padding(.vertical, EditorBlockMetrics.checkboxVerticalHitPadding)

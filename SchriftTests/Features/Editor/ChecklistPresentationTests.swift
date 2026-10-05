@@ -139,7 +139,11 @@ final class ChecklistPresentationTests: XCTestCase {
                                 BlockEditorRow(
                                     viewModel: model, block: block, index: 0,
                                     serverOrigin: "https://docs.example.org", isOffline: true))
-                            : AnyView(MarkdownBlockView(block: block, serverOrigin: "https://docs.example.org"))
+                            : AnyView(
+                                MarkdownBlockView(
+                                    block: block, serverOrigin: "https://docs.example.org",
+                                    onToggleChecklist: { model.toggleChecklist(blockID: block.id) },
+                                    onTapText: { model.startEditing(focusing: block.id) }))
                         let host = ChecklistRenderHost(
                             rootView:
                                 row
@@ -312,7 +316,10 @@ private struct ChecklistSurface: View {
         } else {
             VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
                 ForEach(model.blocks) { block in
-                    MarkdownBlockView(block: block, serverOrigin: "https://docs.example.org")
+                    MarkdownBlockView(
+                        block: block, serverOrigin: "https://docs.example.org",
+                        onToggleChecklist: { model.toggleChecklist(blockID: block.id) },
+                        onTapText: { model.startEditing(focusing: block.id) })
                 }
             }
         }
