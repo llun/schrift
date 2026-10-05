@@ -247,6 +247,7 @@ struct EditorView: View {
     /// and deliberately not observable — see `EditorScrollAnchorStore`.
     @State private var scrollAnchor = EditorScrollAnchorStore()
     @State private var readingScrollPosition = ScrollPosition()
+    @State private var checklistRevealFocusRequest = 0
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -911,114 +912,158 @@ struct EditorView: View {
     /// contribute the same gaps in the same order for the scroll offset to mean
     /// the same thing in both.
     private var readingSurface: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
-                readingHeader
-                    // Tops the stack's own `blockSpacing` up to the header-to-body
-                    // gap, exactly as the editing canvas does.
-                    .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+        let presentation = viewModel.checklistReadingPresentation
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                    readingHeader
+                        // Tops the stack's own `blockSpacing` up to the header-to-body
+                        // gap, exactly as the editing canvas does.
+                        .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
 
-                if viewModel.blocks.isEmpty {
-                    // `isDocumentPendingDelete` joins the error check for the same reason the
-                    // error is here at all: the gated load leaves `blocks` empty *and* — since the
-                    // notice is rendered from the predicate rather than an `errorKey` — no error to
-                    // suppress this. Without it the screen claims a document with content is empty
-                    // and offers "Start writing", which `canStartEditing` makes a silent no-op.
-                    if viewModel.hasLoadedContent, viewModel.errorKey == nil, !viewModel.isDocumentPendingDelete {
-                        emptyContent
+                    if presentation.hasChecklistItems {
+                        ChecklistReadingControls(
+                            hidesCompleted: Binding(
+                                get: { viewModel.hidesCompletedChecklistItems },
+                                set: { viewModel.setHidesCompletedChecklistItems($0) }),
+                            hiddenCount: presentation.hiddenCount,
+                            revealFocusRequest: checklistRevealFocusRequest)
                     }
-                } else {
-                    ForEach(Array(viewModel.blocks.enumerated()), id: \.element.id) { index, block in
-                        Group {
-                            // A queued photo renders from the bytes on disk. Branched here
-                            // rather than inside `MarkdownBlockView` because the state and the
-                            // Retry/Remove intents belong to the view model, which that view
-                            // deliberately does not take — and ahead of `MarkdownImageView`,
-                            // whose fail-closed policy would otherwise show a tap-to-load card
-                            // for a URL that can never be fetched.
-                            if let display = pendingAttachmentDisplay(for: block) {
-                                PendingAttachmentImageView(
-                                    alt: pendingAttachmentAlt(for: block), display: display,
-                                    onRetry: { retryPendingAttachment(for: block) },
-                                    onRemove: { viewModel.removePendingAttachment(blockID: block.id) })
-                            } else if case .checklistItem = block.kind {
-                                MarkdownBlockView(
-                                    block: block, serverOrigin: serverOrigin,
-                                    numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
-                                    isOffline: isOffline,
-                                    onToggleChecklist: {
-                                        viewModel.toggleChecklist(blockID: block.id)
-                                    },
-                                    onTapText: {
-                                        scrollAnchor.snapshotForSwap()
+
+                    if viewModel.blocks.isEmpty {
+                        // `isDocumentPendingDelete` joins the error check for the same reason the
+                        // error is here at all: the gated load leaves `blocks` empty *and* — since the
+                        // notice is rendered from the predicate rather than an `errorKey` — no error to
+                        // suppress this. Without it the screen claims a document with content is empty
+                        // and offers "Start writing", which `canStartEditing` makes a silent no-op.
+                        if viewModel.hasLoadedContent, viewModel.errorKey == nil, !viewModel.isDocumentPendingDelete {
+                            emptyContent
+                        }
+                    } else {
+                        ForEach(presentation.rows) { row in
+                            let index = row.sourceIndex
+                            let block = row.block
+                            Group {
+                                // A queued photo renders from the bytes on disk. Branched here
+                                // rather than inside `MarkdownBlockView` because the state and the
+                                // Retry/Remove intents belong to the view model, which that view
+                                // deliberately does not take — and ahead of `MarkdownImageView`,
+                                // whose fail-closed policy would otherwise show a tap-to-load card
+                                // for a URL that can never be fetched.
+                                if let display = pendingAttachmentDisplay(for: block) {
+                                    PendingAttachmentImageView(
+                                        alt: pendingAttachmentAlt(for: block), display: display,
+                                        onRetry: { retryPendingAttachment(for: block) },
+                                        onRemove: { viewModel.removePendingAttachment(blockID: block.id) })
+                                } else if case .checklistItem = block.kind {
+                                    MarkdownBlockView(
+                                        block: block, serverOrigin: serverOrigin,
+                                        numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                        isOffline: isOffline,
+                                        onToggleChecklist: {
+                                            viewModel.toggleChecklist(blockID: block.id)
+                                            if viewModel.hidesCompletedChecklistItems {
+                                                checklistRevealFocusRequest += 1
+                                            }
+                                        },
+                                        onTapText: {
+                                            snapshotScrollForModeSwap()
+                                            viewModel.startEditing(focusing: block.id)
+                                        }
+                                    )
+                                } else {
+                                    MarkdownBlockView(
+                                        block: block, serverOrigin: serverOrigin,
+                                        numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                        isOffline: isOffline
+                                    )
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        // Snapshot before the swap, not during it:
+                                        // the outgoing ScrollView's last geometry
+                                        // report is zero.
+                                        snapshotScrollForModeSwap()
                                         viewModel.startEditing(focusing: block.id)
                                     }
-                                )
-                            } else {
-                                MarkdownBlockView(
-                                    block: block, serverOrigin: serverOrigin,
-                                    numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
-                                    isOffline: isOffline
-                                )
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    // Snapshot before the swap, not during it:
-                                    // the outgoing ScrollView's last geometry
-                                    // report is zero.
-                                    scrollAnchor.snapshotForSwap()
-                                    viewModel.startEditing(focusing: block.id)
                                 }
                             }
+                            .id(EditorScrollTarget.block(block.id))
+                            .recordingEditorBlockFrame(block.id)
                         }
                     }
-                }
 
-                subpagesSection
-                    .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+                    subpagesSection
+                        .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+                }
+                .padding(.horizontal, EditorBlockMetrics.gutter)
+                .padding(.top, DocsSpacing.spaceSM)
+                .padding(.bottom, DocsSpacing.spaceLG)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, EditorBlockMetrics.gutter)
-            .padding(.top, DocsSpacing.spaceSM)
-            .padding(.bottom, DocsSpacing.spaceLG)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .scrollPosition($readingScrollPosition)
-        // Recorded continuously, read once — when the editing canvas appears
-        // and asks where the reader was.
-        //
-        // The `+ contentInsets.top` normalizes to "distance scrolled from the
-        // content's own top edge", which is the origin `scrollTo(y:)` uses,
-        // whereas `contentOffset.y` is measured from the scroll view's bounds.
-        // **Measured as zero for these two scroll views**, so it changes nothing
-        // today and is kept only because the un-normalized form is wrong the
-        // moment either surface gains a top inset. It is *not* what fixed the
-        // ~110pt error the handoff first showed — that was the editing canvas's
-        // `LazyVStack` clamping the restore, and adding this term made no
-        // difference to it whatsoever.
-        .onScrollGeometryChange(for: CGFloat.self) {
-            $0.contentOffset.y + $0.contentInsets.top
-        } action: { _, offset in
-            scrollAnchor.noteScrolled(to: offset)
-        }
-        .onAppear {
-            if let offsetY = scrollAnchor.consumePendingOffset() {
-                readingScrollPosition.scrollTo(y: offsetY)
+            .scrollPosition($readingScrollPosition)
+            // Recorded continuously, read once — when the editing canvas appears
+            // and asks where the reader was.
+            //
+            // The `+ contentInsets.top` normalizes to "distance scrolled from the
+            // content's own top edge", which is the origin `scrollTo(y:)` uses,
+            // whereas `contentOffset.y` is measured from the scroll view's bounds.
+            // **Measured as zero for these two scroll views**, so it changes nothing
+            // today and is kept only because the un-normalized form is wrong the
+            // moment either surface gains a top inset. It is *not* what fixed the
+            // ~110pt error the handoff first showed — that was the editing canvas's
+            // `LazyVStack` clamping the restore, and adding this term made no
+            // difference to it whatsoever.
+            .onScrollGeometryChange(for: CGFloat.self) {
+                $0.contentOffset.y + $0.contentInsets.top
+            } action: { _, offset in
+                scrollAnchor.noteScrolled(to: offset)
             }
+            .onPreferenceChange(EditorBlockFramesKey.self) { frames in
+                scrollAnchor.noteBlockFrames(frames)
+            }
+            .onAppear {
+                if let blockID = scrollAnchor.consumePendingBlock() {
+                    if presentation.rows.contains(where: { $0.id == blockID }) {
+                        proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
+                    } else {
+                        readingScrollPosition.scrollTo(y: 0)
+                    }
+                } else if let offsetY = scrollAnchor.consumePendingOffset() {
+                    readingScrollPosition.scrollTo(y: offsetY)
+                }
+            }
+            .refreshable {
+                await viewModel.refresh()
+            }
+            // The Subpages rows live in this scroll view, so an open swipe strip closes here for
+            // the same reason it does on Home and in the drawer — and guarded the same way, so a
+            // swipe that nudges this scroll view does not close its own strip.
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) }
+            }
+            // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
+            // autolinker matched — dispatches through this action. Without an override the
+            // default one hands every link to the system, so a link to a sub-page left the app
+            // for Safari. Scoped to the reading surface: it is the only subtree that renders
+            // content the user didn't type, and the sheets keep the system behavior.
+            .environment(\.openURL, OpenURLAction(handler: openLink))
         }
-        .refreshable {
-            await viewModel.refresh()
+    }
+
+    /// Raw offsets still preserve the ordinary parity handoff. With checklist
+    /// chrome or hidden rows, measured block identity preserves the logical place.
+    private func snapshotScrollForModeSwap() {
+        guard viewModel.checklistReadingPresentation.hasChecklistItems || viewModel.hidesCompletedChecklistItems else {
+            scrollAnchor.snapshotForSwap()
+            return
         }
-        // The Subpages rows live in this scroll view, so an open swipe strip closes here for
-        // the same reason it does on Home and in the drawer — and guarded the same way, so a
-        // swipe that nudges this scroll view does not close its own strip.
-        .onScrollPhaseChange { _, phase in
-            if phase == .interacting { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) }
-        }
-        // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
-        // autolinker matched — dispatches through this action. Without an override the
-        // default one hands every link to the system, so a link to a sub-page left the app
-        // for Safari. Scoped to the reading surface: it is the only subtree that renders
-        // content the user didn't type, and the sheets keep the system behavior.
-        .environment(\.openURL, OpenURLAction(handler: openLink))
+        let allIDs = viewModel.blocks.map(\.id)
+        let readingIDs = ChecklistReadingPresentation(
+            blocks: viewModel.blocks, hidingCompleted: viewModel.hidesCompletedChecklistItems
+        ).rows.map(\.id)
+        scrollAnchor.snapshotForSwap(
+            blockOrder: viewModel.isEditing ? allIDs : readingIDs,
+            restoringAmong: viewModel.isEditing ? readingIDs : allIDs)
     }
 
     private func openLink(_ url: URL) -> OpenURLAction.Result {
@@ -1286,7 +1331,7 @@ struct EditorView: View {
         switch action {
         case .edit:
             Button {
-                scrollAnchor.snapshotForSwap()
+                snapshotScrollForModeSwap()
                 viewModel.startEditing()
             } label: {
                 ToolbarIcon(.edit)
@@ -1304,7 +1349,7 @@ struct EditorView: View {
 
         case .done:
             Button {
-                scrollAnchor.snapshotForSwap()
+                snapshotScrollForModeSwap()
                 viewModel.finishEditing()
             } label: {
                 ToolbarIcon(.check, filled: true)

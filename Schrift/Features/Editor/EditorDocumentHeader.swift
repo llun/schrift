@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// A row of the **editing** canvas, for `ScrollViewReader.scrollTo` — which is
-/// how the caret stays visible when Return mints a block.
+/// A canvas target for caret visibility and filtered/full reading/editing handoff.
 ///
 /// An enum rather than a bare `UUID?` so the header and the trailing tap target
 /// are expressible without minting sentinel ids that could be mistaken for a
-/// block's. The reading canvas needs none of these: it has no `ScrollViewReader`
-/// and its rows take their identity from `ForEach`.
+/// block's.
 enum EditorScrollTarget: Hashable {
     case header
     case block(UUID)
@@ -30,6 +28,8 @@ enum EditorScrollTarget: Hashable {
 /// and it is only meaningful *because* this change made the two layouts the same
 /// — a shared offset in two differently-laid-out canvases would land somewhere
 /// arbitrary.
+/// Checklist chrome and filtering are that unequal-layout case: snapshot actual
+/// visible row frames and restore a block ID, without relying on aligned scrolling.
 ///
 /// **Deliberately not `@Observable`, and this is the point.** The offset changes
 /// on every scroll frame; routing that through `@State` would invalidate
@@ -47,6 +47,12 @@ enum EditorScrollTarget: Hashable {
     /// The offset the *next* surface should open at, or `nil` for "wherever you
     /// naturally start".
     private var pendingOffsetY: CGFloat?
+    private var blockFrames: [UUID: CGRect] = [:]
+    private var pendingBlockID: UUID?
+
+    func noteBlockFrames(_ frames: [UUID: CGRect]) {
+        blockFrames = frames
+    }
 
     func noteScrolled(to offsetY: CGFloat) {
         liveOffsetY = offsetY
@@ -60,7 +66,29 @@ enum EditorScrollTarget: Hashable {
     /// moment it is needed, and did: the editor kept opening at the top of the
     /// document with the offset handoff apparently wired up correctly.
     func snapshotForSwap() {
+        pendingBlockID = nil
         pendingOffsetY = liveOffsetY
+    }
+
+    /// Filtered and full canvases have different heights. Snapshot a measured
+    /// visible block rather than applying an offset to unrelated content. If Done
+    /// hides that block, prefer the next visible survivor, then the previous one.
+    func snapshotForSwap(blockOrder: [UUID], restoringAmong visibleIDs: [UUID]) {
+        pendingBlockID = nil
+        pendingOffsetY = 0
+        guard liveOffsetY > 0,
+            let index = blockOrder.firstIndex(where: { blockFrames[$0].map { $0.maxY > 0 } == true })
+        else { return }
+        let visible = Set(visibleIDs)
+        pendingBlockID =
+            blockOrder[index...].first(where: { visible.contains($0) })
+            ?? blockOrder[..<index].last(where: { visible.contains($0) })
+        if pendingBlockID != nil { pendingOffsetY = nil }
+    }
+
+    func consumePendingBlock() -> UUID? {
+        defer { pendingBlockID = nil }
+        return pendingBlockID
     }
 
     /// Read once, by the surface appearing. Clearing it is what stops a later,
@@ -69,6 +97,27 @@ enum EditorScrollTarget: Hashable {
     func consumePendingOffset() -> CGFloat? {
         defer { pendingOffsetY = nil }
         return pendingOffsetY
+    }
+}
+
+/// Actual row frames in the scroll viewport, independent of free-scroll alignment.
+struct EditorBlockFramesKey: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+extension View {
+    func recordingEditorBlockFrame(_ id: UUID) -> some View {
+        background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: EditorBlockFramesKey.self,
+                    value: [id: geometry.frame(in: .scrollView(axis: .vertical))])
+            }
+        }
     }
 }
 

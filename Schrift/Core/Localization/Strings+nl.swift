@@ -288,6 +288,9 @@ enum Strings_nl {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Alinea toevoegen aan het einde",
         .editor_divider_a11y: "Scheidingslijn",
+        .editor_checklist_hide_completed: "Voltooide items verbergen",
+        .editor_checklist_hidden_count: "Verborgen voltooide items: %d",
+        .editor_checklist_show_completed: "Voltooide items tonen",
         .editor_checklist_done_a11y: "Markeren als voltooid",
         .editor_checklist_not_done_a11y: "Markeren als niet voltooid",
         .editor_checklist_state_done_a11y: "Voltooid",

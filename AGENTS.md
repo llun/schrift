@@ -1511,6 +1511,19 @@ that are easy to violate and expensive to discover:
 
 ### Editor & the on-device save (`Core/Yjs`)
 
+- **Hide completed is a reading presentation preference, off by default and local
+  to the editor session.** `ChecklistReadingPresentation` derives visible rows,
+  hidden count and original source indices from the current full `blocks`; never
+  replace the model array or feed that projection to the serializer, save coordinator
+  or collaboration bridge. Toggling must not call a dirty/save/live-write funnel.
+  Editing always exposes every block. The reading controls remain reachable when
+  all items are hidden; an all-hidden list is not an empty document. Preserve
+  `EditorBlockAdornment`'s first-line alignment and dense hit-target rules.
+  Reading checklist chrome and hidden rows make the two canvases unequal, so their
+  mode handoff snapshots measured visible block IDs, preferring the next visible
+  survivor (then previous) when Done hides the anchor. Ordinary documents retain
+  the offset handoff below. Verify production EditorView scrolling and reveal at
+  default/accessibility sizes, beyond pure projection tests.
 - **The editor draws every document twice, and `EditorBlockStyle` is the only
   thing keeping the two drawings the same.** The reading surface is SwiftUI
   `Text` (`MarkdownBlockView`) and the editing surface a UIKit `UITextView`

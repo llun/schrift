@@ -283,6 +283,9 @@ enum Strings_th {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "เพิ่มย่อหน้าที่ท้ายสุด",
         .editor_divider_a11y: "เส้นแบ่ง",
+        .editor_checklist_hide_completed: "ซ่อนรายการที่เสร็จแล้ว",
+        .editor_checklist_hidden_count: "รายการที่เสร็จแล้วที่ซ่อนอยู่: %d",
+        .editor_checklist_show_completed: "แสดงรายการที่เสร็จแล้ว",
         .editor_checklist_done_a11y: "ทำเครื่องหมายว่าเสร็จ",
         .editor_checklist_not_done_a11y: "ทำเครื่องหมายว่ายังไม่เสร็จ",
         .editor_checklist_state_done_a11y: "เสร็จแล้ว",

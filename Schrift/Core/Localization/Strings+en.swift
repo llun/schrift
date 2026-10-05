@@ -284,6 +284,9 @@ enum Strings_en {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Add paragraph at end",
         .editor_divider_a11y: "Divider",
+        .editor_checklist_hide_completed: "Hide completed",
+        .editor_checklist_hidden_count: "Completed items hidden: %d",
+        .editor_checklist_show_completed: "Show completed",
         .editor_checklist_done_a11y: "Mark as done",
         .editor_checklist_not_done_a11y: "Mark as not done",
         .editor_checklist_state_done_a11y: "Done",

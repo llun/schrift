@@ -53,6 +53,17 @@ final class EditorViewModel {
 
     var title: String
     var blocks: [EditorBlock] = []
+    /// Session-local presentation only. Never persisted or passed to a save/live edit.
+    private(set) var hidesCompletedChecklistItems = false
+    var checklistReadingPresentation: ChecklistReadingPresentation {
+        ChecklistReadingPresentation(blocks: blocks, hidingCompleted: hidesCompletedChecklistItems && !isEditing)
+    }
+
+    func setHidesCompletedChecklistItems(_ hidden: Bool) {
+        guard hidesCompletedChecklistItems != hidden else { return }
+        hidesCompletedChecklistItems = hidden
+    }
+
     var rawMarkdown: String = ""
     /// nil = no fetched *or cached* knowledge (the view must not claim "no
     /// subpages"); [] = a real result — fetched this session or restored from
