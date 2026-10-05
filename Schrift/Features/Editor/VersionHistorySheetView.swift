@@ -36,7 +36,12 @@ struct VersionHistorySheetView: View {
         VStack(spacing: 0) {
             SheetHeader(title: loc[.versions_title], closeLabel: loc[.common_close], onClose: { dismiss() })
 
-            if let errorKey = viewModel.errorKey {
+            if viewModel.availability.isOffline {
+                Text(loc[.versions_offline_explanation])
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(DocsColor.textSecondary)
+                    .padding(.horizontal, DocsSpacing.gutter)
+            } else if let errorKey = viewModel.errorKey {
                 Text(loc[errorKey])
                     .font(DocsFont.footnote)
                     .foregroundStyle(DocsColor.danger)
@@ -52,7 +57,7 @@ struct VersionHistorySheetView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, DocsSpacing.spaceLG)
                     } else if viewModel.versions.isEmpty {
-                        if viewModel.errorKey == nil {
+                        if viewModel.errorKey == nil, !viewModel.availability.isOffline {
                             Text(loc[.versions_empty])
                                 .font(DocsFont.footnote)
                                 .foregroundStyle(DocsColor.textTertiary)
@@ -70,7 +75,7 @@ struct VersionHistorySheetView: View {
             }
             .frame(maxHeight: listMaxHeight)
 
-            if let restoreURL {
+            if let restoreURL, !viewModel.availability.isOffline {
                 // Sits directly below the scrolling list, not pinned to the sheet
                 // bottom (the filled VStack leaves page surface below it at the
                 // `.large` detent). The bottom padding keeps it off the home
@@ -88,7 +93,7 @@ struct VersionHistorySheetView: View {
         // system sheet background showing below the capped list.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(DocsColor.surfacePage)
-        .task {
+        .task(id: viewModel.availability.token) {
             await viewModel.load()
         }
     }

@@ -60,7 +60,9 @@ struct MainTabView: View {
         // queued, and offer the undo. Home's own list reads it directly (it owns the
         // coordinator); these two are given it here.
         _searchViewModel = State(
-            initialValue: SearchViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
+            initialValue: SearchViewModel(
+                client: viewModel.client, saveCoordinator: viewModel.saveCoordinator,
+                availability: viewModel.availability))
         _sharedViewModel = State(
             initialValue: SharedViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
         _profileViewModel = State(initialValue: ProfileViewModel(client: viewModel.client))
@@ -147,7 +149,8 @@ struct MainTabView: View {
                 serverHost: serverHost,
                 isOffline: viewModel.isOffline,
                 signInGeneration: signInGeneration,
-                onSignOut: onSignOut
+                onSignOut: onSignOut,
+                onWorkOfflineChanged: { viewModel.availability.preferencesChanged() }
             )
             .navigationDestination(for: ProfileRoute.self) { route in
                 switch route {
@@ -189,12 +192,12 @@ struct MainTabView: View {
             saveCoordinator: viewModel.saveCoordinator,
             entryIntent: route.entryIntent,
             diagnostics: viewModel.diagnostics,
+            availability: viewModel.availability,
             reach: document.linkReach,
             serverHost: serverHost,
             serverOrigin: serverOrigin,
             linkRole: document.linkRole,
             initialIsFavorite: document.isFavorite,
-            isOffline: viewModel.isOffline,
             onDeleted: {
                 pop(path)
                 Task { await viewModel.load() }

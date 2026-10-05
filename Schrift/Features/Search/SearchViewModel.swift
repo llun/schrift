@@ -10,6 +10,10 @@ final class SearchViewModel {
     var isSearching = false
     var errorKey: L10nKey?
 
+    let availability: OnlineAvailability
+    private var searchGeneration = 0
+    private var quickAccessGeneration = 0
+
     let client: DocsAPIClient
     private let store: RecentSearchesStore
     /// Optional: nil simply means "no queued deletions to annotate here", which is what every
@@ -32,9 +36,11 @@ final class SearchViewModel {
     init(
         client: DocsAPIClient, store: RecentSearchesStore = RecentSearchesStore(),
         saveCoordinator: DocumentSaveCoordinator? = nil,
-        signedInUser: SignedInUserStore = SignedInUserStore()
+        signedInUser: SignedInUserStore = SignedInUserStore(),
+        availability: OnlineAvailability = OnlineAvailability()
     ) {
         self.client = client
+        self.availability = availability
         self.store = store
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
@@ -84,15 +90,28 @@ final class SearchViewModel {
     }
 
     func loadQuickAccess() async {
+        quickAccessGeneration += 1
+        let generation = quickAccessGeneration
+        guard !availability.isOffline else { return }
+        let token = availability.token
         do {
             let page = try await client.favoriteDocuments()
+            guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled
+            else { return }
             quickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
+            guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled
+            else { return }
             errorKey = .search_error_quick
         }
     }
 
     func search() async {
+        searchGeneration += 1
+        let generation = searchGeneration
+        isSearching = false
+        guard !availability.isOffline else { return }
+        let token = availability.token
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             results = []
@@ -103,22 +122,31 @@ final class SearchViewModel {
         // this task, so a newer keystroke supersedes an in-flight search and
         // stale results never overwrite fresh ones.
         try? await Task.sleep(nanoseconds: 250_000_000)
-        if Task.isCancelled { return }
+        guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
+            query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+        else { return }
 
         isSearching = true
         errorKey = nil
         do {
             let page = try await client.searchDocuments(query: trimmed)
-            if Task.isCancelled { return }
+            if generation == searchGeneration { isSearching = false }
+            guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
+                query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+            else { return }
             results = page.results.filter { !deletedSinceLoad.contains($0.id) }
         } catch {
-            if Task.isCancelled { return }
+            if generation == searchGeneration { isSearching = false }
+            guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
+                query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+            else { return }
             errorKey = .search_error_search
         }
         isSearching = false
     }
 
     func recordSearch() {
+        guard !availability.isOffline else { return }
         store.add(query)
         recentSearches = store.searches
     }

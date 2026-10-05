@@ -44,12 +44,12 @@ struct HomeSplitView: View {
                     saveCoordinator: viewModel.saveCoordinator,
                     entryIntent: selectedRoute.entryIntent,
                     diagnostics: viewModel.diagnostics,
+                    availability: viewModel.availability,
                     reach: selectedDocument.linkReach,
                     serverHost: serverHost,
                     serverOrigin: serverOrigin,
                     linkRole: selectedDocument.linkRole,
                     initialIsFavorite: selectedDocument.isFavorite,
-                    isOffline: viewModel.isOffline,
                     onDeleted: {
                         self.selectedRoute = nil
                         Task { await viewModel.load() }

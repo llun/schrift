@@ -161,8 +161,8 @@ struct SyncCaptionLabel: View {
 /// offline now queues through the write-ahead draft pipeline (the draft is on
 /// disk before the PATCH is attempted, a transport failure parks the save at
 /// `.pendingSync`, and the reconnect/foreground/launch triggers replay it), so
-/// the gate is gone — along with the parameter, which would otherwise invite it
-/// back. What keeps Edit safe on a document whose content never loaded is
+/// the editing gate is gone. `isOffline` only hides Share. What keeps Edit safe
+/// on a document whose content never loaded is
 /// `EditorViewModel.startEditing`'s `hasLoadedContent` guard, exactly as it
 /// already is online during a load or an error state.
 ///
@@ -177,15 +177,11 @@ enum EditorToolbarAction: Equatable {
     case options
 }
 
-/// `isLocal` drops **Share**: a document that exists only on this device has no share URL
-/// and no accesses to list, so the sheet would show "Couldn't load members" over a link
-/// nobody else can open. Everything else stays — editing, and Options for Delete — because
-/// they are exactly what a local document needs. Deliberately *not* keyed on `isOffline`:
-/// sharing an already-synced document offline fails loudly, which is the pre-existing
-/// behaviour and not this change's business.
-func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorToolbarAction] {
+/// Share addresses the server's copy, so it is hidden for local documents and while
+/// offline. Edit/Done and Options remain reachable for durable local work.
+func editorToolbarActions(isEditing: Bool, isLocal: Bool = false, isOffline: Bool = false) -> [EditorToolbarAction] {
     var actions: [EditorToolbarAction] = [isEditing ? .done : .edit]
-    if !isLocal { actions.append(.share) }
+    if !isLocal && !isOffline { actions.append(.share) }
     actions.append(.options)
     return actions
 }
@@ -195,21 +191,7 @@ func editorToolbarActions(isEditing: Bool, isLocal: Bool = false) -> [EditorTool
 /// Offline suppresses it: peer state is whatever the socket last said, and
 /// presenting a stale count as live would be a small lie.
 ///
-/// `isOffline` is a **coarse** proxy for that, and knowingly so — it is derived
-/// from `HomeViewModel`'s last *list* fetch, so a 5xx or a decoding bug on that
-/// one endpoint sets it with the socket perfectly healthy, and `schrift
-/// .workOffline` sets it outright. It is the signal this app uses to gate
-/// chrome, and presence is chrome; the failure is to hide something true, never
-/// to assert something false.
-///
-/// It was `presenceBadgeCount`, named for the count badge the Options button
-/// carried while editing, which existed only because the reading surface's
-/// avatar stack had no editing counterpart. The document header is shared now
-/// and draws `PresenceBar` in both modes, so the badge is gone — and the name
-/// went with it, rather than leaving a symbol pointing at an affordance nobody
-/// can find. This is the one rule deciding whether that bar has anything fresh
-/// enough to say, on **both** surfaces; before, the reading one drew its avatars
-/// offline and only the badge was suppressed.
+/// Availability follows the current network path and Work Offline preference.
 func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     guard !isOffline, peerCount > 0 else { return nil }
     return peerCount
@@ -224,7 +206,8 @@ struct EditorView: View {
     let serverOrigin: String
     var linkRole: LinkRole? = nil
     var initialIsFavorite: Bool = false
-    var isOffline: Bool = false
+    private var offlineOverride: Bool = false
+    private var isOffline: Bool { offlineOverride || viewModel.availability.isOffline }
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
@@ -302,7 +285,7 @@ struct EditorView: View {
         self.serverOrigin = serverOrigin
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
-        self.isOffline = isOffline
+        self.offlineOverride = isOffline
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
         self.onCreatedDocument = onCreatedDocument
@@ -394,7 +377,8 @@ struct EditorView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     ForEach(
-                        editorToolbarActions(isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument),
+                        editorToolbarActions(
+                            isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument, isOffline: isOffline),
                         id: \.self
                     ) {
                         action in
@@ -403,8 +387,20 @@ struct EditorView: View {
                     }
                 }
             }
-            .task {
-                await viewModel.load()
+            .task(id: viewModel.availability.token) {
+                if viewModel.availability.isOffline {
+                    viewModel.pauseLoadingWhileOffline()
+                    if !viewModel.hasLoadedContent { await viewModel.load() }
+                } else {
+                    await viewModel.reloadAfterReconnect()
+                }
+            }
+            .onChange(of: viewModel.availability.token) { _, _ in
+                if viewModel.availability.isOffline {
+                    viewModel.pauseLoadingWhileOffline()
+                    isPresentingShareSheet = false
+                    pendingShareAfterOptions = false
+                }
             }
             // Presence: request a live session while this document is on screen, so
             // our avatar shows to peers and theirs to us. Reference-counted + balanced
@@ -470,7 +466,7 @@ struct EditorView: View {
             .sheet(
                 isPresented: $isPresentingOptionsSheet,
                 onDismiss: {
-                    if pendingShareAfterOptions {
+                    if pendingShareAfterOptions && !isOffline {
                         pendingShareAfterOptions = false
                         isPresentingShareSheet = true
                     }
@@ -513,6 +509,7 @@ struct EditorView: View {
             shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
             saveCoordinator: viewModel.saveCoordinator,
             signedInUser: viewModel.signedInUser,
+            availability: viewModel.availability,
             onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
             onShare: { pendingShareAfterOptions = true },
             onDeleted: { queued in
@@ -693,6 +690,22 @@ struct EditorView: View {
                 ProgressView()
                     .padding(DocsSpacing.spaceBase)
                 Spacer()
+            } else if viewModel.needsOnlineContent {
+                ContentUnavailableView {
+                    Label {
+                        Text(loc[.editor_offline_unavailable_title])
+                    } icon: {
+                        MaterialSymbol(.wifi_off, size: 44)
+                    }
+                } description: {
+                    Text(loc[.editor_offline_open_online])
+                } actions: {
+                    if !viewModel.availability.isOffline {
+                        DocsButton(title: loc[.common_retry], variant: .secondary) {
+                            Task { await viewModel.reloadAfterReconnect() }
+                        }
+                    }
+                }
             } else if viewModel.isEditing {
                 editingSurface
             } else {
@@ -917,7 +930,7 @@ struct EditorView: View {
                     // notice is rendered from the predicate rather than an `errorKey` — no error to
                     // suppress this. Without it the screen claims a document with content is empty
                     // and offers "Start writing", which `canStartEditing` makes a silent no-op.
-                    if viewModel.errorKey == nil, !viewModel.isDocumentPendingDelete {
+                    if viewModel.hasLoadedContent, viewModel.errorKey == nil, !viewModel.isDocumentPendingDelete {
                         emptyContent
                     }
                 } else {
@@ -1306,6 +1319,7 @@ struct EditorView: View {
 
         case .share:
             Button {
+                guard !isOffline else { return }
                 isPresentingShareSheet = true
             } label: {
                 MaterialSymbol(.share, size: 22)

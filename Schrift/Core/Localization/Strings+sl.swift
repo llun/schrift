@@ -8,6 +8,7 @@ import Foundation
 enum Strings_sl {
     static let table: [L10nKey: String] = [
         .common_cancel: "Prekliči",
+        .common_retry: "Poskusi znova",
         .common_close: "Zapri",
         .common_untitled: "Neimenovan dokument",
         .common_profile: "Profil",
@@ -47,6 +48,11 @@ enum Strings_sl {
         .search_quick_empty: "Pripeti dokumenti bodo prikazani tukaj.",
         .search_empty_title: "Ni najdenih dokumentov",
         .search_empty_body: "Nič se ne ujema z \u{201C}%@\u{201D}. Poskusite z drugim naslovom ali ključno besedo.",
+        .search_offline_explanation: "Iskanje je na voljo s spletno povezavo.",
+        .versions_offline_explanation: "Zgodovina različic je na voljo s spletno povezavo.",
+        .editor_offline_unavailable_title: "Ni na voljo brez povezave",
+        .editor_offline_open_online:
+            "Najprej odprite ta dokument s spletno povezavo, da shranite kopijo v tej napravi.",
         .search_error_quick: "Hitrega dostopa ni bilo mogoče naložiti. Poskusite znova.",
         .search_error_search: "Iskanje ni uspelo. Poskusite znova.",
 

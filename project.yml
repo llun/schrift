@@ -108,6 +108,7 @@ targets:
         excludes:
           - App/SchriftApp.swift
       - path: SchriftUITests/Support/ChecklistTestHostApp.swift
+      - path: SchriftUITests/Support/OfflineControlsTestHost.swift
     info:
       path: Generated/ChecklistTestHost-Info.plist
       properties:

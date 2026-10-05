@@ -478,6 +478,33 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.searchResults.isEmpty)
     }
 
+    func testWorkOfflineSuppressesInlineSearchRequests() async {
+        let viewModel = makeViewModel()
+        preferences.set(true, forKey: "schrift.workOffline")
+        viewModel.searchQuery = "Roadmap"
+        let log = RequestRecorder()
+        let body = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: body, error: nil)
+        }
+
+        await viewModel.search()
+
+        XCTAssertTrue(log.methods.isEmpty)
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    func testServerErrorDoesNotMeanOffline() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertEqual(viewModel.errorKey, .home_error_load)
+    }
+
     func testSearchWithQueryPopulatesResults() async {
         let viewModel = makeViewModel()
         viewModel.searchQuery = "Q3"
@@ -555,7 +582,9 @@ final class HomeViewModelTests: XCTestCase {
         cache.savePinnedDocuments([cachedPinnedDocument])
         cache.saveRecentDocuments([cachedRecentDocument])
         let viewModel = makeViewModel(cache: cache)
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
 
         await viewModel.load()
 
@@ -586,9 +615,11 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Offline Recent"])
     }
 
-    func testLoadFailureSetsIsOffline() async {
+    func testTransportFailureSetsIsOffline() async {
         let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
 
         await viewModel.load()
 
@@ -619,7 +650,9 @@ final class HomeViewModelTests: XCTestCase {
         // the 401 must clear the stale offline flag, not leave it stuck true
         // while the user waits on the re-login sheet.
         let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
         await viewModel.load()
         XCTAssertTrue(viewModel.isOffline)
 
@@ -660,7 +693,9 @@ final class HomeViewModelTests: XCTestCase {
 
     func testLoadSuccessAfterFailureClearsIsOffline() async {
         let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
         await viewModel.load()
         XCTAssertTrue(viewModel.isOffline)
 
@@ -686,7 +721,7 @@ final class HomeViewModelTests: XCTestCase {
         await viewModel.load()
 
         XCTAssertNotNil(viewModel.errorKey)
-        XCTAssertTrue(viewModel.isOffline)
+        XCTAssertFalse(viewModel.isOffline)
     }
 
     /// The memo must re-derive when the *account* changes. Re-auth swaps who may be listed

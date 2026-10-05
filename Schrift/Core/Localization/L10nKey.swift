@@ -6,6 +6,7 @@ import Foundation
 enum L10nKey: String, CaseIterable, Sendable {
     // Common
     case common_cancel = "common.cancel"
+    case common_retry = "common.retry"
     case common_close = "common.close"  // "Close" — sheet close-button accessibility label
     case common_untitled = "common.untitled_document"
     case common_profile = "common.profile"  // "Profile"
@@ -47,6 +48,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case search_quick_empty = "search.quick_empty"  // "Pinned documents will appear here."
     case search_empty_title = "search.empty.title"  // "No documents found"
     case search_empty_body = "search.empty.body"  // "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword."
+    case search_offline_explanation = "search.offline.explanation"
+    case versions_offline_explanation = "versions.offline.explanation"
+    case editor_offline_unavailable_title = "editor.offline.unavailable_title"
+    case editor_offline_open_online = "editor.offline.open_online"
     case search_error_quick = "search.error.quick"  // "Couldn't load quick access. Please try again."
     case search_error_search = "search.error.search"  // "Search failed. Please try again."
 

@@ -4,6 +4,7 @@ import Foundation
 enum Strings_th {
     static let table: [L10nKey: String] = [
         .common_cancel: "ยกเลิก",
+        .common_retry: "ลองอีกครั้ง",
         .common_close: "ปิด",
         .common_untitled: "เอกสารไม่มีชื่อ",
         .common_profile: "โปรไฟล์",
@@ -41,6 +42,10 @@ enum Strings_th {
         .search_quick_empty: "เอกสารที่ปักหมุดแล้วจะปรากฏที่นี่",
         .search_empty_title: "ไม่พบเอกสาร",
         .search_empty_body: "ไม่มีรายการที่ตรงกับ \u{201C}%@\u{201D} ลองใช้ชื่อหรือคำสำคัญอื่น",
+        .search_offline_explanation: "ค้นหาได้เมื่อออนไลน์",
+        .versions_offline_explanation: "ดูประวัติเวอร์ชันได้เมื่อออนไลน์",
+        .editor_offline_unavailable_title: "ใช้งานแบบออฟไลน์ไม่ได้",
+        .editor_offline_open_online: "เปิดเอกสารนี้ขณะออนไลน์ก่อนเพื่อบันทึกสำเนาบนอุปกรณ์นี้",
         .search_error_quick: "โหลดการเข้าถึงด่วนไม่ได้ โปรดลองอีกครั้ง",
         .search_error_search: "ค้นหาไม่สำเร็จ โปรดลองอีกครั้ง",
 

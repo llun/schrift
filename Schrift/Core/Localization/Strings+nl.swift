@@ -4,6 +4,7 @@ import Foundation
 enum Strings_nl {
     static let table: [L10nKey: String] = [
         .common_cancel: "Annuleren",
+        .common_retry: "Opnieuw proberen",
         .common_close: "Sluiten",
         .common_untitled: "Naamloos document",
         .common_profile: "Profiel",
@@ -42,6 +43,10 @@ enum Strings_nl {
         .search_empty_title: "Geen documenten gevonden",
         .search_empty_body:
             "Niets komt overeen met \u{201C}%@\u{201D}. Probeer een andere titel of een ander trefwoord.",
+        .search_offline_explanation: "Zoeken is beschikbaar wanneer je online bent.",
+        .versions_offline_explanation: "Versiegeschiedenis is beschikbaar wanneer je online bent.",
+        .editor_offline_unavailable_title: "Niet offline beschikbaar",
+        .editor_offline_open_online: "Open dit document eerst online om een kopie op dit apparaat op te slaan.",
         .search_error_quick: "Kan snelle toegang niet laden. Probeer het opnieuw.",
         .search_error_search: "Zoeken mislukt. Probeer het opnieuw.",
 

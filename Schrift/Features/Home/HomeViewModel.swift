@@ -84,7 +84,9 @@ final class HomeViewModel {
     /// `DocsAPIError` collapses a CSRF 403, a validation 400, and a decoding bug into the
     /// same sentence, and a self-hoster needs to tell them apart without a debugger.
     var errorDetail: String?
-    var isOffline = false
+    private var loadFailedOffline = false
+    let availability: OnlineAvailability
+    var isOffline: Bool { availability.isOffline || loadFailedOffline }
     /// Whether the recent list is known — cached or fetched this session. The
     /// view may render the "No documents yet" empty state only for a known
     /// list: nil (never fetched) must not masquerade as a real empty result,
@@ -121,6 +123,7 @@ final class HomeViewModel {
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable).
     private var loadGeneration = 0
+    private var searchGeneration = 0
     /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
     /// before the DELETE and still names them, so its results are filtered through this before
     /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
@@ -163,7 +166,8 @@ final class HomeViewModel {
         userDefaults: UserDefaults = .standard,
         signedInUser: SignedInUserStore = SignedInUserStore(),
         cachedUser: CurrentUserCacheStore = CurrentUserCacheStore(),
-        diagnostics: APIDiagnosticsLog? = nil
+        diagnostics: APIDiagnosticsLog? = nil,
+        availability: OnlineAvailability? = nil
     ) {
         self.signedInUser = signedInUser
         self.cachedUser = cachedUser
@@ -176,6 +180,7 @@ final class HomeViewModel {
         self.saveCoordinator =
             saveCoordinator ?? DocumentSaveCoordinator(client: client, serverOrigin: serverOrigin)
         self.userDefaults = userDefaults
+        self.availability = availability ?? OnlineAvailability(userDefaults: userDefaults)
         self.diagnostics = diagnostics
         // Before the two subscriptions below, which capture `self`. Takes the *resolved*
         // coordinator, not the optional parameter.
@@ -274,7 +279,7 @@ final class HomeViewModel {
 
         // "Work offline" preference (Profile > Preferences): serve cached
         // documents and never hit the network.
-        if userDefaults.bool(forKey: "schrift.workOffline") {
+        if availability.isOffline {
             pinnedDocuments = cache.loadPinnedDocuments()
             let cachedRecents = cache.loadRecentDocuments()
             // Don't clobber a just-migrated in-memory row with a nil cache. `runCreatePass`
@@ -284,7 +289,7 @@ final class HomeViewModel {
             // out of every list, with no way back while the toggle is on.
             if let cachedRecents { fetchedRecentDocuments = cachedRecents }
             hasKnownFetchedList = cachedRecents != nil
-            isOffline = true
+            loadFailedOffline = false
             isLoading = false
             return
         }
@@ -305,6 +310,7 @@ final class HomeViewModel {
         let coordinator = saveCoordinator
         Task { await coordinator.recoverDrafts() }
 
+        let availabilityToken = availability.token
         let marker = diagnostics?.marker()
         do {
             async let pinnedPage = client.favoriteDocuments()
@@ -316,6 +322,10 @@ final class HomeViewModel {
             let fetchedPinned = try await pinnedPage.results
             let fetchedRecent = try await recentPage.results
             guard generation == loadGeneration else { return }
+            guard availability.permitsResponse(for: availabilityToken) else {
+                isLoading = false
+                return
+            }
             // Anything deleted while this was in flight is dropped before it can be applied or
             // cached — the fetch predates the DELETE and cannot know.
             let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
@@ -337,9 +347,13 @@ final class HomeViewModel {
             cache.savePinnedDocuments(overlaid.pinned)
             cache.saveRecentDocuments(moved.recent)
             hasKnownFetchedList = true
-            isOffline = false
+            loadFailedOffline = false
         } catch {
             guard generation == loadGeneration else { return }
+            guard availability.permitsResponse(for: availabilityToken) else {
+                isLoading = false
+                return
+            }
             // **Re-seed from the cache.** A migration writes the real document into it
             // (`insertIntoListCaches`) and then drops the record, so if the refetch that
             // follows fails — a flaky reconnect being exactly the profile here — the row is in
@@ -350,18 +364,19 @@ final class HomeViewModel {
                 fetchedRecentDocuments = cachedRecents
                 hasKnownFetchedList = true
             }
-            // A real 401 is not "offline": the client's onSessionExpired hook
-            // has already raised the app-level re-login sheet, so keep serving
-            // cached rows silently. Everything else keeps the offline
-            // treatment. Assigned unconditionally (like SharedViewModel's
-            // recompute) so a 401 also *clears* a stale true from an earlier
-            // network failure — device back online, session since expired.
+            // A transport failure can explain this failed load, but HTTP errors
+            // must never disable server controls as though the path were offline.
             let failed = (error as? DocsAPIError) != .sessionExpired
-            isOffline = failed
+            if case .network = error as? DocsAPIError {
+                loadFailedOffline = true
+            } else {
+                loadFailedOffline = false
+            }
             // Silent when the list has a cached copy to fall back on (offline
             // reading); loud on a true first run — pinned rows are no evidence
             // for it — or an explicit pull-to-refresh.
-            if failed, userInitiated || !hasCachedList {
+            let hasVisibleLocalRows = !pinnedDocuments.isEmpty || !recentDocuments.isEmpty
+            if failed, userInitiated || (!hasCachedList && !(loadFailedOffline && hasVisibleLocalRows)) {
                 errorKey = .home_error_load
                 errorDetail = requestFailureDetail(after: marker, in: diagnostics)
             }
@@ -428,6 +443,10 @@ final class HomeViewModel {
     }
 
     func search() async {
+        searchGeneration += 1
+        let generation = searchGeneration
+        guard !availability.isOffline else { return }
+        let availabilityToken = availability.token
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             searchResults = []
@@ -436,6 +455,9 @@ final class HomeViewModel {
         let marker = diagnostics?.marker()
         do {
             let page = try await client.searchDocuments(query: trimmed)
+            guard generation == searchGeneration, availability.permitsResponse(for: availabilityToken),
+                !Task.isCancelled, searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+            else { return }
             var results = page.results.filter { !deletedSinceLoad.contains($0.id) }
             // The inline results are the same documents the two lists above show, so a pin
             // made here has to reach them too or the same row reads as pinned in one section
@@ -446,6 +468,9 @@ final class HomeViewModel {
             }
             searchResults = results
         } catch {
+            guard generation == searchGeneration, availability.permitsResponse(for: availabilityToken),
+                !Task.isCancelled, searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+            else { return }
             errorKey = .home_error_search
             errorDetail = requestFailureDetail(after: marker, in: diagnostics)
         }

@@ -2,6 +2,7 @@
 enum Strings_zhHans {
     static let table: [L10nKey: String] = [
         .common_cancel: "取消",
+        .common_retry: "重试",
         .common_close: "关闭",
         .common_untitled: "无标题文档",
         .common_profile: "个人资料",
@@ -39,6 +40,10 @@ enum Strings_zhHans {
         .search_quick_empty: "已置顶的文档会显示在这里。",
         .search_empty_title: "未找到文档",
         .search_empty_body: "没有与 \u{201C}%@\u{201D} 匹配的内容。请尝试其他标题或关键字。",
+        .search_offline_explanation: "在线时可以搜索。",
+        .versions_offline_explanation: "在线时可以查看版本历史。",
+        .editor_offline_unavailable_title: "离线时不可用",
+        .editor_offline_open_online: "请先在线打开此文档，以在此设备上保存副本。",
         .search_error_quick: "无法加载快速访问。请重试。",
         .search_error_search: "搜索失败。请重试。",
 

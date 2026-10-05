@@ -38,6 +38,10 @@ the push run is the post-merge verification of the real `main` history
    `SchriftChecklistTestHost`, a test-only app compiling the actual production
    rows with a separate entry point and isolated stores; no login, network
    document, or test-mode branch in the shipping application is required.
+   The same isolated host also runs `OfflineControlsTests`: disposable Home,
+   pushed Search, iPad inline Search, editor and Options fixtures use local
+   URLProtocol responses and a driven path monitor, with screenshots attached.
+   Run this class on both iPhone and iPad for offline/reconnect UI verification.
    Simulator builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
    don't disable code signing — the Keychain tests need the test host's
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a

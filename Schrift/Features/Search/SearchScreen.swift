@@ -8,7 +8,6 @@ struct SearchScreen: View {
     @Environment(LocalizationStore.self) private var loc
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
-    @AppStorage("schrift.workOffline") private var workOffline = false
 
     private var trimmedQuery: String {
         viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -16,11 +15,23 @@ struct SearchScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if workOffline { OfflineBanner(note: loc[.offline_note]) }
+            if viewModel.availability.isOffline {
+                OfflineBanner(note: loc[.search_offline_explanation])
+                SearchField(text: $viewModel.query, placeholder: loc[.search_placeholder])
+                    .disabled(true)
+                    .accessibilityHint(loc[.search_offline_explanation])
+                    .padding(.horizontal, DocsSpacing.gutter)
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if trimmedQuery.isEmpty {
+                    if viewModel.availability.isOffline {
+                        // Retained server results are not an offline-search index.
+                        // Cached documents remain reachable from Home.
+                        Text(loc[.search_offline_explanation])
+                            .font(DocsFont.subhead)
+                            .foregroundStyle(DocsColor.textSecondary)
+                    } else if trimmedQuery.isEmpty {
                         emptyQueryContent
                     } else {
                         resultsContent
@@ -48,18 +59,17 @@ struct SearchScreen: View {
         // a search-role tab to reveal it. Recents and quick access stay as page content
         // rather than becoming `.searchSuggestions`, which would replace the
         // designed empty state with a plain system list.
-        .searchable(
-            text: $viewModel.query,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: loc[.search_placeholder]
+        .modifier(
+            AvailableSearchField(
+                query: $viewModel.query, isOffline: viewModel.availability.isOffline, prompt: loc[.search_placeholder])
         )
         .onSubmit(of: .search) {
             viewModel.recordSearch()
         }
-        .task {
+        .task(id: viewModel.availability.token) {
             await viewModel.loadQuickAccess()
         }
-        .task(id: viewModel.query) {
+        .task(id: SearchRequestID(query: viewModel.query, availability: viewModel.availability.token)) {
             await viewModel.search()
         }
     }
@@ -180,6 +190,27 @@ struct SearchScreen: View {
         // Carry a ~4pt gap to the rows below, matching Home's documentSection
         // and the reference (the wrapping VStacks use spacing 0).
         .padding(.bottom, DocsSpacing.space3xs)
+    }
+}
+
+private struct SearchRequestID: Hashable {
+    let query: String
+    let availability: OnlineAvailability.Token
+}
+
+/// Only the field is unavailable; navigation and the system Back button stay usable.
+private struct AvailableSearchField: ViewModifier {
+    @Binding var query: String
+    let isOffline: Bool
+    let prompt: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isOffline {
+            content
+        } else {
+            content.searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
+        }
     }
 }
 
