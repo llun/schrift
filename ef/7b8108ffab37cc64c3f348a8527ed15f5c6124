@@ -1,0 +1,21 @@
+SchriftUITests/Features/Editor/ChecklistFilterTests.swift
+  s_c483ea2fd44bfe::t_922a054c00cfd0 115-117,120,129,132-134,139
+SchriftUITests/Support/ChecklistTestHostApp.swift
+  s_c483ea2fd44bfe::t_922a054c00cfd0 72-75,132-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef7b8108ffab37cc64c3f348a8527ed15f5c6124",
+  "prompts": {},
+  "sessions": {
+    "s_c483ea2fd44bfe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c0d-d009-7312-b2b6-5d35c5bd8711",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
