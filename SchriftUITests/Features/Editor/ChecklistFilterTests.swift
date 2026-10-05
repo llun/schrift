@@ -108,32 +108,43 @@ final class ChecklistFilterTests: XCTestCase {
     }
 
     private func auditReadingControls(accessibility: Bool) throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--reading-controls-audit"]
-        if accessibility {
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]
-        }
-        app.launch()
-        let toggle = app.switches["checklist.hideCompleted"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         // Audit the real production controls without excluding any findings. The
         // complete-editor tests separately check discovery/reveal, all-hidden mode
         // swaps and scrolling; existing toolbar/offline chrome is outside this audit.
         for filtered in [false, true] {
+            // Accessibility audits exercise font-size changes. Relaunch each state
+            // so the next interaction cannot use geometry left over from an audit.
+            let app = XCUIApplication()
+            app.launchArguments = ["--reading-controls-audit"]
+            if accessibility {
+                app.launchArguments += [
+                    "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL",
+                ]
+            }
+            app.launch()
+            let toggle = app.switches["checklist.hideCompleted"]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+            XCTAssertEqual(toggle.value as? String, "0")
             if filtered {
-                // The standalone native switch's AX frame includes its label;
-                // activate the actual trailing switch, not the label's midpoint.
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
-                XCTAssertEqual(toggle.value as? String, "1", "Audit the filtered state, not an unchanged switch")
+                // SwiftUI's labeled AX switch wraps the actual UISwitch. Target
+                // that native control rather than guessing a point in the label.
+                let nativeSwitch = toggle.switches.firstMatch
+                XCTAssertTrue(nativeSwitch.waitForExistence(timeout: 5))
+                nativeSwitch.tap()
+                let isOn = NSPredicate(format: "value == %@", "1")
+                let enabled = XCTNSPredicateExpectation(predicate: isOn, object: toggle)
+                XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
                 XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
             }
             try app.performAccessibilityAudit(for: [
                 .elementDetection, .sufficientElementDescription, .dynamicType, .textClipped,
             ])
+            if filtered {
+                XCTAssertTrue(app.buttons["checklist.showCompleted"].isHittable)
+                capture(app, accessibility ? "controls-accessibility-audit" : "controls-default-audit")
+            }
+            app.terminate()
         }
-        XCTAssertTrue(app.buttons["checklist.showCompleted"].isHittable)
-        capture(app, accessibility ? "controls-accessibility-audit" : "controls-default-audit")
-        app.terminate()
     }
 
     func testFilteredScrollHandoffKeepsADeepVisibleTaskAcrossBothModes() {
