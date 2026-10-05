@@ -55,8 +55,8 @@ the push run is the post-merge verification of the real `main` history
    Checklist mode swaps likewise use one 200ms stationary press and require
    the old toolbar action to disappear and the new action to appear before
    checking content or restored scroll position. Offline editor toolbar tests
-   drag across the visible toolbar interior before tapping Photo library and
-   await its hittability; a swipe confined to the leftmost 44pt button can leave
+   drag across the visible toolbar interior to reveal the Insert photo button
+   and await its hittability; a swipe confined to the leftmost 44pt button can leave
    the toolbar unmoved. Content, accessibility, and geometry checks remain intact.
    Simulator builds **ad-hoc sign** (no certificates, Team ID, or secrets involved);
    don't disable code signing — the Keychain tests need the test host's
