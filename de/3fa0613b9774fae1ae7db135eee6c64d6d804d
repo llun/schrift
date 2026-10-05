@@ -1,0 +1,25 @@
+docs/architecture.md
+  s_cda8a11c8519d3::t_cff3c1500116f4 1021-1024
+Schrift/Features/Editor/BlockEditorView.swift
+  s_cda8a11c8519d3::t_cff3c1500116f4 49-51,89,119
+Schrift/Features/Editor/EditorDocumentHeader.swift
+  s_cda8a11c8519d3::t_cff3c1500116f4 10
+AGENTS.md
+  s_cda8a11c8519d3::t_cff3c1500116f4 3235-3237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de3fa0613b9774fae1ae7db135eee6c64d6d804d",
+  "prompts": {},
+  "sessions": {
+    "s_cda8a11c8519d3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cfb-fb15-7b43-a181-a02531be474f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
