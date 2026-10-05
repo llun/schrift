@@ -153,8 +153,13 @@ final class ChecklistFilterTests: XCTestCase {
     }
 
     func testFilteredScrollHandoffKeepsADeepVisibleTaskAcrossBothModes() {
-        let app = launch(["--long-checklist"])
-        app.switches["checklist.hideCompleted"].tap()
+        // Isolate scroll restoration from synthesized switch activation. The
+        // mixed/all-completed flows exercise the actual toggle and reveal;
+        // this fixture must be filtered before any viewport anchor is measured.
+        let app = launch(["--long-checklist", "--initially-hide-completed"])
+        XCTAssertTrue(app.buttons["checklist.showCompleted"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Completed items hidden: 40"].exists)
+        XCTAssertFalse(app.staticTexts["Task 2"].exists)
         let target = app.staticTexts["Task 39"]
         for _ in 0..<12 {
             if target.isHittable { break }

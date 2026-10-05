@@ -3656,6 +3656,13 @@ markdown write endpoint**. Understand this before touching the save path:
   match the concrete `DocsAPIError` case) — not `XCTAssertThrowsError`.
 - Fixtures are **inline** JSON string literals; use deterministic repeating-digit
   UUIDs. Test method names describe the behavior and its outcome.
+- Checklist projection and filtered-scroll UI tests establish filtering through
+  the test host's `--initially-hide-completed` intent and verify switch value,
+  hidden count, reveal availability and completed-row absence before the action
+  under test. A synthesized switch tap can leave the fixture unfiltered, falsely
+  blaming a later remote update or mode swap. Mixed/all-completed flows retain
+  actual switch and reveal interactions; do not replace their interaction coverage
+  with configured state or weaken scroll-return assertions.
 
 ## Docs convention
 
