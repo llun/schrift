@@ -9,7 +9,6 @@ import SwiftUI
 /// The document header is injected rather than built here: it is the *same*
 /// view on both surfaces, and only its status slot differs.
 struct BlockEditorView<Header: View>: View {
-    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: EditorViewModel
     /// Threaded to reach the image leaf's off-origin load gate
     /// (`imageLoadPolicy`) and the attachment leaf's card; every other row kind
@@ -340,7 +339,6 @@ struct BlockEditorRow: View {
 }
 
 private struct ChecklistCatalog: View {
-    @Environment(\.docsTheme) private var theme
     @State private var viewModel: EditorViewModel = {
         let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] })
         let model = EditorViewModel(
