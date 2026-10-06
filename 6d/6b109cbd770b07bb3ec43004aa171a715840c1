@@ -1,0 +1,21 @@
+SchriftUITests/Features/Editor/ThemeFlowTests.swift
+  s_a8380ef15fc5d9::t_35cecd64428298 59-62
+SchriftUITests/Support/OfflineControlsTestHost.swift
+  s_a8380ef15fc5d9::t_35cecd64428298 182-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d6b109cbd770b07bb3ec43004aa171a715840c1",
+  "prompts": {},
+  "sessions": {
+    "s_a8380ef15fc5d9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cd0-6f78-72b1-8d1a-eddd5ee962ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}

@@ -1,0 +1,194 @@
+SchriftTests/App/ThemeStoreTests.swift
+  s_a8380ef15fc5d9::t_21f2a2e53c4e48 1-73,76-91,94-95,101-130
+  s_a8380ef15fc5d9::t_05cc922d16454b 74-75,92-93,96-100
+Schrift/Features/Options/OptionsSheetView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,68,132
+Schrift/Features/Profile/AppearancePickerSheet.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 23,48,63-64,71
+Schrift/DesignSystem/Components/ListSection.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,18-20,26,31
+Schrift/Features/Share/ShareSheetView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 32,63,82,128,136,180
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_a8380ef15fc5d9::t_840632e0011102 163
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 11,15,67,70,109-110,115,137,149,165,199,204,250
+Schrift/Features/Search/SearchScreen.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,34,53,97,119,142,145,148,189,204,222,234,237,243,246
+Schrift/DesignSystem/Tokens/DocsColor.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 18-19
+SchriftTests/DesignSystem/Components/ButtonStyleResolverTests.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 12,58
+Schrift/Features/Home/MainTabView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 26,92,240
+Schrift/Features/Profile/LanguagePickerSheet.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 7,27,42-43
+Schrift/App/AppTheme.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 1-105,108-113,116-273,276-281,284-488
+  s_a8380ef15fc5d9::t_c2394e55141f59 106-107,114-115,274-275,282-283
+Schrift/DesignSystem/Components/DocRow.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 68,145,151,160,164,168,178
+Schrift/Features/Documents/MoveDocumentSheetView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 14,43,59,97,109,125
+Schrift/Features/Editor/AttachmentCardView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 41,157,165,171,183,205,292
+Schrift/Features/Editor/MarkdownImageView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 6,90,92,94,103,112,127-128,130,144,149
+Schrift/Features/Editor/SlashMenuView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 6,31,35
+SchriftTests/Features/Editor/MarkdownBlockViewTests.swift
+  s_a8380ef15fc5d9::t_8eda758a1071ab 1-2,9-23,71,90
+Schrift/DesignSystem/Components/SheetHeader.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 10,13,24
+Schrift/Features/Editor/BlockTextView.swift
+  s_a8380ef15fc5d9::t_6a9690e6883323 22,497
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 20,68-71,86,274-275
+Schrift/Features/Profile/ProfileScreen.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,28,36,45,60,73-77,98-110,112,114-116,119,147-154,198,237
+Schrift/Features/Editor/EditorDocumentHeader.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 140,191,206
+Schrift/Features/Editor/EditorView.swift
+  s_a8380ef15fc5d9::t_52b4b4b64dead5 1438
+  s_a8380ef15fc5d9::t_05cc922d16454b 639-640
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 122,133,151,202,348,654,675,679,722,876,1107,1232,1248,1257,1287,1424
+Schrift/App/SchriftApp.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 6,14-16
+Schrift/Features/Profile/AccountScreen.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 45,55,66,89,99,103,160
+  s_a8380ef15fc5d9::t_f09fb163ce3768 27
+Schrift/DesignSystem/Components/DocIcon.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 9,35,39,44,46
+Schrift/Features/Editor/ConflictSheetView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 32,37,67,74,97,107
+Schrift/Features/Shared/SharedRow.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,27,33,41
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 19,43,48,64,96,105,111,118
+SchriftTests/Features/Home/MainTabViewTests.swift
+  s_a8380ef15fc5d9::t_67e5fc56db0ec4 43,104
+SchriftTests/DesignSystem/Tokens/ThemeRenderingTests.swift
+  s_a8380ef15fc5d9::t_6a9690e6883323 1-39,43-78
+  s_a8380ef15fc5d9::t_7f89acb5c8a1c2 40-42
+Schrift/Features/Editor/InlineTextStyle.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 27-29,43-44,53-56
+Schrift/Features/Connect/ReauthenticationSheetView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 9,55,58
+SchriftTests/Features/Editor/EditorThemeTests.swift
+  s_a8380ef15fc5d9::t_6a9690e6883323 79-81
+  s_a8380ef15fc5d9::t_05cc922d16454b 15-16,71-72,91-93,96-98,102-105,113-115
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 27
+  s_a8380ef15fc5d9::t_21f2a2e53c4e48 1-14,17-26,28-44,51-52,55-56,58-70,73-78,85-90,94,99-101,106-112,116-121
+  s_a8380ef15fc5d9::t_840632e0011102 45-50,53-54,57
+  s_a8380ef15fc5d9::t_4fad4417211f9b 82-84,95
+Schrift/Features/Editor/LinkEditorSheet.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 9,86
+Schrift/DesignSystem/Components/Button.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 28-32,44-49,51-52,54-61,63-70,92,94,154,166
+SchriftTests/DesignSystem/Components/SwipeActionStyleResolverTests.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 18-19,26
+Schrift/Features/Home/DocumentListView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4-5,46,50,87,136,139,144,161,229,234,313-314
+Schrift/DesignSystem/Components/Switch.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,12
+Schrift/Features/Editor/SubpageRow.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,44,51,64,69,72
+Schrift/Features/Profile/ThemePickerSheet.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 1-103,115
+  s_a8380ef15fc5d9::t_7f89acb5c8a1c2 104-114,116-117
+Schrift/DesignSystemCatalog/ThemeCatalogPreview.swift
+  s_a8380ef15fc5d9::t_2f3ee91ea9587b 1-45
+Schrift/DesignSystem/Components/ListRow.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 16-18,51,60-65,69,75,78-79,84,87
+Schrift/DesignSystem/Components/Skeleton.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 12,22,41,72
+Schrift/DesignSystem/Tokens/DocsColorHexDark.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 19-20
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 27,67,74,85,91,108,110,119,135,142,196,203,252,278,292
+Schrift/DesignSystem/Components/OfflineBanner.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 11,19,23,25,29,35,38
+Schrift/Features/Editor/EditorBlockStyle.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 156-158,163,168,173,182,189,270,288,317,376,391,397,430
+Schrift/DesignSystem/Components/LinkReachPill.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 20-22,26-27,32-33,38-40,47,54
+Schrift/Features/Editor/ChecklistReadingControls.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 6,17,23,35
+Schrift/DesignSystem/Components/ShareMemberRow.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 12,29,35,41,52,54
+Schrift/Features/Profile/ProfileRows.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 6-7,22,28-29,35,52-53,56
+Schrift/Features/Editor/BlockEditorView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 12,135,158,186,215,237,267,343
+  s_a8380ef15fc5d9::t_67e5fc56db0ec4 213
+SchriftTests/DesignSystem/Tokens/DocsColorHexTests.swift
+  s_a8380ef15fc5d9::t_840632e0011102 6-10
+Schrift/DesignSystem/Components/SwipeRevealRow.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 63-65,69-70,73-74,77,82-83,292,498,503,531
+  s_a8380ef15fc5d9::t_67e5fc56db0ec4 293,347
+Schrift/Features/Editor/PendingAttachmentImageView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 19,49,65,97,117,123,125
+Schrift/Features/Home/HomeSplitView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 9,38,72
+Schrift/DesignSystem/Components/Toast.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 13,19,58
+SchriftUITests/Features/Editor/ThemeFlowTests.swift
+  s_a8380ef15fc5d9::t_05cc922d16454b 8-9,12-14,85-87
+  s_a8380ef15fc5d9::t_b1aa5c94dbd860 92,95,101,105
+  s_a8380ef15fc5d9::t_cb3a180218324e 1-7,10-11,15-37,60-61,66-67,72-84,88-91,93-94,96-100,102-104,106-108
+  s_a8380ef15fc5d9::t_67e5fc56db0ec4 38-59,62-65,68-71
+Schrift/Core/Localization/Strings+en.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 303-311
+Schrift/DesignSystem/Components/AvatarGroup.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 39,56,60,65,67
+Schrift/DesignSystem/Components/TextField.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 18-20,27-28,32-33,36-37,40-41,47,66,77,89,100,107,111
+Schrift/Features/Connect/ConnectView.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,17,22,25,69,89,98,101,104,108
+Schrift/Features/Shared/SharedScreen.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,31,59,91,105
+SchriftUITests/Support/OfflineControlsTestHost.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 15,44,72-84,89-90,98,116-118,122,137-138,141,143,145,147,150,152,154,158-159,178-179,181,191-193
+  s_a8380ef15fc5d9::t_05cc922d16454b 91-97,123-125,139-140,142,144,146,148-149,151,153,155-157,180,189-190
+Schrift/DesignSystem/Components/SearchField.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,18,30
+SchriftTests/Core/Localization/StringsCompletenessTests.swift
+  s_a8380ef15fc5d9::t_ab56b7672803e2 10-16,53,60-70
+  s_a8380ef15fc5d9::t_9e33253add697b 71-74
+Schrift/DesignSystemCatalog/ComponentCatalogPreview.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 4,123,131,140
+Schrift/Features/Editor/SaveStatusIndicator.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 61,76,112,129,144,155
+SchriftTests/DesignSystem/Tokens/DocsColorHexDarkTests.swift
+  s_a8380ef15fc5d9::t_840632e0011102 6-10
+Schrift/DesignSystem/Components/Badge.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 22-24,28-30,33-34,37-38,41-42,45-46,49-50,56,64
+Schrift/DesignSystem/Components/IconButton.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 27-29,32-33,41-44,47-50,52-55,72,74,98,109,134
+Schrift/Core/Localization/L10nKey.swift
+  s_a8380ef15fc5d9::t_2a3c7ab050df37 369-376
+AGENTS.md
+  s_a8380ef15fc5d9::t_c265083a43ee63 603-604,666,910-923,1268-1272
+README.md
+  s_a8380ef15fc5d9::t_e346f80d1421cf 12
+Schrift/App/RootView.swift
+  s_a8380ef15fc5d9::t_86f09cb8d60fdd 238-239
+docs/architecture.md
+  s_a8380ef15fc5d9::t_f38476f670bbf3 1375,1386-1407
+docs/design-system.md
+  s_a8380ef15fc5d9::t_732e9c81432f2e 3-50,643-645,666,1002
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10a0edfdb2dc7e6cecf9c19247e5a1ec0d95b26f",
+  "prompts": {},
+  "sessions": {
+    "s_a8380ef15fc5d9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cd0-6f78-72b1-8d1a-eddd5ee962ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
