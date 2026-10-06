@@ -235,5 +235,7 @@ struct RootView: View {
 #Preview {
     RootView()
         .environment(LocalizationStore())
+        .environment(AppearanceStore())
+        .environment(ThemeStore())
         .environment(ConnectivityMonitor())
 }

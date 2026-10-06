@@ -29,6 +29,7 @@ enum ShareSheetLayout {
 }
 
 struct ShareSheetView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: ShareViewModel
     var shareURL: URL? = nil
     /// Called when the link reached the pasteboard — the presenter confirms it,
@@ -59,7 +60,7 @@ struct ShareSheetView: View {
             if let errorKey = viewModel.errorKey {
                 Text(loc[errorKey])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.danger)
+                    .foregroundStyle(theme.colors.danger)
                     .padding(.horizontal, DocsSpacing.gutter)
             }
 
@@ -78,7 +79,7 @@ struct ShareSheetView: View {
             }
             .refreshable { await viewModel.load() }
         }
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .task {
             await viewModel.load()
         }
@@ -124,7 +125,7 @@ struct ShareSheetView: View {
         Text(text.uppercased())
             .font(DocsFont.footnote)
             .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
-            .foregroundStyle(DocsColor.textTertiary)
+            .foregroundStyle(theme.colors.textTertiary)
     }
 
     @ViewBuilder
@@ -132,7 +133,7 @@ struct ShareSheetView: View {
         if viewModel.searchResults.isEmpty {
             Text(loc[.share_no_people_found])
                 .font(DocsFont.subhead)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DocsSpacing.spaceLG)
         } else {
@@ -176,7 +177,7 @@ struct ShareSheetView: View {
                 LinkReachPill(reach: viewModel.linkReach, showsHint: true)
                 Spacer()
                 MaterialSymbol(.unfold_more, size: 22)
-                    .foregroundStyle(DocsColor.gray300)
+                    .foregroundStyle(theme.colors.gray300)
             }
             .frame(minHeight: DocsSpacing.rowMinHeight)
             .contentShape(Rectangle())

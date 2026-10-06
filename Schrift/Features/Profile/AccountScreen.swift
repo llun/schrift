@@ -24,8 +24,7 @@ func accountDisplayName(_ user: CurrentUser?) -> String? {
 
 /// The email to show in Profile's account row, or `nil` when there is none to show.
 ///
-/// The row shows the *address*, not `accountDisplayName` — that is what the handoff puts
-/// there. Blank is treated as absent so a server sending `""` renders the "—" placeholder
+/// Profile shows this address beneath its identity name. Blank is treated as absent so a server sending `""` renders the "—" placeholder
 /// rather than a visually empty row; `?? "—"` at the call site only covers nil.
 func accountRowEmail(_ user: CurrentUser?) -> String? {
     guard let email = user?.email else { return nil }
@@ -43,6 +42,7 @@ func accountRowEmail(_ user: CurrentUser?) -> String? {
 /// shorter screen. Everything here is display-only, with one link out to the
 /// web app where the account *can* be edited.
 struct AccountScreen: View {
+    @Environment(\.docsTheme) private var theme
     let user: CurrentUser?
     let serverHost: String
     /// The server's own origin — where "manage on the web" goes.
@@ -52,7 +52,7 @@ struct AccountScreen: View {
     @Environment(\.openURL) private var openURL
 
     private var displayName: String? { accountDisplayName(user) }
-    // The same helper the Profile row's title uses, so the two agree about a blank
+    // The same helper the Profile identity header uses, so the two agree about a blank
     // address: `!isEmpty` alone lets `"   "` through and draws an empty line under
     // the header.
     private var email: String? { accountRowEmail(user) }
@@ -63,7 +63,7 @@ struct AccountScreen: View {
             // no account to show. Say that, rather than rendering a hero and a
             // "Full name" row filled with placeholder text that reads as real.
             if let displayName {
-                VStack(spacing: DocsSpacing.spaceMD - DocsSpacing.space3xs) {
+                VStack(spacing: DocsSpacing.spaceLG) {
                     identityHeader(displayName)
                     profileSection(displayName)
                     signInSection
@@ -86,10 +86,7 @@ struct AccountScreen: View {
             }
         }
         .frame(maxWidth: .infinity)
-        // The handoff puts this screen on the sunken surface, unlike the four
-        // tab roots — it is a detail screen, and the grouped cards read against
-        // it rather than floating on white.
-        .background(DocsColor.surfaceSunken)
+        .background(theme.colors.surfacePage)
         .navigationTitle(loc[.account_title])
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -99,11 +96,11 @@ struct AccountScreen: View {
             Avatar(name: displayName, size: 88)
             Text(displayName)
                 .font(DocsFont.title2)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
             if let email {
                 Text(email)
                     .font(DocsFont.subhead)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -160,4 +157,5 @@ struct AccountScreen: View {
     }
     .environment(LocalizationStore())
     .environment(AppearanceStore())
+    .environment(ThemeStore())
 }

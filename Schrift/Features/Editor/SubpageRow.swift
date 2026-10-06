@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SubpageRow: View {
+    @Environment(\.docsTheme) private var theme
     let document: Document
     /// Deleted on this device, waiting for the server to be told. The row stays — struck
     /// through, with a delete glyph — because the deletion is still undoable, and the tap
@@ -40,14 +41,14 @@ struct SubpageRow: View {
             VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                 Text(displayTitle)
                     .font(DocsFont.body)
-                    .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                    .foregroundStyle(pendingDelete ? theme.colors.textTertiary : theme.colors.textPrimary)
                     .strikethrough(pendingDelete)
                     .lineLimit(1)
 
                 if let summary {
                     Text(summary)
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                         .lineLimit(1)
                 }
             }
@@ -60,15 +61,15 @@ struct SubpageRow: View {
                     Text("\(document.numchild)")
                 }
                 .font(DocsFont.caption)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
             }
 
             if pendingDelete {
                 MaterialSymbol(.delete, size: 16)
-                    .foregroundStyle(DocsColor.gray350)
+                    .foregroundStyle(theme.colors.gray350)
             } else {
                 MaterialSymbol(.chevron_right, size: 18)
-                    .foregroundStyle(DocsColor.gray300)
+                    .foregroundStyle(theme.colors.gray300)
             }
         }
         .padding(.horizontal, DocsSpacing.spaceXS)

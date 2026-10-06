@@ -7,9 +7,10 @@ import SwiftUI
 /// the system grabber sits above the title.
 ///
 /// The body below a `SheetHeader` is a **flat, boxless** list: `ListRow`s
-/// rendered directly on `DocsColor.surfacePage` with no `ListSection` card and
+/// rendered directly on `theme.colors.surfacePage` with no `ListSection` card and
 /// no `ProfileRowDivider` between them — matching the handoff's `OptionsSheet`.
 struct SheetHeader: View {
+    @Environment(\.docsTheme) private var theme
     let title: String
     /// Accessibility label for the close button; only used when `onClose` is set.
     var closeLabel: String = "Close"
@@ -20,7 +21,7 @@ struct SheetHeader: View {
         HStack(spacing: DocsSpacing.spaceSM) {
             Text(title)
                 .font(DocsFont.title2)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
 
             Spacer(minLength: DocsSpacing.spaceSM)
 

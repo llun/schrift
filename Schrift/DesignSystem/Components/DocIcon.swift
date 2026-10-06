@@ -6,6 +6,7 @@ func docIconDisplayText(emoji: String?) -> String? {
 }
 
 struct DocIcon: View {
+    @Environment(\.docsTheme) private var theme
     var emoji: String? = nil
     var size: CGFloat = 24
     var tinted: Bool = false
@@ -31,18 +32,18 @@ struct DocIcon: View {
                     // at every category (scaling is not a flat multiple at
                     // accessibility sizes), and the box is sized from ours.
                     MaterialSymbol(.description, size: glyphSize, scales: false)
-                        .foregroundStyle(DocsColor.brandFill)
+                        .foregroundStyle(theme.colors.brandFill)
                 }
             }
             .frame(width: box, height: box)
-            .background(tinted ? DocsColor.brandFillSubtle : Color.clear)
+            .background(tinted ? theme.colors.brandFillSubtle : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: tinted ? DocsRadius.md : 0))
 
             if pinned {
                 MaterialSymbol(.push_pin, size: 14, fill: true)
-                    .foregroundStyle(DocsColor.brandFill)
+                    .foregroundStyle(theme.colors.brandFill)
                     .padding(1)
-                    .background(Circle().fill(DocsColor.surfacePage))
+                    .background(Circle().fill(theme.colors.surfacePage))
                     .offset(x: 4, y: 4)
             }
         }

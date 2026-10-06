@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OptionsSheetView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: OptionsViewModel
     let shareURL: URL?
     let availability: OnlineAvailability
@@ -64,7 +65,7 @@ struct OptionsSheetView: View {
             if let errorKey = viewModel.errorKey {
                 Text(loc[errorKey])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.danger)
+                    .foregroundStyle(theme.colors.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DocsSpacing.gutter)
                     .padding(.bottom, DocsSpacing.spaceXS)
@@ -128,7 +129,7 @@ struct OptionsSheetView: View {
                 }
             }
         }
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         // A system alert, not an action sheet: this is a destructive confirm
         // with one verb, which is exactly what the handoff reserves alerts for.
         .alert(loc[.options_delete_confirm_title], isPresented: $isConfirmingDelete) {

@@ -6,6 +6,7 @@ import SwiftUI
 /// state beyond two text fields, which are seeded from the request and handed
 /// back on save. `EditorViewModel` does the validation and the string surgery.
 struct LinkEditorSheet: View {
+    @Environment(\.docsTheme) private var theme
     let request: EditorViewModel.LinkEditorRequest
     /// Returns false when the destination cannot be embedded safely, which
     /// keeps the sheet open with the field marked.
@@ -82,7 +83,7 @@ struct LinkEditorSheet: View {
                 .padding(DocsSpacing.gutter)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfacePage)
+            .background(theme.colors.surfacePage)
             .navigationTitle(isEditingExistingLink ? loc[.editor_link_edit_title] : loc[.editor_link_add_title])
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

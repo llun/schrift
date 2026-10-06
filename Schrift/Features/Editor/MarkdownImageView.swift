@@ -3,6 +3,7 @@ import SwiftUI
 /// Both surfaces render the same image leaf, including when its bytes cannot
 /// load. The URL remains a secondary action; a failure never becomes prose.
 struct MarkdownImageView: View {
+    @Environment(\.docsTheme) private var theme
     let alt: String
     let url: URL
     let serverOrigin: String
@@ -86,11 +87,11 @@ struct MarkdownImageView: View {
         } label: {
             HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
                 MaterialSymbol(.image, size: 16)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(loc[.editor_image_external]).foregroundStyle(DocsColor.textBrand)
+                    Text(loc[.editor_image_external]).foregroundStyle(theme.colors.textBrand)
                     Text(url.host ?? url.absoluteString)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -99,7 +100,7 @@ struct MarkdownImageView: View {
             .font(DocsFont.footnote)
             .padding(DocsSpacing.spaceSM)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DocsColor.surfaceSunken)
+            .background(theme.colors.surfaceSunken)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         }
         .buttonStyle(.plain)
@@ -108,7 +109,7 @@ struct MarkdownImageView: View {
 
     private var placeholder: some View {
         RoundedRectangle(cornerRadius: DocsRadius.md)
-            .fill(DocsColor.surfaceSunken)
+            .fill(theme.colors.surfaceSunken)
             .frame(maxWidth: .infinity)
             .frame(height: 160)
             .overlay { ProgressView() }
@@ -123,10 +124,10 @@ struct MarkdownImageView: View {
                 Text(alt.isEmpty ? loc[.editor_image_a11y] : alt)
                     .lineLimit(2)
             }
-            .foregroundStyle(DocsColor.textPrimary)
-            Text(loc[message]).foregroundStyle(DocsColor.textTertiary)
+            .foregroundStyle(theme.colors.textPrimary)
+            Text(loc[message]).foregroundStyle(theme.colors.textTertiary)
             Text(url.absoluteString)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .lineLimit(2)
                 .truncationMode(.middle)
             HStack {
@@ -140,12 +141,12 @@ struct MarkdownImageView: View {
                     Link(loc[.editor_image_open], destination: url)
                 }
             }
-            .foregroundStyle(DocsColor.textBrand)
+            .foregroundStyle(theme.colors.textBrand)
         }
         .font(DocsFont.footnote)
         .padding(DocsSpacing.spaceSM)
         .frame(maxWidth: .infinity, minHeight: 160, alignment: .leading)
-        .background(DocsColor.surfaceSunken)
+        .background(theme.colors.surfaceSunken)
         .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
     }
 }

@@ -16,6 +16,7 @@ func versionRowDate(_ version: DocumentVersion, locale: Locale) -> String {
 /// to F4. Older rows are display-only; "Restore on the web" is the one
 /// restore affordance, and it hands off to the web app instead.
 struct VersionHistorySheetView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: VersionHistoryViewModel
     var restoreURL: URL?
 
@@ -39,12 +40,12 @@ struct VersionHistorySheetView: View {
             if viewModel.availability.isOffline {
                 Text(loc[.versions_offline_explanation])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textSecondary)
+                    .foregroundStyle(theme.colors.textSecondary)
                     .padding(.horizontal, DocsSpacing.gutter)
             } else if let errorKey = viewModel.errorKey {
                 Text(loc[errorKey])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.danger)
+                    .foregroundStyle(theme.colors.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DocsSpacing.gutter)
                     .padding(.bottom, DocsSpacing.spaceXS)
@@ -60,7 +61,7 @@ struct VersionHistorySheetView: View {
                         if viewModel.errorKey == nil, !viewModel.availability.isOffline {
                             Text(loc[.versions_empty])
                                 .font(DocsFont.footnote)
-                                .foregroundStyle(DocsColor.textTertiary)
+                                .foregroundStyle(theme.colors.textTertiary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, DocsSpacing.spaceLG)
                         }
@@ -92,7 +93,7 @@ struct VersionHistorySheetView: View {
         // `.large` detent, rather than the content-sized VStack leaving the
         // system sheet background showing below the capped list.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .task(id: viewModel.availability.token) {
             await viewModel.load()
         }
@@ -101,20 +102,20 @@ struct VersionHistorySheetView: View {
     private func versionRow(_ version: DocumentVersion) -> some View {
         HStack(spacing: DocsSpacing.spaceSM) {
             MaterialSymbol(.schedule, size: 20)
-                .foregroundStyle(DocsColor.textSecondary)
+                .foregroundStyle(theme.colors.textSecondary)
                 .frame(width: 24)
                 .accessibilityHidden(true)
 
             Text(versionRowDate(version, locale: loc.locale))
                 .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
+                .foregroundStyle(theme.colors.textPrimary)
 
             Spacer()
 
             if version.isCurrent {
                 Text(loc[.versions_current])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.success)
+                    .foregroundStyle(theme.colors.success)
             }
         }
         .padding(.horizontal, DocsSpacing.gutter)

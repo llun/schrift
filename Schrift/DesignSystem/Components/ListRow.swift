@@ -13,6 +13,9 @@ func listRowTitleColor(isDestructive: Bool) -> ListRowTitleColor {
 }
 
 struct ListRow: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.docsRowGutter) private var rowGutter
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var icon: MaterialIcon? = nil
     let title: String
     var subtitle: String? = nil
@@ -45,7 +48,7 @@ struct ListRow: View {
         HStack(spacing: DocsSpacing.spaceSM) {
             if let icon {
                 MaterialSymbol(icon, size: 24)
-                    .foregroundStyle(isDestructive ? DocsColor.danger : DocsColor.textSecondary)
+                    .foregroundStyle(isDestructive ? theme.colors.danger : theme.colors.textSecondary)
                     .frame(width: 24)
             }
 
@@ -54,28 +57,34 @@ struct ListRow: View {
                     .font(DocsFont.body)
                     .foregroundStyle(
                         listRowTitleColor(isDestructive: isDestructive) == .danger
-                            ? DocsColor.danger : DocsColor.textPrimary)
+                            ? theme.colors.danger : theme.colors.textPrimary)
+                if let value, dynamicTypeSize.isAccessibilitySize {
+                    Text(value)
+                        .font(DocsFont.body)
+                        .foregroundStyle(theme.colors.textSecondary)
+                }
                 if let subtitle {
                     Text(subtitle)
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                 }
             }
 
             Spacer()
 
-            if let value {
+            if let value, !dynamicTypeSize.isAccessibilitySize {
                 Text(value)
                     .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if showsChevron {
                 MaterialSymbol(.chevron_right, size: 18)
-                    .foregroundStyle(DocsColor.gray300)
+                    .foregroundStyle(theme.colors.gray300)
             }
         }
-        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.horizontal, rowGutter)
         .padding(.vertical, DocsSpacing.spaceSM - DocsSpacing.space4xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
     }

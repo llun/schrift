@@ -9,6 +9,7 @@ func shareMemberDisplaySuffix(isCurrentUser: Bool, youLabel: String) -> String? 
 }
 
 struct ShareMemberRow: View {
+    @Environment(\.docsTheme) private var theme
     let name: String
     let email: String
     var role: String = "Reader"
@@ -25,19 +26,19 @@ struct ShareMemberRow: View {
                 HStack(spacing: DocsSpacing.space2xs) {
                     Text(name)
                         .docsScaledFont(size: 16, weight: .semibold, relativeTo: .callout)
-                        .foregroundStyle(DocsColor.textPrimary)
+                        .foregroundStyle(theme.colors.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     if let suffix = shareMemberDisplaySuffix(isCurrentUser: isCurrentUser, youLabel: loc[.common_you]) {
                         Text(suffix)
                             .font(DocsFont.caption)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                     }
                 }
                 if !email.isEmpty {
                     Text(email)
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -48,9 +49,9 @@ struct ShareMemberRow: View {
                 HStack(spacing: DocsSpacing.space4xs) {
                     Text(role)
                         .docsScaledFont(size: 14, weight: .medium, relativeTo: .subheadline)
-                        .foregroundStyle(DocsColor.textSecondary)
+                        .foregroundStyle(theme.colors.textSecondary)
                     MaterialSymbol(.expand_more, size: 18)
-                        .foregroundStyle(DocsColor.textSecondary)
+                        .foregroundStyle(theme.colors.textSecondary)
                 }
                 .frame(minHeight: DocsSpacing.rowMinHeight)
                 .contentShape(Rectangle())

@@ -4,6 +4,7 @@ import SwiftUI
 /// it to `LocalizationStore` and dismisses, live-switching the whole app.
 /// Presented by `ProfileScreen` with `.presentationDetents([.medium, .large])`.
 struct LanguagePickerSheet: View {
+    @Environment(\.docsTheme) private var theme
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.dismiss) private var dismiss
 
@@ -23,7 +24,7 @@ struct LanguagePickerSheet: View {
                             ProfileTrailingRow(title: language.autonym) {
                                 if language == loc.language {
                                     MaterialSymbol(.check, size: 17)
-                                        .foregroundStyle(DocsColor.brandFill)
+                                        .foregroundStyle(theme.colors.brandFill)
                                         // The glyph carries no meaning to VoiceOver; the
                                         // row's .isSelected trait announces the state.
                                         .accessibilityHidden(true)
@@ -38,7 +39,8 @@ struct LanguagePickerSheet: View {
             }
         }
         // White page surface (like the restyled Profile), matching the handoff.
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
+        .presentationBackground(theme.colors.surfacePage)
     }
 }
 

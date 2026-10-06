@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ConnectView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: ConnectViewModel
     @Environment(LocalizationStore.self) private var loc
 
@@ -13,15 +14,15 @@ struct ConnectView: View {
                     .scaledToFit()
                     .frame(width: 72, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
-                    .shadow(color: DocsColor.brandLogo.opacity(0.28), radius: 12, x: 0, y: 8)
+                    .shadow(color: theme.colors.brandLogo.opacity(0.28), radius: 12, x: 0, y: 8)
                     .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
                     .accessibilityHidden(true)
                 Text(loc[.connect_hero_title])
                     .font(DocsFont.title1)
-                    .foregroundStyle(DocsColor.textPrimary)
+                    .foregroundStyle(theme.colors.textPrimary)
                 Text(loc[.connect_hero_subtitle])
                     .font(DocsFont.callout)
-                    .foregroundStyle(DocsColor.textSecondary)
+                    .foregroundStyle(theme.colors.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .padding(.top, DocsSpacing.space2xs)
@@ -65,7 +66,7 @@ struct ConnectView: View {
         }
         .padding(.horizontal, DocsSpacing.spaceMD)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .sheet(isPresented: $viewModel.isPresentingWebLogin) {
             if let url = viewModel.pendingServerURL {
                 WebLoginView(
@@ -85,7 +86,7 @@ struct ConnectView: View {
                 .font(DocsFont.caption)
                 .textCase(.uppercase)
                 .docsTracking(DocsTypographySpec.caption, DocsTracking.eyebrow)
-                .foregroundStyle(DocsColor.textTertiary)
+                .foregroundStyle(theme.colors.textTertiary)
                 .padding(.leading, DocsSpacing.space3xs)
 
             ForEach(viewModel.recentServers.servers, id: \.self) { server in
@@ -94,17 +95,17 @@ struct ConnectView: View {
                 } label: {
                     HStack(spacing: DocsSpacing.space2xs + DocsSpacing.space3xs) {
                         MaterialSymbol(.dns, size: 20)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                         Text(server.host ?? server.absoluteString)
                             .font(DocsFont.subhead)
-                            .foregroundStyle(DocsColor.textPrimary)
+                            .foregroundStyle(theme.colors.textPrimary)
                         Spacer()
                         MaterialSymbol(.chevron_right, size: 18)
-                            .foregroundStyle(DocsColor.gray300)
+                            .foregroundStyle(theme.colors.gray300)
                     }
                     .padding(.horizontal, DocsSpacing.spaceSM)
                     .padding(.vertical, 10)
-                    .background(DocsColor.surfaceSunken)
+                    .background(theme.colors.surfaceSunken)
                     .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
                     .contentShape(Rectangle())
                 }

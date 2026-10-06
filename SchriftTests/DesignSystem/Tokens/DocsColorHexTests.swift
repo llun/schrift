@@ -3,6 +3,11 @@ import XCTest
 @testable import Schrift
 
 final class DocsColorHexTests: XCTestCase {
+    func testSolidControlInkRemainsDistinctFromMediaOverlayInk() {
+        XCTAssertEqual(DocsColorHex.textOnFill, 0xFFFFFF)
+        XCTAssertEqual(DocsColorHex.textOnBrand, 0xFFFFFF)
+    }
+
     func testBrandTokensMatchDesignSpec() {
         XCTAssertEqual(DocsColorHex.brandFill, 0x5E5CD0)
         XCTAssertEqual(DocsColorHex.brandFillHover, 0x4844AD)

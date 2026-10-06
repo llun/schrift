@@ -6,6 +6,7 @@ import SwiftUI
 /// cookies, so this often completes without any typing — then confirms and
 /// re-persists the session via `ReauthenticationViewModel`.
 struct ReauthenticationSheetView: View {
+    @Environment(\.docsTheme) private var theme
     // Built once in init and held in @State so a parent body re-evaluation
     // while the sheet is open (e.g. an iPad size-class change mid-login) can't
     // rebuild the VM and reset its transient isConfirming/errorKey or the
@@ -51,10 +52,10 @@ struct ReauthenticationSheetView: View {
                 if let errorKey = viewModel.errorKey {
                     Text(loc[errorKey])
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.danger)
+                        .foregroundStyle(theme.colors.danger)
                         .padding(DocsSpacing.spaceSM)
                         .frame(maxWidth: .infinity)
-                        .background(DocsColor.surfacePage)
+                        .background(theme.colors.surfacePage)
                 }
             }
             .navigationTitle(loc[.reauth_title])

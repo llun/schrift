@@ -3,6 +3,7 @@ import SwiftUI
 /// The slash-command block picker, docked above the keyboard (caret-anchored
 /// popovers are unreliable on iOS; this mirrors mobile Notion).
 struct SlashMenuView: View {
+    @Environment(\.docsTheme) private var theme
     let query: String
     /// Drops **File**, which POSTs an attachment with no offline queue. Photo is offered —
     /// a queued photo is stored on the device and uploaded by the replay.
@@ -27,11 +28,11 @@ struct SlashMenuView: View {
                         } label: {
                             HStack(spacing: DocsSpacing.spaceSM) {
                                 MaterialSymbol(item.icon, size: 20)
-                                    .foregroundStyle(DocsColor.textSecondary)
+                                    .foregroundStyle(theme.colors.textSecondary)
                                     .frame(width: 24)
                                 Text(loc[item.titleKey])
                                     .font(DocsFont.body)
-                                    .foregroundStyle(DocsColor.textPrimary)
+                                    .foregroundStyle(theme.colors.textPrimary)
                                 Spacer()
                             }
                             .padding(.horizontal, DocsSpacing.spaceBase)

@@ -3,6 +3,8 @@ import SwiftUI
 /// A bespoke row matching ListRow styling, but with a custom trailing view
 /// (Switch / Badge / etc.) that ListRow does not support.
 struct ProfileTrailingRow<Trailing: View>: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.docsRowGutter) private var rowGutter
     var icon: MaterialIcon? = nil
     let title: String
     let trailing: Trailing
@@ -17,23 +19,20 @@ struct ProfileTrailingRow<Trailing: View>: View {
         HStack(spacing: DocsSpacing.spaceSM) {
             if let icon {
                 MaterialSymbol(icon, size: 24)
-                    .foregroundStyle(DocsColor.textSecondary)
+                    .foregroundStyle(theme.colors.textSecondary)
                     .frame(width: 24)
             }
 
             Text(title)
                 .font(DocsFont.body)
-                .foregroundStyle(DocsColor.textPrimary)
-                // A long value (e.g. the server host) truncates with an ellipsis
-                // rather than wrapping to a second line, matching the handoff.
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .foregroundStyle(theme.colors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
 
             trailing
         }
-        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.horizontal, rowGutter)
         .frame(minHeight: DocsSpacing.rowMinHeight)
         // Callers wrap this in a plain `Button` (the server row opens the
         // disconnect confirmation), which hit-tests only what its label draws —
@@ -50,9 +49,11 @@ struct ProfileTrailingRow<Trailing: View>: View {
 /// Hairline divider inset past the leading icon so it starts under the text
 /// (16pt gutter + 24pt icon + 12pt gap), matching the grouped-list rows.
 struct ProfileRowDivider: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.docsRowGutter) private var rowGutter
     var body: some View {
         Rectangle()
-            .fill(DocsColor.borderDefault)
+            .fill(theme.colors.borderDefault)
             .frame(height: 1)
             .padding(.leading, 52)
     }

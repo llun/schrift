@@ -3,6 +3,7 @@ import SwiftUI
 /// Reading chrome, kept outside checklist rows so their alignment and dense hit
 /// targets remain governed entirely by EditorBlockStyle.
 struct ChecklistReadingControls: View {
+    @Environment(\.docsTheme) private var theme
     @Binding var hidesCompleted: Bool
     let hiddenCount: Int
     var revealFocusRequest = 0
@@ -13,13 +14,13 @@ struct ChecklistReadingControls: View {
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             Toggle(loc[.editor_checklist_hide_completed], isOn: $hidesCompleted)
                 .font(DocsFont.body)
-                .tint(DocsColor.textBrand)
+                .tint(theme.colors.textBrand)
                 .accessibilityIdentifier("checklist.hideCompleted")
 
             if hiddenCount > 0 {
                 Text(loc.format(.editor_checklist_hidden_count, hiddenCount))
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textSecondary)
+                    .foregroundStyle(theme.colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
                     hidesCompleted = false
@@ -31,7 +32,7 @@ struct ChecklistReadingControls: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(DocsColor.textBrand)
+                .foregroundStyle(theme.colors.textBrand)
                 .accessibilityIdentifier("checklist.showCompleted")
                 .accessibilityLabel(
                     loc.format(.editor_checklist_hidden_count, hiddenCount) + ". "

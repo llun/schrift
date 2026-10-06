@@ -25,7 +25,11 @@ struct ButtonStyleHex: Equatable {
 enum ButtonStyleResolver {
     // The disabled look is driven purely by lowering opacity at the view level
     // (matching the reference), so the resolver keeps each variant's own colors.
-    static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool = false) -> ButtonStyleHex {
+    static func style(variant: ButtonVariant, color: ButtonColor, isDisabled: Bool = false, theme: AppTheme = .white)
+        -> ButtonStyleHex
+    {
+        let light = DocsPalette(theme: theme, isDark: false)
+        let dark = DocsPalette(theme: theme, isDark: true)
         let fillLightHex: UInt32
         let fillDarkHex: UInt32
         let softLightHex: UInt32
@@ -37,33 +41,33 @@ enum ButtonStyleResolver {
 
         switch color {
         case .brand:
-            fillLightHex = DocsColorHex.brandFill
-            fillDarkHex = DocsColorHexDark.brandFill
-            softLightHex = DocsColorHex.brandFillSoft
-            softDarkHex = DocsColorHexDark.brandFillSoft
-            onFillLightHex = DocsColorHex.textOnBrand
-            onFillDarkHex = DocsColorHexDark.textOnBrand
+            fillLightHex = light.brandFill
+            fillDarkHex = dark.brandFill
+            softLightHex = light.brandFillSoft
+            softDarkHex = dark.brandFillSoft
+            onFillLightHex = light.textOnFill
+            onFillDarkHex = dark.textOnFill
             // Reference Button hues use --text-brand as the ink for soft/ghost/outline.
-            softForegroundLightHex = DocsColorHex.textBrand
-            softForegroundDarkHex = DocsColorHexDark.textBrand
+            softForegroundLightHex = light.textBrand
+            softForegroundDarkHex = dark.textBrand
         case .neutral:
-            fillLightHex = DocsColorHex.textPrimary
-            fillDarkHex = DocsColorHexDark.textPrimary
-            softLightHex = DocsColorHex.surfaceMuted
-            softDarkHex = DocsColorHexDark.surfaceMuted
-            onFillLightHex = DocsColorHex.textOnBrand
-            onFillDarkHex = DocsColorHexDark.textOnBrand
-            softForegroundLightHex = DocsColorHex.textPrimary
-            softForegroundDarkHex = DocsColorHexDark.textPrimary
+            fillLightHex = light.textPrimary
+            fillDarkHex = dark.textPrimary
+            softLightHex = light.surfaceMuted
+            softDarkHex = dark.surfaceMuted
+            onFillLightHex = light.textOnFill
+            onFillDarkHex = dark.textOnFill
+            softForegroundLightHex = light.textPrimary
+            softForegroundDarkHex = dark.textPrimary
         case .danger:
-            fillLightHex = DocsColorHex.danger
-            fillDarkHex = DocsColorHexDark.danger
-            softLightHex = DocsColorHex.dangerSoft
-            softDarkHex = DocsColorHexDark.dangerSoft
-            onFillLightHex = DocsColorHex.textOnBrand
-            onFillDarkHex = DocsColorHexDark.textOnBrand
-            softForegroundLightHex = DocsColorHex.danger
-            softForegroundDarkHex = DocsColorHexDark.danger
+            fillLightHex = light.danger
+            fillDarkHex = dark.danger
+            softLightHex = light.dangerSoft
+            softDarkHex = dark.dangerSoft
+            onFillLightHex = light.textOnFill
+            onFillDarkHex = dark.textOnFill
+            softForegroundLightHex = light.danger
+            softForegroundDarkHex = dark.danger
         }
 
         switch variant {
@@ -85,9 +89,9 @@ enum ButtonStyleResolver {
         case .outline:
             // Reference outline = raised surface fill + neutral hairline border + ink label.
             return ButtonStyleHex(
-                backgroundLightHex: DocsColorHex.surfaceRaised, backgroundDarkHex: DocsColorHexDark.surfaceRaised,
+                backgroundLightHex: light.surfaceRaised, backgroundDarkHex: dark.surfaceRaised,
                 foregroundLightHex: softForegroundLightHex, foregroundDarkHex: softForegroundDarkHex,
-                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault)
+                borderLightHex: light.borderDefault, borderDarkHex: dark.borderDefault)
         }
     }
 }
@@ -147,6 +151,7 @@ enum ButtonSize {
 }
 
 struct DocsButton: View {
+    @Environment(\.docsTheme) private var theme
     let title: String
     var variant: ButtonVariant = .primary
     var color: ButtonColor = .brand
@@ -158,7 +163,7 @@ struct DocsButton: View {
     var action: () -> Void
 
     var body: some View {
-        let style = ButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled)
+        let style = ButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled, theme: theme)
         Button(action: action) {
             HStack(spacing: size.iconGap) {
                 if let icon {

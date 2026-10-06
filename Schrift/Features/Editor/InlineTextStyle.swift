@@ -24,7 +24,9 @@ enum InlineTextStyleResolver {
     /// Marks arrive outermost-first and compose: a bold link is blue, underlined
     /// and bold. Inline code wins the font, since a monospaced italic is not a
     /// distinction anyone reads.
-    static func style(for marks: [InlineMark]) -> InlineTextStyle {
+    static func style(for marks: [InlineMark], theme: AppTheme = .white) -> InlineTextStyle {
+        let light = DocsPalette(theme: theme, isDark: false)
+        let dark = DocsPalette(theme: theme, isDark: true)
         var style = InlineTextStyle()
         for mark in marks {
             switch mark {
@@ -38,8 +40,8 @@ enum InlineTextStyleResolver {
                 style.isStruckThrough = true
             case .link:
                 style.isUnderlined = true
-                style.foregroundLightHex = DocsColorHex.textBrand
-                style.foregroundDarkHex = DocsColorHexDark.textBrand
+                style.foregroundLightHex = light.textBrand
+                style.foregroundDarkHex = dark.textBrand
             }
         }
         return style
@@ -48,8 +50,10 @@ enum InlineTextStyleResolver {
 
 /// The `NSAttributedString` attributes for a marked run, over the block's own
 /// font. The one place raw values become UIKit objects.
-func inlineTextAttributes(for marks: [InlineMark], base: UIFont) -> [NSAttributedString.Key: Any] {
-    let style = InlineTextStyleResolver.style(for: marks)
+func inlineTextAttributes(for marks: [InlineMark], base: UIFont, theme: AppTheme = .white) -> [NSAttributedString.Key:
+    Any]
+{
+    let style = InlineTextStyleResolver.style(for: marks, theme: theme)
     var attributes: [NSAttributedString.Key: Any] = [.font: inlineFont(for: style, base: base)]
     if let color = Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex) {
         attributes[.foregroundColor] = UIColor(color)

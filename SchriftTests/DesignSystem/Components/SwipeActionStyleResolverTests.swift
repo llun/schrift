@@ -15,15 +15,15 @@ final class SwipeActionStyleResolverTests: XCTestCase {
         let style = SwipeActionStyleResolver.style(role: .brand)
         XCTAssertEqual(style.backgroundLightHex, DocsColorHex.brandFill)
         XCTAssertEqual(style.backgroundDarkHex, DocsColorHexDark.brandFill)
-        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textOnBrand)
-        XCTAssertEqual(style.foregroundDarkHex, DocsColorHexDark.textOnBrand)
+        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textOnFill)
+        XCTAssertEqual(style.foregroundDarkHex, DocsColorHexDark.textOnFill)
     }
 
     func testDestructiveUsesTheDangerFill() {
         let style = SwipeActionStyleResolver.style(role: .destructive)
         XCTAssertEqual(style.backgroundLightHex, DocsColorHex.danger)
         XCTAssertEqual(style.backgroundDarkHex, DocsColorHexDark.danger)
-        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textOnBrand)
+        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textOnFill)
     }
 
     /// **Destructive is the reason a resolver carries both halves per color.**

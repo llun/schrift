@@ -11,6 +11,7 @@ import SwiftUI
 /// `.sheet(item:)`'s per-document identity *and* survives the re-render, which is the same rule
 /// the editor's Options and Share models follow.
 struct MoveDocumentSheet: View {
+    @Environment(\.docsTheme) private var theme
     @State private var viewModel: MoveDocumentViewModel
 
     init(
@@ -39,6 +40,7 @@ struct MoveDocumentSheet: View {
 /// act, and a move is not destructive — the document keeps its content, its sub-pages travel
 /// with it, and moving it back is the same two taps.
 struct MoveDocumentSheetView: View {
+    @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: MoveDocumentViewModel
     /// Called once the move has landed, so the presenter can close whatever it was presented
     /// from. The lists themselves are updated by the coordinator's announcement, not here.
@@ -54,7 +56,7 @@ struct MoveDocumentSheetView: View {
             if let errorKey = viewModel.errorKey {
                 Text(loc[errorKey])
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.danger)
+                    .foregroundStyle(theme.colors.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DocsSpacing.gutter)
                     .padding(.bottom, DocsSpacing.spaceXS)
@@ -92,7 +94,7 @@ struct MoveDocumentSheetView: View {
                     if viewModel.isEmpty {
                         Text(loc[.move_empty])
                             .font(DocsFont.footnote)
-                            .foregroundStyle(DocsColor.textTertiary)
+                            .foregroundStyle(theme.colors.textTertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, DocsSpacing.gutter)
                             .padding(.top, DocsSpacing.spaceSM)
@@ -104,7 +106,7 @@ struct MoveDocumentSheetView: View {
                 .disabled(viewModel.isMoving)
             }
         }
-        .background(DocsColor.surfacePage)
+        .background(theme.colors.surfacePage)
         .task { await viewModel.loadDestinations() }
     }
 
@@ -120,7 +122,7 @@ struct MoveDocumentSheetView: View {
     private func sectionLabel(_ text: String) -> some View {
         Text(text.uppercased())
             .font(DocsFont.footnote)
-            .foregroundStyle(DocsColor.textTertiary)
+            .foregroundStyle(theme.colors.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DocsSpacing.gutter)
             .padding(.top, DocsSpacing.spaceMD)

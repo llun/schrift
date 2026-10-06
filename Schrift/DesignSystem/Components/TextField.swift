@@ -15,33 +15,36 @@ struct TextFieldStyleHex: Equatable {
 }
 
 enum TextFieldStyleResolver {
-    static func style(state: TextFieldState) -> TextFieldStyleHex {
+    static func style(state: TextFieldState, theme: AppTheme = .white) -> TextFieldStyleHex {
+        let light = DocsPalette(theme: theme, isDark: false)
+        let dark = DocsPalette(theme: theme, isDark: true)
         // The label stays a constant neutral gray in every state (reference);
         // only the border (and the focus ring) convey focus/error. Disabled
         // dims the label to preserve the sunk look.
         switch state {
         case .normal:
             return TextFieldStyleHex(
-                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault,
-                labelLightHex: DocsColorHex.textSecondary, labelDarkHex: DocsColorHexDark.textSecondary)
+                borderLightHex: light.borderDefault, borderDarkHex: dark.borderDefault,
+                labelLightHex: light.textSecondary, labelDarkHex: dark.textSecondary)
         case .focused:
             // Reference focused border is --border-brand (#5E5CD0 == brandFill); --border-focus is the soft ring.
             return TextFieldStyleHex(
-                borderLightHex: DocsColorHex.brandFill, borderDarkHex: DocsColorHexDark.brandFill,
-                labelLightHex: DocsColorHex.textSecondary, labelDarkHex: DocsColorHexDark.textSecondary)
+                borderLightHex: light.brandFill, borderDarkHex: dark.brandFill,
+                labelLightHex: light.textSecondary, labelDarkHex: dark.textSecondary)
         case .error:
             return TextFieldStyleHex(
-                borderLightHex: DocsColorHex.danger, borderDarkHex: DocsColorHexDark.danger,
-                labelLightHex: DocsColorHex.textSecondary, labelDarkHex: DocsColorHexDark.textSecondary)
+                borderLightHex: light.danger, borderDarkHex: dark.danger,
+                labelLightHex: light.textSecondary, labelDarkHex: dark.textSecondary)
         case .disabled:
             return TextFieldStyleHex(
-                borderLightHex: DocsColorHex.borderDefault, borderDarkHex: DocsColorHexDark.borderDefault,
-                labelLightHex: DocsColorHex.textDisabled, labelDarkHex: DocsColorHexDark.textDisabled)
+                borderLightHex: light.borderDefault, borderDarkHex: dark.borderDefault,
+                labelLightHex: light.textDisabled, labelDarkHex: dark.textDisabled)
         }
     }
 }
 
 struct DocsTextField: View {
+    @Environment(\.docsTheme) private var theme
     var label: String? = nil
     @Binding var text: String
     var placeholder: String = ""
@@ -60,7 +63,7 @@ struct DocsTextField: View {
     }
 
     var body: some View {
-        let style = TextFieldStyleResolver.style(state: state)
+        let style = TextFieldStyleResolver.style(state: state, theme: theme)
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             if let label, !label.isEmpty {
                 Text(label)
@@ -71,7 +74,7 @@ struct DocsTextField: View {
             HStack(spacing: DocsSpacing.spaceXS) {
                 if let icon {
                     MaterialSymbol(icon, size: 20)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                 }
                 TextField(placeholder, text: $text)
                     .font(DocsFont.callout)
@@ -83,7 +86,7 @@ struct DocsTextField: View {
             // rather than clip the text it exists to show.
             .frame(minHeight: DocsSpacing.rowMinHeight)
             // Disabled fields sink to the sunken surface (reference); enabled stay white.
-            .background(isDisabled ? DocsColor.surfaceSunken : DocsColor.surfacePage)
+            .background(isDisabled ? theme.colors.surfaceSunken : theme.colors.surfacePage)
             .clipShape(RoundedRectangle(cornerRadius: DocsRadius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: DocsRadius.sm)
@@ -94,18 +97,18 @@ struct DocsTextField: View {
             .overlay(
                 RoundedRectangle(cornerRadius: DocsRadius.sm)
                     .inset(by: -1.5)
-                    .stroke(DocsColor.borderFocus.opacity(0.25), lineWidth: state == .focused ? 3 : 0)
+                    .stroke(theme.colors.borderFocus.opacity(0.25), lineWidth: state == .focused ? 3 : 0)
             )
             .opacity(isDisabled ? 0.6 : 1)
 
             if let error {
                 Text(error)
                     .font(DocsFont.caption)
-                    .foregroundStyle(DocsColor.danger)
+                    .foregroundStyle(theme.colors.danger)
             } else if let helper {
                 Text(helper)
                     .font(DocsFont.caption)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
         }
     }

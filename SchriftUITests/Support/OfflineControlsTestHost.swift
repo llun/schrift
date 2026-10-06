@@ -12,6 +12,7 @@ struct OfflineControlsTestHost: View {
     @State private var home: HomeViewModel
     @State private var loc: LocalizationStore
     @State private var appearance: AppearanceStore
+    @State private var theme: ThemeStore
 
     init() {
         let suite = "SchriftOfflineControlsTestHost"
@@ -40,7 +41,7 @@ struct OfflineControlsTestHost: View {
             cache.save(
                 CachedDocumentContent(
                     documentID: OfflineFixtureProtocol.documentID, title: "Offline fixture",
-                    markdown: "Cached readable body",
+                    markdown: OfflineFixtureProtocol.markdown,
                     syncedAt: Date()))
         }
         let lists = DocumentCacheStore(userDefaults: defaults)
@@ -68,21 +69,34 @@ struct OfflineControlsTestHost: View {
         let loc = LocalizationStore(userDefaults: defaults)
         loc.language = .english
         _loc = State(initialValue: loc)
-        _appearance = State(initialValue: AppearanceStore(userDefaults: defaults))
-        if !ProcessInfo.processInfo.arguments.contains("--transport-failure") { path.update?(false) }
+        let appearance = AppearanceStore(userDefaults: defaults)
+        appearance.selected = ProcessInfo.processInfo.arguments.contains("--theme-dark") ? .dark : .light
+        _appearance = State(initialValue: appearance)
+        let theme = ThemeStore(userDefaults: defaults)
+        for option in AppTheme.allCases where ProcessInfo.processInfo.arguments.contains("--theme-\(option.rawValue)") {
+            theme.selected = option
+        }
+        _theme = State(initialValue: theme)
+        if ProcessInfo.processInfo.arguments.contains("--theme-audit") {
+            path.update?(true)
+        } else if !ProcessInfo.processInfo.arguments.contains("--transport-failure") {
+            path.update?(false)
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Button("Go offline") { path.update?(false) }.accessibilityIdentifier("fixture.offline")
-                Button("Go online") { path.update?(true) }.accessibilityIdentifier("fixture.online")
-                Button("Work Offline") {
-                    defaults.set(!defaults.bool(forKey: "schrift.workOffline"), forKey: "schrift.workOffline")
-                    availability.preferencesChanged()
-                }.accessibilityIdentifier("fixture.workOffline")
+            if !ProcessInfo.processInfo.arguments.contains("--theme-audit") {
+                HStack {
+                    Button("Go offline") { path.update?(false) }.accessibilityIdentifier("fixture.offline")
+                    Button("Go online") { path.update?(true) }.accessibilityIdentifier("fixture.online")
+                    Button("Work Offline") {
+                        defaults.set(!defaults.bool(forKey: "schrift.workOffline"), forKey: "schrift.workOffline")
+                        availability.preferencesChanged()
+                    }.accessibilityIdentifier("fixture.workOffline")
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
             if ProcessInfo.processInfo.arguments.contains("--options-transitions") {
                 // Keep this production surface mounted while the external fixture driver
                 // changes availability, including Work Offline on a reachable path.
@@ -99,10 +113,16 @@ struct OfflineControlsTestHost: View {
         .defaultAppStorage(defaults)
         .environment(loc)
         .environment(appearance)
+        .environment(theme)
+        .environment(\.docsTheme, theme.selected)
+        .tint(theme.selected.colors.textBrand)
         .environment(AttachmentLoader.inert())
         .environment(ImageLoader.inert())
         .environment(DocumentCollaborationManager.inert())
-        .preferredColorScheme(.light)
+        .preferredColorScheme(appearance.selected.colorScheme)
+        .environment(
+            \.dynamicTypeSize,
+            ProcessInfo.processInfo.arguments.contains("--theme-accessibility") ? .accessibility3 : .large)
     }
 }
 
@@ -114,6 +134,29 @@ private final class OfflineFixturePath: @unchecked Sendable {
 private final class OfflineFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static let failures = OfflineFixtureFailures()
     static let documentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+    static var markdown: String {
+        ProcessInfo.processInfo.arguments.contains("--theme-audit")
+            ? """
+            Make room for the work.
+
+            Schrift should feel calm, familiar, and built for reading and writing.
+
+            ## A clear hierarchy
+
+            Let the document lead. Keep controls close when needed and quiet while reading.
+
+            - [x] Use familiar controls
+            - [ ] Keep the page uncluttered
+
+            > Less interface. More document.
+
+            The writing surface fills the available width. Only the normal text inset remains.
+
+            Read the [project notes](https://docs.example.org/docs/notes/).
+            """
+            : "Cached readable body"
+    }
+
     static let page = Data(
         """
         {"count":1,"results":[{"id":"11111111-1111-4111-8111-111111111111","title":"Offline fixture",
@@ -132,19 +175,38 @@ private final class OfflineFixtureProtocol: URLProtocol, @unchecked Sendable {
                 client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
                 return
             }
+            body = try! JSONSerialization.data(withJSONObject: [
+                "id": "11111111-1111-4111-8111-111111111111", "title": "Offline fixture", "content": Self.markdown,
+                "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z",
+            ])
+        } else if path.contains("accesses") {
             body = Data(
                 """
-                {"id":"11111111-1111-4111-8111-111111111111","title":"Offline fixture","content":"Cached readable body",
-                 "created_at":"2026-01-15T10:30:00Z","updated_at":"2026-01-15T10:30:00Z"}
+                [{"id":"33333333-3333-4333-8333-333333333333",
+                  "user":{"id":"22222222-2222-4222-8222-222222222222","email":"camille@example.org",
+                          "full_name":"Camille Moreau","short_name":"Camille"},"role":"administrator"},
+                 {"id":"44444444-4444-4444-8444-444444444444",
+                  "user":{"id":"55555555-5555-4555-8555-555555555555","email":"alex@example.org",
+                          "full_name":"Alex Martin","short_name":"Alex"},"role":"editor"}]
                 """.utf8)
-        } else if path.contains("children") || path.contains("accesses") {
+        } else if path.contains("invitations") {
+            body = Data(
+                """
+                {"count":1,"results":[{"id":"66666666-6666-4666-8666-666666666666",
+                 "email":"new.member@example.org","role":"reader","is_expired":false}]}
+                """.utf8)
+        } else if path.contains("children") {
             body = Data("{\"count\":0,\"results\":[]}".utf8)
         } else if path.contains("versions") {
             body = Data(
                 "{\"versions\":[{\"version_id\":\"v1\",\"last_modified\":\"2026-01-15T10:30:00Z\",\"is_current\":true}]}"
                     .utf8)
         } else if path.contains("users/me") {
-            body = Data("{\"id\":\"22222222-2222-4222-8222-222222222222\"}".utf8)
+            body = Data(
+                """
+                {"id":"22222222-2222-4222-8222-222222222222", "email":"camille@example.org",
+                 "full_name":"Camille Moreau", "short_name":"Camille", "language":"en"}
+                """.utf8)
         } else if path.contains("config") {
             body = Data("{}".utf8)
         } else if path.contains("favorite_list") {

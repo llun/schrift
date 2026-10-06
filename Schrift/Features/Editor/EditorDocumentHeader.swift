@@ -137,6 +137,7 @@ extension View {
 /// `SaveStatusIndicator`. Both are floored to the same row height, so swapping
 /// one for the other cannot move anything below.
 struct EditorDocumentHeader<Status: View>: View {
+    @Environment(\.docsTheme) private var theme
     let title: String
     /// Non-nil draws the title as an editable field. Same font, tracking and
     /// colour either way — only the caret differs.
@@ -187,7 +188,7 @@ struct EditorDocumentHeader<Status: View>: View {
                 loc[.common_untitled], text: Binding(get: { title }, set: onEditTitle),
                 selection: $titleSelection, axis: .vertical
             )
-            .foregroundStyle(DocsColor.textPrimary)
+            .foregroundStyle(theme.colors.textPrimary)
             .focused($isTitleFocused)
             .task {
                 guard onConsumeInitialTitleFocus?() == true else { return }
@@ -202,7 +203,7 @@ struct EditorDocumentHeader<Status: View>: View {
             // has a title line while editing and none while reading, so the body
             // moves by a whole title's height on the swap.
             Text(title.isEmpty ? loc[.common_untitled] : title)
-                .foregroundStyle(title.isEmpty ? DocsColor.textTertiary : DocsColor.textPrimary)
+                .foregroundStyle(title.isEmpty ? theme.colors.textTertiary : theme.colors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
         }
     }

@@ -7,6 +7,13 @@ final class StringsCompletenessTests: XCTestCase {
     /// Dual/few plural forms that only Slovene resolves (see PluralRule). Every
     /// other language never reaches these keys, so its table legitimately omits
     /// them; `plural(_:one:other:two:few:)` falls back to `other`.
+    /// New UI copy lands in reviewed English first, per the localization convention.
+    /// Remove these entries as translation passes populate the remaining catalogs.
+    private static let englishOnlyKeys: Set<L10nKey> = [
+        .profile_theme, .theme_white, .theme_mist, .theme_paper,
+        .theme_white_description, .theme_mist_description, .theme_paper_description, .theme_footer,
+    ]
+
     private static let extendedPluralKeys: Set<L10nKey> = [
         .search_results_two, .search_results_few,
         .shared_count_two, .shared_count_few,
@@ -43,8 +50,24 @@ final class StringsCompletenessTests: XCTestCase {
         for language in AppLanguage.allCases {
             let table = Strings.table(for: language)
             for key in L10nKey.allCases where !Self.extendedPluralKeys.contains(key) {
+                if language != .english, Self.englishOnlyKeys.contains(key) { continue }
                 XCTAssertNotNil(table[key], "\(language.code) missing \(key.rawValue)")
                 XCTAssertFalse((table[key] ?? "").isEmpty, "\(language.code) empty \(key.rawValue)")
+            }
+        }
+    }
+
+    @MainActor
+    func testEnglishOnlyThemeCopyFallsBackForEveryLanguage() {
+        let suite = "StringsCompletenessTests.ThemeFallback"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = LocalizationStore(userDefaults: defaults)
+        for language in AppLanguage.allCases {
+            store.language = language
+            for key in Self.englishOnlyKeys {
+                XCTAssertEqual(store[key], Strings.table(for: language)[key] ?? Strings_en.table[key])
+                XCTAssertNotEqual(store[key], key.rawValue)
             }
         }
     }

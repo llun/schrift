@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SharedRow: View {
+    @Environment(\.docsTheme) private var theme
     let title: String
     let subtitle: String
     var memberNames: [String] = []
@@ -23,13 +24,13 @@ struct SharedRow: View {
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(title)
                         .font(DocsFont.body)
-                        .foregroundStyle(pendingDelete ? DocsColor.textTertiary : DocsColor.textPrimary)
+                        .foregroundStyle(pendingDelete ? theme.colors.textTertiary : theme.colors.textPrimary)
                         .strikethrough(pendingDelete)
                         .lineLimit(1)
 
                     Text(subtitle)
                         .font(DocsFont.footnote)
-                        .foregroundStyle(DocsColor.textTertiary)
+                        .foregroundStyle(theme.colors.textTertiary)
                         .lineLimit(1)
                 }
 
@@ -37,7 +38,7 @@ struct SharedRow: View {
 
                 if pendingDelete {
                     MaterialSymbol(.delete, size: 16)
-                        .foregroundStyle(DocsColor.gray350)
+                        .foregroundStyle(theme.colors.gray350)
                 } else if !memberNames.isEmpty {
                     AvatarGroup(names: memberNames, size: 28, max: 3)
                 }

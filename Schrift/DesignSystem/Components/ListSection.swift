@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ListSection<Content: View>: View {
+    @Environment(\.docsTheme) private var theme
     var header: String? = nil
     var footer: String? = nil
     let content: Content
@@ -14,28 +15,20 @@ struct ListSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             if let header {
-                Text(header.uppercased())
-                    .font(DocsFont.footnote)
-                    .docsTracking(DocsTypographySpec.footnote, DocsTracking.groupedHeader)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.gutter)
+                Text(header)
+                    .font(DocsFont.footnote.weight(.semibold))
+                    .foregroundStyle(theme.colors.textTertiary)
             }
 
             VStack(spacing: 0) {
                 content
             }
-            .background(DocsColor.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
-            .overlay(
-                RoundedRectangle(cornerRadius: DocsRadius.lg)
-                    .strokeBorder(DocsColor.borderDefault, lineWidth: 1)
-            )
+            .environment(\.docsRowGutter, 0)
 
             if let footer {
                 Text(footer)
                     .font(DocsFont.footnote)
-                    .foregroundStyle(DocsColor.textTertiary)
-                    .padding(.horizontal, DocsSpacing.gutter)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
         }
     }

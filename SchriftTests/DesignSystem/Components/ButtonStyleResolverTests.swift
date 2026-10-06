@@ -9,7 +9,7 @@ final class ButtonStyleResolverTests: XCTestCase {
             style,
             ButtonStyleHex(
                 backgroundLightHex: DocsColorHex.brandFill, backgroundDarkHex: DocsColorHexDark.brandFill,
-                foregroundLightHex: DocsColorHex.textOnBrand, foregroundDarkHex: DocsColorHexDark.textOnBrand,
+                foregroundLightHex: DocsColorHex.textOnFill, foregroundDarkHex: DocsColorHexDark.textOnFill,
                 borderLightHex: nil, borderDarkHex: nil))
     }
 
@@ -55,7 +55,7 @@ final class ButtonStyleResolverTests: XCTestCase {
             style,
             ButtonStyleHex(
                 backgroundLightHex: DocsColorHex.textPrimary, backgroundDarkHex: DocsColorHexDark.textPrimary,
-                foregroundLightHex: DocsColorHex.textOnBrand, foregroundDarkHex: DocsColorHexDark.textOnBrand,
+                foregroundLightHex: DocsColorHex.textOnFill, foregroundDarkHex: DocsColorHexDark.textOnFill,
                 borderLightHex: nil, borderDarkHex: nil))
     }
 }

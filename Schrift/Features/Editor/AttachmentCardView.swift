@@ -38,6 +38,7 @@ func attachmentCardState(loaderState: AttachmentLoadState?, isOffline: Bool) -> 
 /// origin-pinned request and the disk cache that makes the attachment readable
 /// offline. This view only asks, and renders what it is told.
 struct AttachmentCardView: View {
+    @Environment(\.docsTheme) private var theme
     let display: AttachmentDisplay
     /// Chrome only — it decides whether to *ask*, never whether a cached
     /// attachment opens. Defaulted because a card renders correctly without it;
@@ -153,7 +154,7 @@ struct AttachmentCardView: View {
                 // extension stays readable.
                 Text(title)
                     .font(DocsFont.body)
-                    .foregroundStyle(DocsColor.textPrimary)
+                    .foregroundStyle(theme.colors.textPrimary)
                     .lineLimit(2)
                     .truncationMode(.middle)
                 Text(subtitle)
@@ -161,13 +162,13 @@ struct AttachmentCardView: View {
                     // `danger`, matching SaveStatusIndicator's `.retry` — the
                     // app's established register for "this didn't work, tap to
                     // try again". The brand colour reads as an ordinary link.
-                    .foregroundStyle(isFailure ? DocsColor.danger : DocsColor.textTertiary)
+                    .foregroundStyle(isFailure ? theme.colors.danger : theme.colors.textTertiary)
             }
             Spacer(minLength: 0)
             switch accessory {
             case .chevron:
                 MaterialSymbol(.chevron_right, size: 20)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             case .progress:
                 ProgressView()
             case .none:
@@ -179,7 +180,7 @@ struct AttachmentCardView: View {
         // A row of text that must never clip as Dynamic Type grows, so a floor
         // rather than a fixed height.
         .frame(minHeight: DocsSpacing.rowMinHeight)
-        .background(DocsColor.surfaceSunken)
+        .background(theme.colors.surfaceSunken)
         .clipShape(RoundedRectangle(cornerRadius: DocsRadius.md))
         .contentShape(RoundedRectangle(cornerRadius: DocsRadius.md))
     }
@@ -201,7 +202,7 @@ struct AttachmentCardView: View {
                     .scaledToFill()
             } else {
                 MaterialSymbol(.description, size: attachmentThumbnailGlyphSide, scales: false)
-                    .foregroundStyle(DocsColor.textTertiary)
+                    .foregroundStyle(theme.colors.textTertiary)
             }
         }
         .frame(width: scaledThumbnailSide, height: scaledThumbnailSide)
@@ -288,6 +289,7 @@ private enum AttachmentThumbnailCache {
 /// `.offlineAndUncached` from an empty loader plus `isOffline`. `.downloading` is
 /// the transient between them and is pinned by `attachmentCardState`'s tests.
 private struct AttachmentCardCatalog: View {
+    @Environment(\.docsTheme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceSM) {
             if let pdf = Self.display(ext: "pdf", label: "Q3 report.pdf") {
