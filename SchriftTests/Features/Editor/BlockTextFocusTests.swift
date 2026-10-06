@@ -44,6 +44,11 @@ final class BlockTextFocusTests: XCTestCase {
         return view.subviews.lazy.compactMap { self.textView(in: $0) }.first
     }
 
+    private func textViews(in view: UIView) -> [EditorUITextView] {
+        if let text = view as? EditorUITextView { return [text] }
+        return view.subviews.flatMap { textViews(in: $0) }
+    }
+
     private func withDetachedRow(
         _ body: @MainActor (Fixture, UIHostingController<Probe>, EditorUITextView, UIWindow) async throws -> Void
     ) async throws {
@@ -193,6 +198,337 @@ final class BlockTextFocusTests: XCTestCase {
             XCTAssertEqual(vm.blocks.map(\.text), ["lead 😀", "Xtail"])
             XCTAssertEqual(vm.cursorRequest?.offset, 1)
             XCTAssertEqual(vm.currentMarkdown(), "lead 😀\n\nXtail\n")
+        }
+    }
+
+    func testMarkedCompositionImmediatelyAfterMidParagraphReturnUsesDestination() async throws {
+        try await withRow(text: "lead tail") { vm, _, text, _ in
+            let sourceID = vm.blocks[0].id
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            // No yield or destination render between Return and the native IME call.
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.id), [sourceID, targetID])
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に tail"])
+            XCTAssertEqual(vm.focusedBlockID, targetID)
+            XCTAssertEqual(vm.selection, NSRange(location: 1, length: 0))
+            text.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "日本 tail"])
+            text.unmarkText()
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "日本 tail"])
+            XCTAssertEqual(vm.currentMarkdown(), "lead\n\n日本 tail\n")
+        }
+    }
+
+    func testOrdinaryMarkedCompositionKeepsUIKitReplacementAndUTF16Selection() async throws {
+        try await withRow(text: "lead 😀tail") { vm, _, text, _ in
+            let id = vm.blocks[0].id
+            text.selectedRange = NSRange(location: 5, length: 2)
+            text.setMarkedText("に😀", selectedRange: NSRange(location: 1, length: 2))
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertEqual(text.text, "lead に😀tail")
+            XCTAssertEqual(text.selectedRange, NSRange(location: 6, length: 2))
+            text.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+            text.insertText("日本語")
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.id), [id])
+            XCTAssertEqual(vm.blocks[0].text, "lead 日本語tail")
+            XCTAssertEqual(text.selectedRange, NSRange(location: 8, length: 0))
+            let range = NSRange(location: 5, length: 3)
+            let allowed = text.delegate?.textView?(text, shouldChangeTextIn: range, replacementText: "Japanese") ?? true
+            if allowed {
+                text.text = (text.text as NSString).replacingCharacters(in: range, with: "Japanese")
+                text.delegate?.textViewDidChange?(text)
+            }
+            XCTAssertEqual(vm.blocks[0].text, "lead Japanesetail")
+        }
+    }
+
+    func testPendingCompositionCancelAndRapidReturnsKeepSuffixOnce() async throws {
+        try await withRow(text: "lead 😀tail") { vm, _, text, _ in
+            let sourceID = vm.blocks[0].id
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            text.setMarkedText("に😀", selectedRange: NSRange(location: 1, length: 2))
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に😀 😀tail"])
+            XCTAssertEqual(vm.selection, NSRange(location: 1, length: 2))
+            text.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+            text.unmarkText()
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", " 😀tail"])
+            self.type("\n", in: text)
+            let thirdID = try XCTUnwrap(vm.focusedBlockID)
+            text.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0))
+            text.insertText("仮名")
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.id), [sourceID, targetID, thirdID])
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "", "仮名 😀tail"])
+            self.type("\n", in: text)
+            text.deleteBackward()
+            self.type("X", in: text)
+            XCTAssertEqual(vm.blocks.map(\.id), [sourceID, targetID, thirdID])
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "", "仮名X 😀tail"])
+            XCTAssertEqual(vm.selection, NSRange(location: 3, length: 0))
+        }
+    }
+
+    func testDestinationAttachmentDoesNotCommitOrStealPendingComposition() async throws {
+        try await withRow(text: "lead tail", canvas: true) { vm, host, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            await waitUntil { self.textViews(in: host.view).count == 2 }
+            let retainedSource = try XCTUnwrap(self.textViews(in: host.view).first { $0 !== text })
+            let target = text
+            XCTAssertTrue(text.isFirstResponder)
+            XCTAssertFalse(retainedSource.isFirstResponder)
+            XCTAssertEqual(retainedSource.text, "lead")
+            XCTAssertEqual(target.text, "に tail")
+            XCTAssertNotNil(text.markedTextRange, "destination arrival must leave native composition active")
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に tail"])
+            text.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+            text.insertText("日本語")
+            await waitUntil { target.isFirstResponder }
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.focusedBlockID, targetID)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "日本語 tail"])
+            XCTAssertEqual(target.text, "日本語 tail")
+            XCTAssertEqual(target.selectedRange, NSRange(location: 3, length: 0))
+            XCTAssertEqual(vm.selection, NSRange(location: 3, length: 0))
+            self.type("X", in: target)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "日本語X tail"])
+        }
+    }
+
+    func testAttachedCompositionCancellationLeavesDestinationCaretReady() async throws {
+        try await withRow(text: "lead tail", canvas: true) { vm, host, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            await waitUntil { self.textViews(in: host.view).count == 2 }
+            XCTAssertTrue(text.isFirstResponder)
+            text.setMarkedText(nil, selectedRange: NSRange(location: 0, length: 0))
+            text.unmarkText()
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", " tail"])
+            XCTAssertEqual(vm.focusedBlockID, targetID)
+            XCTAssertEqual(vm.selection, NSRange(location: 0, length: 0))
+            self.type("X", in: text)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "X tail"])
+        }
+    }
+
+    func testPendingSameRowCompositionReplacesUTF16SelectionWithoutConsumingShortcut() async throws {
+        try await withRow(text: "[]teh😀") { vm, _, text, _ in
+            let id = vm.blocks[0].id
+            text.selectedRange = NSRange(location: 2, length: 0)
+            self.type(" ", in: text)
+            XCTAssertEqual(vm.blocks[0].kind, .checklistItem(checked: false))
+            // A same-row request can precede UIKit applying the new source coordinates.
+            vm.cursorRequest = .init(blockID: id, offset: 3, length: 2)
+            text.setMarkedText("に😀", selectedRange: NSRange(location: 1, length: 2))
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.text), ["tehに😀"])
+            XCTAssertEqual(vm.selection, NSRange(location: 4, length: 2))
+            text.insertText("日本語")
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(vm.blocks.map(\.id), [id])
+            XCTAssertEqual(vm.blocks.map(\.text), ["teh日本語"])
+            XCTAssertEqual(vm.selection, NSRange(location: 6, length: 0))
+            XCTAssertEqual(text.selectedRange, NSRange(location: 6, length: 0))
+        }
+    }
+
+    func testRapidPendingRowsKeepNativeCompositionBeyondOriginalViewport() async throws {
+        try await withRow(text: "lead tail", canvas: true) { vm, host, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            for _ in 0..<24 {
+                self.type("row", in: text)
+                self.type("\n", in: text)
+            }
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            XCTAssertEqual(vm.blocks.first?.text, "lead")
+            XCTAssertEqual(vm.blocks.last?.text, "に tail")
+            // Force body/layout reconciliation, including lazy realization/scroll work.
+            _ = host.sizeThatFits(in: CGSize(width: 370, height: 600))
+            host.view.layoutIfNeeded()
+            await waitUntil {
+                guard let coordinator = text.delegate as? BlockTextView.Coordinator else { return false }
+                return coordinator.parent.blockID == targetID && coordinator.handoffBlockID == nil
+            }
+            XCTAssertTrue(self.textViews(in: host.view).contains { $0 === text })
+            await waitUntil { host.view.bounds.intersects(text.convert(text.bounds, to: host.view)) }
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertTrue(text.isFirstResponder)
+            text.insertText("日本語")
+            XCTAssertEqual(vm.focusedBlockID, targetID)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead"] + Array(repeating: "row", count: 24) + ["日本語 tail"])
+            XCTAssertEqual(Set(vm.blocks.map { vm.inputRowID(for: $0.id) }).count, vm.blocks.count)
+        }
+    }
+
+    func testCompositionCommitAfterExplicitFocusCancellationDoesNotRestoreFocus() async throws {
+        try await withRow(text: "lead tail") { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            vm.focusedBlockID = nil
+            vm.cursorRequest = nil
+            vm.selection = nil
+            text.unmarkText()
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に tail"])
+            XCTAssertNil(vm.focusedBlockID)
+            XCTAssertNil(vm.cursorRequest)
+            XCTAssertNil(vm.selection)
+            XCTAssertFalse(text.isFirstResponder)
+        }
+    }
+
+    func testPendingMergeCompositionUsesRetainedBlockAndNativeInputIdentity() async throws {
+        try await withRow(text: "lead tail", canvas: true) { vm, host, text, _ in
+            let sourceID = vm.blocks[0].id
+            let inputRowID = vm.inputRowID(for: sourceID)
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            await waitUntil { self.textViews(in: host.view).count == 2 && text.text == " tail" }
+            text.deleteBackward()
+            XCTAssertEqual(vm.blocks.map(\.id), [sourceID])
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            await waitUntil {
+                (text.delegate as? BlockTextView.Coordinator)?.parent.blockID == sourceID
+                    && self.textView(in: host.view) === text
+            }
+            XCTAssertTrue(self.textView(in: host.view) === text)
+            XCTAssertEqual(vm.focusedBlockID, sourceID)
+            XCTAssertEqual((text.delegate as? BlockTextView.Coordinator)?.parent.blockID, sourceID)
+            XCTAssertTrue(text.isFirstResponder)
+            XCTAssertNotNil(text.markedTextRange)
+            XCTAssertTrue(self.textViews(in: host.view).filter { $0 !== text }.allSatisfy { !$0.isFirstResponder })
+            XCTAssertEqual(vm.inputRowID(for: sourceID), inputRowID)
+            text.unmarkText()
+            XCTAssertEqual(vm.blocks.map(\.text), ["leadに tail"])
+            XCTAssertEqual(vm.selection, NSRange(location: 5, length: 0))
+        }
+    }
+
+    func testDividerShortcutAndHeadingSplitKeepNativeCompositionInParagraph() async throws {
+        for source in ["---", "Heading tail"] {
+            try await withRow(text: source, canvas: true) { vm, host, text, _ in
+                if source != "---" { vm.blocks[0].kind = .heading(level: 1) }
+                let offset = source == "---" ? 3 : 7
+                text.selectedRange = NSRange(location: offset, length: 0)
+                self.type("\n", in: text)
+                let targetID = try XCTUnwrap(vm.focusedBlockID)
+                text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+                await waitUntil {
+                    guard let coordinator = text.delegate as? BlockTextView.Coordinator else { return false }
+                    return coordinator.parent.blockID == targetID && coordinator.handoffBlockID == nil
+                }
+                XCTAssertTrue(self.textViews(in: host.view).contains { $0 === text })
+                XCTAssertTrue(text.isFirstResponder)
+                XCTAssertNotNil(text.markedTextRange)
+                XCTAssertEqual(vm.blocks[1].kind, .paragraph)
+                XCTAssertEqual(text.font?.pointSize, blockTextStyling(for: vm.blocks[1]).font.pointSize)
+                text.insertText("日本語")
+                XCTAssertEqual(vm.blocks.map(\.text), source == "---" ? ["", "日本語"] : ["Heading", "日本語 tail"])
+                XCTAssertEqual(vm.selection, NSRange(location: 3, length: 0))
+            }
+        }
+    }
+
+    func testInputRowIdentityRemainsUniqueWhenRemovedStableIDReturns() async throws {
+        try await withRow(text: "lead tail") { vm, _, text, _ in
+            let original = vm.blocks[0]
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let target = vm.blocks[1]
+            vm.blocks.removeFirst()
+            // A remote update can reintroduce the original stable model identity.
+            vm.blocks.insert(original, at: 0)
+            vm.focusedBlockID = target.id
+            vm.cursorRequest = .init(blockID: target.id, offset: 0)
+            self.type("\n", in: text)
+            XCTAssertEqual(Set(vm.blocks.map { vm.inputRowID(for: $0.id) }).count, vm.blocks.count)
+            XCTAssertNotEqual(vm.inputRowID(for: original.id), vm.inputRowID(for: target.id))
+        }
+    }
+
+    func testCommittedCompositionBeforeRowReconciliationKeepsDestinationCorrections() async throws {
+        try await withRow(text: "lead tail") { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            text.insertText("日本語")
+            XCTAssertNil(text.markedTextRange)
+            XCTAssertEqual(text.text, "日本語 tail")
+            let correction = NSRange(location: 0, length: 3)
+            let allowed =
+                text.delegate?.textView?(text, shouldChangeTextIn: correction, replacementText: "Japanese") ?? true
+            if allowed {
+                text.text = (text.text as NSString).replacingCharacters(in: correction, with: "Japanese")
+                text.delegate?.textViewDidChange?(text)
+            }
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "Japanese tail"])
+            XCTAssertEqual(text.text, "Japanese tail")
+            text.selectedRange = NSRange(location: 8, length: 0)
+            text.delegate?.textViewDidChangeSelection?(text)
+            self.type("\n", in: text)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            text.unmarkText()
+            XCTAssertEqual(vm.blocks.first?.text, "lead")
+            XCTAssertEqual(vm.blocks.last?.text, "に tail")
+        }
+    }
+
+    func testUnchangedCompositionCommitProcessesMarkdownShortcutAndSlashQuery() async throws {
+        for input in ["- ", "# ", "/table"] {
+            try await withRow(text: "lead") { vm, _, text, _ in
+                text.selectedRange = NSRange(location: 4, length: 0)
+                self.type("\n", in: text)
+                text.setMarkedText(input, selectedRange: NSRange(location: (input as NSString).length, length: 0))
+                XCTAssertNotNil(text.markedTextRange)
+                XCTAssertEqual(vm.blocks[1].kind, .paragraph, "marked input is not shortcut syntax yet")
+                text.unmarkText()
+                XCTAssertNil(text.markedTextRange)
+                if input == "/table" {
+                    XCTAssertEqual(vm.slashQueryText, "table")
+                    XCTAssertEqual(vm.blocks[1].text, input)
+                } else {
+                    XCTAssertEqual(vm.blocks[1].kind, input == "- " ? .bulletItem : .heading(level: 1))
+                    XCTAssertEqual(vm.blocks[1].text, "")
+                    XCTAssertEqual(vm.selection, NSRange(location: 0, length: 0))
+                }
+            }
+        }
+    }
+
+    func testNativeResignationDuringCompositionPreservesCommitAndClearsFocus() async throws {
+        try await withRow(text: "lead tail", canvas: true) { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            await waitUntil {
+                guard let coordinator = text.delegate as? BlockTextView.Coordinator else { return false }
+                return coordinator.parent.blockID == targetID && coordinator.handoffBlockID == nil
+            }
+            text.resignFirstResponder()
+            XCTAssertFalse(text.isFirstResponder)
+            XCTAssertNil(vm.focusedBlockID)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に tail"])
+            text.unmarkText()
+            XCTAssertNil(vm.focusedBlockID)
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に tail"])
         }
     }
 
@@ -467,6 +803,7 @@ final class BlockTextFocusTests: XCTestCase {
 
     private func withRow(
         text source: String,
+        canvas: Bool = false,
         _ body:
             @MainActor (EditorViewModel, UIHostingController<AnyView>, EditorUITextView, BlockEditorRow) async throws ->
             Void
@@ -499,7 +836,17 @@ final class BlockTextFocusTests: XCTestCase {
         let window = UIWindow(windowScene: scene)
         let row = BlockEditorRow(
             viewModel: vm, block: queuedBlock, index: 0, serverOrigin: "https://docs.example.org", isOffline: true)
-        let host = UIHostingController(rootView: AnyView(row.environment(LocalizationStore(userDefaults: defaults))))
+        let root: AnyView
+        if canvas {
+            root = AnyView(
+                BlockEditorView(
+                    viewModel: vm, serverOrigin: "https://docs.example.org", isOffline: true,
+                    scrollAnchor: EditorScrollAnchorStore(), header: { EmptyView() }
+                ).environment(LocalizationStore(userDefaults: defaults)))
+        } else {
+            root = AnyView(row.environment(LocalizationStore(userDefaults: defaults)))
+        }
+        let host = UIHostingController(rootView: root)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer {

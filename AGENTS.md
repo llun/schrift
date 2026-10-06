@@ -3229,6 +3229,23 @@ markdown write endpoint**. Understand this before touching the save path:
   reconciliation: Observation notifies before the write finishes. Reconcile
   after the outermost publication, never consuming a token against old text. `BlockTextFocusTests` covers these races,
   cancellation, repeated Return/backspace, identity, Unicode, and caret retention.
+- **Marked input after a row transition belongs to the destination.** Keep model
+  block IDs stable. The canvas uses session-local input row IDs so a split or
+  merge can give the destination the existing native keyboard view; the retained
+  source receives a separate row. Stored scroll anchors and recorded frames still
+  name model block IDs; the editing canvas resolves them to direct input-row scroll
+  targets so lazy rows remain reachable without replacing the native text view.
+  Before native `setMarkedText`, prepare the pending destination's buffer, styling,
+  and UTF-16 selection, then bind all callbacks to that destination until SwiftUI
+  adopts it. Keep this binding through commit and immediate corrections; restoring
+  the source buffer on commit corrupts subsequent correction coordinates. Never
+  replace marked characters, attributes, or selection during model reconciliation.
+  Process shortcuts and slash queries on commit even when the committed characters
+  equal the provisional model text. Retired input row IDs stay reserved until a
+  content install, and stale row callbacks/focus requests cannot reclaim them.
+  Native regression tests must include commit, cancel, unchanged commits, ranged
+  corrections after commit, same-row pending carets, and real canvas reconciliation
+  with the same native view, marked range, and first responder.
 - **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
   block's source into visible `spans` (styled) and hidden `syntax` (the
   complement of the spans, so the two cannot drift), plus its `links`.

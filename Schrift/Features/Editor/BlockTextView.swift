@@ -122,6 +122,36 @@ func baseTextAttributes(for styling: BlockTextStyling) -> [NSAttributedString.Ke
 /// `@MainActor`-isolated, but every call reaches us on the main thread during
 /// layout of a main-actor view.
 final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegate {
+    var onWillCompose: (@MainActor (EditorUITextView, Bool) -> Void)?
+    var onDidCompose: (@MainActor (EditorUITextView) -> Void)?
+    var hasCompositionHandoff: (@MainActor () -> Bool)?
+    private(set) var isChangingWindowAttachment = false
+
+    override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        onWillCompose?(self, true)
+        super.setMarkedText(markedText, selectedRange: selectedRange)
+        onDidCompose?(self)
+    }
+
+    override func unmarkText() {
+        onWillCompose?(self, false)
+        super.unmarkText()
+        onDidCompose?(self)
+    }
+
+    override func insertText(_ text: String) {
+        let composing = markedTextRange != nil || hasCompositionHandoff?() == true
+        if composing { onWillCompose?(self, false) }
+        super.insertText(text)
+        if composing { onDidCompose?(self) }
+    }
+
+    override func replace(_ range: UITextRange, withText text: String) {
+        let composing = markedTextRange != nil || hasCompositionHandoff?() == true
+        if composing { onWillCompose?(self, false) }
+        super.replace(range, withText: text)
+        if composing { onDidCompose?(self) }
+    }
     /// Invoked when backspace is pressed with the caret at the very start and
     /// nothing selected. Returning true swallows the key.
     var onDeleteAtStart: (@MainActor () -> Bool)?
@@ -162,8 +192,14 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         return view
     }
 
+    override func willMove(toWindow newWindow: UIWindow?) {
+        isChangingWindowAttachment = newWindow !== window
+        super.willMove(toWindow: newWindow)
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        isChangingWindowAttachment = window == nil
         if window != nil { onWindowAttached?(self) }
     }
 
@@ -244,6 +280,12 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     // MARK: - Caret rules
 
     override func deleteBackward() {
+        if markedTextRange != nil {
+            onWillCompose?(self, false)
+            super.deleteBackward()
+            onDidCompose?(self)
+            return
+        }
         if markedTextRange == nil, onPendingDeleteBackward?() == true { return }
         // Never delete a character the user cannot see: skipping the hidden run
         // first turns "backspace past a link" into "delete the label's last
@@ -311,6 +353,11 @@ extension EditorUITextView: UIGestureRecognizerDelegate {
 /// reporting, model-driven focus and caret placement, and inline markdown
 /// rendered as rich text over its own markdown source.
 struct BlockTextView: UIViewRepresentable {
+    var blockID: UUID? = nil
+    var resolveInputTarget: (UUID) -> BlockTextView? = { _ in nil }
+    var pendingComposition: (UUID?) -> EditorViewModel.PendingComposition? = { _ in nil }
+    var compositionStyling: (EditorBlock) -> BlockTextStyling = { blockTextStyling(for: $0) }
+    var onCompositionChange: (UUID, String, NSRange, Bool) -> Void = { _, _, _, _ in }
     /// Resolve at UIKit update time: SwiftUI can cache a Binding's read value
     /// before a newer keyboard delegate event reaches the model.
     var text: () -> String
@@ -336,6 +383,15 @@ struct BlockTextView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> EditorUITextView {
         let view = EditorUITextView.textKit1()
+        view.onWillCompose = { [weak coordinator = context.coordinator] view, preparesHandoff in
+            coordinator?.willCompose(in: view, preparesHandoff: preparesHandoff)
+        }
+        view.onDidCompose = { [weak coordinator = context.coordinator] view in
+            coordinator?.didCompose(in: view)
+        }
+        view.hasCompositionHandoff = { [weak coordinator = context.coordinator] in
+            coordinator?.compositionBlockID != nil
+        }
         view.delegate = context.coordinator
         view.isScrollEnabled = false
         // The document scrolls as a whole. Inner row edge effects can obscure
@@ -370,14 +426,34 @@ struct BlockTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: EditorUITextView, context: Context) {
-        context.coordinator.parent = self
-        reconcile(uiView, coordinator: context.coordinator)
+        let current: BlockTextView
+        if let target = context.coordinator.handoffBlockID, target != blockID,
+            let resolved = resolveInputTarget(target)
+        {
+            current = resolved
+        } else {
+            current = self
+            context.coordinator.handoffBlockID = nil
+        }
+        if context.coordinator.parent.blockID != current.blockID {
+            context.coordinator.resetSourceState()
+        }
+        context.coordinator.parent = current
+        current.reconcile(uiView, coordinator: context.coordinator)
     }
 
     fileprivate func reconcile(_ uiView: EditorUITextView, coordinator: Coordinator) {
         // Observation can reenter before a delegate's model write finishes.
         // Keep text and its cursor token together until that publication ends.
         guard coordinator.textChangeDepth == 0 else { return }
+        guard coordinator.nativeCompositionDepth == 0 else { return }
+        // UIKit owns the characters, marked attributes, and selection until commit.
+        if uiView.markedTextRange != nil {
+            // A reused row can attach before its coordinator receives the new
+            // identity. Retry current focus without touching UIKit's marked range.
+            syncFocus(on: uiView, coordinator: coordinator)
+            return
+        }
 
         var needsRestyle = false
         let currentText = text()
@@ -408,7 +484,8 @@ struct BlockTextView: UIViewRepresentable {
         return CGSize(width: width, height: fitted.height)
     }
 
-    private func applyStyling(to view: EditorUITextView) {
+    private func applyStyling(to view: EditorUITextView, using override: BlockTextStyling? = nil) {
+        let styling = override ?? styling
         view.font = styling.font
         view.textColor = styling.textColor
         view.typingAttributes = baseTextAttributes(for: styling)
@@ -480,12 +557,50 @@ struct BlockTextView: UIViewRepresentable {
         var isApplyingModelChange = false
         var textChangeDepth = 0
         var hasUnreconciledSourceReplacement = false
+        var nativeCompositionDepth = 0
+        var compositionBlockID: UUID?
+        var handoffBlockID: UUID?
         private var editMenuInteraction: UIEditMenuInteraction?
         private var menuSpan: InlineLinkSpan?
 
         init(_ parent: BlockTextView) {
             self.parent = parent
             self.appliedStyling = parent.styling
+        }
+
+        func resetSourceState() {
+            hasUnreconciledSourceReplacement = false
+            menuSpan = nil
+        }
+
+        func willCompose(in view: EditorUITextView, preparesHandoff: Bool) {
+            nativeCompositionDepth += 1
+            guard preparesHandoff, nativeCompositionDepth == 1, compositionBlockID == nil, view.markedTextRange == nil,
+                let pending = parent.pendingComposition(consumedCursorToken)
+            else { return }
+            compositionBlockID = pending.block.id
+            if let target = parent.resolveInputTarget(pending.block.id) {
+                handoffBlockID = pending.block.id
+                parent = target
+            }
+            resetSourceState()
+            isApplyingModelChange = true
+            view.text = pending.block.text
+            let styling = parent.compositionStyling(pending.block)
+            parent.applyStyling(to: view, using: styling)
+            view.applyInlineStyling(styling)
+            appliedStyling = styling
+            view.selectedRange = pending.selection
+            isApplyingModelChange = false
+        }
+
+        func didCompose(in view: EditorUITextView) {
+            nativeCompositionDepth -= 1
+            guard nativeCompositionDepth == 0 else { return }
+            textViewDidChange(view)
+            if view.markedTextRange == nil { compositionBlockID = nil }
+            textViewDidChangeSelection(view)
+            parent.reconcile(view, coordinator: self)
         }
 
         func handleDeleteAtStart() -> Bool {
@@ -537,6 +652,7 @@ struct BlockTextView: UIViewRepresentable {
         // MARK: UITextViewDelegate
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            if nativeCompositionDepth > 0 || compositionBlockID != nil { return true }
             // A correction names a range in the source row; it is not a key
             // typed at the pending destination. Composing input stays in UIKit.
             if textView.markedTextRange == nil, range == textView.selectedRange,
@@ -586,7 +702,7 @@ struct BlockTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            guard !isApplyingModelChange else { return }
+            guard !isApplyingModelChange, nativeCompositionDepth == 0 else { return }
             textChangeDepth += 1
             defer {
                 textChangeDepth -= 1
@@ -597,7 +713,12 @@ struct BlockTextView: UIViewRepresentable {
             // Attribute edits/layout can reenter UIKit and deliver a queued row
             // update. Publish this captured buffer before that update can read
             // the previous model value and overwrite the latest keystroke.
-            parent.onEvent(.textChanged(textView.text ?? ""))
+            if let target = compositionBlockID {
+                parent.onCompositionChange(
+                    target, textView.text ?? "", textView.selectedRange, textView.markedTextRange != nil)
+            } else {
+                parent.onEvent(.textChanged(textView.text ?? ""))
+            }
             // Only blocks that render inline markdown need a per-keystroke
             // restyle. Code and `.unknown` blocks style nothing and hide nothing,
             // yet they are the only ones that grow unbounded (`allowsNewlines`),
@@ -616,7 +737,12 @@ struct BlockTextView: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
-            guard !isApplyingModelChange else { return }
+            guard !isApplyingModelChange, nativeCompositionDepth == 0 else { return }
+            if let target = compositionBlockID {
+                parent.onCompositionChange(
+                    target, textView.text ?? "", textView.selectedRange, textView.markedTextRange != nil)
+                return
+            }
             guard !parent.hasPendingSelection(consumedCursorToken) else { return }
             guard let editor = textView as? EditorUITextView else { return }
             // Re-entrant by design: assigning `selectedRange` fires this again,
@@ -636,6 +762,13 @@ struct BlockTextView: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             guard !isApplyingModelChange else { return }
+            // A structural row move can end the outgoing native attachment
+            // before its pending focus/caret request reaches the reused view.
+            if let editor = textView as? EditorUITextView, editor.isChangingWindowAttachment,
+                parent.hasPendingFocusTarget()
+            {
+                return
+            }
             parent.onEvent(.endedEditing)
         }
     }
