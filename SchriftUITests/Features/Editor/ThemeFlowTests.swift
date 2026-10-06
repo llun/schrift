@@ -70,6 +70,55 @@ final class ThemeFlowTests: XCTestCase {
         }
     }
 
+    /// Reads one pixel of a screenshot as 8-bit RGB, addressed in points.
+    private func rgb(_ screenshot: XCUIScreenshot, x: CGFloat, y: CGFloat) throws -> [Int] {
+        let image = screenshot.image
+        let cgImage = try XCTUnwrap(image.cgImage)
+        let scale = CGFloat(cgImage.width) / image.size.width
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(
+            CGContext(
+                data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(
+            cgImage,
+            in: CGRect(
+                x: -x * scale, y: -(CGFloat(cgImage.height) - 1 - y * scale), width: CGFloat(cgImage.width),
+                height: CGFloat(cgImage.height)))
+        return pixel.prefix(3).map(Int.init)
+    }
+
+    /// The strip behind the status bar must be the detail canvas, not the system
+    /// background. White's light page colour is white, which hid the split view's
+    /// container showing the system colour there until the paired themes existed.
+    /// The canvas is sampled low in the detail column, below any fixture content.
+    private func assertTopSafeAreaMatchesDetailCanvas(_ app: XCUIApplication, _ name: String) throws {
+        let screenshot = app.screenshot()
+        let width = screenshot.image.size.width
+        let strip = try rgb(screenshot, x: width * 0.75, y: 2)
+        let canvas = try rgb(screenshot, x: width * 0.75, y: screenshot.image.size.height * 0.88)
+        let delta = zip(strip, canvas).map { abs($0 - $1) }.max() ?? 0
+        XCTAssertLessThanOrEqual(delta, 3, "\(name): status strip \(strip) differs from the canvas \(canvas)")
+    }
+
+    func testRegularWidthStatusStripFollowsTheTheme() throws {
+        // White's dark page (#16161C) differs from the system black too.
+        for theme in ["white", "mist", "paper"] {
+            for dark in [false, true] {
+                let name = "\(theme)-\(dark ? "dark" : "light")"
+                let app = launch(theme: theme, dark: dark)
+                guard app.windows.firstMatch.frame.width >= 700 else {
+                    app.terminate()
+                    throw XCTSkip("The split view's container chrome only exists at regular width.")
+                }
+                try assertTopSafeAreaMatchesDetailCanvas(app, "\(name)-home")
+                openDocument(app)
+                try assertTopSafeAreaMatchesDetailCanvas(app, "\(name)-reading")
+                app.terminate()
+            }
+        }
+    }
+
     func testNativeWhiteScreensAcrossPairedAppearances() { verifyNativeThemeCatalog(theme: "white") }
     func testNativeMistScreensAcrossPairedAppearances() { verifyNativeThemeCatalog(theme: "mist") }
     func testNativePaperScreensAcrossPairedAppearances() { verifyNativeThemeCatalog(theme: "paper") }

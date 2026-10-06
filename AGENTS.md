@@ -916,7 +916,15 @@ new code reads like the surrounding code.
   Never remap raw hex numbers globally (page and on-brand can both be white), use a
   mutable global palette, or reset identity with `.id(theme)`. The UIKit editor row
   passes its theme into the shared block/inline resolvers and `BlockTextStyling`,
-  restyling in place without dirty/save/content/selection changes. Identity avatar
+  restyling in place without dirty/save/content/selection changes. A theme change
+  that lands while UIKit owns marked (IME) text repaints only after commit:
+  `reconcile` returns before the styling comparison, and #159's composition
+  handoff styling must carry the row's theme too. Container chrome White's light
+  page hid is easy to miss: `HomeSplitView` paints `surfacePage` behind the whole
+  `NavigationSplitView`, or the status-bar strip and the margin around the
+  floating sidebar show the system white/black (`ThemeFlowTests
+  .testRegularWidthStatusStripFollowsTheTheme`; CI's iPhone skips it, so run it
+  locally on an iPad). Identity avatar
   colors and white media overlays keep their independent roles. `textOnFill` is
   the contrasting solid-control ink; do not substitute `textOnBrand` in dark fills.
   Any Profile/Theme-picker preview also injects `ThemeStore`; ordinary palette

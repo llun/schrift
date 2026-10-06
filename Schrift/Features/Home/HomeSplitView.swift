@@ -72,6 +72,10 @@ struct HomeSplitView: View {
                 .background(theme.colors.surfacePage)
             }
         }
+        // The split view's own container shows through behind the status bar
+        // and around the floating sidebar. Left alone it is the system
+        // background, which matched only White's light page colour.
+        .background(theme.colors.surfacePage.ignoresSafeArea())
     }
 }
 
