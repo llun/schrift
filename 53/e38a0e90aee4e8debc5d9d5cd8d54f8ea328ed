@@ -1,0 +1,26 @@
+SchriftUITests/Features/Editor/ThemeFlowTests.swift
+  s_bb30fd4ade6199::t_401d9561048f40 73-112
+  s_bb30fd4ade6199::t_f2215f50d9dde8 113-116
+AGENTS.md
+  s_bb30fd4ade6199::t_55c88e0f4fbeec 919-926
+Schrift/Features/Home/HomeSplitView.swift
+  s_bb30fd4ade6199::t_a93826cb05365d 75-78
+docs/design-system.md
+  s_bb30fd4ade6199::t_c0dd98959bf72c 40-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53e38a0e90aee4e8debc5d9d5cd8d54f8ea328ed",
+  "prompts": {},
+  "sessions": {
+    "s_bb30fd4ade6199": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "425ef736-e391-437f-9db9-feae38472f37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
