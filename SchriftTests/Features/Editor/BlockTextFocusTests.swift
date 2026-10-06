@@ -224,6 +224,37 @@ final class BlockTextFocusTests: XCTestCase {
         }
     }
 
+    func testCompositionHandoffPaintsTheDestinationInTheActiveTheme() async throws {
+        // Without the canvas the source row restyles itself; with it, the
+        // destination row's own closure takes over the native view.
+        for canvas in [false, true] {
+            try await assertCompositionHandoffUsesPaper(canvas: canvas)
+        }
+    }
+
+    private func assertCompositionHandoffUsesPaper(canvas: Bool) async throws {
+        try await withRow(text: "lead tail", canvas: canvas, theme: .paper) { vm, _, text, _ in
+            text.selectedRange = NSRange(location: 4, length: 0)
+            self.type("\n", in: text)
+            let targetID = try XCTUnwrap(vm.focusedBlockID)
+            // The handoff restyles the native view before SwiftUI adopts the
+            // destination row, so it must use the theme the row would.
+            text.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+            XCTAssertNotNil(text.markedTextRange)
+            let target = try XCTUnwrap(vm.blocks.first { $0.id == targetID })
+            let expected = blockTextStyling(for: target, theme: .paper)
+            let traits = text.traitCollection
+            XCTAssertEqual(
+                text.textColor?.resolvedColor(with: traits), expected.textColor.resolvedColor(with: traits))
+            XCTAssertEqual(text.tintColor.resolvedColor(with: traits), expected.tintColor.resolvedColor(with: traits))
+            XCTAssertNotEqual(
+                text.tintColor.resolvedColor(with: traits),
+                blockTextStyling(for: target, theme: .white).tintColor.resolvedColor(with: traits))
+            text.unmarkText()
+            XCTAssertEqual(vm.blocks.map(\.text), ["lead", "に tail"])
+        }
+    }
+
     func testOrdinaryMarkedCompositionKeepsUIKitReplacementAndUTF16Selection() async throws {
         try await withRow(text: "lead 😀tail") { vm, _, text, _ in
             let id = vm.blocks[0].id
@@ -804,6 +835,7 @@ final class BlockTextFocusTests: XCTestCase {
     private func withRow(
         text source: String,
         canvas: Bool = false,
+        theme: AppTheme = .white,
         _ body:
             @MainActor (EditorViewModel, UIHostingController<AnyView>, EditorUITextView, BlockEditorRow) async throws ->
             Void
@@ -842,9 +874,12 @@ final class BlockTextFocusTests: XCTestCase {
                 BlockEditorView(
                     viewModel: vm, serverOrigin: "https://docs.example.org", isOffline: true,
                     scrollAnchor: EditorScrollAnchorStore(), header: { EmptyView() }
-                ).environment(LocalizationStore(userDefaults: defaults)))
+                )
+                .environment(LocalizationStore(userDefaults: defaults))
+                .environment(\.docsTheme, theme))
         } else {
-            root = AnyView(row.environment(LocalizationStore(userDefaults: defaults)))
+            root = AnyView(
+                row.environment(LocalizationStore(userDefaults: defaults)).environment(\.docsTheme, theme))
         }
         let host = UIHostingController(rootView: root)
         window.rootViewController = host

@@ -257,7 +257,7 @@ struct BlockEditorRow: View {
             pendingComposition: { token in
                 viewModel.pendingComposition(from: block.id, consumedCursorToken: token)
             },
-            compositionStyling: { blockTextStyling(for: $0, dynamicTypeSize: dynamicTypeSize) },
+            compositionStyling: { blockTextStyling(for: $0, dynamicTypeSize: dynamicTypeSize, theme: theme) },
             onCompositionChange: { targetID, text, selection, isMarked in
                 viewModel.updateComposition(blockID: targetID, text: text, selection: selection, isMarked: isMarked)
             },
