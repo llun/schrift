@@ -255,6 +255,37 @@ final class BlockTextFocusTests: XCTestCase {
         }
     }
 
+    func testThemeChangeDuringCompositionWaitsForCommitAndKeepsMarkedText() async throws {
+        try await withRow(text: "lead tail") { vm, host, text, row in
+            let id = vm.blocks[0].id
+            text.selectedRange = NSRange(location: 4, length: 0)
+            text.setMarkedText("にほ", selectedRange: NSRange(location: 2, length: 0))
+            let markedRange = try XCTUnwrap(text.markedTextRange)
+            let selection = text.selectedRange
+            let traits = text.traitCollection
+            let white = blockTextStyling(for: vm.blocks[0], theme: .white)
+            let paper = blockTextStyling(for: vm.blocks[0], theme: .paper)
+            // A system appearance or theme switch re-renders the row while UIKit
+            // still owns the marked characters.
+            host.rootView = AnyView(
+                row.environment(LocalizationStore()).environment(\.docsTheme, .paper))
+            _ = host.sizeThatFits(in: CGSize(width: 370, height: 200))
+            await waitAndConfirmNever { text.markedTextRange == nil || text.text != "leadにほ tail" }
+            XCTAssertEqual(text.markedTextRange, markedRange)
+            XCTAssertEqual(text.selectedRange, selection)
+            XCTAssertEqual(text.textColor?.resolvedColor(with: traits), white.textColor.resolvedColor(with: traits))
+            text.unmarkText()
+            _ = host.sizeThatFits(in: CGSize(width: 370, height: 200))
+            await waitUntil {
+                text.textColor?.resolvedColor(with: traits) == paper.textColor.resolvedColor(with: traits)
+            }
+            XCTAssertEqual(text.tintColor.resolvedColor(with: traits), paper.tintColor.resolvedColor(with: traits))
+            XCTAssertEqual(vm.blocks.map(\.id), [id])
+            XCTAssertEqual(vm.blocks[0].text, "leadにほ tail")
+            XCTAssertEqual(text.selectedRange, NSRange(location: 6, length: 0))
+        }
+    }
+
     func testOrdinaryMarkedCompositionKeepsUIKitReplacementAndUTF16Selection() async throws {
         try await withRow(text: "lead 😀tail") { vm, _, text, _ in
             let id = vm.blocks[0].id
