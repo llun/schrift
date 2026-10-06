@@ -1,0 +1,21 @@
+SchriftTests/Features/Editor/BlockTextFocusTests.swift
+  s_bb30fd4ade6199::t_67469808303bb5 227-257,838,877-879,881-882
+Schrift/Features/Editor/BlockEditorView.swift
+  s_bb30fd4ade6199::t_58bd9bec41cc67 260
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf9f4a5538d0eba8a9e08692cc1d6b83a14ecdcc",
+  "prompts": {},
+  "sessions": {
+    "s_bb30fd4ade6199": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "425ef736-e391-437f-9db9-feae38472f37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
