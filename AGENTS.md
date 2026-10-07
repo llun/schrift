@@ -1536,8 +1536,8 @@ that are easy to violate and expensive to discover:
 
 - **Hide completed is a reading presentation preference, off by default and local
   to the editor session.** `ChecklistReadingPresentation` derives visible rows,
-  hidden count and original source indices from the current full `blocks`; a hidden
-  item takes the image/attachment leaves directly after it with it (up to the first
+  hidden count and original source indices from the current full `blocks`; the
+  image/attachment leaves directly after a hidden item are hidden along with it (up to the first
   non-media block; a queued-photo placeholder always stays visible), while the count
   stays items-only; never
   replace the model array or feed that projection to the serializer, save coordinator
