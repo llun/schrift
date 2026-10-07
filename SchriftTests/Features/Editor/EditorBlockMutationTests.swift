@@ -229,6 +229,16 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
     }
 
+    func testTappingAListFormatWithNothingFocusedDoesNothing() {
+        let block = EditorBlock(kind: .paragraph, text: "Item")
+        let viewModel = makeViewModel(blocks: [block])
+
+        viewModel.tapListFormat(.bulleted)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
     func testChoosingAListFormatWithNothingFocusedDoesNothing() {
         let block = EditorBlock(kind: .paragraph, text: "Item")
         let viewModel = makeViewModel(blocks: [block])
