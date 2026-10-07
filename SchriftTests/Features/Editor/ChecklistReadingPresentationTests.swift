@@ -66,4 +66,76 @@ final class ChecklistReadingPresentationTests: XCTestCase {
         XCTAssertEqual(
             ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.id), [blocks[1].id])
     }
+
+    func testMediaDirectlyUnderACompletedItemIsHiddenWithIt() {
+        let blocks = parseEditorBlocks(
+            """
+            - [x] Done
+
+            ![](https://docs.llun.dev/media/one.jpg)
+
+            ![](https://docs.llun.dev/media/two.jpg)
+
+            - [ ] Open
+
+            ![](https://docs.llun.dev/media/three.jpg)
+            """)
+        XCTAssertEqual(blocks.count, 5)
+        let filtered = ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true)
+        XCTAssertEqual(filtered.rows.map(\.sourceIndex), [3, 4])
+        XCTAssertEqual(filtered.hiddenCount, 1, "The notice counts completed items, not the media hidden with them")
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: false).rows.map(\.sourceIndex),
+            Array(blocks.indices))
+    }
+
+    func testAttachmentUnderACompletedItemIsHiddenWithIt() {
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: true), text: "Done"),
+            EditorBlock(kind: .attachment(name: "a.pdf", url: "https://docs.llun.dev/media/a.pdf"), text: ""),
+            EditorBlock(kind: .checklistItem(checked: false), text: "Open"),
+        ]
+        let filtered = ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true)
+        XCTAssertEqual(filtered.rows.map(\.sourceIndex), [2])
+    }
+
+    func testOnlyTheMediaRunIsHiddenNotWhatFollowsIt() {
+        let blocks = parseEditorBlocks(
+            """
+            - [x] Done
+
+            ![](https://docs.llun.dev/media/one.jpg)
+
+            A paragraph about something else
+
+            ![](https://docs.llun.dev/media/two.jpg)
+            """)
+        XCTAssertEqual(blocks.count, 4)
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [2, 3])
+    }
+
+    func testMediaUnderAnOpenItemOrWithNoItemAboveStaysVisible() {
+        let blocks = parseEditorBlocks(
+            """
+            ![](https://docs.llun.dev/media/zero.jpg)
+
+            - [ ] Open
+
+            ![](https://docs.llun.dev/media/one.jpg)
+            """)
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [0, 1, 2])
+    }
+
+    func testAQueuedPhotoUnderACompletedItemStaysVisibleForItsActions() {
+        let placeholder = "schrift-attachment://11111111-1111-4111-8111-111111111111"
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: true), text: "Done"),
+            EditorBlock(kind: .image(alt: "", url: placeholder), text: ""),
+        ]
+        XCTAssertNotNil(pendingAttachmentID(fromPlaceholderURL: placeholder))
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [1])
+    }
 }
