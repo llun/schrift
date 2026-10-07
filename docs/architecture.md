@@ -1277,6 +1277,31 @@ does for an off-origin image's tap-to-load. The states that draw no button
 (downloading, offline-and-uncached, and a markup type) still enter editing, and
 the toolbar's Edit action always does.
 
+**The Attachments list (Profile → Files → Attachments).** Docs has no endpoint
+that lists a user's attachments, so the list is built from what this device
+already holds: `AttachmentsViewModel` reads every `DocumentContentCacheStore`
+entry and `attachmentLibraryGroups` runs each body through
+`parseEditorBlocks(_:serverOrigin:)`, keeping the `.attachment` blocks. It uses
+the same classifier the editor does, so the list can never show a link the
+editor would draw as text, nor one on another host. Groups are per document,
+newest sync first, and a file linked twice in one document is listed once. A
+document whose deletion is queued is withheld, as every other list hides or
+strikes it. The rows are the editor's own `AttachmentCardView`, sharing the one
+`AttachmentLoader`, so a file downloads, previews and fails exactly as it does
+inside its document. They are flattened into one `LazyVStack` of header and
+file rows (`attachmentLibraryRows`) rather than nested in per-document
+`ListSection`s: a section lays its children out in a plain `VStack`, which
+would realize — and start downloading — every card of a document at once. Row
+ids are scoped by document, since one file linked from two documents appears
+under both. Loading issues no request and runs on every appearance, so
+documents opened since the last visit show up. Limits that follow from the
+source: a document never opened on this device is absent; the content cache's
+50-entry eviction and sign-out clear apply to the list too; and, like Home's
+metadata caches, the content cache is not cleared when a *different* account
+signs in through the re-login sheet, so until the next sign-out the list can
+show the previous account's cached documents. The read and parse run on the
+main actor at each appearance — bounded by those 50 entries.
+
 **Not yet.** Modelling `file`/`pdf` nodes in `YBlockProjection` (they project
 `.opaque` today, which correctly keeps a document holding one out of live
 editing while the default-off flag is off).

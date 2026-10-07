@@ -97,6 +97,18 @@ final class DocumentContentCacheStore {
         evictBeyondLimit()
     }
 
+    /// Every entry on disk, in no particular order. A file that no longer
+    /// decodes is skipped rather than failing the whole listing, the same
+    /// answer `content(for:)` gives for it.
+    func allContents() -> [CachedDocumentContent] {
+        guard let urls = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        else { return [] }
+        return urls.compactMap { url in
+            guard url.pathExtension == "json", let data = try? Data(contentsOf: url) else { return nil }
+            return try? decoder.decode(CachedDocumentContent.self, from: data)
+        }
+    }
+
     func remove(documentID: UUID) {
         try? fileManager.removeItem(at: fileURL(for: documentID))
     }

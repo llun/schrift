@@ -412,7 +412,10 @@ final class NewDocumentEntryTests: XCTestCase {
                 .environment(\.dynamicTypeSize, fixture.1))
             window.rootViewController = host
             window.makeKeyAndVisible()
-            await waitUntil { self.textViews(in: host.view).contains(where: \.isFirstResponder) }
+            // A freshly hosted editor window has to lay out, realize its rows and claim
+            // first responder; on a loaded CI runner that has taken longer than the
+            // default 3s at accessibility sizes, so this wait gets a longer budget.
+            await waitUntil(timeout: 10) { self.textViews(in: host.view).contains(where: \.isFirstResponder) }
             let field = try XCTUnwrap(textViews(in: host.view).first(where: \.isFirstResponder))
             XCTAssertEqual(field.text, fixture.0)
             XCTAssertEqual(field.selectedRange.length, (fixture.0 as NSString).length)
