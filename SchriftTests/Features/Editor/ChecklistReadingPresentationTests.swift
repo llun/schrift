@@ -127,4 +127,15 @@ final class ChecklistReadingPresentationTests: XCTestCase {
         XCTAssertEqual(
             ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [0, 1, 2])
     }
+
+    func testAQueuedPhotoUnderACompletedItemStaysVisibleForItsActions() {
+        let placeholder = "schrift-attachment://11111111-1111-4111-8111-111111111111"
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: true), text: "Done"),
+            EditorBlock(kind: .image(alt: "", url: placeholder), text: ""),
+        ]
+        XCTAssertNotNil(pendingAttachmentID(fromPlaceholderURL: placeholder))
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [1])
+    }
 }

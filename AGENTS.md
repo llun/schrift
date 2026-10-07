@@ -1538,7 +1538,8 @@ that are easy to violate and expensive to discover:
   to the editor session.** `ChecklistReadingPresentation` derives visible rows,
   hidden count and original source indices from the current full `blocks`; a hidden
   item takes the image/attachment leaves directly after it with it (up to the first
-  non-media block), while the count stays items-only; never
+  non-media block; a queued-photo placeholder always stays visible), while the count
+  stays items-only; never
   replace the model array or feed that projection to the serializer, save coordinator
   or collaboration bridge. Toggling must not call a dirty/save/live-write funnel.
   Editing always exposes every block. The reading controls remain reachable when
