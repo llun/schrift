@@ -233,7 +233,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let block = EditorBlock(kind: .paragraph, text: "Item")
         let viewModel = makeViewModel(blocks: [block])
 
-        viewModel.tapListFormat(.bulleted)
+        viewModel.tapFormat(ListFormat.bulleted)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
         XCTAssertFalse(viewModel.isDirty)
