@@ -47,7 +47,8 @@ func blockReorderDestination(
 /// The in-progress drag of one block on the editing canvas.
 struct BlockReorderDrag: Equatable {
     let blockID: UUID
-    /// The row's centre when the drag began, in the canvas's frame space.
+    /// The row's centre when the drag began, in the canvas's frame space. Captured
+    /// once: the row's recorded frame follows the drag offset afterwards.
     let startMidY: CGFloat
     var translation: CGFloat = 0
 
@@ -98,8 +99,6 @@ struct BlockReorderGesture: UIGestureRecognizerRepresentable {
         switch recognizer.state {
         case .began:
             context.coordinator.startY = y
-            // The press has become a drag: say so, since nothing moves until the finger does.
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             onBegan()
         case .changed:
             onChanged(y - context.coordinator.startY)

@@ -1586,8 +1586,9 @@ that are easy to violate and expensive to discover:
   `SwipeRevealGesture`. The drop index is the pure `blockReorderDestination`
   (a row the lazy canvas hasn't realized keeps its original side), applied by
   `EditorViewModel.moveBlock`, an ordinary edit that keeps the block's id. The
-  dragged row is `.offset` *after* `recordingEditorBlockFrame`, so its recorded
-  frame stays the resting one the drop math starts from.
+  drop math reads the dragged row's centre once, at `.began`, and skips that row
+  when counting: its recorded frame *does* follow the drag offset, so reading
+  `blockFrames[draggedID]` at drop time would count the translation twice.
 - **The editor draws every document twice, and `EditorBlockStyle` is the only
   thing keeping the two drawings the same.** The reading surface is SwiftUI
   `Text` (`MarkdownBlockView`) and the editing surface a UIKit `UITextView`

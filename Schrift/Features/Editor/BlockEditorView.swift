@@ -195,6 +195,8 @@ struct BlockReorderRowModifier: ViewModifier {
                 .opacity(translation == nil ? 1 : 0.85)
                 .offset(y: translation ?? 0)
                 .zIndex(translation == nil ? 0 : 1)
+                // The press has become a drag: say so, since nothing moves until the finger does.
+                .sensoryFeedback(.impact, trigger: translation != nil) { _, isDragging in isDragging }
                 .gesture(gesture)
                 .accessibilityActions {
                     if canMoveUp { Button(moveUpLabel, action: onMoveUp) }
