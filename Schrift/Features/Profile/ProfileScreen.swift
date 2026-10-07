@@ -44,6 +44,7 @@ struct ProfileScreen: View {
             ScrollView {
                 VStack(spacing: DocsSpacing.spaceLG) {
                     userSection
+                    filesSection
                     preferencesSection
                     serverSection
                     aboutSection
@@ -125,6 +126,22 @@ struct ProfileScreen: View {
             // Offline is no longer the userless state: a cached profile makes this row
             // live with no network.
             .disabled(accountDisplayName(viewModel.user) == nil)
+        }
+    }
+
+    // MARK: - Files
+
+    /// The way into every attachment this device has cached. Always enabled: the
+    /// list is read from disk, so it works offline, and an empty cache has its
+    /// own empty state.
+    private var filesSection: some View {
+        ListSection(header: loc[.profile_files]) {
+            NavigationLink(value: ProfileRoute.attachments) {
+                ListRow(icon: .download, title: loc[.profile_attachments], showsChevron: true)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("profile.attachments")
         }
     }
 

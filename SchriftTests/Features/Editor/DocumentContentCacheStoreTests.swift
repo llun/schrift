@@ -76,6 +76,26 @@ final class DocumentContentCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.content(for: documentID), entry)
     }
 
+    func testAllContentsListsEverySavedEntry() {
+        let store = makeStore()
+        let other = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        store.save(makeEntry())
+        store.save(makeEntry(id: other, markdown: "Other"))
+        XCTAssertEqual(Set(store.allContents().map(\.documentID)), [documentID, other])
+    }
+
+    func testAllContentsSkipsAnUndecodableFile() throws {
+        let store = makeStore()
+        store.save(makeEntry())
+        try Data("not json".utf8).write(
+            to: directory.appendingPathComponent("22222222-2222-4222-8222-222222222222.json"))
+        XCTAssertEqual(store.allContents().map(\.documentID), [documentID])
+    }
+
+    func testAllContentsIsEmptyWithNoCacheDirectory() {
+        XCTAssertEqual(makeStore().allContents(), [])
+    }
+
     func testContentForUnknownDocumentReturnsNil() {
         XCTAssertNil(makeStore().content(for: documentID))
     }

@@ -47,6 +47,7 @@ struct MainTabView: View {
     @State private var searchViewModel: SearchViewModel
     @State private var sharedViewModel: SharedViewModel
     @State private var profileViewModel: ProfileViewModel
+    @State private var attachmentsViewModel: AttachmentsViewModel
 
     init(
         viewModel: HomeViewModel, serverHost: String, serverOrigin: String, signInGeneration: Int,
@@ -67,6 +68,7 @@ struct MainTabView: View {
         _sharedViewModel = State(
             initialValue: SharedViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
         _profileViewModel = State(initialValue: ProfileViewModel(client: viewModel.client))
+        _attachmentsViewModel = State(initialValue: AttachmentsViewModel(serverOrigin: serverOrigin))
     }
 
     var body: some View {
@@ -141,8 +143,8 @@ struct MainTabView: View {
         }
     }
 
-    /// Profile pushes its account detail. No explicit path binding: there is one
-    /// destination and nothing needs to drive it programmatically.
+    /// Profile pushes its account detail and the attachments list. No explicit
+    /// path binding: nothing needs to drive either programmatically.
     private var profileTab: some View {
         NavigationStack {
             ProfileScreen(
@@ -163,6 +165,9 @@ struct MainTabView: View {
                         // — no second source of truth for where the server is.
                         serverURL: URL(string: serverOrigin)
                     )
+                case .attachments:
+                    AttachmentsScreen(
+                        viewModel: attachmentsViewModel, isOffline: viewModel.availability.isOffline)
                 }
             }
         }

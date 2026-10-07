@@ -4,6 +4,7 @@ import SwiftUI
 /// `Document`-style value so a second detail screen has an obvious home.
 enum ProfileRoute: Hashable {
     case account
+    case attachments
 }
 
 /// The name to show for an account, or `nil` when there is no user to describe.

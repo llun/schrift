@@ -325,6 +325,11 @@ enum Strings_es {
         .profile_offline: "Sin conexión",
         .profile_server_version: "Versión del servidor",
         .profile_about: "Acerca de",
+        .profile_files: "Archivos",
+        .profile_attachments: "Adjuntos",
+        .attachments_empty_title: "No hay adjuntos",
+        .attachments_empty_body:
+            "Aquí aparecen los archivos adjuntos a los documentos que has abierto en este dispositivo.",
         .profile_version: "Versión",
         .profile_sign_out: "Cerrar sesión",
         .profile_disconnect_title: "¿Desconectar de %@?",

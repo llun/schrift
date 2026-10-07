@@ -427,8 +427,11 @@ Schrift/
 │   │                    predates them; and the Pinned/Recent split), MoveOverlay (moves vs.
 │   │                    the same race)
 │   ├── Search/ Shared/  the other tabs; Profile also hosts the Appearance/Language
-│   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet)
-│   │                    and the server-version row (ServerConfig)
+│   │   Profile/         picker sheets (AppearancePickerSheet, LanguagePickerSheet),
+│   │                    the server-version row (ServerConfig), and the Attachments
+│   │                    list (AttachmentsScreen: every file linked from a document
+│   │                    in the content cache, no request of its own — docs has no
+│   │                    attachments listing API)
 │   ├── Options/ Share/
 │   └── Editor/          block editor, save coordinator, drafts, content cache,
 │                        file attachments (AttachmentDisplay classifier +
