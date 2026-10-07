@@ -190,7 +190,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.chooseListFormat(.numbered)
+        viewModel.chooseFormat(ListFormat.numbered)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
         XCTAssertEqual(viewModel.blocks[0].text, "Item")
@@ -202,7 +202,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.chooseListFormat(.checklist)
+        viewModel.chooseFormat(ListFormat.checklist)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .checklistItem(checked: true))
         XCTAssertFalse(viewModel.isDirty)
@@ -213,7 +213,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.tapListFormat(.checklist)
+        viewModel.tapFormat(ListFormat.checklist)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
         XCTAssertEqual(viewModel.blocks[0].text, "Done")
@@ -224,7 +224,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.tapListFormat(.numbered)
+        viewModel.tapFormat(ListFormat.numbered)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
     }
@@ -233,7 +233,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let block = EditorBlock(kind: .paragraph, text: "Item")
         let viewModel = makeViewModel(blocks: [block])
 
-        viewModel.tapListFormat(.bulleted)
+        viewModel.tapFormat(ListFormat.bulleted)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
         XCTAssertFalse(viewModel.isDirty)
@@ -243,9 +243,31 @@ final class EditorBlockMutationTests: XCTestCase {
         let block = EditorBlock(kind: .paragraph, text: "Item")
         let viewModel = makeViewModel(blocks: [block])
 
-        viewModel.chooseListFormat(.bulleted)
+        viewModel.chooseFormat(ListFormat.bulleted)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+    }
+
+    func testChoosingCodeForACodeBlockKeepsItsLanguage() {
+        let block = EditorBlock(kind: .codeBlock(language: "swift"), text: "let x = 1")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.chooseFormat(QuoteFormat.code)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .codeBlock(language: "swift"))
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    func testTappingTheQuoteDefaultOnAQuoteMakesItAParagraph() {
+        let block = EditorBlock(kind: .quote, text: "Said")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.tapFormat(QuoteFormat.quote)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertEqual(viewModel.blocks[0].text, "Said")
     }
 
     // MARK: - Attachment leaf semantics

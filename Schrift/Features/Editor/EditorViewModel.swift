@@ -2148,24 +2148,20 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Converts the focused block's type (blocks mode).
-    func convertFocusedBlock(to kind: BlockKind) {
-        guard let focusedBlockID else { return }
-        convertBlock(blockID: focusedBlockID, to: kind)
-    }
-
-    /// A tap on the list button: toggles the default list kind — see `blockKindAfterTapping`.
-    func tapListFormat(_ format: ListFormat) {
+    /// A tap on a family button (list, quote/code): toggles the default kind — see
+    /// `blockKindAfterTapping`.
+    func tapFormat<Format: FormattingBarFormat>(_ format: Format) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
-        // Never equal to the current kind (a list item goes to `.paragraph`, anything else
-        // to a list kind), so `convertBlock`'s exact-match toggle cannot fire here.
+        // Never equal to the current kind (a block already in the format's family member
+        // goes to `.paragraph`, anything else to that member), so `convertBlock`'s
+        // exact-match toggle cannot fire here.
         convertBlock(blockID: focusedBlockID, to: blockKindAfterTapping(format, current: blocks[index].kind))
     }
 
-    /// A pick from the list button's long-press choices. Unlike a tap (`tapListFormat`,
+    /// A pick from a family button's long-press choices. Unlike a tap (`tapFormat`,
     /// which toggles), choosing the kind the block already has leaves it alone — see
     /// `blockKindAfterChoosing`.
-    func chooseListFormat(_ format: ListFormat) {
+    func chooseFormat<Format: FormattingBarFormat>(_ format: Format) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID),
             let kind = blockKindAfterChoosing(format, current: blocks[index].kind)
         else { return }
