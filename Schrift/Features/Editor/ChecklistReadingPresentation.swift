@@ -2,6 +2,14 @@ import Foundation
 
 /// A disposable reading projection. The editor, serializer and collaboration bridge
 /// always own the full source array; the source index also preserves numbered runs.
+///
+/// Hiding a completed item also hides the media that belongs to it: the run of image
+/// and attachment leaves directly after it. The editor has no nested blocks, so a
+/// photo "under" a checked item is the leaf that follows it; leaving it on screen
+/// stranded it beneath whichever unrelated item happened to precede the hidden one.
+/// The run ends at the first block that is not media, so prose, headings and other
+/// items are never hidden. `hiddenCount` still counts completed items only — it is
+/// what the "Completed items hidden" notice reports.
 struct ChecklistReadingPresentation {
     struct Row: Identifiable {
         let sourceIndex: Int
@@ -14,11 +22,29 @@ struct ChecklistReadingPresentation {
     let hasChecklistItems: Bool
 
     init(blocks: [EditorBlock], hidingCompleted: Bool) {
-        rows = blocks.enumerated().compactMap { index, block in
-            if hidingCompleted, case .checklistItem(checked: true) = block.kind { return nil }
-            return Row(sourceIndex: index, block: block)
+        var rows: [Row] = []
+        var hiddenCount = 0
+        var hidingAttachedMedia = false
+        for (index, block) in blocks.enumerated() {
+            if hidingCompleted, case .checklistItem(checked: true) = block.kind {
+                hiddenCount += 1
+                hidingAttachedMedia = true
+                continue
+            }
+            if hidingAttachedMedia, isChecklistAttachedMedia(block.kind) { continue }
+            hidingAttachedMedia = false
+            rows.append(Row(sourceIndex: index, block: block))
         }
-        hiddenCount = blocks.count - rows.count
+        self.rows = rows
+        self.hiddenCount = hiddenCount
         hasChecklistItems = blocks.contains { if case .checklistItem = $0.kind { true } else { false } }
+    }
+}
+
+/// The leaves that ride along with the checklist item above them when it is hidden.
+private func isChecklistAttachedMedia(_ kind: BlockKind) -> Bool {
+    switch kind {
+    case .image, .attachment: true
+    default: false
     }
 }

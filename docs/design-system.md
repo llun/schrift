@@ -70,7 +70,8 @@
 > **Revised: 2026-10-05 (Hide completed checklist items).** Reading mode offers
 > a native **Hide completed** switch above the body whenever the document contains
 > checklist blocks. It starts off for each editor session. Enabled, it hides only
-> checked checklist blocks and shows **Completed items hidden: N** with a full-width,
+> checked checklist blocks, plus the images/attachments directly beneath each one,
+> and shows **Completed items hidden: N** with a full-width,
 > at-least-44pt **Show completed** button. The notice and reveal remain visible for
 > an all-completed list; the document is never presented as empty. Native switch
 > state, a count-bearing reveal accessibility label, wrapping text and Dynamic Type

@@ -1040,7 +1040,9 @@ This is the part with no direct backend support, so it's called out explicitly:
    Reading's optional **Hide completed** preference is session-local and off by
    default. `ChecklistReadingPresentation` derives visible rows from the complete
    `[EditorBlock]`, retaining IDs and source indices; only checked checklist blocks
-   are omitted. A hidden count and Show completed action remain when every checklist
+   are omitted, together with the run of image/attachment leaves directly after
+   each one (the media "under" the item — the editor has no nested blocks). The
+   run ends at the first non-media block, and the hidden count reports items only. A hidden count and Show completed action remain when every checklist
    item is completed. Editing, serialization, drafts and the live replica always
    retain the full array. Preference changes never enter a dirty/save/live-write
    path, and remote updates recompute the projection instead of updating a second
