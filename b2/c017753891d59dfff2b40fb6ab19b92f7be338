@@ -1,0 +1,21 @@
+AGENTS.md
+  s_45196c6adedbd6::t_800ed28b572222 59-60,891-902
+docs/design-system.md
+  s_45196c6adedbd6::t_800ed28b572222 67-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2c017753891d59dfff2b40fb6ab19b92f7be338",
+  "prompts": {},
+  "sessions": {
+    "s_45196c6adedbd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9c00491-b306-4378-b82a-da0f818a6f3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
