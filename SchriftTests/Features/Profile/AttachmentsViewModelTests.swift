@@ -2,6 +2,7 @@ import XCTest
 
 @testable import Schrift
 
+@MainActor
 final class AttachmentsViewModelTests: XCTestCase {
     private let origin = "https://docs.llun.dev"
     private let docA = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
@@ -73,6 +74,38 @@ final class AttachmentsViewModelTests: XCTestCase {
         XCTAssertEqual(groups.map(\.documentID), [docB, docA])
     }
 
+    // MARK: - Rows
+
+    func testRowsPutAHeaderBeforeEachDocumentsFiles() {
+        let groups = attachmentLibraryGroups(
+            from: [
+                content(docA, link("a.pdf", document: docA, file: fileOne), title: "A", at: 2),
+                content(docB, link("b.pdf", document: docB, file: fileTwo), title: "B", at: 1),
+            ],
+            serverOrigin: origin)
+        let rows = attachmentLibraryRows(groups)
+        XCTAssertEqual(rows.count, 4)
+        XCTAssertEqual(rows[0], .header(documentID: docA, title: "A", isFirst: true))
+        XCTAssertEqual(rows[2], .header(documentID: docB, title: "B", isFirst: false))
+        guard case .file(_, let display) = rows[1] else { return XCTFail("Expected a file row") }
+        XCTAssertEqual(display.name, "a.pdf")
+    }
+
+    func testOneFileLinkedFromTwoDocumentsHasDistinctRowIDs() {
+        // The lazy stack needs unique ids, and the same url appears under both documents.
+        let line = link("shared.pdf", document: docA, file: fileOne)
+        let groups = attachmentLibraryGroups(
+            from: [content(docA, line, at: 2), content(docB, line, at: 1)], serverOrigin: origin)
+        let rows = attachmentLibraryRows(groups)
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+    }
+
+    func testABlankTitleFallsBackToUntitled() {
+        XCTAssertNil(attachmentGroupTitle(nil))
+        XCTAssertNil(attachmentGroupTitle("  \n"))
+        XCTAssertEqual(attachmentGroupTitle(" Notes "), "Notes")
+    }
+
     // MARK: - View model
 
     private var directory: URL!
@@ -89,7 +122,6 @@ final class AttachmentsViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    @MainActor
     func testLoadReadsTheContentCache() {
         let cache = DocumentContentCacheStore(directory: directory)
         cache.save(content(docA, link("a.pdf", document: docA, file: fileOne), at: 1))
@@ -100,7 +132,6 @@ final class AttachmentsViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.groups.map(\.documentID), [docA])
     }
 
-    @MainActor
     func testLoadPicksUpDocumentsCachedSinceTheLastLoad() {
         let cache = DocumentContentCacheStore(directory: directory)
         let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin)
@@ -109,5 +140,16 @@ final class AttachmentsViewModelTests: XCTestCase {
         cache.save(content(docB, link("b.pdf", document: docB, file: fileTwo), at: 2))
         viewModel.load()
         XCTAssertEqual(viewModel.groups.map(\.documentID), [docB])
+    }
+
+    func testLoadWithholdsADocumentWhoseDeletionIsQueued() {
+        let cache = DocumentContentCacheStore(directory: directory)
+        cache.save(content(docA, link("a.pdf", document: docA, file: fileOne), at: 1))
+        cache.save(content(docB, link("b.pdf", document: docB, file: fileTwo), at: 2))
+        let viewModel = AttachmentsViewModel(
+            contentCache: cache, serverOrigin: origin, isPendingDelete: { [docB] in $0 == docB })
+        viewModel.load()
+        XCTAssertEqual(viewModel.groups.map(\.documentID), [docA])
+        XCTAssertEqual(viewModel.rows.count, 2)
     }
 }

@@ -68,7 +68,12 @@ struct MainTabView: View {
         _sharedViewModel = State(
             initialValue: SharedViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
         _profileViewModel = State(initialValue: ProfileViewModel(client: viewModel.client))
-        _attachmentsViewModel = State(initialValue: AttachmentsViewModel(serverOrigin: serverOrigin))
+        _attachmentsViewModel = State(
+            initialValue: AttachmentsViewModel(
+                serverOrigin: serverOrigin,
+                isPendingDelete: { [saveCoordinator = viewModel.saveCoordinator, user = viewModel.signedInUser] in
+                    saveCoordinator.isListablePendingDelete(documentID: $0, currentUserID: user.userID)
+                }))
     }
 
     var body: some View {

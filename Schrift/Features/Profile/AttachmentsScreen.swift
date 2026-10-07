@@ -5,8 +5,10 @@ import SwiftUI
 ///
 /// The rows are the editor's own `AttachmentCardView`, so a file downloads,
 /// previews and fails exactly as it does inside its document, sharing the one
-/// app-scoped `AttachmentLoader` cache. The stack is lazy so a long list only
-/// asks for the cards on screen.
+/// app-scoped `AttachmentLoader` cache. Every card is its own row of one flat
+/// `LazyVStack` — never nested in a per-document `ListSection`, whose plain
+/// `VStack` would realize (and start downloading) a whole document's cards at
+/// once — so only cards scrolled into view ask for bytes.
 struct AttachmentsScreen: View {
     @Environment(\.docsTheme) private var theme
     @Environment(LocalizationStore.self) private var loc
@@ -27,14 +29,20 @@ struct AttachmentsScreen: View {
                 }
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: DocsSpacing.spaceLG) {
-                        ForEach(viewModel.groups) { group in
-                            ListSection(header: group.title ?? loc[.common_untitled]) {
-                                ForEach(group.attachments, id: \.urlString) { display in
-                                    AttachmentCardView(display: display, isOffline: isOffline)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.vertical, DocsSpacing.space3xs)
-                                }
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(viewModel.rows) { row in
+                            switch row {
+                            case .header(_, let title, let isFirst):
+                                Text(attachmentGroupTitle(title) ?? loc[.common_untitled])
+                                    .font(DocsFont.footnote.weight(.semibold))
+                                    .foregroundStyle(theme.colors.textTertiary)
+                                    .padding(.top, isFirst ? 0 : DocsSpacing.spaceLG)
+                                    .padding(.bottom, DocsSpacing.space2xs)
+                                    .accessibilityAddTraits(.isHeader)
+                            case .file(_, let display):
+                                AttachmentCardView(display: display, isOffline: isOffline)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, DocsSpacing.space3xs)
                             }
                         }
                     }
