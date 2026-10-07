@@ -37,6 +37,11 @@
 > broadcast or navigation reset. No `.id(theme)` is used. Native navigation, tabs,
 > keyboards, alerts, authentication web content and Liquid Glass keep their native
 > behavior. Avatar identity colors also stay stable for collaboration awareness.
+> A theme change during IME composition repaints only after commit, so marked text,
+> its range and the selection are never touched. On iPad the split view's own
+> container shows behind the status bar and around the floating sidebar;
+> `HomeSplitView` paints it `surfacePage`. Only White's light page matched the system
+> colour there, so its regression test runs on a local iPad (CI's iPhone skips it).
 >
 > Profile's Theme sheet shows paired samples, remains open to compare selections,
 > and announces the selected row to VoiceOver. Its English copy uses the existing
