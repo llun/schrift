@@ -2148,12 +2148,6 @@ final class EditorViewModel {
         markDirty()
     }
 
-    /// Converts the focused block's type (blocks mode).
-    func convertFocusedBlock(to kind: BlockKind) {
-        guard let focusedBlockID else { return }
-        convertBlock(blockID: focusedBlockID, to: kind)
-    }
-
     /// A tap on a family button (list, quote/code): toggles the default kind — see
     /// `blockKindAfterTapping`.
     func tapFormat<Format: FormattingBarFormat>(_ format: Format) {
