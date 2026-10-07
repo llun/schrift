@@ -299,6 +299,8 @@ enum Strings_sl {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Dodaj odstavek na koncu",
         .editor_divider_a11y: "Ločilna črta",
+        .editor_move_block_up: "Premakni gor",
+        .editor_move_block_down: "Premakni dol",
         .editor_checklist_hide_completed: "Skrij opravljene",
         .editor_checklist_hidden_count: "Skriti opravljeni elementi: %d",
         .editor_checklist_show_completed: "Prikaži opravljene",

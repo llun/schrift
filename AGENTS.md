@@ -1578,6 +1578,17 @@ that are easy to violate and expensive to discover:
   survivor (then previous) when Done hides the anchor. Ordinary documents retain
   the offset handoff below. Verify production EditorView scrolling and reveal at
   default/accessibility sizes, beyond pure projection tests.
+- **Only leaf blocks are draggable in edit mode.** A long press on a divider,
+  image or attachment (`blockIsReorderable`) picks it up; on a text row the same
+  press belongs to `UITextView`, so don't extend the gesture there without a
+  separate handle. The gesture is a UIKit long press (`BlockReorderGesture`), not
+  a SwiftUI `DragGesture`, for the same scroll-arbitration reason as
+  `SwipeRevealGesture`. The drop index is the pure `blockReorderDestination`
+  (a row the lazy canvas hasn't realized keeps its original side), applied by
+  `EditorViewModel.moveBlock`, an ordinary edit that keeps the block's id. The
+  drop math reads the dragged row's centre once, at `.began`, and skips that row
+  when counting: its recorded frame *does* follow the drag offset, so reading
+  `blockFrames[draggedID]` at drop time would count the translation twice.
 - **The editor draws every document twice, and `EditorBlockStyle` is the only
   thing keeping the two drawings the same.** The reading surface is SwiftUI
   `Text` (`MarkdownBlockView`) and the editing surface a UIKit `UITextView`

@@ -71,6 +71,63 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
     }
 
+    // MARK: - Moving
+
+    func testMovingAnImageBelowAChecklistItemReordersAndDirties() {
+        let image = EditorBlock(kind: .image(alt: "Photo", url: "https://docs.example.org/media/a.jpg"))
+        let item = EditorBlock(kind: .checklistItem(checked: false), text: "Buy milk")
+        let viewModel = makeViewModel(blocks: [image, item])
+
+        viewModel.moveBlock(blockID: image.id, to: 1)
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [item.id, image.id])
+        XCTAssertTrue(viewModel.isDirty)
+        XCTAssertEqual(viewModel.currentMarkdown(), serializeMarkdown([item, image]))
+    }
+
+    func testMovingUpwardInsertsAtTheDestination() {
+        let first = EditorBlock(kind: .paragraph, text: "A")
+        let second = EditorBlock(kind: .paragraph, text: "B")
+        let divider = EditorBlock(kind: .divider)
+        let viewModel = makeViewModel(blocks: [first, second, divider])
+
+        viewModel.moveBlock(blockID: divider.id, to: 0)
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [divider.id, first.id, second.id])
+    }
+
+    func testMovingToTheSameIndexIsANoOp() {
+        let first = EditorBlock(kind: .paragraph, text: "A")
+        let divider = EditorBlock(kind: .divider)
+        let viewModel = makeViewModel(blocks: [first, divider])
+
+        viewModel.moveBlock(blockID: divider.id, to: 1)
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [first.id, divider.id])
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    func testMovingPastTheEndClampsToTheLastIndex() {
+        let divider = EditorBlock(kind: .divider)
+        let first = EditorBlock(kind: .paragraph, text: "A")
+        let second = EditorBlock(kind: .paragraph, text: "B")
+        let viewModel = makeViewModel(blocks: [divider, first, second])
+
+        viewModel.moveBlock(blockID: divider.id, to: 99)
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [first.id, second.id, divider.id])
+    }
+
+    func testMovingAnUnknownBlockChangesNothing() {
+        let first = EditorBlock(kind: .paragraph, text: "A")
+        let viewModel = makeViewModel(blocks: [first])
+
+        viewModel.moveBlock(blockID: UUID(), to: 0)
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [first.id])
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
     // MARK: - Merging
 
     func testBackspaceMergesParagraphIntoPrevious() {

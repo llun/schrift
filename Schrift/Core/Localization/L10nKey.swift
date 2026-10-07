@@ -342,6 +342,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     // Editor - block canvas accessibility labels (BlockEditorView)
     case editor_add_paragraph_a11y = "editor.add_paragraph_a11y"  // "Add paragraph at end"
     case editor_divider_a11y = "editor.divider_a11y"  // "Divider"
+    case editor_move_block_up = "editor.move_block_up"  // "Move up"
+    case editor_move_block_down = "editor.move_block_down"  // "Move down"
     case editor_checklist_hide_completed = "editor.checklist.hide_completed"  // "Hide completed"
     case editor_checklist_hidden_count = "editor.checklist.hidden_count"  // "Completed items hidden: %d"
     case editor_checklist_show_completed = "editor.checklist.show_completed"  // "Show completed"

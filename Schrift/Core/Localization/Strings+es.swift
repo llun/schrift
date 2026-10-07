@@ -294,6 +294,8 @@ enum Strings_es {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Añadir párrafo al final",
         .editor_divider_a11y: "Separador",
+        .editor_move_block_up: "Mover arriba",
+        .editor_move_block_down: "Mover abajo",
         .editor_checklist_hide_completed: "Ocultar completados",
         .editor_checklist_hidden_count: "Elementos completados ocultos: %d",
         .editor_checklist_show_completed: "Mostrar completados",

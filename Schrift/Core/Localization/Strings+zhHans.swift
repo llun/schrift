@@ -283,6 +283,8 @@ enum Strings_zhHans {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "在末尾添加段落",
         .editor_divider_a11y: "分隔线",
+        .editor_move_block_up: "上移",
+        .editor_move_block_down: "下移",
         .editor_checklist_hide_completed: "隐藏已完成项",
         .editor_checklist_hidden_count: "已隐藏的完成项：%d",
         .editor_checklist_show_completed: "显示已完成项",
