@@ -252,6 +252,7 @@ enum Strings_sl {
         .editor_format_quote: "Citat",
         .editor_format_code_block: "Blok kode",
         .editor_format_insert_photo: "Vstavi fotografijo",
+        .editor_format_change_list_type: "Spremeni vrsto seznama",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Dodaj povezavo",

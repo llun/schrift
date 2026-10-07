@@ -47,7 +47,7 @@ extension MaterialIcon {
 /// The glyph **scales with Dynamic Type** by default, relative to `.body`, so an
 /// icon stays proportionate to the text it sits beside. Pass `scales: false` for
 /// the few glyphs that live in a hard-bounded box and would overflow it — the
-/// formatting bar's row of nine, where the width budget is fixed by the narrowest
+/// formatting bar's row of eight, where the width budget is fixed by the narrowest
 /// device (see `EditorFormattingBar`).
 struct MaterialSymbol: View {
     let icon: MaterialIcon

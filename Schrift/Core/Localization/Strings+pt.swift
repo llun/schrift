@@ -242,6 +242,7 @@ enum Strings_pt {
         .editor_format_quote: "Citação",
         .editor_format_code_block: "Bloco de código",
         .editor_format_insert_photo: "Inserir fotografia",
+        .editor_format_change_list_type: "Alterar tipo de lista",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Adicionar link",
