@@ -2154,6 +2154,16 @@ final class EditorViewModel {
         convertBlock(blockID: focusedBlockID, to: kind)
     }
 
+    /// A pick from the list button's long-press choices. Unlike a tap (which toggles via
+    /// `convertBlock`), choosing the kind the block already has leaves it alone — see
+    /// `blockKindAfterChoosing`.
+    func chooseListFormat(_ format: ListFormat) {
+        guard let focusedBlockID, let index = blockIndex(focusedBlockID),
+            let kind = blockKindAfterChoosing(format, current: blocks[index].kind)
+        else { return }
+        convertBlock(blockID: focusedBlockID, to: kind)
+    }
+
     // MARK: - Links
 
     /// Whether the link button can act: a focused block whose text is read as

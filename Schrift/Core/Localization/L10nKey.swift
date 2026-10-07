@@ -288,6 +288,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_format_quote = "editor.format.quote"  // "Quote"
     case editor_format_code_block = "editor.format.code_block"  // "Code block"
     case editor_format_insert_photo = "editor.format.insert_photo"  // "Insert photo"
+    case editor_format_change_list_type = "editor.format.change_list_type"  // "Change list type"
 
     // Editor - link editor sheet
     case editor_link_add_title = "editor.link.add_title"  // "Add link"

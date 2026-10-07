@@ -183,6 +183,40 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
     }
 
+    // MARK: - List format choice
+
+    func testChoosingAListFormatConvertsTheFocusedBlock() {
+        let block = EditorBlock(kind: .paragraph, text: "Item")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.chooseListFormat(.numbered)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
+        XCTAssertEqual(viewModel.blocks[0].text, "Item")
+        XCTAssertTrue(viewModel.isDirty)
+    }
+
+    func testChoosingTheFormatABlockAlreadyHasIsNotAToggle() {
+        let block = EditorBlock(kind: .checklistItem(checked: true), text: "Done")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.chooseListFormat(.checklist)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .checklistItem(checked: true))
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    func testChoosingAListFormatWithNothingFocusedDoesNothing() {
+        let block = EditorBlock(kind: .paragraph, text: "Item")
+        let viewModel = makeViewModel(blocks: [block])
+
+        viewModel.chooseListFormat(.bulleted)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+    }
+
     // MARK: - Attachment leaf semantics
     //
     // The `.image` twins below each have an attachment counterpart, because the

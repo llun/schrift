@@ -104,6 +104,12 @@ struct IconButton: View {
     var filled: Bool = false
     var isDisabled: Bool = false
     var action: () -> Void
+    /// An optional secondary action on a long press, e.g. the formatting bar's list button
+    /// offering every list kind. Declared after `action` so a trailing closure still binds
+    /// to the tap. VoiceOver reaches it as a named custom action (`longPressLabel`), since a
+    /// long press is not something a VoiceOver user can discover.
+    var longPressAction: (() -> Void)? = nil
+    var longPressLabel: String? = nil
 
     var body: some View {
         let style = IconButtonStyleResolver.style(variant: variant, color: color, isDisabled: isDisabled, theme: theme)
@@ -124,9 +130,20 @@ struct IconButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        // Simultaneous, so the plain tap keeps working; the caller ignores the tap that
+        // ends a successful long press (the formatting bar swaps the row out first).
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5).onEnded { _ in longPressAction?() },
+            isEnabled: longPressAction != nil && !isDisabled
+        )
         .opacity(isDisabled ? 0.4 : 1)
         .disabled(isDisabled)
         .accessibilityLabel(label)
+        .accessibilityActions {
+            if let longPressAction, let longPressLabel, !isDisabled {
+                Button(longPressLabel, action: longPressAction)
+            }
+        }
     }
 }
 

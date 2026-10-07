@@ -29,7 +29,7 @@ final class EditorFormattingBarTests: XCTestCase {
         return host.sizeThatFits(in: CGSize(width: column, height: 100)).width
     }
 
-    /// One point of slack: SwiftUI divides the row into ninths and rounds each
+    /// One point of slack: SwiftUI divides the row into equal shares and rounds each
     /// share up, so a fraction of a point can accumulate on some widths. The
     /// failure this guards against was 54 points, not a sub-pixel.
     private let roundingSlack: CGFloat = 1

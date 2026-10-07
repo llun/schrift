@@ -236,6 +236,7 @@ enum Strings_zhHant {
         .editor_format_quote: "引文",
         .editor_format_code_block: "程式碼區塊",
         .editor_format_insert_photo: "插入照片",
+        .editor_format_change_list_type: "變更清單類型",
 
         // Editor - link editor sheet
         .editor_link_add_title: "新增連結",
