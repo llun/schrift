@@ -69,6 +69,8 @@ struct EditorFormattingBar: View {
         // The bar floats over the canvas, which is exactly the functional layer
         // glass is meant for.
         .glassEffect(.regular, in: Capsule())
+        // The choices act on the focused block; moving the caret elsewhere ends the choice.
+        .onChange(of: viewModel.focusedBlockID) { isChoosingListFormat = false }
     }
 
     /// Close, then one button per list kind. Picking one applies it to the focused block
@@ -84,6 +86,8 @@ struct EditorFormattingBar: View {
                     defaultListFormatRaw = format.rawValue
                     isChoosingListFormat = false
                 }
+                // The brand colour marks the default for sighted users; VoiceOver gets the trait.
+                .accessibilityAddTraits(format == defaultListFormat ? .isSelected : [])
             }
         }
     }
@@ -110,15 +114,15 @@ struct EditorFormattingBar: View {
             ) {
                 viewModel.beginLinkEditing()
             }
-            // One list button: a tap applies the default kind (toggling it off a block
-            // that already has it, as before), a long press offers all three.
+            // One list button: a tap applies the default kind (toggling a block already
+            // in that list kind back to a paragraph), a long press offers all three.
             barButton(
                 icon: defaultListFormat.icon, label: loc[defaultListFormat.labelKey],
                 longPressLabel: loc[.editor_format_change_list_type],
                 longPressAction: { isChoosingListFormat = true }
             ) {
                 guard !isChoosingListFormat else { return }
-                viewModel.convertFocusedBlock(to: defaultListFormat.blockKind)
+                viewModel.tapListFormat(defaultListFormat)
             }
             barButton(icon: .format_quote, label: loc[.editor_format_quote]) {
                 viewModel.convertFocusedBlock(to: .quote)

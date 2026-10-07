@@ -208,6 +208,27 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertFalse(viewModel.isDirty)
     }
 
+    func testTappingTheChecklistDefaultOnACheckedItemRemovesTheList() {
+        let block = EditorBlock(kind: .checklistItem(checked: true), text: "Done")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.tapListFormat(.checklist)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertEqual(viewModel.blocks[0].text, "Done")
+    }
+
+    func testTappingTheDefaultOnAParagraphMakesItThatList() {
+        let block = EditorBlock(kind: .paragraph, text: "Item")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.tapListFormat(.numbered)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
+    }
+
     func testChoosingAListFormatWithNothingFocusedDoesNothing() {
         let block = EditorBlock(kind: .paragraph, text: "Item")
         let viewModel = makeViewModel(blocks: [block])

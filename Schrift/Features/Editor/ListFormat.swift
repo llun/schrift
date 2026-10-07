@@ -63,11 +63,20 @@ enum ListFormat: String, CaseIterable, Sendable {
     }
 }
 
+/// The kind a block becomes when the user *taps* the list button with `format` as the
+/// default: a block already in that list kind goes back to a paragraph, anything else
+/// becomes that kind. Keyed on the list kind, not the exact `BlockKind` — `convertBlock`'s
+/// own toggle compares exactly, so a *checked* item tapped with Checklist as the default
+/// would merely be unchecked and stay a list.
+func blockKindAfterTapping(_ format: ListFormat, current: BlockKind) -> BlockKind {
+    ListFormat(blockKind: current) == format ? .paragraph : format.blockKind
+}
+
 /// The kind a block should become when the user *picks* `format` from the long-press
 /// choices, or nil when it already is that list kind.
 ///
-/// Distinct from a tap on the list button, which goes through `convertBlock`'s toggle
-/// (tapping the kind a block already has turns it back into a paragraph). A pick is a
+/// Distinct from a tap on the list button (`blockKindAfterTapping`), which turns a block
+/// already in that list kind back into a paragraph. A pick is a
 /// choice, not a toggle: choosing "Checklist" for a checklist item must not strip the
 /// list, and must not reset a checked item to unchecked.
 func blockKindAfterChoosing(_ format: ListFormat, current: BlockKind) -> BlockKind? {

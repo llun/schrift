@@ -35,4 +35,13 @@ final class ListFormatTests: XCTestCase {
         XCTAssertNil(blockKindAfterChoosing(.bulleted, current: .bulletItem))
         XCTAssertNil(blockKindAfterChoosing(.checklist, current: .checklistItem(checked: true)))
     }
+
+    func testTappingTogglesOnTheListKindNotTheExactState() {
+        XCTAssertEqual(blockKindAfterTapping(.checklist, current: .paragraph), .checklistItem(checked: false))
+        XCTAssertEqual(blockKindAfterTapping(.checklist, current: .checklistItem(checked: true)), .paragraph)
+        XCTAssertEqual(blockKindAfterTapping(.checklist, current: .checklistItem(checked: false)), .paragraph)
+        XCTAssertEqual(blockKindAfterTapping(.bulleted, current: .bulletItem), .paragraph)
+        XCTAssertEqual(blockKindAfterTapping(.numbered, current: .bulletItem), .numberedItem)
+        XCTAssertEqual(blockKindAfterTapping(.bulleted, current: .quote), .bulletItem)
+    }
 }

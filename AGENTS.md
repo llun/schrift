@@ -1090,7 +1090,8 @@ new code reads like the surrounding code.
   `EditorFormattingBarTests` covers both the width containment and row height.
   **One list button stands for all three list kinds** (`ListFormat`): a tap
   applies the remembered default (`schrift.editor.defaultListFormat`, a local
-  preference) with `convertBlock`'s usual toggle, and a long press
+  preference), toggling a block already in that list kind — checked or not — back
+  to a paragraph (`blockKindAfterTapping`), and a long press
   (`IconButton.longPressAction`, also exposed as a named VoiceOver action) swaps
   the row in place for Close + bulleted/numbered/checklist. A pick applies that
   kind and becomes the default, and is *not* a toggle (`blockKindAfterChoosing`):

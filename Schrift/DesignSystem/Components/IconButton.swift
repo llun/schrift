@@ -105,8 +105,8 @@ struct IconButton: View {
     var isDisabled: Bool = false
     var action: () -> Void
     /// An optional secondary action on a long press, e.g. the formatting bar's list button
-    /// offering every list kind. Declared after `action` so a trailing closure still binds
-    /// to the tap. VoiceOver reaches it as a named custom action (`longPressLabel`), since a
+    /// offering every list kind. A trailing closure still binds to `action`, the first
+    /// closure parameter without a default. VoiceOver reaches it as a named custom action (`longPressLabel`), since a
     /// long press is not something a VoiceOver user can discover.
     var longPressAction: (() -> Void)? = nil
     var longPressLabel: String? = nil
