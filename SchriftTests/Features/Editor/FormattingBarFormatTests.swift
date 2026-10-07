@@ -53,6 +53,9 @@ final class FormattingBarFormatTests: XCTestCase {
         XCTAssertEqual(QuoteFormat.code.blockKind, .codeBlock(language: ""))
         XCTAssertEqual(QuoteFormat(blockKind: .codeBlock(language: "swift")), .code)
         XCTAssertNil(QuoteFormat(blockKind: .bulletItem))
+        XCTAssertNil(QuoteFormat(blockKind: .paragraph))
+        XCTAssertNil(QuoteFormat(blockKind: .heading(level: 1)))
+        XCTAssertNil(QuoteFormat(blockKind: .checklistItem(checked: false)))
         XCTAssertEqual(QuoteFormat.stored("nope"), .quote)
         XCTAssertNotEqual(QuoteFormat.preferenceKey, ListFormat.preferenceKey)
     }

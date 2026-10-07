@@ -83,22 +83,23 @@ enum ListFormat: String, FormattingBarFormat {
     }
 }
 
-/// The kind a block becomes when the user *taps* the list button with `format` as the
-/// default: a block already in that list kind goes back to a paragraph, anything else
-/// becomes that kind. Keyed on the list kind, not the exact `BlockKind` — `convertBlock`'s
+/// The kind a block becomes when the user *taps* a family button with `format` as the
+/// default: a block already of that format goes back to a paragraph, anything else
+/// becomes that format. Keyed on the format, not the exact `BlockKind` — `convertBlock`'s
 /// own toggle compares exactly, so a *checked* item tapped with Checklist as the default
-/// would merely be unchecked and stay a list.
+/// would merely be unchecked and stay a list, and a `swift` code block tapped with Code
+/// as the default would become an unlabelled code block.
 func blockKindAfterTapping<Format: FormattingBarFormat>(_ format: Format, current: BlockKind) -> BlockKind {
     Format(blockKind: current) == format ? .paragraph : format.blockKind
 }
 
 /// The kind a block should become when the user *picks* `format` from the long-press
-/// choices, or nil when it already is that list kind.
+/// choices, or nil when it already is that format.
 ///
-/// Distinct from a tap on the list button (`blockKindAfterTapping`), which turns a block
-/// already in that list kind back into a paragraph. A pick is a
-/// choice, not a toggle: choosing "Checklist" for a checklist item must not strip the
-/// list, and must not reset a checked item to unchecked.
+/// Distinct from a tap on a family button (`blockKindAfterTapping`), which turns a block
+/// already of that format back into a paragraph. A pick is a choice, not a toggle:
+/// choosing "Checklist" for a checklist item must not strip the list or reset a checked
+/// item to unchecked, and choosing "Code" for a `swift` block must keep its language.
 func blockKindAfterChoosing<Format: FormattingBarFormat>(_ format: Format, current: BlockKind) -> BlockKind? {
     Format(blockKind: current) == format ? nil : format.blockKind
 }

@@ -248,6 +248,28 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
     }
 
+    func testChoosingCodeForACodeBlockKeepsItsLanguage() {
+        let block = EditorBlock(kind: .codeBlock(language: "swift"), text: "let x = 1")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.chooseFormat(QuoteFormat.code)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .codeBlock(language: "swift"))
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    func testTappingTheQuoteDefaultOnAQuoteMakesItAParagraph() {
+        let block = EditorBlock(kind: .quote, text: "Said")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        viewModel.tapFormat(QuoteFormat.quote)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertEqual(viewModel.blocks[0].text, "Said")
+    }
+
     // MARK: - Attachment leaf semantics
     //
     // The `.image` twins below each have an attachment counterpart, because the

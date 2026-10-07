@@ -239,7 +239,7 @@ enum Strings_th {
         .editor_format_code_block: "บล็อกโค้ด",
         .editor_format_insert_photo: "แทรกรูปภาพ",
         .editor_format_change_list_type: "เปลี่ยนประเภทรายการ",
-        .editor_format_change_quote_type: "เปลี่ยนคำพูดหรือโค้ด",
+        .editor_format_change_quote_type: "เปลี่ยนคำอ้างอิงหรือโค้ด",
 
         // Editor - link editor sheet
         .editor_link_add_title: "เพิ่มลิงก์",

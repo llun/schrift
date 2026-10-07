@@ -2158,8 +2158,9 @@ final class EditorViewModel {
     /// `blockKindAfterTapping`.
     func tapFormat<Format: FormattingBarFormat>(_ format: Format) {
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
-        // Never equal to the current kind (a list item goes to `.paragraph`, anything else
-        // to a list kind), so `convertBlock`'s exact-match toggle cannot fire here.
+        // Never equal to the current kind (a block already in the format's family member
+        // goes to `.paragraph`, anything else to that member), so `convertBlock`'s
+        // exact-match toggle cannot fire here.
         convertBlock(blockID: focusedBlockID, to: blockKindAfterTapping(format, current: blocks[index].kind))
     }
 

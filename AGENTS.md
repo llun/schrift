@@ -1084,9 +1084,10 @@ new code reads like the surrounding code.
   `DocsTextField`, custom search fields and the sheet close action share that
   floor; text controls may grow with Dynamic Type. Native system controls keep
   their platform metrics, and checklist adornments retain first-line alignment.
-  A hard minimum does not compress: seven square formatting actions cannot fit
-  on a narrow phone. `EditorFormattingBar` therefore scrolls horizontally inside
-  the editor's offered width, preserving 44pt squares and screen geometry.
+  A hard minimum does not compress. The seven square formatting actions fit the
+  narrowest phone's column today, but any addition would not, so
+  `EditorFormattingBar` scrolls horizontally inside the editor's offered width as
+  a safeguard, preserving 44pt squares and screen geometry.
   `EditorFormattingBarTests` covers both the width containment and row height.
   **Family buttons: one list button for all three list kinds (`ListFormat`) and
   one for quote/code (`QuoteFormat`)**, both `FormattingBarFormat`s. A tap applies

@@ -67,8 +67,9 @@
 > family's default kind on tap; a long press swaps the row for Close plus the
 > family's members (bulleted/numbered/checklist, or quote/code), the remembered
 > default drawn in the brand colour, and a pick becomes the new default.
-> The formatting accessory scrolls horizontally on narrow devices rather than
-> compressing its seven actions or widening the editor. The Sketch component library
+> The formatting accessory's seven actions fit the narrowest phone column; it still
+> scrolls horizontally, as a safeguard, rather than compressing an eighth action or
+> widening the editor. The Sketch component library
 > (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
 > dimensions and shapes.
 
