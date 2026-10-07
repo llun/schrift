@@ -36,26 +36,37 @@ struct EditorFormattingBar: View {
 
     @Environment(LocalizationStore.self) private var loc
 
-    /// The list button's default kind — a local preference, see `ListFormat`.
+    /// Each family button's default kind — local preferences, see `FormattingBarFormat`.
     @AppStorage(ListFormat.preferenceKey) private var defaultListFormatRaw = ListFormat.fallback.rawValue
+    @AppStorage(QuoteFormat.preferenceKey) private var defaultQuoteFormatRaw = QuoteFormat.fallback.rawValue
 
-    /// True while the row shows the list button's long-press choices in place of the
-    /// actions. An in-row swap rather than a `Menu`/context menu, so the choice is made
-    /// with the same plain buttons as every other formatting action and nothing new
-    /// competes with the text view for first responder mid-edit.
-    @State private var isChoosingListFormat = false
+    /// The family buttons that open choices on a long press.
+    private enum Family {
+        case list
+        case quote
+    }
+
+    /// The family whose long-press choices the row shows in place of the actions, if any.
+    /// An in-row swap rather than a `Menu`/context menu, so the choice is made with the
+    /// same plain buttons as every other formatting action and nothing new competes with
+    /// the text view for first responder mid-edit.
+    @State private var choosingFamily: Family?
 
     private var hasTarget: Bool { viewModel.focusedBlockID != nil }
 
     private var defaultListFormat: ListFormat { ListFormat.stored(defaultListFormatRaw) }
+    private var defaultQuoteFormat: QuoteFormat { QuoteFormat.stored(defaultQuoteFormatRaw) }
 
     var body: some View {
         // Keep every action circular and 44pt square. A horizontal scroll view
         // contains the row on narrow screens without widening the editor.
         ScrollView(.horizontal) {
-            if isChoosingListFormat {
-                listFormatChoices
-            } else {
+            switch choosingFamily {
+            case .list:
+                formatChoices(current: defaultListFormat) { defaultListFormatRaw = $0.rawValue }
+            case .quote:
+                formatChoices(current: defaultQuoteFormat) { defaultQuoteFormatRaw = $0.rawValue }
+            case nil:
                 actions
             }
         }
@@ -70,24 +81,27 @@ struct EditorFormattingBar: View {
         // glass is meant for.
         .glassEffect(.regular, in: Capsule())
         // The choices act on the focused block; moving the caret elsewhere ends the choice.
-        .onChange(of: viewModel.focusedBlockID) { isChoosingListFormat = false }
+        .onChange(of: viewModel.focusedBlockID) { choosingFamily = nil }
     }
 
-    /// Close, then one button per list kind. Picking one applies it to the focused block
-    /// and makes it the default; the current default is drawn in the brand colour.
-    private var listFormatChoices: some View {
+    /// Close, then one button per member of the family. Picking one applies it to the
+    /// focused block and makes it the default (`remember`); the current default is drawn
+    /// in the brand colour.
+    private func formatChoices<Format: FormattingBarFormat>(
+        current: Format, remember: @escaping (Format) -> Void
+    ) -> some View {
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: .close, label: loc[.common_close], disabled: false) {
-                isChoosingListFormat = false
+                choosingFamily = nil
             }
-            ForEach(ListFormat.allCases, id: \.self) { format in
-                barButton(icon: format.icon, label: loc[format.labelKey], brand: format == defaultListFormat) {
-                    viewModel.chooseListFormat(format)
-                    defaultListFormatRaw = format.rawValue
-                    isChoosingListFormat = false
+            ForEach(Format.allCases, id: \.self) { format in
+                barButton(icon: format.icon, label: loc[format.labelKey], brand: format == current) {
+                    viewModel.chooseFormat(format)
+                    remember(format)
+                    choosingFamily = nil
                 }
                 // The brand colour marks the default for sighted users; VoiceOver gets the trait.
-                .accessibilityAddTraits(format == defaultListFormat ? .isSelected : [])
+                .accessibilityAddTraits(format == current ? .isSelected : [])
             }
         }
     }
@@ -119,16 +133,19 @@ struct EditorFormattingBar: View {
             barButton(
                 icon: defaultListFormat.icon, label: loc[defaultListFormat.labelKey],
                 longPressLabel: loc[.editor_format_change_list_type],
-                longPressAction: { isChoosingListFormat = true }
+                longPressAction: { choosingFamily = .list }
             ) {
-                guard !isChoosingListFormat else { return }
-                viewModel.tapListFormat(defaultListFormat)
+                guard choosingFamily == nil else { return }
+                viewModel.tapFormat(defaultListFormat)
             }
-            barButton(icon: .format_quote, label: loc[.editor_format_quote]) {
-                viewModel.convertFocusedBlock(to: .quote)
-            }
-            barButton(icon: .data_object, label: loc[.editor_format_code_block]) {
-                viewModel.convertFocusedBlock(to: .codeBlock(language: ""))
+            // Quote and code share one button on the same terms.
+            barButton(
+                icon: defaultQuoteFormat.icon, label: loc[defaultQuoteFormat.labelKey],
+                longPressLabel: loc[.editor_format_change_quote_type],
+                longPressAction: { choosingFamily = .quote }
+            ) {
+                guard choosingFamily == nil else { return }
+                viewModel.tapFormat(defaultQuoteFormat)
             }
             // Stays disabled while an upload is in flight (and before content has
             // loaded): the view model would decline anyway, so don't invite the tap.

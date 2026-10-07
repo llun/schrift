@@ -63,11 +63,12 @@
 > hidden at accessibility text sizes. Native toggles,
 > segmented controls and navigation retain system metrics. Document checklist
 > adornments retain their first-line alignment and row-pitch hit targets.
-> The formatting accessory's single list button applies the default list kind on
-> tap; a long press swaps the row for Close plus bulleted/numbered/checklist, the
-> remembered default drawn in the brand colour, and a pick becomes the new default.
+> The formatting accessory's list button and quote/code button each apply their
+> family's default kind on tap; a long press swaps the row for Close plus the
+> family's members (bulleted/numbered/checklist, or quote/code), the remembered
+> default drawn in the brand colour, and a pick becomes the new default.
 > The formatting accessory scrolls horizontally on narrow devices rather than
-> compressing its eight actions or widening the editor. The Sketch component library
+> compressing its seven actions or widening the editor. The Sketch component library
 > (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
 > dimensions and shapes.
 
@@ -307,7 +308,7 @@
 >    mid-document (a baked-in `UIFont` otherwise goes stale);
 >    `docsScaledFont` covers the few component sizes off the HIG ramp (the 14pt
 >    button label); `MaterialSymbol` scales by default (`scales: false` for
->    glyphs in hard-bounded boxes — `IconButton`, whose row of eight shares a
+>    glyphs in hard-bounded boxes — `IconButton`, whose row of seven shares a
 >    fixed width budget); `DocIcon` scales glyph and box together from one
 >    value; fixed `height:` around text became `minHeight:` (`DocsTextField`,
 >    `SearchField`, `DocsButton`, `NavBar` — whose standard-mode title, drawn in

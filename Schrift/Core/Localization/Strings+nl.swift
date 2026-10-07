@@ -244,6 +244,7 @@ enum Strings_nl {
         .editor_format_code_block: "Codeblok",
         .editor_format_insert_photo: "Foto invoegen",
         .editor_format_change_list_type: "Lijsttype wijzigen",
+        .editor_format_change_quote_type: "Citaat of code wijzigen",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Link toevoegen",

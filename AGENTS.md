@@ -1045,7 +1045,7 @@ new code reads like the surrounding code.
   It **scales with Dynamic Type by default** (relative to `.body`), so a glyph
   stays proportionate to the text beside it; pass `scales: false` for a glyph in
   a hard-bounded box that would crop it instead — `IconButton`, whose row of
-  eight in the formatting bar scrolls inside a fixed width budget, and `DocIcon`,
+  seven in the formatting bar scrolls inside a fixed width budget, and `DocIcon`,
   which scales its glyph and box together from one value.
   `IconButton(icon:)` takes a `MaterialIcon`; a `ToolbarItem`'s icon-only label
   uses `ToolbarIcon` (template image) and `.buttonBorderShape(.circle)`, with fixed
@@ -1084,18 +1084,21 @@ new code reads like the surrounding code.
   `DocsTextField`, custom search fields and the sheet close action share that
   floor; text controls may grow with Dynamic Type. Native system controls keep
   their platform metrics, and checklist adornments retain first-line alignment.
-  A hard minimum does not compress: eight square formatting actions cannot fit
+  A hard minimum does not compress: seven square formatting actions cannot fit
   on a narrow phone. `EditorFormattingBar` therefore scrolls horizontally inside
   the editor's offered width, preserving 44pt squares and screen geometry.
   `EditorFormattingBarTests` covers both the width containment and row height.
-  **One list button stands for all three list kinds** (`ListFormat`): a tap
-  applies the remembered default (`schrift.editor.defaultListFormat`, a local
-  preference), toggling a block already in that list kind — checked or not — back
-  to a paragraph (`blockKindAfterTapping`), and a long press
-  (`IconButton.longPressAction`, also exposed as a named VoiceOver action) swaps
-  the row in place for Close + bulleted/numbered/checklist. A pick applies that
-  kind and becomes the default, and is *not* a toggle (`blockKindAfterChoosing`):
-  picking the kind a block already has leaves it, checked state included. The
+  **Family buttons: one list button for all three list kinds (`ListFormat`) and
+  one for quote/code (`QuoteFormat`)**, both `FormattingBarFormat`s. A tap applies
+  the family's remembered default (`schrift.editor.defaultListFormat` /
+  `…defaultQuoteFormat`, local preferences), toggling a block already of that
+  kind — checked or not, any code language — back to a paragraph
+  (`blockKindAfterTapping`), and a long press (`IconButton.longPressAction`, also
+  exposed as a named VoiceOver action) swaps the row in place for Close + the
+  family's members. A pick applies that kind and becomes the default, and is *not*
+  a toggle (`blockKindAfterChoosing`): picking the kind a block already has leaves
+  it, checked state and code language included. A new family is a new conforming
+  enum plus a `Family` case in the bar — not another choices view. The
   choices replace the row rather than opening a system `Menu`, so nothing but the
   bar's own plain buttons competes with the text view mid-edit.
 - **A 44pt frame is not a 44pt tap target — a plain `Button` hit-tests the shape

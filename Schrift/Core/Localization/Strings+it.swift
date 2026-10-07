@@ -243,6 +243,7 @@ enum Strings_it {
         .editor_format_code_block: "Blocco di codice",
         .editor_format_insert_photo: "Inserisci foto",
         .editor_format_change_list_type: "Cambia tipo di elenco",
+        .editor_format_change_quote_type: "Cambia citazione o codice",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Aggiungi link",

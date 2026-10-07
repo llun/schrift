@@ -190,7 +190,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.chooseListFormat(.numbered)
+        viewModel.chooseFormat(ListFormat.numbered)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
         XCTAssertEqual(viewModel.blocks[0].text, "Item")
@@ -202,7 +202,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.chooseListFormat(.checklist)
+        viewModel.chooseFormat(ListFormat.checklist)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .checklistItem(checked: true))
         XCTAssertFalse(viewModel.isDirty)
@@ -213,7 +213,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.tapListFormat(.checklist)
+        viewModel.tapFormat(ListFormat.checklist)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
         XCTAssertEqual(viewModel.blocks[0].text, "Done")
@@ -224,7 +224,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let viewModel = makeViewModel(blocks: [block])
         viewModel.focusedBlockID = block.id
 
-        viewModel.tapListFormat(.numbered)
+        viewModel.tapFormat(ListFormat.numbered)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .numberedItem)
     }
@@ -243,7 +243,7 @@ final class EditorBlockMutationTests: XCTestCase {
         let block = EditorBlock(kind: .paragraph, text: "Item")
         let viewModel = makeViewModel(blocks: [block])
 
-        viewModel.chooseListFormat(.bulleted)
+        viewModel.chooseFormat(ListFormat.bulleted)
 
         XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
     }
