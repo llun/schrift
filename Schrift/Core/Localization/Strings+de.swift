@@ -293,6 +293,8 @@ enum Strings_de {
         // Editor - block canvas accessibility labels (BlockEditorView)
         .editor_add_paragraph_a11y: "Absatz am Ende hinzufügen",
         .editor_divider_a11y: "Trennlinie",
+        .editor_move_block_up: "Nach oben verschieben",
+        .editor_move_block_down: "Nach unten verschieben",
         .editor_checklist_hide_completed: "Erledigte ausblenden",
         .editor_checklist_hidden_count: "Ausgeblendete erledigte Einträge: %d",
         .editor_checklist_show_completed: "Erledigte anzeigen",

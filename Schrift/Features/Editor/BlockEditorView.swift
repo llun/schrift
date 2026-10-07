@@ -25,6 +25,9 @@ struct BlockEditorView<Header: View>: View {
 
     @Environment(LocalizationStore.self) private var loc
     @State private var scrollPosition = ScrollPosition()
+    /// The rows' latest frames, read when a leaf is dropped to decide where it lands.
+    @State private var blockFrames: [UUID: CGRect] = [:]
+    @State private var reorderDrag: BlockReorderDrag?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -50,6 +53,7 @@ struct BlockEditorView<Header: View>: View {
                         // native view's identity when it moves to another block.
                         .id(EditorScrollTarget.block(row.rowID))
                         .recordingEditorBlockFrame(row.block.id)
+                        .modifier(reorderable(row.block, index: row.index))
                     }
 
                     // Tapping the empty canvas below the last block starts a
@@ -82,6 +86,7 @@ struct BlockEditorView<Header: View>: View {
             }
             .onPreferenceChange(EditorBlockFramesKey.self) { frames in
                 scrollAnchor.noteBlockFrames(frames)
+                blockFrames = frames
             }
             .onAppear {
                 if let blockID = scrollAnchor.consumePendingBlock() {
@@ -119,6 +124,84 @@ struct BlockEditorView<Header: View>: View {
                     proxy.scrollTo(EditorScrollTarget.block(viewModel.inputRowID(for: focusedID)), anchor: .center)
                 }
             }
+        }
+    }
+}
+
+extension BlockEditorView {
+    /// Long-press-and-drag plus VoiceOver move actions for a leaf row; nothing
+    /// for a text row (see `blockIsReorderable`).
+    fileprivate func reorderable(_ block: EditorBlock, index: Int) -> BlockReorderRowModifier {
+        BlockReorderRowModifier(
+            isEnabled: blockIsReorderable(block.kind),
+            translation: reorderDrag?.blockID == block.id ? reorderDrag?.translation : nil,
+            canMoveUp: index > 0,
+            canMoveDown: index < viewModel.blocks.count - 1,
+            moveUpLabel: loc[.editor_move_block_up],
+            moveDownLabel: loc[.editor_move_block_down],
+            onMoveUp: { viewModel.moveBlock(blockID: block.id, to: index - 1) },
+            onMoveDown: { viewModel.moveBlock(blockID: block.id, to: index + 1) },
+            gesture: BlockReorderGesture(
+                onBegan: {
+                    guard let frame = blockFrames[block.id] else { return }
+                    reorderDrag = BlockReorderDrag(blockID: block.id, startMidY: frame.midY)
+                },
+                onChanged: { translation in
+                    guard reorderDrag?.blockID == block.id else { return }
+                    reorderDrag?.translation = translation
+                },
+                onEnded: { translation in
+                    guard var drag = reorderDrag, drag.blockID == block.id else { return }
+                    drag.translation = translation
+                    let destination = blockReorderDestination(
+                        draggedID: block.id, dragCenterY: drag.centerY,
+                        order: viewModel.blocks.map(\.id), frames: blockFrames)
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        reorderDrag = nil
+                        if let destination {
+                            viewModel.moveBlock(blockID: block.id, to: destination)
+                        }
+                    }
+                },
+                onCancelled: {
+                    guard reorderDrag?.blockID == block.id else { return }
+                    withAnimation(.easeOut(duration: 0.2)) { reorderDrag = nil }
+                }
+            )
+        )
+    }
+}
+
+/// Lifts the row while it is dragged and attaches the drag gesture. Only a
+/// leaf gets the gesture; the structural branch is safe because a leaf never
+/// becomes a text row in place (`convertBlock` refuses images and attachments,
+/// and a divider is already its own branch in `BlockEditorRow`).
+struct BlockReorderRowModifier: ViewModifier {
+    let isEnabled: Bool
+    /// Non-nil while this row is the one being dragged.
+    let translation: CGFloat?
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let moveUpLabel: String
+    let moveDownLabel: String
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let gesture: BlockReorderGesture
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .scaleEffect(translation == nil ? 1 : 1.02)
+                .opacity(translation == nil ? 1 : 0.85)
+                .offset(y: translation ?? 0)
+                .zIndex(translation == nil ? 0 : 1)
+                .gesture(gesture)
+                .accessibilityActions {
+                    if canMoveUp { Button(moveUpLabel, action: onMoveUp) }
+                    if canMoveDown { Button(moveDownLabel, action: onMoveDown) }
+                }
+        } else {
+            content
         }
     }
 }

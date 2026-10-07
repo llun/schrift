@@ -2112,6 +2112,21 @@ final class EditorViewModel {
         markDirty()
     }
 
+    /// Moves a block so it ends up at `destination` in the final array (clamped).
+    ///
+    /// The block keeps its id, so its input row and any focus survive the move.
+    /// A move is an ordinary edit: the full-overwrite save serializes the new
+    /// order, and the live write path sends it as `BlockNoteWrite`'s coarse
+    /// delete + re-insert.
+    func moveBlock(blockID: UUID, to destination: Int) {
+        guard let index = blockIndex(blockID), !blocks.isEmpty else { return }
+        let target = min(max(destination, 0), blocks.count - 1)
+        guard target != index else { return }
+        let block = blocks.remove(at: index)
+        blocks.insert(block, at: target)
+        markDirty()
+    }
+
     func insertBlock(after blockID: UUID?, kind: BlockKind) {
         let newBlock = EditorBlock(kind: kind)
         let insertionIndex: Int

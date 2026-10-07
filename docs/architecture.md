@@ -1034,6 +1034,19 @@ session so a remotely reintroduced model ID cannot collide with an inherited nat
 identity; installing replacement content resets them. Discarded row configurations
 cannot acquire focus or publish changes for a model ID they no longer own.
 
+**Reordering blocks.** In edit mode a leaf block (divider, image, attachment) can
+be long-pressed and dragged to a new position, which is how a photo ends up under
+a checklist item. Text rows are not draggable: their long press belongs to
+`UITextView` (caret loupe, selection). The gesture is a UIKit long press
+(`BlockReorderGesture`), so UIKit's own arbitration with the scroll view's pan
+decides between scrolling and dragging; the canvas does not auto-scroll during a
+drag, so a long move is several drags or VoiceOver's Move up / Move down actions.
+The drop position comes from the pure `blockReorderDestination` over the rows'
+recorded frames, and `EditorViewModel.moveBlock` applies it as an ordinary edit:
+the block keeps its id, the full-overwrite save serializes the new order (no new
+markdown or Yjs shape), and the live write path sends it as `BlockNoteWrite`'s
+coarse delete + re-insert.
+
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).
