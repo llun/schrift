@@ -64,8 +64,9 @@
 > segmented controls and navigation retain system metrics. Document checklist
 > adornments retain their first-line alignment and row-pitch hit targets.
 > The formatting accessory scrolls horizontally on narrow devices rather than
-> compressing its nine actions or widening the editor. The editable Sketch source
-> `/Users/llun/Desktop/Schrift.sketch` uses the same control dimensions and shapes.
+> compressing its nine actions or widening the editor. The Sketch component library
+> (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
+> dimensions and shapes.
 
 > **Revised: 2026-10-05 (Hide completed checklist items).** Reading mode offers
 > a native **Hide completed** switch above the body whenever the document contains

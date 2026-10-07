@@ -56,6 +56,8 @@ names the section with the details.
      the bytes must change, stop and get human sign-off first.
    - Design system: update the component's `#Preview` catalog; new color
      tokens get `DocsColorHexTests` assertions.
+   - Any change that alters the design: update the Sketch component library
+     too ([Sketch source of truth](#sketch-source-of-truth)).
    - Networking: assert method, path (trailing slash, lowercase UUID), and
      body via `MockURLProtocol`; mutating endpoints go through `send`/`sendVoid`.
    - View models: poll with `waitUntil`; cover the error path (friendly
@@ -886,6 +888,18 @@ new code reads like the surrounding code.
 
 ### Design system (`DesignSystem`)
 
+- <a id="sketch-source-of-truth"></a>**Sketch source of truth.** The design
+  lives in the separate [`llun/sketch`](https://github.com/llun/sketch) repo
+  (checked out beside this one as `sketch/`), under `Schrijft/`:
+  - `Schrijft/Schrijft.sketch` is the **component library only** — colors,
+    type, symbols and components. When a change alters the design (a token, a
+    component's shape, size or states, a new component), update the matching
+    symbol or component there in the same piece of work.
+  - **App screens are never placed in the Sketch file.** They are generated as
+    HTML into `Schrijft/Screens/` (an `index.html` viewer plus its assets).
+    When a change alters a screen, regenerate the affected screens there.
+  - Commit and push the sketch repo **directly to its default branch** — no
+    PR. Only the code change in this repo goes through the normal PR flow.
 - **App identity:** `docs/assets/app-icon/make-svg.mjs` is the source of truth
   for the app icon and the sign-in logo; `export.sh` beside it renders every PNG
   (icon default/dark/tinted, logo Any/Dark). Change the geometry there and
