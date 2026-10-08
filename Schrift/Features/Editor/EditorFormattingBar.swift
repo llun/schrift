@@ -40,6 +40,13 @@ func canOfferAttachmentInsertion(
     hasTarget && canInsertAttachment && !isOffline && !isLocalDocument
 }
 
+/// Whether the bar's Attach button is enabled: it opens the Photo/File choices, so it is
+/// disabled only when neither choice could be taken. Offline it stays enabled for Photo
+/// (which queues) while File inside it is disabled.
+func canOfferAttach(photo: Bool, file: Bool) -> Bool {
+    photo || file
+}
+
 /// Floating formatting toolbar shown above the keyboard while editing.
 ///
 /// The actions target the focused block (convert type, wrap the selection in
@@ -47,7 +54,8 @@ func canOfferAttachmentInsertion(
 struct EditorFormattingBar: View {
     @Bindable var viewModel: EditorViewModel
     /// Read/control availability, which withholds the File choice (it uploads at once).
-    var isOffline: Bool = false
+    /// Required, not defaulted: a call site that forgot it would offer File offline.
+    let isOffline: Bool
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -217,7 +225,7 @@ struct EditorFormattingBar: View {
             // disabled — see `canOfferAttachmentInsertion`.
             barButton(
                 icon: .attach_file, label: loc[.editor_format_attach],
-                disabled: !(canOfferPhoto || canOfferFile)
+                disabled: !canOfferAttach(photo: canOfferPhoto, file: canOfferFile)
             ) {
                 choosingFamily = .attach
             }

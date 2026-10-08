@@ -1424,9 +1424,9 @@ refused from the file system's own answer **before** the bytes are read; the
 server's 10 MB default remains the cap users normally meet, and it gets its own
 copy rather than a useless "please try again".
 
-Both uploading affordances — photo and file — are withheld offline and on a
-document with no server id. In the **slash menu** that is expressed as
-`SlashMenuAction.requiresUpload`, so a third menu item cannot forget it; the
+File insertion is withheld offline and on a document with no server id (a
+photo queues instead, through `PendingAttachmentStore`). In the **slash menu**
+that is expressed as `SlashMenuAction.requiresImmediateUpload`, so a third menu item cannot forget it; the
 formatting bar has one **Attach** button whose tap swaps the row for Close,
 Photo and File (the same in-row swap the list and quote families use), each
 gated by its own pure function — `canOfferPhotoInsertion` and

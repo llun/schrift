@@ -25,7 +25,7 @@ final class EditorFormattingBarTests: XCTestCase {
 
     private func barWidth(_ viewModel: EditorViewModel, offered column: CGFloat) -> CGFloat {
         let host = UIHostingController(
-            rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
+            rootView: EditorFormattingBar(viewModel: viewModel, isOffline: false).environment(LocalizationStore()))
         return host.sizeThatFits(in: CGSize(width: column, height: 100)).width
     }
 
@@ -72,7 +72,7 @@ final class EditorFormattingBarTests: XCTestCase {
     func testTheBarKeepsTheStandardTapHeight() {
         let viewModel = makeViewModel()
         let host = UIHostingController(
-            rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
+            rootView: EditorFormattingBar(viewModel: viewModel, isOffline: false).environment(LocalizationStore()))
         let height = host.sizeThatFits(in: CGSize(width: 343, height: CGFloat.greatestFiniteMagnitude)).height
         XCTAssertEqual(height, DocsSpacing.rowMinHeight + 2 * DocsSpacing.space3xs, accuracy: 0.5)
     }
@@ -143,13 +143,21 @@ final class EditorFormattingBarTests: XCTestCase {
         }
     }
 
-    /// Offline, the bar still renders inside its width with the Attach button present.
-    func testTheBarFitsOffline() {
-        let viewModel = makeViewModel()
-        let column: CGFloat = 375 - 2 * DocsSpacing.gutter
-        let host = UIHostingController(
-            rootView: EditorFormattingBar(viewModel: viewModel, isOffline: true).environment(LocalizationStore()))
-        XCTAssertLessThanOrEqual(
-            host.sizeThatFits(in: CGSize(width: column, height: 100)).width, column + roundingSlack)
+    /// Offline on a loaded server document, Attach stays enabled because Photo queues,
+    /// while File inside it is withheld.
+    func testAttachStaysEnabledOfflineWithOnlyPhotoOffered() {
+        let photo = canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: true)
+        let file = canOfferAttachmentInsertion(
+            hasTarget: true, canInsertAttachment: true, isOffline: true, isLocalDocument: false)
+        XCTAssertTrue(photo)
+        XCTAssertFalse(file)
+        XCTAssertTrue(canOfferAttach(photo: photo, file: file))
+    }
+
+    /// Attach is disabled only when neither choice could be taken.
+    func testAttachIsDisabledOnlyWhenNeitherChoiceIsOffered() {
+        XCTAssertFalse(canOfferAttach(photo: false, file: false))
+        XCTAssertTrue(canOfferAttach(photo: false, file: true))
+        XCTAssertTrue(canOfferAttach(photo: true, file: false))
     }
 }

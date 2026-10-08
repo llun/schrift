@@ -1975,9 +1975,10 @@ markdown write endpoint**. Understand this before touching the save path:
   because the picked name is interpolated into both: multipart-header safety (no
   quote, CR, LF) *and* markdown-label safety (no brackets or parens, or the
   block's own `[name](url)` line stops parsing back as one link). Size is refused
-  from the file system's answer **before** the bytes are read. Both uploading
-  affordances are withheld offline and on a local document; the **slash menu**
-  routes that through `SlashMenuAction.requiresUpload`, while the formatting
+  from the file system's answer **before** the bytes are read. File insertion is
+  withheld offline and on a local document (Photo queues instead — see
+  `PendingAttachmentStore` below); the **slash menu**
+  routes that through `SlashMenuAction.requiresImmediateUpload`, while the formatting
   bar's **Attach** button (one slot, a tap swaps the row for Close + Photo + File)
   gates each choice with its own pure function — `canOfferPhotoInsertion` and
   `canOfferAttachmentInsertion`, the latter pinned to agree with the slash menu
@@ -1986,9 +1987,8 @@ markdown write endpoint**. Understand this before touching the save path:
   Only one upload runs at a time.
   **A file attachment has no offline queue.** Photos have the machinery for one
   (`PendingAttachmentStore`, the `schrift-attachment://` placeholder and the
-  save hold — see the offline rules further down), but the Photo slash item is
-  still withheld offline too, so nothing is inconsistent *yet*. When photo
-  insertion is offered offline, file insertion should follow through that same
+  save hold — see the offline rules further down), and Photo is offered offline
+  through it. To offer File offline too, follow that same
   path rather than growing a parallel one: the placeholder scheme, the hold and
   the replay are all type-agnostic, and only `parseImageLine`'s allowlist and
   the resolve step assume an image.
@@ -3089,13 +3089,14 @@ markdown write endpoint**. Understand this before touching the save path:
   document with nothing loaded is the case that guard exists for, online or off.
   **Within the editor's own surfaces the dividing line is whether the action
   POSTs**, and it cuts through the editing surface itself: every block
-  transformation is a local edit the draft pipeline queues, but **inserting a
-  photo** uploads a multipart attachment that has no queue, so it stays gated
-  offline in *both* entry points — disabled in `EditorFormattingBar` (via
-  `canOfferPhotoInsertion`), and dropped from the slash menu by the pure
-  `filteredSlashItems(query:isOffline:isLocalDocument:)`. Offering it would open the picker and
-  re-encode the chosen image only to fail. **Photo now also gates on
-  `isLocalDocument`** at both entry points: a create that 500s with the network fine
+  transformation is a local edit the draft pipeline queues, and so is **inserting a
+  photo** (it becomes a placeholder `PendingAttachmentStore` uploads later), but
+  **inserting a file** uploads a multipart attachment that has no queue, so it stays gated
+  offline in *both* entry points — the File choice behind the bar's Attach button is
+  disabled (via `canOfferAttachmentInsertion`), and `.insertAttachment` is dropped from the
+  slash menu by the pure `filteredSlashItems(query:isOffline:isLocalDocument:)`
+  (`requiresImmediateUpload`). Offering it would open the picker only to fail. **File also
+  gates on `isLocalDocument`** at both entry points: a create that 500s with the network fine
   mints a local document while `isOffline` reads false, and the upload would POST a
   client-minted id for a 404 and an impossible retry.
   The editor's two **create** buttons are **ungated** — neither on `isOffline` (a failed
@@ -3123,7 +3124,7 @@ markdown write endpoint**. Understand this before touching the save path:
   and the document header's `PresenceBar`, via `headerPeers`/`presentedPeerCount`
   — that was the Options button's presence *badge* until the shared header gave
   both surfaces a bar, and note the gate now reaches the reading surface too)
-  plus the one POST-only affordance above that still reads it (photo).
+  plus the one POST-only affordance above that still reads it (File).
   Nothing about whether an edit is kept, queued, or replayed reads it.
   **Availability for editor/Home search controls uses one injected
   `OnlineAvailability`**, reading Work Offline and the live `ConnectivityMonitor`
