@@ -769,7 +769,7 @@ struct EditorView: View {
                             isLocalDocument: viewModel.isLocalDocument,
                             onSelect: { viewModel.applySlashSelection($0) })
                     }
-                    EditorFormattingBar(viewModel: viewModel)
+                    EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
                 }
             }
             .padding(.horizontal, DocsSpacing.gutter)

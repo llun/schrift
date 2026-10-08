@@ -1,21 +1,8 @@
 import SwiftUI
 
-/// Whether the photo button may be offered: there must be a focused block to insert
-/// into, no upload already in flight (`canInsertPhoto` also covers "content loaded"),
-/// and the device must not be offline.
+/// Whether the Attach row's Photo choice may be offered: a focused block to insert into and
+/// no upload already in flight (`canInsertPhoto` also covers "content loaded").
 ///
-/// Offline is the odd one out and the reason this is a named function rather than an
-/// inline expression: every *other* action in the bar is a local block transformation
-/// the draft pipeline queues, so editing offline is supported. A photo POSTs a
-/// multipart attachment and there is no queue for one — offered offline it would open
-/// the picker and re-encode the chosen image only to fail. The slash menu's half lives
-/// in `filteredSlashItems(query:)`.
-/// `isLocalDocument` is the load-bearing half. `isOffline` is derived from Home's last
-/// *list* fetch, not from reachability — so a create that 500s while the network is fine
-/// mints a local document and leaves this reading false. The upload would then POST
-/// `documents/{client-minted-uuid}/attachment-upload/`, take a 404, and offer a retry that
-/// can never succeed. Same rule as "Add a subpage" and the Pages drawer's "New page", both
-/// of which moved to this gate; this one was missed.
 /// Photo insertion no longer gates on connectivity or on whether the server has seen the
 /// document. A photo picked with neither is stored on this device and uploaded by the replay,
 /// exactly as an offline text edit is queued and pushed.
@@ -27,12 +14,35 @@ func canOfferPhotoInsertion(hasTarget: Bool, canInsertPhoto: Bool) -> Bool {
     hasTarget && canInsertPhoto
 }
 
+/// Whether the bar's File choice may be offered — the bar's half of the slash menu's
+/// `requiresImmediateUpload` filter, on the same terms.
+///
+/// Unlike a photo, a file has no offline queue: it uploads the moment it is picked, so it
+/// is withheld offline and on a document the server has not seen yet (whose id would 404).
+/// Any type is accepted — `.fileImporter` asks for `.item`, and the server sniffs the
+/// content and stores a zip, docx, … under an `-unsafe` key rather than refusing it.
+func canOfferAttachmentInsertion(
+    hasTarget: Bool, canInsertAttachment: Bool, isOffline: Bool, isLocalDocument: Bool
+) -> Bool {
+    hasTarget && canInsertAttachment && !isOffline && !isLocalDocument
+}
+
+/// Whether the bar's Attach button is enabled: it opens the Photo/File choices, so it is
+/// disabled only when neither choice could be taken. Offline it stays enabled for Photo
+/// (which queues) while File inside it is disabled.
+func canOfferAttach(photo: Bool, file: Bool) -> Bool {
+    photo || file
+}
+
 /// Floating formatting toolbar shown above the keyboard while editing.
 ///
 /// The actions target the focused block (convert type, wrap the selection in
 /// inline markers). Never a blind append: everything is selection-aware.
 struct EditorFormattingBar: View {
     @Bindable var viewModel: EditorViewModel
+    /// Read/control availability, which withholds the File choice (it uploads at once).
+    /// Required, not defaulted: a call site that forgot it would offer File offline.
+    let isOffline: Bool
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -40,10 +50,12 @@ struct EditorFormattingBar: View {
     @AppStorage(ListFormat.preferenceKey) private var defaultListFormatRaw = ListFormat.fallback.rawValue
     @AppStorage(QuoteFormat.preferenceKey) private var defaultQuoteFormatRaw = QuoteFormat.fallback.rawValue
 
-    /// The family buttons that open choices on a long press.
+    /// The buttons that swap the row for a set of choices: the list and quote families on
+    /// a long press, and Attach (Photo or File) on a tap.
     private enum Family {
         case list
         case quote
+        case attach
     }
 
     /// The family whose long-press choices the row shows in place of the actions, if any.
@@ -66,6 +78,8 @@ struct EditorFormattingBar: View {
                 formatChoices(current: defaultListFormat) { defaultListFormatRaw = $0.rawValue }
             case .quote:
                 formatChoices(current: defaultQuoteFormat) { defaultQuoteFormatRaw = $0.rawValue }
+            case .attach:
+                attachChoices
             case nil:
                 actions
             }
@@ -102,6 +116,33 @@ struct EditorFormattingBar: View {
                 }
                 // The brand colour marks the default for sighted users; VoiceOver gets the trait.
                 .accessibilityAddTraits(format == current ? .isSelected : [])
+            }
+        }
+    }
+
+    private var canOfferPhoto: Bool {
+        canOfferPhotoInsertion(hasTarget: hasTarget, canInsertPhoto: viewModel.canInsertPhoto)
+    }
+
+    private var canOfferFile: Bool {
+        canOfferAttachmentInsertion(
+            hasTarget: hasTarget, canInsertAttachment: viewModel.canInsertAttachment,
+            isOffline: isOffline, isLocalDocument: viewModel.isLocalDocument)
+    }
+
+    /// Close, Photo, File. Each choice closes the row before presenting its picker.
+    private var attachChoices: some View {
+        HStack(spacing: DocsSpacing.space4xs) {
+            barButton(icon: .close, label: loc[.common_close], disabled: false) {
+                choosingFamily = nil
+            }
+            barButton(icon: .image, label: loc[.editor_format_insert_photo], disabled: !canOfferPhoto) {
+                choosingFamily = nil
+                viewModel.requestPhotoInsertion()
+            }
+            barButton(icon: .description, label: loc[.editor_format_insert_file], disabled: !canOfferFile) {
+                choosingFamily = nil
+                viewModel.requestAttachmentInsertion()
             }
         }
     }
@@ -165,15 +206,15 @@ struct EditorFormattingBar: View {
                 guard choosingFamily == nil else { return }
                 viewModel.tapFormat(defaultQuoteFormat)
             }
-            // Stays disabled while an upload is in flight (and before content has
-            // loaded): the view model would decline anyway, so don't invite the tap.
-            // No longer gated on connectivity — see `canOfferPhotoInsertion`.
+            // One Attach button for both uploads: a tap swaps the row for Photo and
+            // File. Disabled only when neither can be offered (no target, content not
+            // loaded, or an upload already in flight); offline it still opens, with File
+            // disabled — see `canOfferAttachmentInsertion`.
             barButton(
-                icon: .image, label: loc[.editor_format_insert_photo],
-                disabled: !canOfferPhotoInsertion(
-                    hasTarget: hasTarget, canInsertPhoto: viewModel.canInsertPhoto)
+                icon: .attach_file, label: loc[.editor_format_attach],
+                disabled: !canOfferAttach(photo: canOfferPhoto, file: canOfferFile)
             ) {
-                viewModel.requestPhotoInsertion()
+                choosingFamily = .attach
             }
         }
     }

@@ -65,7 +65,9 @@
 > queue, so it is withheld offline too (disabled in `EditorFormattingBar`,
 > dropped from the slash menu by `filteredSlashItems(query:isOffline:isLocalDocument:)`) —
 > otherwise it would open the picker and re-encode the chosen image only to
-> fail. Offline **creation** was out of scope in *this* change — the "Add a subpage"
+> fail. (**Superseded** for photos: a photo now queues offline — see "A photo
+> queued on this device". Only File, behind the bar's Attach button and
+> `.insertAttachment` in the slash menu, is still withheld.) Offline **creation** was out of scope in *this* change — the "Add a subpage"
 > and Pages-drawer "New page" buttons stayed gated here — and is **superseded**: it
 > landed 2026-08-02, and those buttons now fall back to a local document rather than
 > gating on `isOffline`. See "Documents created on this device". That rule describes the
@@ -2647,6 +2649,10 @@ recovery, pagination disagreements and moves during unpin. Race tests use explic
 `MockURLProtocol.ResponseGate` delivery ordering.
 
 ## A photo queued on this device (2026-08-07, in progress)
+
+> Revised: the insert, render and replay work has since landed (see the end of this
+> section), so Photo is offered offline; the status paragraph below is the original
+> foundation-only snapshot.
 
 **Status: foundation only.** The placeholder vocabulary, the store, and the save hold
 have landed. Nothing yet *mints* a placeholder — the photo-insert path is still gated

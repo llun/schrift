@@ -236,6 +236,8 @@ enum Strings_zhHant {
         .editor_format_quote: "引文",
         .editor_format_code_block: "程式碼區塊",
         .editor_format_insert_photo: "插入照片",
+        .editor_format_attach: "附加",
+        .editor_format_insert_file: "插入檔案",
         .editor_format_indent: "增加縮排",
         .editor_format_outdent: "減少縮排",
         .editor_format_change_list_type: "變更清單類型",

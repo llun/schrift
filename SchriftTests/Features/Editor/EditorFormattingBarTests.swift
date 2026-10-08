@@ -25,7 +25,7 @@ final class EditorFormattingBarTests: XCTestCase {
 
     private func barWidth(_ viewModel: EditorViewModel, offered column: CGFloat) -> CGFloat {
         let host = UIHostingController(
-            rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
+            rootView: EditorFormattingBar(viewModel: viewModel, isOffline: false).environment(LocalizationStore()))
         return host.sizeThatFits(in: CGSize(width: column, height: 100)).width
     }
 
@@ -72,7 +72,7 @@ final class EditorFormattingBarTests: XCTestCase {
     func testTheBarKeepsTheStandardTapHeight() {
         let viewModel = makeViewModel()
         let host = UIHostingController(
-            rootView: EditorFormattingBar(viewModel: viewModel).environment(LocalizationStore()))
+            rootView: EditorFormattingBar(viewModel: viewModel, isOffline: false).environment(LocalizationStore()))
         let height = host.sizeThatFits(in: CGSize(width: 343, height: CGFloat.greatestFiniteMagnitude)).height
         XCTAssertEqual(height, DocsSpacing.rowMinHeight + 2 * DocsSpacing.space3xs, accuracy: 0.5)
     }
@@ -102,5 +102,62 @@ final class EditorFormattingBarTests: XCTestCase {
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: true))
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: false))
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: false))
+    }
+
+    // MARK: - File availability
+
+    /// File is offered from the bar on the same terms as the photo, plus the two the slash
+    /// menu already applies: it uploads at once and has no offline queue.
+    func testFileIsOfferedOnlineOnAServerDocument() {
+        XCTAssertTrue(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: true, isOffline: false, isLocalDocument: false))
+    }
+
+    func testFileIsWithheldOfflineOnALocalDocumentOrWithoutATarget() {
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: true, isOffline: true, isLocalDocument: false))
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: true, isOffline: false, isLocalDocument: true))
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: false, canInsertAttachment: true, isOffline: false, isLocalDocument: false))
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: false, isOffline: false, isLocalDocument: false))
+    }
+
+    /// The bar and the slash menu must agree on when File is available — two surfaces
+    /// offering the same action on different terms is how one of them drifts.
+    func testTheBarAndTheSlashMenuAgreeOnFileAvailability() {
+        for isOffline in [false, true] {
+            for isLocal in [false, true] {
+                let slashOffers = filteredSlashItems(query: "", isOffline: isOffline, isLocalDocument: isLocal)
+                    .contains { $0.action == .insertAttachment }
+                let barOffers = canOfferAttachmentInsertion(
+                    hasTarget: true, canInsertAttachment: true, isOffline: isOffline, isLocalDocument: isLocal)
+                XCTAssertEqual(barOffers, slashOffers, "offline=\(isOffline) local=\(isLocal)")
+            }
+        }
+    }
+
+    /// Offline on a loaded server document, Attach stays enabled because Photo queues,
+    /// while File inside it is withheld.
+    func testAttachStaysEnabledOfflineWithOnlyPhotoOffered() {
+        let photo = canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: true)
+        let file = canOfferAttachmentInsertion(
+            hasTarget: true, canInsertAttachment: true, isOffline: true, isLocalDocument: false)
+        XCTAssertTrue(photo)
+        XCTAssertFalse(file)
+        XCTAssertTrue(canOfferAttach(photo: photo, file: file))
+    }
+
+    /// Attach is disabled only when neither choice could be taken.
+    func testAttachIsDisabledOnlyWhenNeitherChoiceIsOffered() {
+        XCTAssertFalse(canOfferAttach(photo: false, file: false))
+        XCTAssertTrue(canOfferAttach(photo: false, file: true))
+        XCTAssertTrue(canOfferAttach(photo: true, file: false))
     }
 }

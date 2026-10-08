@@ -1,5 +1,12 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-10-08 — One Attach button in the formatting bar.** The bar's last
+> slot is now **Attach** (`attach_file`, U+E226, bringing the bundled subset to 80
+> icons). A tap swaps the row in place for Close, **Photo** (`image`) and **File**
+> (`description`) — the same swap the list and quote families use on a long press —
+> so any file, a zip included, can be attached from the bar and not only from the
+> slash menu. The row keeps its width; File is disabled offline and on a document the
+> server hasn't seen, since it uploads at once.
 
 > **Revised: 2026-10-08 — Nested list items, and how to re-subset the icon font.**
 > Bullet, numbered and checklist items can nest (Tab / Shift-Tab, or the formatting
