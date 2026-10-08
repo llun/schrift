@@ -1105,6 +1105,11 @@ new code reads like the surrounding code.
   enum plus a `Family` case in the bar — not another choices view. The
   choices replace the row rather than opening a system `Menu`, so nothing but the
   bar's own plain buttons competes with the text view mid-edit.
+  **Attach is the one *tap*-to-choose slot**: the bar's last button
+  (`attach_file`) swaps the row for Close + Photo + File on a tap, because neither
+  upload is a sensible default — it shares the `Family` swap rather than adding a
+  `Menu`. It is disabled only when neither choice can be offered; offline it opens
+  with File disabled (Photo queues, File has no queue).
 - **A 44pt frame is not a 44pt tap target — a plain `Button` hit-tests the shape
   its label *draws*.** So a `Button { HStack { icon; title; Spacer() } }` is
   tappable on the glyphs and nothing else: the `Spacer`, the padding and the rest
@@ -1973,9 +1978,12 @@ markdown write endpoint**. Understand this before touching the save path:
   from the file system's answer **before** the bytes are read. Both uploading
   affordances are withheld offline and on a local document; the **slash menu**
   routes that through `SlashMenuAction.requiresUpload`, while the formatting
-  bar's photo button still has its own `canOfferPhotoInsertion` (there is no
-  formatting-bar file button — the bar's width budget is full). Only one upload
-  runs at a time.
+  bar's **Attach** button (one slot, a tap swaps the row for Close + Photo + File)
+  gates each choice with its own pure function — `canOfferPhotoInsertion` and
+  `canOfferAttachmentInsertion`, the latter pinned to agree with the slash menu
+  by `EditorFormattingBarTests`. Any file type is accepted (zip included): the
+  server sniffs and stores it under an `-unsafe` key rather than refusing it.
+  Only one upload runs at a time.
   **A file attachment has no offline queue.** Photos have the machinery for one
   (`PendingAttachmentStore`, the `schrift-attachment://` placeholder and the
   save hold — see the offline rules further down), but the Photo slash item is

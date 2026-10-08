@@ -252,6 +252,8 @@ enum Strings_sl {
         .editor_format_quote: "Citat",
         .editor_format_code_block: "Blok kode",
         .editor_format_insert_photo: "Vstavi fotografijo",
+        .editor_format_attach: "Priloži",
+        .editor_format_insert_file: "Vstavi datoteko",
         .editor_format_indent: "Povečaj zamik",
         .editor_format_outdent: "Zmanjšaj zamik",
         .editor_format_change_list_type: "Spremeni vrsto seznama",

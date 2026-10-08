@@ -6,9 +6,9 @@ import XCTest
 
 final class MaterialIconTests: XCTestCase {
     func testCoversEveryHandoffGlyph() {
-        // 69 from the handoff (brand-iconography.html) + 10 app-specific Material
+        // 69 from the handoff (brand-iconography.html) + 11 app-specific Material
         // Symbols the iOS app needs that the mockups didn't surface.
-        XCTAssertEqual(MaterialIcon.allCases.count, 79)
+        XCTAssertEqual(MaterialIcon.allCases.count, 80)
     }
 
     func testKnownCodepoints() {
@@ -20,6 +20,7 @@ final class MaterialIconTests: XCTestCase {
         XCTAssertEqual(MaterialIcon.`public`.codepoint, 0xe80b)
         XCTAssertEqual(MaterialIcon.format_indent_increase.codepoint, 0xe23e)
         XCTAssertEqual(MaterialIcon.format_indent_decrease.codepoint, 0xe23d)
+        XCTAssertEqual(MaterialIcon.attach_file.codepoint, 0xe226)
     }
 
     func testBundledFontHasAGlyphForEveryIcon() {

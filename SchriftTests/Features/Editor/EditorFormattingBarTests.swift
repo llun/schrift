@@ -103,4 +103,53 @@ final class EditorFormattingBarTests: XCTestCase {
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: true, canInsertPhoto: false))
         XCTAssertFalse(canOfferPhotoInsertion(hasTarget: false, canInsertPhoto: false))
     }
+
+    // MARK: - File availability
+
+    /// File is offered from the bar on the same terms as the photo, plus the two the slash
+    /// menu already applies: it uploads at once and has no offline queue.
+    func testFileIsOfferedOnlineOnAServerDocument() {
+        XCTAssertTrue(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: true, isOffline: false, isLocalDocument: false))
+    }
+
+    func testFileIsWithheldOfflineOnALocalDocumentOrWithoutATarget() {
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: true, isOffline: true, isLocalDocument: false))
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: true, isOffline: false, isLocalDocument: true))
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: false, canInsertAttachment: true, isOffline: false, isLocalDocument: false))
+        XCTAssertFalse(
+            canOfferAttachmentInsertion(
+                hasTarget: true, canInsertAttachment: false, isOffline: false, isLocalDocument: false))
+    }
+
+    /// The bar and the slash menu must agree on when File is available — two surfaces
+    /// offering the same action on different terms is how one of them drifts.
+    func testTheBarAndTheSlashMenuAgreeOnFileAvailability() {
+        for isOffline in [false, true] {
+            for isLocal in [false, true] {
+                let slashOffers = filteredSlashItems(query: "", isOffline: isOffline, isLocalDocument: isLocal)
+                    .contains { $0.action == .insertAttachment }
+                let barOffers = canOfferAttachmentInsertion(
+                    hasTarget: true, canInsertAttachment: true, isOffline: isOffline, isLocalDocument: isLocal)
+                XCTAssertEqual(barOffers, slashOffers, "offline=\(isOffline) local=\(isLocal)")
+            }
+        }
+    }
+
+    /// Offline, the bar still renders inside its width with the Attach button present.
+    func testTheBarFitsOffline() {
+        let viewModel = makeViewModel()
+        let column: CGFloat = 375 - 2 * DocsSpacing.gutter
+        let host = UIHostingController(
+            rootView: EditorFormattingBar(viewModel: viewModel, isOffline: true).environment(LocalizationStore()))
+        XCTAssertLessThanOrEqual(
+            host.sizeThatFits(in: CGSize(width: column, height: 100)).width, column + roundingSlack)
+    }
 }

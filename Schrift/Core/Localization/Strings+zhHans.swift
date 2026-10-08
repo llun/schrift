@@ -236,6 +236,8 @@ enum Strings_zhHans {
         .editor_format_quote: "引用",
         .editor_format_code_block: "代码块",
         .editor_format_insert_photo: "插入照片",
+        .editor_format_attach: "附加",
+        .editor_format_insert_file: "插入文件",
         .editor_format_indent: "增加缩进",
         .editor_format_outdent: "减少缩进",
         .editor_format_change_list_type: "更改列表类型",

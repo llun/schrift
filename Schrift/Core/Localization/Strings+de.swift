@@ -246,6 +246,8 @@ enum Strings_de {
         .editor_format_quote: "Zitat",
         .editor_format_code_block: "Codeblock",
         .editor_format_insert_photo: "Foto einfügen",
+        .editor_format_attach: "Anhängen",
+        .editor_format_insert_file: "Datei einfügen",
         .editor_format_indent: "Einrücken",
         .editor_format_outdent: "Ausrücken",
         .editor_format_change_list_type: "Listentyp ändern",

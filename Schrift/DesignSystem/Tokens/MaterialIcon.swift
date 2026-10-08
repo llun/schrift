@@ -106,6 +106,7 @@ enum MaterialIcon: String, CaseIterable, Sendable {
     case check_box_outline_blank
     case format_indent_increase
     case format_indent_decrease
+    case attach_file
 
     /// The glyph's code point in the Material Symbols font (Private Use Area).
     var codepoint: UInt32 {
@@ -189,6 +190,7 @@ enum MaterialIcon: String, CaseIterable, Sendable {
         case .check_box_outline_blank: return 0xe835
         case .format_indent_increase: return 0xe23e
         case .format_indent_decrease: return 0xe23d
+        case .attach_file: return 0xe226
         }
     }
 

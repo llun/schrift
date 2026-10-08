@@ -1427,9 +1427,13 @@ copy rather than a useless "please try again".
 Both uploading affordances — photo and file — are withheld offline and on a
 document with no server id. In the **slash menu** that is expressed as
 `SlashMenuAction.requiresUpload`, so a third menu item cannot forget it; the
-formatting bar keeps its own `canOfferPhotoInsertion` (and has no file button,
-the bar's width budget being full), so a future bar affordance still has to
-remember. Only one upload runs at a time.
+formatting bar has one **Attach** button whose tap swaps the row for Close,
+Photo and File (the same in-row swap the list and quote families use), each
+gated by its own pure function — `canOfferPhotoInsertion` and
+`canOfferAttachmentInsertion`, which a test holds in agreement with the slash
+menu — so a future bar affordance still has to remember. Any file type is
+accepted: the server sniffs the content and stores e.g. a zip under an
+`-unsafe` key rather than rejecting it. Only one upload runs at a time.
 
 **An attachment insert always takes the classic save path**
 (`markDirty(forcesClassicPath:)`). `canEngageLiveWrite` inspects the projection

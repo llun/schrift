@@ -243,6 +243,8 @@ enum Strings_fr {
         .editor_format_quote: "Citation",
         .editor_format_code_block: "Bloc de code",
         .editor_format_insert_photo: "Insérer une photo",
+        .editor_format_attach: "Joindre",
+        .editor_format_insert_file: "Insérer un fichier",
         .editor_format_indent: "Augmenter le retrait",
         .editor_format_outdent: "Diminuer le retrait",
         .editor_format_change_list_type: "Changer le type de liste",
