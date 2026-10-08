@@ -13,6 +13,8 @@ struct HomeSplitView: View {
     let serverOrigin: String
 
     @State private var selectedRoute: DocumentEditorRoute?
+    /// The iPhone Duo's crease when unfolded; nil everywhere else.
+    @State private var fold: FoldLayout.Fold?
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -36,6 +38,8 @@ struct HomeSplitView: View {
                 }
             )
             .environment(\.docsCanvasRole, DocsCanvasRole.sidebar)
+            // Unfolded, the list fills the left panel and the document the right one.
+            .sidebarWidth(fold.flatMap { FoldLayout.sidebarWidth(fold: $0.span, width: $0.width) })
         } detail: {
             if let selectedRoute {
                 let selectedDocument = selectedRoute.document
@@ -61,6 +65,8 @@ struct HomeSplitView: View {
                     onCreatedDocument: { self.selectedRoute = DocumentEditorRoute(createdDocument: $0) }
                 )
                 .id(selectedDocument.id)
+                // With the sidebar hidden the document spans the crease; keep it to one side.
+                .foldClearance()
             } else {
                 ContentUnavailableView {
                     Label {
@@ -76,6 +82,20 @@ struct HomeSplitView: View {
         // and around the floating sidebar. Left alone it is the system
         // background, which matched only White's light page colour.
         .background(theme.colors.surfacePage.ignoresSafeArea())
+        .foldAware { fold = $0 }
+    }
+}
+
+extension View {
+    /// Only unfolded Duos take the branch, and unfolding already swaps the whole docs tab
+    /// (compact stack → split view), so the identity change resets nothing extra.
+    @ViewBuilder
+    fileprivate func sidebarWidth(_ width: CGFloat?) -> some View {
+        if let width {
+            navigationSplitViewColumnWidth(width)
+        } else {
+            self
+        }
     }
 }
 
