@@ -362,8 +362,8 @@ final class MarkdownParserTests: XCTestCase {
                 EditorBlock(kind: .bulletItem, text: "c", indent: 2),
                 EditorBlock(kind: .bulletItem, text: "d", indent: 1),
             ])
-        // One column short of the parent's content column still nests (within
-        // the three-column slack), under the parent above it.
+        // A column past the parent's content column still nests (within the
+        // three-column slack before it would be indented code).
         assertParses(
             "- a\n   - b",
             [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .bulletItem, text: "b", indent: 1)])

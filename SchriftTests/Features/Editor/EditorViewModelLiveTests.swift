@@ -587,6 +587,32 @@ final class EditorViewModelLiveTests: XCTestCase {
 
         XCTAssertTrue(viewModel.isDirty, "with no delegate the classic path is untouched")
     }
+
+    /// Indenting mid-session takes the classic path, but a live snapshot the bridge
+    /// scheduled for an earlier keystroke can still fire. That snapshot encodes the
+    /// flat replica, missing the nesting and everything typed after it — it must not
+    /// be enqueued over the classic save, nor reset the dirty baseline.
+    func testALiveSnapshotScheduledBeforeAnIndentIsNotSaved() async {
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "- a\\n- b")
+        await viewModel.load()
+        viewModel.startEditing()
+        XCTAssertTrue(viewModel.canEngageLiveEditing, "a flat list can go live")
+        let live = FakeLiveWrite()
+        live.handleLive = true
+        viewModel.liveWrite = live
+        viewModel.updateText(blockID: viewModel.blocks[0].id, text: "a!")
+
+        viewModel.indentListItem(blockID: viewModel.blocks[1].id)
+        XCTAssertEqual(live.forwardCount, 1, "the indent is never forwarded live")
+        XCTAssertFalse(viewModel.canEngageLiveEditing, "a nested list keeps the screen off the live stream")
+
+        viewModel.persistLiveSnapshot(Data([0x00]), projectedMarkdown: "- a!\n- b\n")
+
+        XCTAssertNil(coordinator.pendingSave(documentID: documentID), "the stale snapshot is not enqueued")
+        XCTAssertTrue(viewModel.isDirty)
+        XCTAssertEqual(viewModel.currentMarkdown(), "- a!\n  - b\n")
+    }
 }
 
 /// A scripted stand-in for the C1/C2c `LiveEditingBridge`. `handleLive` toggles

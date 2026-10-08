@@ -3244,16 +3244,6 @@ final class EditorViewModel {
     /// holding a `file` node belongs anyway, since the read side already refuses
     /// to engage on one.
     private func markDirty(forcesClassicPath: Bool = false) {
-        // Live-collaboration write path (C2c). When live-write mode is engaged the bridge
-        // forwards this edit to the shared replica, broadcasts it to peers, and schedules the
-        // debounced full-state snapshot — so the classic REST autosave must NOT also run (it
-        // would double-save and fight the live stream). Returning here leaves `isDirty` false:
-        // the replica + periodic snapshot own durability, and the classic dirty/draft
-        // machinery stays out of it — and *staying* clean is what keeps `canEngageLiveEditing`
-        // true so the document stays live. A `false` return (delegate absent, not engaged, or
-        // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
-        // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
-        // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
         // Every edit funnels here, so this is where a stranded indent (a parent
         // deleted, converted or moved away) is put right. Written only when it
         // changes anything, so an ordinary keystroke doesn't rewrite the array.
@@ -3269,6 +3259,16 @@ final class EditorViewModel {
         if nestsListItems {
             hasUnmodelableLocalEdit = true
         }
+        // Live-collaboration write path (C2c). When live-write mode is engaged the bridge
+        // forwards this edit to the shared replica, broadcasts it to peers, and schedules the
+        // debounced full-state snapshot — so the classic REST autosave must NOT also run (it
+        // would double-save and fight the live stream). Returning here leaves `isDirty` false:
+        // the replica + periodic snapshot own durability, and the classic dirty/draft
+        // machinery stays out of it — and *staying* clean is what keeps `canEngageLiveEditing`
+        // true so the document stays live. A `false` return (delegate absent, not engaged, or
+        // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
+        // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
+        // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
         if !forcesClassicPath, !nestsListItems, liveWrite?.forwardLocalEdit() == true {
             // A stash can exist here too: `canEngageLiveEditing` only guarantees no save/
             // draft/conflict was pending at *engage* time, and an A5 signal is suppressed
@@ -3497,6 +3497,11 @@ final class EditorViewModel {
     /// snapshot write-ahead a draft (and PATCH) for something that must not be saved.
     func persistLiveSnapshot(_ snapshot: Data, projectedMarkdown: String) {
         guard hasLoadedContent, !isDocumentDiscarded else { return }
+        // A snapshot scheduled before this screen made an edit the replica can't
+        // hold (a nested list item, an attachment) encodes the replica without it.
+        // The classic save owns the document from that edit on; enqueueing this
+        // would overwrite it latest-wins and reset the dirty baseline to match.
+        guard !hasUnmodelableLocalEdit else { return }
         saveCoordinator.enqueueLiveSnapshot(
             documentID: documentID, snapshot: snapshot, projectedMarkdown: projectedMarkdown,
             title: title, baseline: serverBaseline)

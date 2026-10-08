@@ -1818,7 +1818,13 @@ markdown write endpoint**. Understand this before touching the save path:
   item itself. On save it becomes a BlockNote child in a nested `blockGroup`
   (`BlockNoteBlock.children`, golden-pinned by
   `testNestedListChildrenGoInANestedBlockGroup`) — a **saved-bytes change**, signed
-  off, that replaced writing nested lines back as literal-text paragraphs.
+  off, that replaced writing nested lines back as literal-text paragraphs. Known,
+  accepted: the parser measures against the *source* marker width and the
+  serializer renumbers, so a child under a wider source marker than it gets back
+  (`100. a` then a 4-space `- b`) reads verbatim first and nests after one save — no
+  content is lost either way. A live snapshot never persists once
+  `hasUnmodelableLocalEdit` is latched: it would encode the replica without the
+  nesting and overwrite the classic save.
 - A standalone `![alt](url)` line with an **absolute http(s) URL** is a
   first-class `BlockKind.image(alt:url:)` block (classified in the parser's
   `parseClassifiedLine` chain via `parseImageLine`, so classification and

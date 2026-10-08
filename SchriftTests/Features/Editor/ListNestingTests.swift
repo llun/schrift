@@ -6,11 +6,14 @@ import XCTest
 /// editor's indent, outdent, Return and backspace behaviour built on them.
 @MainActor
 final class ListNestingTests: XCTestCase {
+    private var suiteNames: [String] = []
+
     private func makeViewModel(blocks: [EditorBlock]) -> EditorViewModel {
         let client = DocsAPIClient(
             baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, session: MockURLProtocol.makeSession(),
             cookieProvider: { [] })
         let suiteName = "ListNestingTests.\(UUID().uuidString)"
+        suiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let coordinator = DocumentSaveCoordinator(client: client, draftStore: draftStore, backgroundTasks: .noop)
         let viewModel = EditorViewModel(client: client, documentID: UUID(), title: "Doc", saveCoordinator: coordinator)
@@ -21,6 +24,10 @@ final class ListNestingTests: XCTestCase {
 
     override func tearDown() {
         MockURLProtocol.reset()
+        for suiteName in suiteNames {
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
+        suiteNames = []
         super.tearDown()
     }
 
@@ -217,7 +224,6 @@ final class ListNestingTests: XCTestCase {
         XCTAssertEqual(live.forwardCount, 1, "the indent is never forwarded")
         XCTAssertTrue(viewModel.isDirty)
         XCTAssertTrue(viewModel.hasUnmodelableLocalEdit)
-        XCTAssertFalse(viewModel.canEngageLiveEditing)
     }
 }
 
