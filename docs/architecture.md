@@ -1425,6 +1425,8 @@ From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views usin
 
 **iPad**: the same `TabView` shell, whose documents tab hosts a `NavigationSplitView` (document list sidebar + detail/editor pane) instead of the iPhone single-column stack — extrapolated from the design's tokens/components since the handoff only mocked iPhone (390×844) layouts. iOS layout constants (status bar 54px, nav bar 44px, tab bar 49px, home indicator 34px, row min-height 44px, gutters 16/20px) are implemented as native safe-area-driven layout, not hardcoded pixel values, since real devices vary.
 
+**iPhone Duo (foldable, iOS 27.1)**: no layout of its own — the size classes already pick the right shell. Folded, the cover screen is a compact-width iPhone, and iOS moves the status bar, navigation/toolbar items and tab bar into a vertical rail on one side (`UIVerticalBarBehavior.automatic`); the app keeps the system default and lets the rail compress its own items when space runs short. Unfolded, the inner screen is regular width, so the docs tab is `HomeSplitView`. The crease is reported as a `.division` reserved region (`FoldLayout`): unfolded in landscape, the sidebar is sized to end exactly at the crease (list on one panel, document on the other), and a document shown full width with the sidebar hidden is padded onto the wider side so no line straddles it. A crease near an edge, or a horizontal one, leaves the system layout alone. All 27.1 API sits behind `#if canImport(SwiftUI, _version: 8.0.85)` plus `#available(iOS 27.1, *)`, so older SDKs (CI's Xcode) compile it out and older OS versions skip it.
+
 ## Personal themes
 
 White, Mist and Paper are local app-wide palettes, persisted independently of

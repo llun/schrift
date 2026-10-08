@@ -126,6 +126,15 @@ names the section with the details.
   networking behavior is verified for real. (Related giveaway: an **"Empty
   document"** in the editor means the server genuinely returned empty markdown, not
   this stall.)
+- **iPhone Duo (foldable).** It needs Xcode 27.1 **and the iOS 27.1 simulator
+  runtime** (`xcodebuild -downloadPlatform iOS`); no earlier runtime lists the
+  device. Folding is done from Xcode 27's **Device Hub** window — `simctl` and
+  `devicectl` have no fold command. Code that uses 27.1-only API (reserved
+  regions, hinge, vertical bar) goes behind
+  `#if canImport(SwiftUI, _version: 8.0.85)` (the 27.1 SDK's SwiftUI) **and**
+  `#available(iOS 27.1, *)`, because CI builds with an older Xcode and the
+  deployment floor is 26 — see `Schrift/App/FoldLayout.swift`, and
+  [`docs/architecture.md`](docs/architecture.md) for the layout rules.
 - All build configuration (bundle ids, deployment target, `SWIFT_VERSION`,
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`
