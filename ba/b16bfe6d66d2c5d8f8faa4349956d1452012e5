@@ -1,0 +1,21 @@
+.github/workflows/pr-checks.yml
+  s_bb5990cecf5b26::t_1902e43f5af722 97-98,114-118
+docs/ci.md
+  s_bb5990cecf5b26::t_e10412a8ffea6d 37-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bab16bfe6d66d2c5d8f8faa4349956d1452012e5",
+  "prompts": {},
+  "sessions": {
+    "s_bb5990cecf5b26": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "337d27e1-9bf5-4707-a448-20fb3549076f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
