@@ -94,14 +94,39 @@ jobs:
             xcrun simctl list devices available >&2
             exit 1
           fi
-          echo "Using simulator: $device"
+          # Pin the exact device (newest runtime carrying that name) by UDID,
+          # so the device booted below is the one xcodebuild tests on.
+          udid="$(xcrun simctl list -j devices available \
+            | jq -r --arg name "$device" \
+              '.devices | to_entries[] | .key as $rt | .value[]
+               | select(.isAvailable and .name == $name) | "\($rt) \(.udid)"' \
+            | sort -V | tail -n 1 | cut -d' ' -f2)"
+          if [ -z "$udid" ]; then
+            echo "No UDID found for simulator: $device" >&2
+            exit 1
+          fi
+          echo "Using simulator: $device ($udid)"
           echo "name=$device" >> "$GITHUB_OUTPUT"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      # Boot the simulator and wait until it has finished booting before
+      # xcodebuild starts. Left to xcodebuild, the first UI test races a cold
+      # boot: its app is still installing behind SpringBoard while XCUITest
+      # synthesizes the test's first press, which is then silently dropped.
+      # `|| true` because an already-booted device makes `boot` exit non-zero;
+      # `bootstatus -b` is the real gate (it boots if needed and blocks).
+      - name: Boot the simulator
+        env:
+          SIM_ID: ${{ steps.sim.outputs.udid }}
+        run: |
+          xcrun simctl boot "$SIM_ID" || true
+          xcrun simctl bootstatus "$SIM_ID" -b
 
       - name: Build & test
         # Passed via env (not inline ${{ }}) to keep dynamic text out of the
         # script body, matching the repo's no-interpolation convention.
         env:
-          SIM_NAME: ${{ steps.sim.outputs.name }}
+          SIM_ID: ${{ steps.sim.outputs.udid }}
         run: |
           set -o pipefail
           # xcbeautify is preinstalled on GitHub macOS images; fall back to
@@ -115,7 +140,7 @@ jobs:
           xcodebuild test \
             -project Schrift.xcodeproj \
             -scheme Schrift \
-            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -destination "platform=iOS Simulator,id=${SIM_ID}" \
             -resultBundlePath TestResults.xcresult \
             | "$formatter"
 

@@ -32,6 +32,14 @@ the push run is the post-merge verification of the real `main` history
    not committed, so CI must regenerate it before any `xcodebuild` call.
 3. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
    to the first available iPhone on the runner image (image lineups change).
+   It is pinned by UDID (the newest runtime carrying that name), so the device
+   booted next is the one tested on. The simulator is then booted and `xcrun simctl bootstatus -b` waits for the
+   boot to finish before testing. Without it the first UI test raced a cold
+   boot: the recording opened on SpringBoard with the test app still
+   installing, XCUITest's interruption check took ~5s instead of ~0.1s, and
+   the test's first press on the Hide completed switch landed dead centre on an
+   unobstructed switch and was dropped. The all-completed accessibility-size
+   checklist test failed twice that way only because it sorts first.
 4. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
    simulator — the same suite as the documented local test command, including
    unit/rendering tests and `SchriftChecklistUITests`. The UI bundle launches

@@ -161,7 +161,9 @@ names the section with the details.
   `main` itself, as post-merge verification of the squash commit — builds the
   app and runs the full test suite on an iPhone simulator via
   [`.github/workflows/pr-checks.yml`](.github/workflows/pr-checks.yml). The job
-  surfaces as the status check **`Build & Test`**, which serves as the merge
+  boots the picked simulator and waits on `xcrun simctl bootstatus -b` before
+  testing (a cold boot drops the first UI test's first press — keep that step),
+  and surfaces as the status check **`Build & Test`**, which serves as the merge
   guard (a repo admin must configure the ruleset once — see
   [`docs/ci.md`](docs/ci.md); renaming the job breaks the guard). The workflow
   uses **no secrets and must never gain one**,
