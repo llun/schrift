@@ -9,23 +9,49 @@ import Foundation
 /// All other neighbors are separated by a blank line. Empty paragraphs are
 /// dropped — markdown has no representation for them. Output ends with a
 /// single trailing newline.
+///
+/// A nested list item is indented to its parent's content column — two spaces
+/// under `- `, three under `1. ` — which is where CommonMark (and the server's
+/// own markdown export) puts a child. `parseEditorBlocks` reads the same
+/// columns back, so the nesting round-trips.
 func serializeMarkdown(_ blocks: [EditorBlock]) -> String {
-    let renderable = blocks.filter { block in
-        if case .paragraph = block.kind, block.text.isEmpty {
-            return false
-        }
-        return true
-    }
+    let renderable = normalizedListIndents(
+        blocks.filter { block in
+            if case .paragraph = block.kind, block.text.isEmpty {
+                return false
+            }
+            return true
+        })
     guard !renderable.isEmpty else { return "" }
 
     var output = ""
+    // `contentColumns[d]` is the column the text of the latest list item at
+    // depth `d` starts at: a child at depth `d + 1` is indented to it.
+    var contentColumns: [Int] = []
     for (index, block) in renderable.enumerated() {
         if index > 0 {
             output += joinsTightly(renderable[index - 1], block) ? "\n" : "\n\n"
         }
-        output += serializeBlock(block, numberedIndex: numberedIndex(of: index, in: renderable))
+        let line = serializeBlock(block, numberedIndex: numberedIndex(of: index, in: renderable))
+        if blockIsListItem(block.kind) {
+            let column = block.indent == 0 ? 0 : contentColumns[block.indent - 1]
+            contentColumns = Array(contentColumns.prefix(block.indent)) + [column + listMarkerWidth(of: line)]
+            output += String(repeating: " ", count: column) + line
+        } else {
+            contentColumns = []
+            output += line
+        }
     }
     return output + "\n"
+}
+
+/// The width of a serialized list line's marker — `- ` and `- [ ] ` are both
+/// two (a checkbox is part of the item's content), `1. ` is three, `10. ` four.
+/// A nested item is indented by its parent's indent plus this.
+func listMarkerWidth(of line: String) -> Int {
+    if line.hasPrefix("- ") || line.hasPrefix("* ") { return 2 }
+    let digits = line.prefix { $0.isNumber }.count
+    return digits + 2
 }
 
 private func joinsTightly(_ first: EditorBlock, _ second: EditorBlock) -> Bool {
@@ -101,12 +127,7 @@ func serializeBlock(_ block: EditorBlock, numberedIndex: Int) -> String {
 }
 
 private func isRunKind(_ kind: BlockKind) -> Bool {
-    switch kind {
-    case .bulletItem, .numberedItem, .checklistItem:
-        return true
-    default:
-        return false
-    }
+    blockIsListItem(kind)
 }
 
 private func longestBacktickRun(in text: String) -> Int {

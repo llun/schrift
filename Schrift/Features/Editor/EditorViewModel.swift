@@ -2025,6 +2025,15 @@ final class EditorViewModel {
             return
         }
 
+        // Enter on an empty nested item steps out one level, taking its own
+        // children with it, before it ever escapes the list.
+        if block.text.isEmpty, block.indent > 0, let shifted = shiftingListItem(at: index, by: -1, in: blocks) {
+            blocks = shifted
+            focusBlock(block.id, cursorAt: 0)
+            markDirty()
+            return
+        }
+
         // Enter on an empty list item escapes back to a paragraph.
         if block.text.isEmpty, isListKind(block.kind) {
             blocks[index].kind = .paragraph
@@ -2036,9 +2045,11 @@ final class EditorViewModel {
         let text = block.text as NSString
         let splitOffset = min(max(0, offset), text.length)
         blocks[index].text = text.substring(to: splitOffset)
+        // A new list item keeps its level; anything else starts at the top.
         let newBlock = EditorBlock(
             kind: continuationKind(after: block.kind),
-            text: text.substring(from: splitOffset)
+            text: text.substring(from: splitOffset),
+            indent: isListKind(block.kind) ? block.indent : 0
         )
         transferInputRow(from: blockID, to: newBlock.id)
         blocks.insert(newBlock, at: index + 1)
@@ -2049,6 +2060,16 @@ final class EditorViewModel {
     func mergeBlockWithPrevious(blockID: UUID) {
         guard let index = blockIndex(blockID) else { return }
         let block = blocks[index]
+
+        // A nested list item first steps out a level, the way a styled block
+        // first converts back to a paragraph: backspace undoes structure before
+        // it deletes anything.
+        if block.indent > 0, let shifted = shiftingListItem(at: index, by: -1, in: blocks) {
+            blocks = shifted
+            focusBlock(block.id, cursorAt: 0)
+            markDirty()
+            return
+        }
 
         // A styled block first converts back to a paragraph.
         if block.kind != .paragraph {
@@ -2128,10 +2149,14 @@ final class EditorViewModel {
     }
 
     func insertBlock(after blockID: UUID?, kind: BlockKind) {
-        let newBlock = EditorBlock(kind: kind)
+        var newBlock = EditorBlock(kind: kind)
         let insertionIndex: Int
         if let blockID, let index = blockIndex(blockID) {
             insertionIndex = index + 1
+            // A list item inserted under a nested one joins it at its level.
+            if isListKind(kind), isListKind(blocks[index].kind) {
+                newBlock.indent = blocks[index].indent
+            }
         } else {
             insertionIndex = blocks.count
         }
@@ -2140,6 +2165,52 @@ final class EditorViewModel {
             focusBlock(newBlock.id, cursorAt: 0)
         }
         markDirty()
+    }
+
+    // MARK: - List nesting
+
+    /// Nests a list item (and its children) one level under the item above.
+    ///
+    /// Returns whether the block is a list item at all — not whether it moved —
+    /// so the Tab key is consumed on every list item, including one already as
+    /// deep as it can go, and only types a tab character elsewhere.
+    @discardableResult
+    func indentListItem(blockID: UUID) -> Bool {
+        shiftListItem(blockID: blockID, by: 1)
+    }
+
+    /// Moves a nested list item (and its children) one level out. Returns
+    /// whether the block is a list item, as `indentListItem` does.
+    @discardableResult
+    func outdentListItem(blockID: UUID) -> Bool {
+        shiftListItem(blockID: blockID, by: -1)
+    }
+
+    /// Whether the formatting bar's Indent applies to the focused block.
+    var canIndentFocusedBlock: Bool {
+        guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return false }
+        return canIndentListItem(at: index, in: blocks)
+    }
+
+    /// Whether the formatting bar's Outdent applies to the focused block.
+    var canOutdentFocusedBlock: Bool {
+        guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return false }
+        return canOutdentListItem(at: index, in: blocks)
+    }
+
+    /// Whether the focused block is a list item — the formatting bar shows its
+    /// Indent and Outdent buttons only then.
+    var focusedBlockIsListItem: Bool {
+        guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return false }
+        return isListKind(blocks[index].kind)
+    }
+
+    private func shiftListItem(blockID: UUID, by delta: Int) -> Bool {
+        guard let index = blockIndex(blockID), isListKind(blocks[index].kind) else { return false }
+        guard let shifted = shiftingListItem(at: index, by: delta, in: blocks) else { return true }
+        blocks = shifted
+        markDirty()
+        return true
     }
 
     // MARK: - Formatting bar actions
@@ -3183,7 +3254,22 @@ final class EditorViewModel {
         // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
         // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
         // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
-        if !forcesClassicPath, liveWrite?.forwardLocalEdit() == true {
+        // Every edit funnels here, so this is where a stranded indent (a parent
+        // deleted, converted or moved away) is put right. Written only when it
+        // changes anything, so an ordinary keystroke doesn't rewrite the array.
+        let normalized = normalizedListIndents(blocks)
+        if normalized.map(\.indent) != blocks.map(\.indent) {
+            blocks = normalized
+        }
+        // Nested items have no live-write spelling: `BlockNoteWrite` diffs a flat
+        // block list, and the projection reads a nested `blockGroup` as opaque.
+        // So a nested list takes the classic path and keeps this screen off the
+        // live stream, exactly as an attachment does (`hasUnmodelableLocalEdit`).
+        let nestsListItems = blocks.contains { $0.indent > 0 }
+        if nestsListItems {
+            hasUnmodelableLocalEdit = true
+        }
+        if !forcesClassicPath, !nestsListItems, liveWrite?.forwardLocalEdit() == true {
             // A stash can exist here too: `canEngageLiveEditing` only guarantees no save/
             // draft/conflict was pending at *engage* time, and an A5 signal is suppressed
             // only while the bridge is actively applying live content — a pull-to-refresh
@@ -3236,8 +3322,10 @@ final class EditorViewModel {
     weak var liveWrite: EditorLiveWriteCoordinating?
 
     /// Latched once this screen has made an edit the shared replica cannot
-    /// represent — today exactly an attachment insert, because
-    /// `YBlockProjection` does not model the BlockNote `file` node.
+    /// represent — an attachment insert, because `YBlockProjection` does not
+    /// model the BlockNote `file` node, and any edit that leaves a list item
+    /// nested, because the projection reads a nested `blockGroup` as opaque and
+    /// `BlockNoteWrite` diffs a flat list.
     ///
     /// It is a **latch, not a momentary flag**, and that is the whole point.
     /// `markDirty(forcesClassicPath:)` keeps the insert off the live path so it
@@ -3287,6 +3375,9 @@ final class EditorViewModel {
         // document and then snapshotting that over the server. See
         // `hasUnmodelableLocalEdit`.
         guard !hasUnmodelableLocalEdit else { return false }
+        // A nested list item has no place in the flat block list the live path
+        // diffs and applies (see `markDirty`), whether it was typed here or loaded.
+        guard !blocks.contains(where: { $0.indent > 0 }) else { return false }
         guard saveCoordinator.conflict(for: documentID) == nil else { return false }
         guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return false }
         guard saveCoordinator.pendingSave(documentID: documentID) == nil else { return false }
@@ -3451,12 +3542,7 @@ final class EditorViewModel {
     }
 
     private func isListKind(_ kind: BlockKind) -> Bool {
-        switch kind {
-        case .bulletItem, .numberedItem, .checklistItem:
-            return true
-        default:
-            return false
-        }
+        blockIsListItem(kind)
     }
 
     private func continuationKind(after kind: BlockKind) -> BlockKind {

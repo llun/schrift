@@ -161,6 +161,10 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// nothing selected. Returning true swallows the key.
     var onDeleteAtStart: (@MainActor () -> Bool)?
     var onPendingDeleteBackward: (@MainActor () -> Bool)?
+    /// Invoked for Tab (`false`) and Shift-Tab (`true`) on a hardware keyboard.
+    /// Returning true swallows the key; otherwise Tab types a tab character as
+    /// it always has, and Shift-Tab does nothing.
+    var onTabKey: (@MainActor (Bool) -> Bool)?
     /// Invoked when the user taps a link's visible label. The view is passed
     /// back rather than captured, so the stored closure cannot retain it.
     var onLinkTapped: (@MainActor (EditorUITextView, InlineLinkSpan, CGPoint) -> Void)?
@@ -308,6 +312,31 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         super.deleteBackward()
     }
 
+    // MARK: - Tab and Shift-Tab
+
+    /// Tab and Shift-Tab as key commands, ahead of the system's own handling (a
+    /// tab character, or focus navigation on iPad). Not offered while text is
+    /// being composed: the input method owns the keyboard until it commits.
+    override var keyCommands: [UIKeyCommand]? {
+        let inherited = super.keyCommands ?? []
+        guard onTabKey != nil, markedTextRange == nil else { return inherited }
+        let indent = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKeyPressed))
+        let outdent = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(shiftTabKeyPressed))
+        indent.wantsPriorityOverSystemBehavior = true
+        outdent.wantsPriorityOverSystemBehavior = true
+        return inherited + [indent, outdent]
+    }
+
+    @objc private func tabKeyPressed() {
+        if onTabKey?(false) != true {
+            insertText("\t")
+        }
+    }
+
+    @objc private func shiftTabKeyPressed() {
+        _ = onTabKey?(true)
+    }
+
     // MARK: - Link tap
 
     @objc fileprivate func handleLinkTap(_ recognizer: UITapGestureRecognizer) {
@@ -372,6 +401,8 @@ struct BlockTextView: UIViewRepresentable {
     var hasPendingFocusTarget: () -> Bool = { false }
     let cursorRequest: () -> EditorViewModel.CursorRequest?
     var onEvent: (BlockTextEvent) -> Void
+    /// Tab (`false`) or Shift-Tab (`true`); returns whether the key was handled.
+    var onTabKey: (Bool) -> Bool = { _ in false }
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
     /// Keyboard events may arrive before a structural edit reaches UIKit.
     var onPendingInput: (String, UUID?) -> Bool = { _, _ in false }
@@ -413,6 +444,9 @@ struct BlockTextView: UIViewRepresentable {
         view.setContentCompressionResistancePriority(.required, for: .vertical)
         view.onDeleteAtStart = { [weak coordinator = context.coordinator] in
             coordinator?.handleDeleteAtStart() ?? false
+        }
+        view.onTabKey = { [weak coordinator = context.coordinator] outdent in
+            coordinator?.parent.onTabKey(outdent) ?? false
         }
         view.onPendingDeleteBackward = { [weak coordinator = context.coordinator] in
             guard let coordinator else { return false }

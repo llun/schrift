@@ -143,4 +143,64 @@ final class MarkdownSerializerTests: XCTestCase {
         XCTAssertEqual(numberedIndex(of: 1, in: blocks), 2)
         XCTAssertEqual(numberedIndex(of: 3, in: blocks), 1)
     }
+
+    // MARK: - Nested list items
+
+    /// The same columns the web editor's markdown export uses: two under a
+    /// bullet or checklist item, three under `1. `, four under `10. `.
+    func testNestedItemsAreIndentedToTheirParentsContentColumn() {
+        let blocks = [
+            EditorBlock(kind: .bulletItem, text: "A"),
+            EditorBlock(kind: .bulletItem, text: "B", indent: 1),
+            EditorBlock(kind: .checklistItem(checked: false), text: "C", indent: 2),
+            EditorBlock(kind: .bulletItem, text: "D", indent: 3),
+            EditorBlock(kind: .numberedItem, text: "N", indent: 1),
+            EditorBlock(kind: .numberedItem, text: "M", indent: 2),
+            EditorBlock(kind: .bulletItem, text: "E"),
+        ]
+        XCTAssertEqual(
+            serializeMarkdown(blocks), "- A\n  - B\n    - [ ] C\n      - D\n  1. N\n     1. M\n- E\n")
+    }
+
+    func testAChildOfATwoDigitItemIsIndentedFourColumns() {
+        var blocks = (1...10).map { EditorBlock(kind: .numberedItem, text: "n\($0)") }
+        blocks.append(EditorBlock(kind: .bulletItem, text: "child", indent: 1))
+        XCTAssertTrue(serializeMarkdown(blocks).hasSuffix("10. n10\n    - child\n"))
+    }
+
+    func testSerializedNestingParsesBackToTheSameIndents() {
+        let blocks = [
+            EditorBlock(kind: .numberedItem, text: "one"),
+            EditorBlock(kind: .checklistItem(checked: true), text: "two", indent: 1),
+            EditorBlock(kind: .bulletItem, text: "three", indent: 2),
+            EditorBlock(kind: .numberedItem, text: "four", indent: 1),
+            EditorBlock(kind: .paragraph, text: "after"),
+        ]
+        XCTAssertTrue(blocksContentEqual(parseEditorBlocks(serializeMarkdown(blocks)), blocks))
+    }
+
+    /// An indent the position can't hold is written as what normalization makes
+    /// of it — never as an indented line under prose, which would read back as
+    /// verbatim text.
+    func testAnUnsupportedIndentIsNormalizedBeforeWriting() {
+        XCTAssertEqual(
+            serializeMarkdown([
+                EditorBlock(kind: .paragraph, text: "p"),
+                EditorBlock(kind: .bulletItem, text: "a", indent: 2),
+                EditorBlock(kind: .bulletItem, text: "b", indent: 3),
+            ]), "p\n\n- a\n  - b\n")
+    }
+
+    func testNumberingRestartsPerLevelAndContinuesAcrossASubList() {
+        let blocks = [
+            EditorBlock(kind: .numberedItem, text: "a"),
+            EditorBlock(kind: .numberedItem, text: "a.1", indent: 1),
+            EditorBlock(kind: .numberedItem, text: "a.2", indent: 1),
+            EditorBlock(kind: .bulletItem, text: "a.2.x", indent: 2),
+            EditorBlock(kind: .numberedItem, text: "b"),
+            EditorBlock(kind: .bulletItem, text: "b.x", indent: 1),
+            EditorBlock(kind: .numberedItem, text: "b.1", indent: 1),
+        ]
+        XCTAssertEqual(blocks.indices.map { numberedIndex(of: $0, in: blocks) }, [1, 1, 2, 1, 2, 1, 1])
+    }
 }

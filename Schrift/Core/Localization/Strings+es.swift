@@ -247,6 +247,8 @@ enum Strings_es {
         .editor_format_quote: "Cita",
         .editor_format_code_block: "Bloque de código",
         .editor_format_insert_photo: "Insertar foto",
+        .editor_format_indent: "Aumentar sangría",
+        .editor_format_outdent: "Reducir sangría",
         .editor_format_change_list_type: "Cambiar el tipo de lista",
         .editor_format_change_quote_type: "Cambiar cita o código",
 

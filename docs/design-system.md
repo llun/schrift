@@ -1,6 +1,28 @@
 # iOS design update — tab pages, dark mode, localization
 
 
+> **Revised: 2026-10-08 — Nested list items, and how to re-subset the icon font.**
+> Bullet, numbered and checklist items can nest (Tab / Shift-Tab, or the formatting
+> bar's **Outdent** and **Indent** buttons, which appear only while a list item is
+> focused and are disabled where the item can't move that way). Each level is inset
+> by `EditorBlockMetrics.listIndentStep` (`DocsSpacing.spaceMD`, 24pt — roughly an
+> adornment and its gap, so a child's marker sits under its parent's text). Both
+> surfaces apply the inset through `listIndentInset(_:)`, always (zero at the top
+> level), so indenting never changes a row's structure and never recreates the text
+> view. Numbering restarts at 1 for each level and continues across a sub-list.
+>
+> The two new glyphs are `format_indent_increase` (U+E23E) and
+> `format_indent_decrease` (U+E23D), bringing the bundled subset to 79 icons. To
+> add a glyph, re-subset from the upstream variable font
+> (`MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf`, the version the existing
+> subset was cut from) with fontTools: **subset first** to every codepoint in
+> `MaterialIcon`, **then** instance the axes to
+> `GRAD=0, opsz=24, wght=400` keeping `FILL` variable (instancing first fails on
+> `.notdef`), drop the `prep` table, and before committing compare the existing
+> glyphs' outlines and `gvar` deltas against the old file — they must be identical.
+> `MaterialIconTests.testBundledFontHasAGlyphForEveryIcon` fails for any icon the
+> font lacks.
+
 > **Revised: 2026-10-05 — Quiet, Unboxed personal themes.** White, Mist and Paper
 > apply to every app-owned surface, including editor text, links, sheets and the
 > iPad sidebar. Profile and Account use open `ListSection` composition: sentence-case

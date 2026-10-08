@@ -281,6 +281,7 @@ struct BlockEditorRow: View {
                     }
                     .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
             }
+            .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
         }
     }
 
@@ -368,6 +369,13 @@ struct BlockEditorRow: View {
             },
             onEvent: { event in
                 handle(event, blockID: block.id, inputRowID: inputRowID)
+            },
+            onTabKey: { outdent in
+                if let inputRowID, viewModel.inputRowID(for: block.id) != inputRowID { return false }
+                if outdent {
+                    return viewModel.outdentListItem(blockID: block.id)
+                }
+                return viewModel.indentListItem(blockID: block.id)
             },
             onCursorRequestHandled: { token in
                 if viewModel.cursorRequest?.token == token {

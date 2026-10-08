@@ -1047,6 +1047,37 @@ the block keeps its id, the full-overwrite save serializes the new order (no new
 markdown or Yjs shape), and the live write path sends it as `BlockNoteWrite`'s
 coarse delete + re-insert.
 
+**Nested list items.** Bullet, numbered and checklist items nest. The editor keeps
+its flat `[EditorBlock]`; nesting is `EditorBlock.indent`, read against the blocks
+before it — an item is a child of the nearest earlier list item one level shallower,
+which is the tree both markdown indentation and BlockNote's `blockGroup` children
+describe. `normalizedListIndents` is the one invariant (only list items nest, never
+more than one level below the list item directly above, at most `maxListIndent` = 6)
+and `markDirty` re-applies it after every edit, so a conversion, deletion or move
+never strands an item at a depth nothing reaches. Tab / Shift-Tab (hardware
+keyboard) and the formatting bar's Indent / Outdent move an item **with its
+subtree**; outdenting leaves its later siblings behind, so they become its children,
+as BlockNote does. Return keeps the level, Return on an empty nested item steps out
+one level, and backspace at the start of a nested item outdents it before anything
+is deleted.
+
+On the wire, `parseEditorBlocks` classifies a list line indented under the list item
+directly above it (no blank line between, spaces only, at or past that item's
+content column and less than four columns past it) as a nested item; anything else
+stays verbatim, as it always has. `serializeMarkdown` writes a child at its parent's
+content column — two spaces under `- `, three under `1. ` — matching the server's own
+export (`* A\n  * B\n    * [ ] C\n  1. N`). `MarkdownYjs.blockNoteBlocks` folds the
+flat blocks into `BlockNoteBlock.children`, and `BlockNoteYjs.encode` emits each
+block's children as a nested `blockGroup` after its props and before its `id`, with
+the content element as the group's left origin — byte-identical to
+`blocksToYXmlFragment` (`YjsEncoderTests.testNestedListChildrenGoInANestedBlockGroup`).
+This **changed saved bytes** for documents with nested lists, which used to be written
+back as literal-text paragraphs (flattening every web-made outline on the first in-app
+save); signed off for this change. Nesting has no live-write spelling — `BlockNoteWrite`
+diffs a flat list and `YBlockProjection` reads a nested `blockGroup` as opaque — so
+a nested document stays on the classic save path: `markDirty` sets
+`hasUnmodelableLocalEdit` and never forwards an edit while any item is nested.
+
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).
@@ -1054,7 +1085,8 @@ This is the part with no direct backend support, so it's called out explicitly:
    default. `ChecklistReadingPresentation` derives visible rows from the complete
    `[EditorBlock]`, retaining IDs and source indices; only checked checklist blocks
    are omitted, together with the run of image/attachment leaves directly after
-   each one (the media "under" the item — the editor has no nested blocks). The
+   each one (the media "under" the item — only list items nest), and any list items
+   nested under a hidden item (its `indent` subtree, counted only when checked). The
    run ends at the first non-media block, a queued photo placeholder is never
    hidden (its card carries Retry/Remove), and the hidden count reports items
    only. A hidden count and Show completed action remain when every checklist
