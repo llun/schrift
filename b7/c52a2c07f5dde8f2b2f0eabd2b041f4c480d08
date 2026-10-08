@@ -1,0 +1,30 @@
+Schrift/Features/Home/HomeSplitView.swift
+  s_f343a049330cd4::t_c0b68c2ef1d278 86-90
+  s_f343a049330cd4::t_9a9186d558bb40 16-18,42-43,69-70,91-102
+docs/architecture.md
+  s_f343a049330cd4::t_d828f3047e9900 1428-1429
+Schrift/App/FoldLayout.swift
+  s_f343a049330cd4::t_c0b68c2ef1d278 49-51,70-74
+  s_f343a049330cd4::t_3a27aeb709fd1b 1-48,52-69,75-77
+AGENTS.md
+  s_f343a049330cd4::t_d828f3047e9900 129-137
+SchriftTests/App/FoldLayoutTests.swift
+  s_f343a049330cd4::t_cb6c654ee477fc 1-34,36,39-40
+  s_f343a049330cd4::t_65ddb57b9a90c5 35,37-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7c52a2c07f5dde8f2b2f0eabd2b041f4c480d08",
+  "prompts": {},
+  "sessions": {
+    "s_f343a049330cd4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2cc9d906-4bd2-41fb-bec7-3eac32b6ac2e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
