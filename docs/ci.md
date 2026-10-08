@@ -31,9 +31,16 @@ the push run is the post-merge verification of the real `main` history
 2. `xcodegen generate` — the `.xcodeproj` is generated from `project.yml` and
    not committed, so CI must regenerate it before any `xcodebuild` call.
 3. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
-   to the first available iPhone on the runner image (image lineups change).
-4. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
-   simulator — the same suite as the documented local test command, including
+   to the first available iPhone on the runner image (image lineups change),
+   and resolves that name to the device on the newest iOS runtime.
+4. Boot that simulator with `xcrun simctl bootstatus <udid> -b`, which blocks
+   until boot finishes. This guards against a suspected cold-boot flake: in
+   one hosted run the first UI test on a fresh simulator spent 5s in XCTest's
+   interruption check and the switch press that followed never registered.
+   That the cold boot caused the ignored press is inferred, not confirmed.
+5. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
+   simulator (by UDID, so it is the device step 4 booted) — the same suite as
+   the documented local test command, including
    unit/rendering tests and `SchriftChecklistUITests`. The UI bundle launches
    `SchriftChecklistTestHost`, a test-only app compiling the actual production
    rows with a separate entry point and isolated stores; no login, network
