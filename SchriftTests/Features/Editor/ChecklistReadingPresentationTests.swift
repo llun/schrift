@@ -138,4 +138,24 @@ final class ChecklistReadingPresentationTests: XCTestCase {
         XCTAssertEqual(
             ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [1])
     }
+
+    /// A completed item's nested items are part of it: they hide with it rather
+    /// than drawing indented under whichever item precedes it. Siblings at its
+    /// level and above stay, and the count is still completed items only.
+    func testACompletedItemHidesItsNestedItems() {
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: false), text: "open"),
+            EditorBlock(kind: .checklistItem(checked: true), text: "done", indent: 1),
+            EditorBlock(kind: .checklistItem(checked: false), text: "sub-open", indent: 2),
+            EditorBlock(kind: .checklistItem(checked: true), text: "sub-done", indent: 2),
+            EditorBlock(kind: .checklistItem(checked: false), text: "sibling", indent: 1),
+            EditorBlock(kind: .checklistItem(checked: false), text: "next"),
+        ]
+        let filtered = ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true)
+        XCTAssertEqual(filtered.rows.map(\.sourceIndex), [0, 4, 5])
+        XCTAssertEqual(filtered.hiddenCount, 2)
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: false).rows.map(\.sourceIndex),
+            Array(blocks.indices))
+    }
 }

@@ -12,7 +12,7 @@ final class MarkdownParserTests: XCTestCase {
         let parsed = parseEditorBlocks(markdown)
         XCTAssertTrue(
             blocksContentEqual(parsed, expected),
-            "Parsed \(parsed.map { "\($0.kind): \"\($0.text)\"" }) but expected \(expected.map { "\($0.kind): \"\($0.text)\"" })",
+            "Parsed \(parsed.map { "\($0.kind)@\($0.indent): \"\($0.text)\"" }) but expected \(expected.map { "\($0.kind)@\($0.indent): \"\($0.text)\"" })",
             file: file,
             line: line
         )
@@ -316,13 +316,101 @@ final class MarkdownParserTests: XCTestCase {
             ])
     }
 
-    func testNestedListUnderBulletIsPreserved() {
+    func testNestedListUnderBulletBecomesIndentedItems() {
         assertParses(
             "- top\n  - nested\n  - nested two",
             [
                 EditorBlock(kind: .bulletItem, text: "top"),
-                EditorBlock(kind: .unknown, text: "  - nested\n  - nested two"),
+                EditorBlock(kind: .bulletItem, text: "nested", indent: 1),
+                EditorBlock(kind: .bulletItem, text: "nested two", indent: 1),
             ])
+    }
+
+    // MARK: - Nested list items
+
+    /// The server's own markdown export of a web-made outline (BlockNote 0.51.4
+    /// `blocksToMarkdownLossy`): `*` bullets, children at the parent's content
+    /// column, a numbered sub-list under a bullet, and a numbered list nested
+    /// three columns deep under `1. `.
+    func testTheWebExportOfANestedOutlineParsesToIndentedItems() {
+        assertParses(
+            "* A\n  * B\n    * [ ] C\n  1. N1\n  2. N2\n\n1. X\n   1. Y\n\nP\n\n* Q\n",
+            [
+                EditorBlock(kind: .bulletItem, text: "A"),
+                EditorBlock(kind: .bulletItem, text: "B", indent: 1),
+                EditorBlock(kind: .checklistItem(checked: false), text: "C", indent: 2),
+                EditorBlock(kind: .numberedItem, text: "N1", indent: 1),
+                EditorBlock(kind: .numberedItem, text: "N2", indent: 1),
+                EditorBlock(kind: .numberedItem, text: "X"),
+                EditorBlock(kind: .numberedItem, text: "Y", indent: 1),
+                EditorBlock(kind: .paragraph, text: "P"),
+                EditorBlock(kind: .bulletItem, text: "Q"),
+            ])
+    }
+
+    func testANestedOutlineSurvivesTheRoundTrip() {
+        XCTAssertTrue(markdownSurvivesRoundTrip("* A\n  * B\n    * [ ] C\n  1. N1\n  2. N2\n\n1. X\n   1. Y\n"))
+        XCTAssertTrue(markdownSurvivesRoundTrip("- a\n  - b\n    - c\n      - d\n  - e\n- f\n"))
+    }
+
+    func testANestedItemGoesUnderTheDeepestItemItReaches() {
+        assertParses(
+            "- a\n  - b\n    - c\n  - d",
+            [
+                EditorBlock(kind: .bulletItem, text: "a"),
+                EditorBlock(kind: .bulletItem, text: "b", indent: 1),
+                EditorBlock(kind: .bulletItem, text: "c", indent: 2),
+                EditorBlock(kind: .bulletItem, text: "d", indent: 1),
+            ])
+        // A column past the parent's content column still nests (within the
+        // three-column slack before it would be indented code).
+        assertParses(
+            "- a\n   - b",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .bulletItem, text: "b", indent: 1)])
+    }
+
+    func testIndentationThatIsNotANestedItemStaysVerbatim() {
+        // Under prose: there's no list item to nest under.
+        assertParses(
+            "Intro\n  - item",
+            [EditorBlock(kind: .unknown, text: "Intro\n  - item")])
+        // After a blank line: the list is over.
+        assertParses(
+            "- a\n\n  - b",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .unknown, text: "  - b")])
+        // Four columns past the parent's content is indented code, not a child.
+        assertParses(
+            "- a\n      - b",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .unknown, text: "      - b")])
+        // Less than the parent's content column is a lazy continuation line.
+        assertParses(
+            "- a\n - b",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .unknown, text: " - b")])
+        // A tab's width is the reader's to decide.
+        assertParses(
+            "- a\n\t- b",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .unknown, text: "\t- b")])
+        // An indented line that isn't a list item is continuation text.
+        assertParses(
+            "- a\n  more",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .unknown, text: "  more")])
+    }
+
+    func testNestingDeeperThanTheMaximumStaysVerbatim() {
+        var markdown = "- l0"
+        for depth in 1...(maxListIndent + 1) {
+            markdown += "\n" + String(repeating: " ", count: depth * 2) + "- l\(depth)"
+        }
+        let parsed = parseEditorBlocks(markdown)
+        XCTAssertEqual(parsed.map(\.indent), Array(0...maxListIndent) + [0])
+        XCTAssertEqual(parsed.last?.kind, .unknown)
+        XCTAssertTrue(markdownSurvivesRoundTrip(markdown))
+    }
+
+    func testANestedItemInsideACodeFenceIsNotParsed() {
+        assertParses(
+            "- a\n```\n  - b\n```",
+            [EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .codeBlock(language: ""), text: "  - b")])
     }
 
     func testCRLFLineEndingsParseLikeLF() {

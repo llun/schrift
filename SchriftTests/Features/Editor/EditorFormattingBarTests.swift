@@ -45,6 +45,21 @@ final class EditorFormattingBarTests: XCTestCase {
         }
     }
 
+    /// A focused list item adds Outdent and Indent — the widest the row gets. It
+    /// still scrolls inside the offered width rather than widening the editor.
+    func testTheBarFitsWithTheListNestingButtons() {
+        let viewModel = makeViewModel()
+        viewModel.blocks = [
+            EditorBlock(kind: .bulletItem, text: "a"), EditorBlock(kind: .bulletItem, text: "b", indent: 1),
+        ]
+        viewModel.focusedBlockID = viewModel.blocks[1].id
+        XCTAssertTrue(viewModel.focusedBlockIsListItem)
+        for screen in screenWidths {
+            let column = screen - 2 * DocsSpacing.gutter
+            XCTAssertLessThanOrEqual(barWidth(viewModel, offered: column), column + roundingSlack)
+        }
+    }
+
     /// Disabled buttons must not change the geometry either — with no focused block
     /// every action is disabled, the widest the row's disabled state ever gets.
     func testTheBarFitsWhenEveryButtonIsDisabled() {

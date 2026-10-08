@@ -46,10 +46,42 @@ enum MarkdownYjs {
     /// paragraphs), but a document with an `.unknown` block is never
     /// write-eligible (its projection is not `isFullyModeled`), so it stays
     /// read-live and this coarseness is unreachable in the write path.
+    ///
+    /// A nested list item (`indent > 0`) becomes a BlockNote child of the item it
+    /// nests under, so the flat editor array is folded into the tree here.
     static func blockNoteBlocks(from blocks: [EditorBlock]) -> [BlockNoteBlock] {
-        let mapped = blocks.flatMap(map)
+        let mapped = nestedBlocks(normalizedListIndents(blocks))
         // BlockNote documents must contain at least one block.
         return mapped.isEmpty ? [emptyParagraph()] : mapped
+    }
+
+    /// Folds normalized blocks into BlockNote's tree: each block at `depth` takes
+    /// the blocks deeper than it that follow as its children. Normalization
+    /// guarantees an indented block is a list item following a list item at most
+    /// one level shallower, and that `map` returns exactly one block for it.
+    private static func nestedBlocks(_ blocks: [EditorBlock]) -> [BlockNoteBlock] {
+        var index = 0
+
+        func level(_ depth: Int) -> [BlockNoteBlock] {
+            var result: [BlockNoteBlock] = []
+            while index < blocks.count, blocks[index].indent == depth {
+                var mapped = map(blocks[index])
+                index += 1
+                if index < blocks.count, blocks[index].indent > depth, !mapped.isEmpty {
+                    mapped[mapped.count - 1].children = level(depth + 1)
+                }
+                result += mapped
+            }
+            return result
+        }
+
+        var result: [BlockNoteBlock] = []
+        // Normalized input is all depth 0 at the top; taking each run at its own
+        // depth means nothing can be dropped even if it weren't.
+        while index < blocks.count {
+            result += level(blocks[index].indent)
+        }
+        return result
     }
 
     private static func emptyParagraph() -> BlockNoteBlock {
@@ -147,7 +179,7 @@ enum MarkdownYjs {
                     runs: [], id: id)
             ]
         case .unknown:
-            // Content the editor can't model (tables, HTML, nested lists). Preserve
+            // Content the editor can't model (tables, HTML, lists nested too deep). Preserve
             // the text verbatim as one paragraph per non-empty line so a save never
             // drops it, even though the richer structure can't be reproduced.
             return block.text

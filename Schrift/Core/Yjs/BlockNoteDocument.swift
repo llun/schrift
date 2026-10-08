@@ -24,11 +24,16 @@ struct InlineRun: Equatable {
 /// element's ordered attributes. Most nodes wrap an `xmlText` child holding
 /// their inline runs; a few are leaves with no text child — `divider` (no
 /// props either) and `image` (a leaf that still carries props: url, name, …).
+///
+/// `children` are the blocks nested under this one — a sub-list under a list
+/// item. BlockNote stores them in a second `blockGroup` inside the container,
+/// after the content element.
 struct BlockNoteBlock: Equatable {
     var node: String
     var props: [(key: String, value: YAnyValue)]
     var runs: [InlineRun]
     var id: String
+    var children: [BlockNoteBlock] = []
 
     /// Whether this node wraps an `xmlText` child for its inline content.
     /// Leaf nodes (`divider`, `image`) have none. Props are emitted for every
@@ -36,7 +41,7 @@ struct BlockNoteBlock: Equatable {
     var hasTextChild: Bool { node != "divider" && node != "image" && node != "file" }
 
     static func == (lhs: BlockNoteBlock, rhs: BlockNoteBlock) -> Bool {
-        lhs.node == rhs.node && lhs.id == rhs.id && lhs.runs == rhs.runs
+        lhs.node == rhs.node && lhs.id == rhs.id && lhs.runs == rhs.runs && lhs.children == rhs.children
             && lhs.props.map { [$0.key, String(describing: $0.value)] }
                 == rhs.props.map { [$0.key, String(describing: $0.value)] }
     }
@@ -67,34 +72,50 @@ enum BlockNoteYjs {
             return start
         }
 
-        let blockGroup = emit(.xmlElement(nodeName: "blockGroup"), parentRootKey: fragmentField)
-
-        var previousContainer: Int?
-        for block in blocks {
-            let container: Int
-            if let previous = previousContainer {
-                container = emit(.xmlElement(nodeName: "blockContainer"), origin: previous)
+        // One `blockGroup` of containers, recursively: a block's children go in
+        // a nested group emitted after its props and before its `id`, with the
+        // content element as the group's left origin — the order
+        // `blocksToYXmlFragment` builds the same tree in.
+        func emitGroup(_ blocks: [BlockNoteBlock], groupOrigin: Int?) {
+            let blockGroup: Int
+            if let groupOrigin {
+                blockGroup = emit(.xmlElement(nodeName: "blockGroup"), origin: groupOrigin)
             } else {
-                container = emit(.xmlElement(nodeName: "blockContainer"), parentClock: blockGroup)
+                blockGroup = emit(.xmlElement(nodeName: "blockGroup"), parentRootKey: fragmentField)
             }
 
-            let element = emit(.xmlElement(nodeName: block.node), parentClock: container)
+            var previousContainer: Int?
+            for block in blocks {
+                let container: Int
+                if let previous = previousContainer {
+                    container = emit(.xmlElement(nodeName: "blockContainer"), origin: previous)
+                } else {
+                    container = emit(.xmlElement(nodeName: "blockContainer"), parentClock: blockGroup)
+                }
 
-            if block.hasTextChild {
-                let text = emit(.xmlText, parentClock: element)
-                emitInline(block.runs, parentText: text, emit: emit)
-            }
-            // Props belong to the content element and are emitted for every
-            // block. Hoisting this out of the text-child branch is byte-neutral
-            // for text blocks (same item order) and for `divider` (empty props),
-            // and is what lets a leaf `image` carry its url/name/… attributes.
-            for prop in block.props {
-                _ = emit(.any([prop.value]), parentClock: element, parentSub: prop.key)
-            }
-            _ = emit(.any([.string(block.id)]), parentClock: container, parentSub: "id")
+                let element = emit(.xmlElement(nodeName: block.node), parentClock: container)
 
-            previousContainer = container
+                if block.hasTextChild {
+                    let text = emit(.xmlText, parentClock: element)
+                    emitInline(block.runs, parentText: text, emit: emit)
+                }
+                // Props belong to the content element and are emitted for every
+                // block. Hoisting this out of the text-child branch is byte-neutral
+                // for text blocks (same item order) and for `divider` (empty props),
+                // and is what lets a leaf `image` carry its url/name/… attributes.
+                for prop in block.props {
+                    _ = emit(.any([prop.value]), parentClock: element, parentSub: prop.key)
+                }
+                if !block.children.isEmpty {
+                    emitGroup(block.children, groupOrigin: element)
+                }
+                _ = emit(.any([.string(block.id)]), parentClock: container, parentSub: "id")
+
+                previousContainer = container
+            }
         }
+
+        emitGroup(blocks, groupOrigin: nil)
 
         return YjsUpdateEncoder.encode(clientID: clientID, items: items)
     }

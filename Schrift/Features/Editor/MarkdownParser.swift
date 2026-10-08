@@ -7,11 +7,21 @@ import Foundation
 /// tables, images, HTML, multi-line runs — is grouped verbatim into `.unknown`
 /// blocks so the save round-trip never destroys it.
 ///
+/// The one indented construct that classifies is a **nested list item**: a
+/// bullet, numbered or checklist line indented under the list item directly
+/// above it (no blank line between), at or past that item's content column and
+/// less than four columns past it (four more is indented code in CommonMark).
+/// It becomes a list block with `indent` one deeper than its parent. Anything
+/// that doesn't fit — a tab, a blank line before it, too little or too much
+/// indentation, a line nested under prose, deeper than `maxListIndent` — stays
+/// verbatim text exactly as before.
+///
 /// Intentional canonicalizations (lossy on re-serialize):
 /// - runs of blank lines collapse to a single separator
 /// - `*` bullets become `-`; `N)` ordered markers become `N.`; ordered runs renumber from 1
 /// - trailing whitespace on classified lines is trimmed (never inside code/unknown blocks)
 /// - dividers of any length/character normalize to `---`
+/// - a nested list item's indentation normalizes to its parent's content column
 /// `serverOrigin` enables attachment classification, and defaults to "" — which
 /// classifies nothing, so every existing caller keeps exactly today's behavior.
 /// Pass it only where the distinction matters: the encoder (a `.attachment`
@@ -33,6 +43,11 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
     var pendingLines: [String] = []
     let lines = markdownLines(markdown)
     var index = 0
+    // Content columns of the open list items, outermost first: what a nested
+    // item's indentation is measured against. Empty whenever the previous line
+    // wasn't a classified list item, so nesting never reaches across prose, a
+    // blank line or verbatim text.
+    var listContentColumns: [Int] = []
 
     func flushPending() {
         guard !pendingLines.isEmpty else { return }
@@ -55,12 +70,20 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
 
         if trimmed.isEmpty {
             flushPending()
+            listContentColumns = []
+            index += 1
+            continue
+        }
+
+        if pendingLines.isEmpty, let nested = parseNestedListItem(line, contentColumns: &listContentColumns) {
+            blocks.append(nested)
             index += 1
             continue
         }
 
         if let fence = parseCodeFenceOpening(line) {
             flushPending()
+            listContentColumns = []
             index += 1
             var content: [String] = []
             while index < lines.count, !closesCodeFence(lines[index], openingLength: fence.length) {
@@ -77,6 +100,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
 
         if isDividerLine(trimmed), line.first != " ", line.first != "\t" {
             flushPending()
+            listContentColumns = []
             blocks.append(EditorBlock(kind: .divider))
             index += 1
             continue
@@ -84,12 +108,14 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
 
         if let block = parseClassifiedLine(line) {
             flushPending()
+            listContentColumns = blockIsListItem(block.kind) ? [listMarkerWidth(of: line)] : []
             blocks.append(block)
             index += 1
             continue
         }
 
         pendingLines.append(line)
+        listContentColumns = []
         index += 1
     }
 
@@ -144,7 +170,38 @@ private func canonicalizeLine(_ line: String) -> String {
     if let block = parseClassifiedLine(line) {
         return serializeBlock(block, numberedIndex: 1)
     }
+    // A nested list item's indentation is canonicalized like its marker: the
+    // serializer re-indents it to its parent's content column, so the count
+    // compares the item itself. Indentation is spaces only, as the parser's.
+    let unindented = line.drop { $0 == " " }
+    if unindented.count < line.count, let block = parseClassifiedLine(String(unindented)),
+        blockIsListItem(block.kind)
+    {
+        return serializeBlock(block, numberedIndex: 1)
+    }
     return rstrip(line)
+}
+
+/// A list line indented under the list item directly above it, as a list
+/// block one level deeper than the item it nests under — or nil, leaving the
+/// line to the verbatim path.
+///
+/// `contentColumns` holds the open items' content columns, outermost first.
+/// The line nests under the deepest item whose content column it reaches, and
+/// must stay within three columns of it: four more is indented code under that
+/// item, not a child list. Indentation is spaces only — a tab's width is the
+/// reader's to decide, so a tab-indented line stays verbatim.
+private func parseNestedListItem(_ line: String, contentColumns: inout [Int]) -> EditorBlock? {
+    guard !contentColumns.isEmpty, line.first == " " else { return nil }
+    let leading = line.prefix { $0 == " " }.count
+    let rest = String(line.dropFirst(leading))
+    guard rest.first != "\t", var block = parseClassifiedLine(rest), blockIsListItem(block.kind) else { return nil }
+    guard let parent = contentColumns.lastIndex(where: { $0 <= leading }),
+        leading - contentColumns[parent] < 4, parent + 1 <= maxListIndent
+    else { return nil }
+    block.indent = parent + 1
+    contentColumns = Array(contentColumns.prefix(parent + 1)) + [leading + listMarkerWidth(of: rest)]
+    return block
 }
 
 private func rstrip(_ line: String) -> String {

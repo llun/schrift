@@ -1567,8 +1567,9 @@ that are easy to violate and expensive to discover:
 
 - **Hide completed is a reading presentation preference, off by default and local
   to the editor session.** `ChecklistReadingPresentation` derives visible rows,
-  hidden count and original source indices from the current full `blocks`; the
-  image/attachment leaves directly after a hidden item are hidden along with it (up to the first
+  hidden count and original source indices from the current full `blocks`; list items
+  nested under a hidden item (its `indent` subtree) and the
+  image/attachment leaves directly after it are hidden along with it (up to the first
   non-media block; a queued-photo placeholder always stays visible), while the count
   stays items-only; never
   replace the model array or feed that projection to the serializer, save coordinator
@@ -1581,6 +1582,21 @@ that are easy to violate and expensive to discover:
   survivor (then previous) when Done hides the anchor. Ordinary documents retain
   the offset handoff below. Verify production EditorView scrolling and reveal at
   default/accessibility sizes, beyond pure projection tests.
+- **List items nest through `EditorBlock.indent`, never a tree.** The editor's
+  `blocks` stay flat; an item is a child of the nearest earlier list item one level
+  shallower. `normalizedListIndents` is the invariant (only bullet/numbered/checklist
+  items nest, at most one level below the list item directly above, at most
+  `maxListIndent`), and `markDirty` re-applies it after every edit — so no mutator
+  has to reason about the items around it, and a new mutator must keep funnelling
+  through `markDirty`. Indent/outdent (`shiftingListItem`) moves an item **with its
+  subtree**. Tab is consumed on every list item even when it can't move, so a list
+  never gets a literal tab. Both surfaces inset a row by
+  `EditorBlockMetrics.listIndentInset(indent)` **unconditionally** (zero at the top),
+  so indenting never changes the row's structure or recreates its `UITextView`.
+  `numberedIndex` counts per level, skipping deeper items. Nesting has **no
+  live-write spelling** (`BlockNoteWrite` diffs a flat list; the projection reads a
+  nested `blockGroup` as opaque), so `markDirty` sets `hasUnmodelableLocalEdit` and
+  takes the classic path while any item is nested — keep that if you touch it.
 - **Only leaf blocks are draggable in edit mode.** A long press on a divider,
   image or attachment (`blockIsReorderable`) picks it up; on a text row the same
   press belongs to `UITextView`, so don't extend the gesture there without a
@@ -1792,7 +1808,23 @@ markdown write endpoint**. Understand this before touching the save path:
   data (e.g. a link URL) with `JSONSerialization`, never string interpolation.
 - **Parse markdown conservatively** so a full-overwrite save never destroys
   content: anything the editor can't model is preserved verbatim as `.unknown`
-  blocks; ambiguous inline spans stay literal.
+  blocks; ambiguous inline spans stay literal. The one indented line that
+  classifies is a **nested list item**: a list line directly under a list item (no
+  blank line, spaces only — a tab stays verbatim), at or past that item's content
+  column and less than four columns past it, and no deeper than `maxListIndent`.
+  `serializeMarkdown` writes it back at the parent's content column (two spaces
+  under `- `, three under `1. `), which is also what the server's export emits, and
+  `canonicalizeLine` strips that indentation so the round-trip gate compares the
+  item itself. On save it becomes a BlockNote child in a nested `blockGroup`
+  (`BlockNoteBlock.children`, golden-pinned by
+  `testNestedListChildrenGoInANestedBlockGroup`) — a **saved-bytes change**, signed
+  off, that replaced writing nested lines back as literal-text paragraphs. Known,
+  accepted: the parser measures against the *source* marker width and the
+  serializer renumbers, so a child under a wider source marker than it gets back
+  (`100. a` then a 4-space `- b`) reads verbatim first and nests after one save — no
+  content is lost either way. A live snapshot never persists once
+  `hasUnmodelableLocalEdit` is latched: it would encode the replica without the
+  nesting and overwrite the classic save.
 - A standalone `![alt](url)` line with an **absolute http(s) URL** is a
   first-class `BlockKind.image(alt:url:)` block (classified in the parser's
   `parseClassifiedLine` chain via `parseImageLine`, so classification and

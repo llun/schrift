@@ -5,7 +5,8 @@ import Foundation
 /// (`brand-iconography.html`, 69 glyphs); the final group is a handful of
 /// further Material Symbols the iOS app needs that the handoff's mockups did
 /// not surface (divider rule, remove-link, heading 3, a paragraph/"Text"
-/// glyph, a sync spinner, a per-version clock, checklist check boxes) — still
+/// glyph, a sync spinner, a per-version clock, checklist check boxes, list
+/// indent and outdent) — still
 /// the same icon system. The raw value is the Material glyph name; `codepoint`
 /// is its Private-Use-Area code point in the bundled font subset.
 enum MaterialIcon: String, CaseIterable, Sendable {
@@ -103,6 +104,8 @@ enum MaterialIcon: String, CaseIterable, Sendable {
     case schedule
     case check_box
     case check_box_outline_blank
+    case format_indent_increase
+    case format_indent_decrease
 
     /// The glyph's code point in the Material Symbols font (Private Use Area).
     var codepoint: UInt32 {
@@ -184,6 +187,8 @@ enum MaterialIcon: String, CaseIterable, Sendable {
         case .schedule: return 0xefd6
         case .check_box: return 0xe9de
         case .check_box_outline_blank: return 0xe835
+        case .format_indent_increase: return 0xe23e
+        case .format_indent_decrease: return 0xe23d
         }
     }
 

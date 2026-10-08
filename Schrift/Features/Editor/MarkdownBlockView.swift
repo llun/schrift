@@ -192,6 +192,7 @@ struct MarkdownBlockView: View {
                     .editorBlockDecoration(blockDecoration(for: block.kind, text: block.text))
             }
         }
+        .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
     }
 
     @ViewBuilder private var blockText: some View {

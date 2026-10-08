@@ -222,4 +222,40 @@ final class MarkdownYjsTests: XCTestCase {
         let mapped = MarkdownYjs.blockNoteBlocks(from: [block])
         XCTAssertEqual(mapped.map(\.id), [block.id.uuidString.lowercased()])
     }
+
+    // MARK: - Nested lists
+
+    /// The web editor's own markdown export for a two-level list (captured from
+    /// `blocksToMarkdownLossy`, BlockNote 0.51.4) maps back to the same tree the
+    /// web stored — children nested under their item, siblings after a nested
+    /// group back at the parent's level — never flattened, never literal text.
+    func testTheWebExportOfANestedListMapsBackToTheSameTree() {
+        let blocks = MarkdownYjs.blockNoteBlocks(
+            from: "* A\n  * B\n    * [ ] C\n  1. N\n* D\n", serverOrigin: serverOrigin)
+        XCTAssertEqual(blocks.map(\.node), ["bulletListItem", "bulletListItem"])
+        XCTAssertEqual(blocks[0].children.map(\.node), ["bulletListItem", "numberedListItem"])
+        XCTAssertEqual(blocks[0].children[0].children.map(\.node), ["checkListItem"])
+        XCTAssertEqual(blocks[0].children[0].children[0].runs, [InlineRun("C")])
+        XCTAssertTrue(blocks[0].children[1].children.isEmpty)
+        XCTAssertTrue(blocks[1].children.isEmpty)
+        XCTAssertEqual(blocks[1].runs, [InlineRun("D")])
+    }
+
+    func testNestedEditorBlocksKeepTheirIDsInTheTree() {
+        let parent = EditorBlock(kind: .bulletItem, text: "p")
+        let child = EditorBlock(kind: .checklistItem(checked: true), text: "c", indent: 1)
+        let mapped = MarkdownYjs.blockNoteBlocks(from: [parent, child])
+        XCTAssertEqual(mapped.map(\.id), [parent.id.uuidString.lowercased()])
+        XCTAssertEqual(mapped[0].children.map(\.id), [child.id.uuidString.lowercased()])
+    }
+
+    /// An indent the position can't support (a list item under a paragraph) is
+    /// normalized away rather than dropped: the item is written at the top level.
+    func testAnUnsupportedIndentIsWrittenAtTheTopLevel() {
+        let paragraph = EditorBlock(kind: .paragraph, text: "p")
+        let stray = EditorBlock(kind: .bulletItem, text: "b", indent: 2)
+        let mapped = MarkdownYjs.blockNoteBlocks(from: [paragraph, stray])
+        XCTAssertEqual(mapped.map(\.node), ["paragraph", "bulletListItem"])
+        XCTAssertTrue(mapped.allSatisfy { $0.children.isEmpty })
+    }
 }

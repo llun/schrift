@@ -138,6 +138,24 @@ struct EditorFormattingBar: View {
                 guard choosingFamily == nil else { return }
                 viewModel.tapFormat(defaultListFormat)
             }
+            // Outdent and Indent, for the keyboards that have no Tab key. Shown only
+            // on a list item — the only blocks that nest — and each disabled where
+            // the item can't move that way (already at the top, or with no item
+            // above it to nest under).
+            if viewModel.focusedBlockIsListItem, let focusedBlockID = viewModel.focusedBlockID {
+                barButton(
+                    icon: .format_indent_decrease, label: loc[.editor_format_outdent],
+                    disabled: !viewModel.canOutdentFocusedBlock
+                ) {
+                    viewModel.outdentListItem(blockID: focusedBlockID)
+                }
+                barButton(
+                    icon: .format_indent_increase, label: loc[.editor_format_indent],
+                    disabled: !viewModel.canIndentFocusedBlock
+                ) {
+                    viewModel.indentListItem(blockID: focusedBlockID)
+                }
+            }
             // Quote and code share one button on the same terms.
             barButton(
                 icon: defaultQuoteFormat.icon, label: loc[defaultQuoteFormat.labelKey],

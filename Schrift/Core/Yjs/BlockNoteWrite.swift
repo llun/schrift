@@ -38,6 +38,11 @@ enum BlockNoteWrite {
     /// Throws `YIntegrationError` if integration or encoding hits a malformed state;
     /// the caller (the collaboration session, C2) turns that into `failSafe`.
     static func applyEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], to doc: YDoc) throws -> Data {
+        // The diff is over one flat level of blocks; nested children would be
+        // silently dropped. The editor never sends them (a nested list takes the
+        // classic save), so refusing is a backstop: the caller downgrades to classic.
+        guard !old.contains(where: { !$0.children.isEmpty }), !new.contains(where: { !$0.children.isEmpty })
+        else { throw YIntegrationError.unexpectedCase }
         // Snapshot the state vector *before* the transaction so the returned update
         // is a diff of exactly what this edit minted. From-empty ⇒ empty vector ⇒
         // full snapshot, which is what makes the bytes equal the golden encoder.
