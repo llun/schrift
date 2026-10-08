@@ -100,10 +100,10 @@ unless their brief says to.
   verify them, not the raw output. The main thread may still do directly:
   reading the parts of this file it needs to brief sub-agents, one short command
   or one small file whose output it needs anyway (for example `git status`,
-  `git diff --stat`, or spot-checking a `file:line` a sub-agent cited), and git/PR
-  bookkeeping (commits, pushes, PR descriptions, replying to and resolving
-  review threads). Anything longer, and any edit to the repository's files, goes
-  to a sub-agent.
+  `git diff --stat`, or spot-checking a `file:line` a sub-agent cited), and
+  git/PR bookkeeping (commits, pushes, PR descriptions, posting review findings
+  as PR comments, replying to and resolving review threads). Anything longer,
+  and any edit to the repository's files, goes to a sub-agent.
 - **Set model and effort on every sub-agent explicitly.** Never rely on the
   inherited default. Choose the cheapest model and lowest effort that will still
   do the task well, using the table below, and step up only where quality
@@ -113,15 +113,18 @@ unless their brief says to.
   (search, reading, review) parallelizes freely; give parallel implementers
   separate worktrees or non-overlapping files so they do not overwrite each
   other. Never run two `xcodegen`/`xcodebuild` sub-agents at once in the same
-  checkout.
+  checkout, and never two `xcodebuild test` runs on the same simulator even
+  from separate worktrees — they kill each other
+  ([Testing conventions](#testing-conventions)); run tests one at a time or
+  give each run its own simulator and `-derivedDataPath`.
 - **Brief each sub-agent completely.** A sub-agent starts with no context: give
   it the goal, the relevant paths, the constraints from this file, whether it
   may edit files, commit or push, and the exact shape of the result you want
   back.
 - **Verify before trusting.** Check a sub-agent's claims (diffs, test output,
   `file:line` references) before building on them or reporting them. If a cheap
-  sub-agent's result is wrong or shallow, re-run that task one step up (next
-  effort level, or next model tier) rather than patching around it.
+  sub-agent's result is wrong or shallow, re-run that task one step up the
+  escalation ladder below rather than patching around it.
 - **Review with a fresh sub-agent.** Every round of the
   [PR review loop](#pr-review-loop--required-for-all-agent-work) uses a new
   reviewer sub-agent that did not write the change; fixes go to an implementer
@@ -156,10 +159,11 @@ Guidelines:
   and fastest, and a wrong search result is cheap to redo.
 - Reserve `opus` and `high` effort for work where a mistake is expensive:
   design, security-sensitive code, subtle bugs, and review.
-- Escalate one step at a time: raise effort first (`medium` → `high` → `xhigh` →
-  `max`), and move up a model tier when a higher effort on the same model still
-  falls short. Use `max` only when `xhigh` has failed or the problem is
-  unusually hard.
+- Escalate one step at a time. A `haiku` task that falls short moves to
+  `sonnet` at the table's effort for that kind of task (or `medium`); do not
+  raise `haiku` past `medium`. On `sonnet`, raise effort to `high`, then move to
+  `opus` at `high`. On `opus`, raise effort `high` → `xhigh` → `max`. Use `max`
+  only on `opus`, when `xhigh` has failed or the problem is unusually hard.
 - Do not pick other model values (for example `fable`) unless the user asks for
   them. When the available models change, map them onto the same three tiers
   (cheapest, balanced, strongest) rather than pinning these names.
