@@ -161,8 +161,9 @@ Guidelines:
 - Use `haiku` freely for retrieval and mechanical changes. It is the cheapest
   and fastest, and a wrong search result is cheap to redo.
 - Start at `opus` or `high` effort only where a mistake is expensive: design,
-  security-sensitive code, subtle bugs, and review. Reaching them by escalation
-  is fine.
+  the high-risk areas in the table, subtle bugs, and review. When a task matches
+  both a cheaper row and the high-risk row, the high-risk row wins. Reaching
+  them by escalation is fine.
 - Escalate one step at a time, starting from the task's row in the table. The
   ladder is `haiku`/`low` → `haiku`/`medium` → `sonnet`/`medium` →
   `sonnet`/`high` → `opus`/`high` → `opus`/`xhigh` → `opus`/`max`; a task that
