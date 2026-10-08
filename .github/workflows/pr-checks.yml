@@ -94,14 +94,40 @@ jobs:
             xcrun simctl list devices available >&2
             exit 1
           fi
-          echo "Using simulator: $device"
-          echo "name=$device" >> "$GITHUB_OUTPUT"
+          # Resolve the name to one device (on the newest iOS runtime) so the
+          # boot step below and xcodebuild target the same simulator.
+          udid="$(xcrun simctl list -j devices available | jq -r --arg name "$device" '
+            [.devices | to_entries[]
+             | select(.key | test("\\.SimRuntime\\.iOS-[0-9-]+$"))
+             | (.key | capture("iOS-(?<v>[0-9-]+)$").v | split("-") | map(tonumber)) as $v
+             | .value[] | select(.isAvailable and .name == $name) | {v: $v, udid}]
+            | sort_by(.v) | last | .udid // empty')"
+          if [ -z "$udid" ]; then
+            echo "No iOS runtime found for simulator: $device" >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Using simulator: $device ($udid)"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      # Boot the simulator and wait until it has finished booting before any
+      # test runs. Left to xcodebuild, the first UI test can land on a
+      # simulator still settling from a cold boot: a hosted run spent 5s in
+      # XCTest's interruption check and the switch press that followed never
+      # registered (ChecklistFilterTests, run 37733961599; the cold boot is the
+      # suspected, not confirmed, cause). `bootstatus -b` boots the
+      # device if needed and blocks until boot (including data migration)
+      # completes.
+      - name: Boot simulator
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
+        run: xcrun simctl bootstatus "$SIM_UDID" -b
 
       - name: Build & test
         # Passed via env (not inline ${{ }}) to keep dynamic text out of the
         # script body, matching the repo's no-interpolation convention.
         env:
-          SIM_NAME: ${{ steps.sim.outputs.name }}
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: |
           set -o pipefail
           # xcbeautify is preinstalled on GitHub macOS images; fall back to
@@ -115,7 +141,7 @@ jobs:
           xcodebuild test \
             -project Schrift.xcodeproj \
             -scheme Schrift \
-            -destination "platform=iOS Simulator,name=${SIM_NAME}" \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             -resultBundlePath TestResults.xcresult \
             | "$formatter"
 
