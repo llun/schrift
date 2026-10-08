@@ -9,6 +9,12 @@ enum FoldLayout {
     /// The narrowest sidebar worth aligning to the fold; nearer the edge, the system width stays.
     static let minimumSidebarWidth: CGFloat = 280
 
+    /// A crease as seen by one view: its horizontal span, and the view's width it was measured in.
+    struct Fold: Equatable {
+        var span: ClosedRange<CGFloat>
+        var width: CGFloat
+    }
+
     /// The horizontal span of the first vertical fold that crosses a view `width` wide, or
     /// nil. A horizontal crease (a tabletop posture) is ignored: text reads across it fine.
     static func verticalFold(in regions: [CGRect], width: CGFloat) -> ClosedRange<CGFloat>? {
@@ -39,13 +45,14 @@ enum FoldLayout {
 extension View {
     /// Reports the vertical fold crossing this view, in its own coordinates. Always nil on
     /// SDKs before iOS 27.1 (CI's Xcode) and on devices that do not fold.
-    func foldAware(_ action: @escaping (ClosedRange<CGFloat>?) -> Void) -> some View {
+    func foldAware(_ action: @escaping (FoldLayout.Fold?) -> Void) -> some View {
         #if canImport(SwiftUI, _version: 8.0.85)
             // shortcut: reads the first active division only; a device with two creases would need more.
-            return onGeometryChange(for: ClosedRange<CGFloat>?.self) { proxy in
+            return onGeometryChange(for: FoldLayout.Fold?.self) { proxy in
                 guard #available(iOS 27.1, *) else { return nil }
+                let width = proxy.size.width
                 let regions = proxy.reservedRegions(kind: .division).map(\.frame)
-                return FoldLayout.verticalFold(in: regions, width: proxy.size.width)
+                return FoldLayout.verticalFold(in: regions, width: width).map { .init(span: $0, width: width) }
             } action: {
                 action($0)
             }
@@ -61,17 +68,11 @@ extension View {
 }
 
 private struct FoldClearance: ViewModifier {
-    @State private var fold: ClosedRange<CGFloat>?
-    @State private var width: CGFloat = 0
+    @State private var fold: FoldLayout.Fold?
 
     func body(content: Content) -> some View {
         content
-            .safeAreaPadding(fold.map { FoldLayout.clearance(fold: $0, width: width) } ?? EdgeInsets())
-            .onGeometryChange(for: CGFloat.self) {
-                $0.size.width
-            } action: {
-                width = $0
-            }
+            .safeAreaPadding(fold.map { FoldLayout.clearance(fold: $0.span, width: $0.width) } ?? EdgeInsets())
             .foldAware { fold = $0 }
     }
 }
