@@ -1,21 +1,8 @@
 import SwiftUI
 
-/// Whether the photo button may be offered: there must be a focused block to insert
-/// into, no upload already in flight (`canInsertPhoto` also covers "content loaded"),
-/// and the device must not be offline.
+/// Whether the Attach row's Photo choice may be offered: a focused block to insert into and
+/// no upload already in flight (`canInsertPhoto` also covers "content loaded").
 ///
-/// Offline is the odd one out and the reason this is a named function rather than an
-/// inline expression: every *other* action in the bar is a local block transformation
-/// the draft pipeline queues, so editing offline is supported. A photo POSTs a
-/// multipart attachment and there is no queue for one — offered offline it would open
-/// the picker and re-encode the chosen image only to fail. The slash menu's half lives
-/// in `filteredSlashItems(query:)`.
-/// `isLocalDocument` is the load-bearing half. `isOffline` is derived from Home's last
-/// *list* fetch, not from reachability — so a create that 500s while the network is fine
-/// mints a local document and leaves this reading false. The upload would then POST
-/// `documents/{client-minted-uuid}/attachment-upload/`, take a 404, and offer a retry that
-/// can never succeed. Same rule as "Add a subpage" and the Pages drawer's "New page", both
-/// of which moved to this gate; this one was missed.
 /// Photo insertion no longer gates on connectivity or on whether the server has seen the
 /// document. A photo picked with neither is stored on this device and uploaded by the replay,
 /// exactly as an offline text edit is queued and pushed.
