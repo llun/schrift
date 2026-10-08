@@ -26,7 +26,9 @@ This file is the shorter, operational "how we write code here" companion.
 ## Task workflow — start here
 
 The rest of this file is reference; this is the order to work in. Each step
-names the section with the details.
+names the section with the details. Throughout, the main thread orchestrates
+and delegates each step to sub-agents, choosing model and effort explicitly
+([Working with Sub-Agents](#working-with-sub-agents-always)).
 
 1. **Orient.** Skim this file's headings, then read the sections your task
    touches in full. Architecture rationale lives in the design spec
@@ -80,6 +82,63 @@ names the section with the details.
    - the [PR review loop](#pr-review-loop--required-for-all-agent-work) has
      run and every thread is resolved;
    - **`Build & Test` is green on the latest pushed state.**
+
+## Working with Sub-Agents (always)
+
+Agents working in this repository always delegate work to sub-agents. The main
+thread is the orchestrator: it understands the ask, splits it into tasks,
+briefs a sub-agent for each, checks what comes back, and owns the final
+answer. It does not do the bulk reading, searching, editing or reviewing
+itself.
+
+### Rules for the main thread
+
+- **Delegate every non-trivial step.** Exploration, code search, reading large
+  files or logs, implementation, test runs, and code review each go to a
+  sub-agent. The main thread keeps only the conclusions, not the raw output.
+- **Pick the model and effort for every sub-agent explicitly.** Never rely on
+  the inherited default. Choose the cheapest model and lowest effort that will
+  still do the task well, and step up only where quality depends on it.
+- **Run independent tasks in parallel.** Launch sub-agents that do not depend
+  on each other in a single message so they run concurrently.
+- **Brief each sub-agent completely.** A sub-agent starts with no context: give
+  it the goal, the relevant paths, the constraints from this file, and the exact
+  shape of the result you want back.
+- **Verify before trusting.** Check a sub-agent's claims (diffs, test output,
+  `file:line` references) before building on them or reporting them. If a
+  cheap sub-agent's result is wrong or shallow, re-run that task one tier up
+  rather than patching around it.
+- **Review with a fresh sub-agent.** The code review loop always uses a
+  separate reviewer sub-agent that did not write the change; fixes go to an
+  implementer sub-agent; repeat until the reviewer comes back clean.
+
+### Choosing model and effort
+
+Match the tier to how much judgment the task needs, not to how important the
+overall change is.
+
+| Task | Model | Effort |
+| --- | --- | --- |
+| Finding files, grepping, listing usages, reading logs, summarizing docs | Haiku | low |
+| Mechanical edits: renames, formatting, applying a fix that is already decided, updating docs to match code | Haiku or Sonnet | low |
+| Running builds, tests and linters and reporting failures | Haiku | low |
+| Implementing a well-specified feature or fix, writing tests | Sonnet | medium |
+| Root-causing a CI failure or a bug with a clear reproduction | Sonnet | medium–high |
+| Architecture and design decisions, plans that touch several subsystems | Opus | high |
+| Hard debugging (concurrency, data loss, security, flaky behaviour with no clear cause) | Opus | high–max |
+| Code review of a change before it is pushed or merged | Opus | high |
+
+Guidelines:
+
+- Default to Sonnet at medium effort when unsure; it is the best balance of
+  quality and cost for most coding work.
+- Use Haiku freely for anything that is retrieval or a mechanical change. It is
+  the cheapest and fastest, and a wrong search result is cheap to redo.
+- Reserve Opus and high effort for work where a mistake is expensive: design,
+  security-sensitive code, subtle bugs, and review. Use `max` effort only when
+  `high` has already failed or the problem is unusually hard.
+- When a newer or stronger model family is available, map the tiers onto it
+  (fastest/cheapest, balanced, strongest) rather than pinning old names.
 
 ## Build, run, test
 
@@ -3852,14 +3911,17 @@ follow-up push made outside an active loop. Pushes made while addressing
 comments (steps 2–3) do **not** start a new loop: the re-review that follows
 them is simply the next round and counts toward the same round cap in step 4.
 
-1. **Review with sub agents.** Spawn sub agents to review **all** the code in
+1. **Review with sub agents.** Spawn a fresh reviewer sub-agent (one that did
+   not write the change; model and effort per
+   [Working with Sub-Agents](#working-with-sub-agents-always)) to review **all** the code in
    the PR (the full diff, not just the latest commit) — correctness, the
    conventions in this file, test coverage, and the
    [Safety](#safety--never-add-anything-dangerous) rules. Post **everything
    they find as review comments on the PR** — anchored to the relevant file
    and line when the finding maps to a line in the diff, otherwise as a
    top-level PR comment naming the file.
-2. **Address every comment.** Fix each finding (or explain in the thread why
+2. **Address every comment.** Delegate the fixes to an implementer sub-agent.
+   Fix each finding (or explain in the thread why
    no change is needed), push the fixes, **reply to each comment** describing
    what was done, and **mark the thread as resolved** (a top-level PR comment
    has no resolvable thread — a reply on the PR conversation recording the
