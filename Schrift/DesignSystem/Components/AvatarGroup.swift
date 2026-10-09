@@ -6,11 +6,15 @@ struct AvatarGroupLayout: Equatable {
 }
 
 func avatarGroupLayout(names: [String], max: Int) -> AvatarGroupLayout {
-    if names.count <= max {
+    // `max` is a public parameter on `AvatarGroup`, and `prefix(_:)` traps on a
+    // negative length — so a negative limit means "show no avatars", the same as
+    // zero, rather than a crash.
+    let limit = Swift.max(0, max)
+    if names.count <= limit {
         return AvatarGroupLayout(visibleNames: names, overflowCount: 0)
     }
-    // The prototype shows the first `max` avatars, then a "+N" chip for the rest.
-    let visible = Array(names.prefix(max))
+    // The prototype shows the first `limit` avatars, then a "+N" chip for the rest.
+    let visible = Array(names.prefix(limit))
     let overflow = names.count - visible.count
     return AvatarGroupLayout(visibleNames: visible, overflowCount: overflow)
 }
