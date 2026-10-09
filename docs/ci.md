@@ -59,6 +59,8 @@ the push run is the post-merge verification of the real `main` history
    projection or mode changes. A hosted result captured a correctly targeted 50ms
    tap that left the native switch off; why UIKit ignored it remains unconfirmed.
    The tests neither retry the gesture nor bypass the interaction with preset state.
+   When the switch does not turn on, the filter-enable step attaches the switch frame,
+   hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
    Checklist mode swaps likewise use one 200ms stationary press and require
    the old toolbar action to disappear and the new action to appear before
    checking content or restored scroll position. Offline editor toolbar tests

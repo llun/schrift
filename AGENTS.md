@@ -3958,6 +3958,8 @@ markdown write endpoint**. Understand this before touching the save path:
   transition before continuing. CI captured a correctly targeted 50ms synthesized
   tap that left the switch off; its underlying UIKit cause is unconfirmed. Do not
   retry gestures until green or treat an unactivated filter as a mode-swap defect.
+  When the switch does not turn on, the filter-enable step attaches the switch frame,
+  hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
 
 ## Docs convention
 
