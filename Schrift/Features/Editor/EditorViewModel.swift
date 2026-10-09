@@ -1615,7 +1615,15 @@ final class EditorViewModel {
         }
     }
 
+    /// True while `addSubpage` is running; the "Add a subpage" button is disabled and a second
+    /// call returns nil without a request, so repeated taps during a slow POST cannot mint
+    /// duplicate sub-pages.
+    private(set) var isAddingSubpage = false
+
     func addSubpage() async -> Document? {
+        guard !isAddingSubpage else { return nil }
+        isAddingSubpage = true
+        defer { isAddingSubpage = false }
         clearError()
         // **Nothing may be filed inside a document that has just been deleted.** `handleDidDelete`
         // makes the same point about an in-flight photo upload: it leaves `hasLoadedContent` true,
@@ -1654,6 +1662,16 @@ final class EditorViewModel {
             guard let ownerUserID = signedInUser.userID else {
                 // No account id has ever been learned from `/users/me/`, so a record minted here
                 // would be unattributable: never listed, never replayed. Better to say so.
+                showError(.editor_error_add_subpage)
+                return nil
+            }
+            return saveCoordinator.createLocalDocument(
+                title: "Untitled subpage", parentID: documentID, ownerUserID: ownerUserID)
+        }
+        // A path known to be down: skip the POST that would hang to the transport timeout and
+        // take the retryable-failure fallback below anyway. Same outcome, no wait.
+        if availability.isOffline {
+            guard let ownerUserID = signedInUser.userID else {
                 showError(.editor_error_add_subpage)
                 return nil
             }

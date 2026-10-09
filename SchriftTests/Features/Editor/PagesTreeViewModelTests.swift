@@ -207,6 +207,33 @@ final class PagesTreeViewModelTests: XCTestCase {
         XCTAssertNil(cache.children(for: rootID), "and nothing is written to the shared cache")
     }
 
+    /// A slow POST must not let repeated taps on "New page" mint a page each.
+    func testASecondAddPageWhileOneIsInFlightIsRefusedWithoutARequest() async {
+        let (viewModel, _) = makeViewModel()
+        let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { [createdID] request in
+            log.record(request)
+            return .init(
+                statusCode: 201, headers: [:],
+                body: Data(Self.documentFixture(id: createdID, title: "Untitled subpage").utf8), error: nil,
+                releasedBy: gate)
+        }
+
+        let first = Task { await viewModel.addPage(under: rootID) }
+        await waitUntil { log.count(ofMethod: "POST") == 1 }
+        XCTAssertTrue(viewModel.isAddingPage)
+
+        let second = await viewModel.addPage(under: rootID)
+        gate.open()
+        let created = await first.value
+
+        XCTAssertNil(second)
+        XCTAssertEqual(created?.id, createdID)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertFalse(viewModel.isAddingPage)
+    }
+
     func testCreatingAPageAppendsToALevelThatIsKnown() async {
         let (viewModel, cache) = makeViewModel()
         MockURLProtocol.stubHandler = { [childID, createdID] request in

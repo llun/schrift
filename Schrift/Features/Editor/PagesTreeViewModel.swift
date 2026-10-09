@@ -357,7 +357,15 @@ final class PagesTreeViewModel {
 
     /// Creates a child of `parent` and slots it into the open tree, so the new
     /// page appears where it belongs instead of only after a reload.
+    /// True while `addPage` is running; the "New page" button is disabled and a second call
+    /// returns nil without a request. This view model has no `OnlineAvailability`, so unlike
+    /// Home and the editor it still POSTs first on a path that is down.
+    private(set) var isAddingPage = false
+
     func addPage(under parent: UUID) async -> Document? {
+        guard !isAddingPage else { return nil }
+        isAddingPage = true
+        defer { isAddingPage = false }
         // Nothing may be filed inside a document whose deletion is queued — the twin of
         // `EditorViewModel.addSubpage`'s gate, and reachable from the same drawer whose level
         // fetch is already gated two lines away. Online this would POST

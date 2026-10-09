@@ -1291,6 +1291,7 @@ struct EditorView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(viewModel.isAddingSubpage)
             }
             .padding(.top, DocsSpacing.spaceBase)
         }

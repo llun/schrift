@@ -745,14 +745,26 @@ final class HomeViewModel {
             title: "Untitled document", parentID: nil, ownerUserID: ownerUserID)
     }
 
+    /// True from the moment `createDocument` starts until it returns. The `+` is disabled
+    /// while set, and a second call is refused outright: a POST that hangs for the transport
+    /// timeout otherwise lets every further tap mint its own "Untitled" document.
+    private(set) var isCreatingDocument = false
+
     func createDocument() async -> Document? {
+        // One create at a time. Refused before `clearError()` so a stray tap cannot wipe the
+        // message of the create still in flight.
+        guard !isCreatingDocument else { return nil }
+        isCreatingDocument = true
+        defer { isCreatingDocument = false }
         // A retry must not sit underneath the message its predecessor left behind: nothing
         // else clears this one, since the failure path never reaches load().
         clearError()
         // Work Offline is a strict no-network contract on every read path, so honour it here
         // too rather than POSTing behind the user's back and reporting a failure they asked
-        // for. Creating locally is the whole point of the mode.
-        if userDefaults.bool(forKey: "schrift.workOffline") {
+        // for. Creating locally is the whole point of the mode. A path that is known to be down
+        // gets the same answer (`isOffline` covers both): the POST would hang until the
+        // transport timeout and then take this very fallback, so skip straight to it.
+        if availability.isOffline {
             return createLocalDocument()
         }
         let marker = diagnostics?.marker()

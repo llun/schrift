@@ -169,4 +169,54 @@ final class HomeViewModelCreateTests: HomeViewModelTestCase {
         XCTAssertNil(viewModel.errorKey)
         XCTAssertNil(viewModel.errorDetail)
     }
+
+    /// A POST that hangs (plane Wi-Fi, a slow server) used to leave the `+` live, so each
+    /// further tap issued its own POST and minted its own "Untitled" document.
+    func testASecondCreateWhileOneIsInFlightIsRefusedWithoutARequest() async {
+        let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "POST" {
+                return .init(
+                    statusCode: 201, headers: [:], body: Self.documentFixture(), error: nil, releasedBy: gate)
+            }
+            return .init(statusCode: 200, headers: [:], body: Self.emptyPageFixture(), error: nil)
+        }
+
+        let first = Task { await viewModel.createDocument() }
+        await waitUntil { log.count(ofMethod: "POST") == 1 }
+        XCTAssertTrue(viewModel.isCreatingDocument)
+
+        let second = await viewModel.createDocument()
+        gate.open()
+        let created = await first.value
+
+        XCTAssertNil(second)
+        XCTAssertNotNil(created)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertFalse(viewModel.isCreatingDocument, "released on completion, so the next create is allowed")
+    }
+
+    /// With the path known to be down the POST would hang to the transport timeout and then
+    /// take the local fallback anyway; skip straight to it.
+    func testCreateDocumentWhileThePathIsDownCreatesLocallyWithoutARequest() async {
+        let log = RequestRecorder()
+        let path = FakeNetworkPath(userDefaults: preferences)
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser(), availability: path.availability)
+        path.setSatisfied(false)
+        await waitUntil { path.availability.isOffline }
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let document = await viewModel.createDocument()
+
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertNotNil(document)
+        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: document!.id))
+        XCTAssertNil(viewModel.errorKey)
+    }
 }

@@ -3245,7 +3245,12 @@ markdown write endpoint**. Understand this before touching the save path:
   not read it as an inventory.** Several POSTing affordances elsewhere are
   deliberately ungated: Home's **`+`** now creates *locally* under Work Offline or on a
   retryable failure, and errors with `home_error_create` only on a rejection the server
-  actually made (or when no account id is known). Also the Options
+  actually made (or when no account id is known). The three create buttons (Home `+`,
+  Add subpage, Pages "New page") are disabled while their create is in flight
+  (`isCreatingDocument` / `isAddingSubpage` / `isAddingPage`; a second call returns nil
+  without a request, or repeated taps on a hanging POST mint duplicates), and Home and
+  the editor mint locally with no request whenever `availability.isOffline` (path down or
+  Work Offline); the drawer has no availability and still POSTs first. Also the Options
   sheet's local actions (including queued Delete), which remain reachable offline.
   Share is hidden in the toolbar and Options while offline; Version history is
   disabled with a localized explanation. An already-presented Share/history sheet
