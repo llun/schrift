@@ -10,7 +10,7 @@ final class HomeViewModelReplayReloadTests: HomeViewModelTestCase {
 
     private func stubServer(log: RequestRecorder, savesSucceed: Bool) {
         let id = documentID.uuidString.lowercased()
-        MockURLProtocol.stubHandler = { request in
+        MockURLProtocol.stubHandler = { [empty = Self.emptyFixture] request in
             log.record(request)
             let url = request.url?.absoluteString ?? ""
             if url.contains("formatted-content") {
@@ -27,7 +27,7 @@ final class HomeViewModelReplayReloadTests: HomeViewModelTestCase {
                     statusCode: savesSucceed ? 200 : 500, headers: [:], body: Data("{}".utf8), error: nil)
             }
             if url.contains("documents/?") {
-                return .init(statusCode: 200, headers: [:], body: Self.emptyFixture, error: nil)
+                return .init(statusCode: 200, headers: [:], body: empty, error: nil)
             }
             return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
         }
