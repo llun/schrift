@@ -2415,7 +2415,11 @@ final class EditorViewModel {
     /// concurrent insert would race the first one's block placement.
     var canInsertPhoto: Bool { hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment }
 
-    var canInsertAttachment: Bool { hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment }
+    /// A local document has no server id to upload against (the POST would 404), so File is refused here
+    /// as a backstop to the entry points' own gating — see `SlashMenuAction.requiresImmediateUpload`.
+    var canInsertAttachment: Bool {
+        hasLoadedContent && !isUploadingPhoto && !isUploadingAttachment && !isLocalDocument
+    }
 
     /// Entry point for both the formatting-bar button and the slash-menu item.
     func requestPhotoInsertion() {

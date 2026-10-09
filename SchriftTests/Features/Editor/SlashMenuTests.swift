@@ -83,4 +83,18 @@ final class SlashMenuTests: XCTestCase {
                 "Expected the photo item to match \"\(query)\"")
         }
     }
+
+    /// The view is what `EditorView` hands `isOffline` / `isLocalDocument` to; the pure filter being
+    /// right is not enough if the view forgets to pass them.
+    @MainActor
+    func testTheMenuViewWithholdsFileOfflineAndOnALocalDocumentOnly() {
+        func ids(isOffline: Bool, isLocalDocument: Bool) -> [String] {
+            SlashMenuView(query: "", isOffline: isOffline, isLocalDocument: isLocalDocument, onSelect: { _ in }).items
+                .map(\.id)
+        }
+        XCTAssertFalse(ids(isOffline: true, isLocalDocument: false).contains("file"))
+        XCTAssertFalse(ids(isOffline: false, isLocalDocument: true).contains("file"))
+        XCTAssertTrue(ids(isOffline: false, isLocalDocument: false).contains("file"))
+        XCTAssertTrue(ids(isOffline: true, isLocalDocument: true).contains("photo"))
+    }
 }

@@ -17,8 +17,13 @@ struct SlashMenuView: View {
     /// four once the rows themselves grow.
     @ScaledMetric(relativeTo: .body) private var maxHeight: CGFloat = 4 * DocsSpacing.rowMinHeight
 
+    /// The rows on offer: the query filter plus the File gate. Exposed so the gate is testable without hosting.
+    var items: [SlashMenuItem] {
+        filteredSlashItems(query: query, isOffline: isOffline, isLocalDocument: isLocalDocument)
+    }
+
     var body: some View {
-        let items = filteredSlashItems(query: query)
+        let items = self.items
         if !items.isEmpty {
             ScrollView {
                 VStack(spacing: 0) {
