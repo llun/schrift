@@ -136,8 +136,9 @@ final class SwipeRevealRowTests: XCTestCase {
     /// and overflow, and a fourth action at 343pt still passes this test, so it does not catch
     /// that. A fourth action must be checked at 288pt.
     func testADocumentRowsStripFitsTheNarrowestRowWithoutHittingTheTapTargetFloor() {
-        // **Derived from the real resolver, not a literal.** A hard-coded 3 would keep passing
-        // when a fourth action is added, which is the whole thing this is here to catch.
+        // **Derived from the real resolver, not a literal.** Deriving the count keeps the test honest
+        // as actions change. At 343pt it starts failing only at a fifth action, so a fourth must be
+        // checked at 288pt (see the doc comment above).
         let actionCount = documentRowSwipeActions(
             isPendingDelete: false, isLocalDocument: false, isFavorite: false, offersPin: true,
             keepLabel: "Keep", pinLabel: "Pin", unpinLabel: "Unpin", moveLabel: "Move",
