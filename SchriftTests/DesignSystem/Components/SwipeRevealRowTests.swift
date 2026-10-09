@@ -126,12 +126,13 @@ final class SwipeRevealRowTests: XCTestCase {
             DocsSpacing.rowMinHeight)
     }
 
-    /// **The three-action strip, at the narrowest width a device actually offers.** Home rows
+    /// **The three-action strip, at the standard iPhone row width.** Home rows
     /// gained Move between Pin and Delete, and AGENTS.md's rule for a row of fixed-minimum
     /// controls is to measure it against the narrowest device before adding to it — so that
     /// the *next* addition fails a test rather than a screen.
     ///
-    /// 343pt is an iPhone SE's 375pt less the 16pt gutter each side. The cap (0.6 × 343 ÷ 3 =
+    /// 343pt is the standard iPhone row width: an iPhone SE's 375pt less the 16pt gutter each
+    /// side (Display Zoom can narrow it further). The cap (0.6 × 343 ÷ 3 =
     /// 68.6pt) is what binds: under the 72pt base, comfortably over the 44pt floor, and the
     /// strip lands exactly on the 60% budget.
     func testADocumentRowsStripFitsTheNarrowestRowWithoutHittingTheTapTargetFloor() {

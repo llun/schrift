@@ -1273,7 +1273,7 @@ new code reads like the surrounding code.
   Type. The formatting bar's five square actions (240pt) fit every supported iPhone
   column, even under Display Zoom. The seven on a list item (adding Outdent and
   Indent, 332pt) fit the standard 343pt-or-wider column but overflow narrower ones:
-  Display Zoom on non-Max iPhones (a 320pt screen leaves a 288pt column) and narrow
+  a screen Display Zoom narrows to 320pt (leaving a 288pt column) and narrow
   iPad containers (Slide Over, ⅓ split). There `EditorFormattingBar` scrolls
   horizontally inside the editor's offered width, preserving 44pt squares and screen
   geometry, and a ~24pt gradient (`mask`) fades the edge with hidden buttons

@@ -10,8 +10,8 @@
 > and Indent). The buttons are 44pt and don't grow with Dynamic Type. The five-button
 > row (240pt) fits every supported iPhone column, even under Display Zoom. The
 > seven-button list-item row (332pt) fits the standard 343pt-or-wider column but
-> overflows narrower ones: Display Zoom on non-Max iPhones (a 320pt screen leaves a
-> 288pt column) and narrow iPad containers (Slide Over, a ⅓ split). There the row
+> overflows narrower ones: a screen Display Zoom narrows to 320pt (leaving a 288pt
+> column) and narrow iPad containers (Slide Over, a ⅓ split). There the row
 > scrolls horizontally and a ~24pt fade marks the edge with hidden buttons.
 >
 > **Revised: 2026-10-08 — One Attach button in the formatting bar.** The bar's last
