@@ -37,12 +37,24 @@ enum BlockNoteWrite {
     ///
     /// Throws `YIntegrationError` if integration or encoding hits a malformed state;
     /// the caller (the collaboration session, C2) turns that into `failSafe`.
-    static func applyEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], to doc: YDoc) throws -> Data {
-        // The diff is over one flat level of blocks; nested children would be
-        // silently dropped. The editor never sends them (a nested list takes the
-        // classic save), so refusing is a backstop: the caller downgrades to classic.
-        guard !old.contains(where: { !$0.children.isEmpty }), !new.contains(where: { !$0.children.isEmpty })
-        else { throw YIntegrationError.unexpectedCase }
+    ///
+    /// `allowsNestedInserts` is the Docs 6 incremental save's opt-in
+    /// (`BlockNoteIncrementalSave`) to write nested lists as freshly inserted subtrees.
+    /// It defaults to `false`, which keeps the live (C2c) path's backstop: a nested `new`
+    /// block throws there, so the live caller downgrades to classic instead of
+    /// broadcasting a nested `blockGroup` the projection reads back as opaque.
+    static func applyEdit(
+        old: [BlockNoteBlock], new: [BlockNoteBlock], to doc: YDoc, allowsNestedInserts: Bool = false
+    ) throws -> Data {
+        // `old` is the replica's projection, which is one flat level: a nested `old`
+        // block has no live counterpart to map, so refusing is a backstop (the live
+        // caller downgrades to classic). A `new` block may carry children only when the
+        // caller opts in (the Docs 6 save writes nested lists) — and then only as a
+        // freshly *inserted* subtree, never a reconciled one (see `applyBlocks`).
+        guard !old.contains(where: { !$0.children.isEmpty }) else { throw YIntegrationError.unexpectedCase }
+        guard allowsNestedInserts || !new.contains(where: { !$0.children.isEmpty }) else {
+            throw YIntegrationError.unexpectedCase
+        }
         // Snapshot the state vector *before* the transaction so the returned update
         // is a diff of exactly what this edit minted. From-empty ⇒ empty vector ⇒
         // full snapshot, which is what makes the bytes equal the golden encoder.
@@ -88,18 +100,30 @@ enum BlockNoteWrite {
     /// 3. if `hasTextChild`: the `xmlText` (first child of element) and its run
     ///    pieces (`InlineContent.pieces`, the shared open/carry/close sequence);
     /// 4. the block's props as `.any([value])` map entries **on the element**;
-    /// 5. the `id` as `.any([.string(id)])` map entry **on the container**.
+    /// 5. if the block has children: a nested `blockGroup` as the container's list child
+    ///    right after the element, then each child block inside it, recursively;
+    /// 6. the `id` as `.any([.string(id)])` map entry **on the container**.
     ///
     /// Steps 2–4 are shared verbatim with `reconcileBlock`'s kind-change branch via
-    /// `insertContentElement`.
+    /// `insertContentElement`. Step 5 mirrors `BlockNoteYjs.encode`'s `emitGroup`, whose
+    /// nested group takes the element as its left origin — pinned by the from-empty anchor
+    /// for a nested list (`BlockNoteWriteTests`).
     private static func insertBlock(
         _ tx: YTransaction, group: YType, after left: YItem?, _ block: BlockNoteBlock
     ) throws -> YItem? {
         let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
         let last = try YWrite.insertAfter(tx, into: group, after: left, [.type(container)])
-        try insertContentElement(tx, into: container, block)
-        // The `id` lives on the container, minted after its content element for byte
-        // parity with `BlockNoteYjs.encode`.
+        let element = try insertContentElement(tx, into: container, block)
+        if !block.children.isEmpty {
+            let childGroup = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            try YWrite.insertAfter(tx, into: container, after: element, [.type(childGroup)])
+            var childLeft: YItem?
+            for child in block.children {
+                childLeft = try insertBlock(tx, group: childGroup, after: childLeft, child)
+            }
+        }
+        // The `id` lives on the container, minted after its content element (and any
+        // nested group) for byte parity with `BlockNoteYjs.encode`.
         try YWrite.mapSet(tx, on: container, key: "id", .any([.string(block.id)]))
         return last
     }
@@ -114,12 +138,16 @@ enum BlockNoteWrite {
     ///
     /// The mint order — element, text, run pieces, props — is load-bearing: it is
     /// what the from-empty byte-identity anchor (`BlockNoteWriteTests`) pins against
-    /// `BlockNoteYjs.encode`. Do not reorder.
+    /// `BlockNoteYjs.encode`. Do not reorder. Returns the element's item, the left origin of
+    /// a nested `blockGroup`.
+    @discardableResult
     private static func insertContentElement(
         _ tx: YTransaction, into container: YType, _ block: BlockNoteBlock
-    ) throws {
+    ) throws -> YItem {
         let element = YType(typeRef: .xmlElement(nodeName: block.node))
-        try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)])
+        guard let elementItem = try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)]) else {
+            throw YIntegrationError.unexpectedCase
+        }
 
         if block.hasTextChild {
             let text = YType(typeRef: .xmlText)
@@ -131,6 +159,7 @@ enum BlockNoteWrite {
         for prop in block.props {
             try YWrite.mapSet(tx, on: element, key: prop.key, .any([prop.value]))
         }
+        return elementItem
     }
 
     /// Map one `InlinePiece` (the shared inline shape) to the live `YContent` an
@@ -168,14 +197,16 @@ enum BlockNoteWrite {
         liveListChildren(of: container).first
     }
 
-    /// The `xmlText` child of a content element — its first undeleted list child
-    /// whose content is an `xmlText` type. nil for a leaf element (`divider`,
-    /// `image`) or a malformed shape.
-    private static func xmlTextType(of element: YType) -> YType? {
-        for child in liveListChildren(of: element) {
-            if case .type(let type) = child.content, type.typeRef == .xmlText { return type }
+    /// The `xmlText` of a content element whose only undeleted list child is that
+    /// `xmlText`. nil for a leaf element (`divider`, `image`), an element with no text
+    /// child, or one whose inline content is split across several children (an inline node
+    /// such as the web's document link sits *between* two `xmlText`s).
+    private static func soleXmlText(of element: YType) -> YType? {
+        let children = liveListChildren(of: element)
+        guard children.count == 1, case .type(let type) = children[0].content, type.typeRef == .xmlText else {
+            return nil
         }
-        return nil
+        return type
     }
 
     // MARK: - Block-level diff
@@ -227,7 +258,9 @@ enum BlockNoteWrite {
         var left: YItem?
         for block in new {
             if let existing = oldByID[block.id], let container = containerByID[block.id] {
-                if keptIDs.contains(block.id) {
+                // A survivor whose new block has children is rebuilt, never reconciled:
+                // reconciling edits the container's element only and would drop the subtree.
+                if keptIDs.contains(block.id), block.children.isEmpty {
                     try reconcileBlock(tx, container: container, old: existing, new: block)
                     left = container
                 } else {
@@ -295,7 +328,13 @@ enum BlockNoteWrite {
             throw YIntegrationError.unexpectedCase
         }
 
-        if old.node != new.node {
+        // A text change is only spliced in place when the element holds its text in exactly
+        // one `xmlText`, the only shape whose visible indices are the diff's. Anything else —
+        // no `xmlText` at all (y-prosemirror writes none for an empty paragraph), or several
+        // — would silently drop the edit or splice it at the wrong place, so the element is
+        // rebuilt instead, exactly as for a kind change. The container and `id` survive.
+        let textType = soleXmlText(of: element)
+        if old.node != new.node || (old.runs != new.runs && textType == nil) {
             elementItem.delete(tx)
             try insertContentElement(tx, into: containerType, new)
             return
@@ -307,9 +346,7 @@ enum BlockNoteWrite {
             try YWrite.mapSet(tx, on: element, key: prop.key, .any([prop.value]))
         }
 
-        if old.runs != new.runs, let textType = xmlTextType(of: element),
-            let change = TextSpanDiff.diff(old: old.runs, new: new.runs)
-        {
+        if old.runs != new.runs, let textType, let change = TextSpanDiff.diff(old: old.runs, new: new.runs) {
             let lower = UInt(change.deleteRange.lowerBound)
             try YWrite.delete(tx, from: textType, at: lower, length: UInt(change.deleteRange.count))
             try YWrite.insert(tx, into: textType, at: lower, change.insertPieces.map(content(of:)))

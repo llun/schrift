@@ -42,6 +42,13 @@ struct VersionHistorySheetView: View {
                     .font(DocsFont.footnote)
                     .foregroundStyle(theme.colors.textSecondary)
                     .padding(.horizontal, DocsSpacing.gutter)
+            } else if viewModel.isHistoryOnWebOnly {
+                Text(loc[.versions_web_only])
+                    .font(DocsFont.footnote)
+                    .foregroundStyle(theme.colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.bottom, DocsSpacing.spaceXS)
             } else if let errorKey = viewModel.errorKey {
                 Text(loc[errorKey])
                     .font(DocsFont.footnote)
@@ -58,7 +65,9 @@ struct VersionHistorySheetView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.top, DocsSpacing.spaceLG)
                     } else if viewModel.versions.isEmpty {
-                        if viewModel.errorKey == nil, !viewModel.availability.isOffline {
+                        if viewModel.errorKey == nil, !viewModel.isHistoryOnWebOnly,
+                            !viewModel.availability.isOffline
+                        {
                             Text(loc[.versions_empty])
                                 .font(DocsFont.footnote)
                                 .foregroundStyle(theme.colors.textTertiary)

@@ -94,7 +94,7 @@ Full detail lives in this conversation's research; key facts that drove the desi
 
 - **Auth is OIDC-only**, server-to-server confidential client by default. No documented native/PKCE public-client flow for this codebase, and no personal API tokens. The DRF API validates bearer tokens via the IdP's `userinfo` endpoint with no audience restriction (so a token from any client on the same IdP *would* be accepted), but that path requires registering a new OIDC client per self-hosted instance and the app having no portable way to discover IdP endpoints from a Docs server URL alone.
 - **Document content is an opaque base64-encoded Yjs CRDT blob**, stored in S3, edited live via a separate Node.js Hocuspocus WebSocket service authenticated purely by Django session cookie. No Swift Yjs implementation exists anywhere.
-- The backend exposes `GET /documents/{id}/formatted-content/?content_format=markdown|html|json` for **reading** a converted snapshot, and `PATCH /documents/{id}/content/` for **writing** — but the write endpoint requires raw base64 Yjs bytes, not markdown/HTML.
+- The backend exposes `GET /documents/{id}/formatted-content/?content_format=markdown|html|json` for **reading** a converted snapshot, and (before Docs 6) `PATCH /documents/{id}/content/` for **writing** — but the write endpoint requires raw base64 Yjs bytes, not markdown/HTML. **Docs 6 removed `content/` (and `versions/`)**: content lives in the collaboration server ("yhub", `@y/hub`) mounted on the same origin under `/collaboration/`, whose `/collaboration/ydoc/v1/{org}/{id}` route returns the document's Yjs state as JSON and applies a PATCHed update *incrementally* — see "Editing & save mechanism" below.
 - File-to-Yjs conversion (`Converter().convert(..., accept=YJS)`) is wired into document **creation only** (`POST /documents/` with a `file` field) — confirmed NOT present in the update path (`perform_update`/`DocumentSerializer.update`).
 - Sharing model: document roles `reader < commenter < editor < administrator < owner` (`RoleChoices`); link reach `restricted < authenticated < public` (`LinkReachChoices`); link role `reader < commenter < editor` (`LinkRoleChoices`). Matches the design system's `LinkReachPill`/`ShareMemberRow` components exactly.
 - API base path `/api/v1.0/`, `PageNumberPagination` (default page size 20, max 200), DRF throttle scope `document` at 80/min default.
@@ -295,9 +295,15 @@ the collaboration session, transport, and save coordinator.
   origins, parents, clocks) for every block type, because both encode the same store
   shape. It holds because `insertBlock` mints items in the same order the golden
   encoder does — blockGroup, then per block the container, the content element, the
-  `xmlText` and its run pieces, the element's props, then the container's `id` — and
-  each `YWrite` primitive mints sequentially, so clocks/origins/parents (and therefore
-  the encoded bytes) coincide.
+  `xmlText` and its run pieces, the element's props, a nested `blockGroup` holding the
+  block's children (if any, with the element as its left origin), then the container's
+  `id` — and each `YWrite` primitive mints sequentially, so clocks/origins/parents (and
+  therefore the encoded bytes) coincide. Children are only ever *inserted*, and only when the
+  caller opts in with `allowsNestedInserts: true` (the Docs 6 save, which writes nested
+  lists that way; the live path keeps the default `false` and throws): `old` must be flat, and a survivor whose new block
+  has children is rebuilt rather than reconciled. A text change is spliced in place only
+  when the element's sole child is one `xmlText`; an element with none (y-prosemirror's
+  empty paragraph) or several (text split by an inline node) is rebuilt instead.
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — so it is verified at the document/projection level, not the
   store-structure level.** A changed text span is rebuilt wholesale from the new runs
@@ -391,6 +397,16 @@ one and adds the outbound write path on top of it.
   permanently (so this document's replica is never rebuilt or trusted again this
   session), and the error is rethrown, never trapped — clocks are peer/edit-influenced
   and this store must not crash on them.
+- **A survivor whose content element is not exactly one `xmlText` is rebuilt, not
+  spliced.** `BlockNoteWrite`'s `reconcileBlock` text-splices a changed block in place
+  only when its content element holds exactly one `xmlText`; otherwise — a block holding
+  a web document-link node (its text split around the inline node), or a web-created
+  empty paragraph (y-prosemirror writes no `xmlText` for it) — it rebuilds the block's
+  content element from the new runs. The live path inherits this, so editing such a block
+  here **flattens a document-link node to a plain markdown link** for every peer. `applyEdit`
+  also refuses a nested `new` block on this path (`allowsNestedInserts` defaults to
+  `false`; only the Docs 6 save opts in), so a nested list downgrades to classic rather
+  than broadcasting a subtree.
 - **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
   path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
   when `canWriteReplica` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
@@ -609,6 +625,13 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   remote change delivered *only* through the observer re-syncs `old` before the next
   forward). Every pre-existing `EditorViewModel*Tests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
+
+**Not on Docs 6.** Docs 6 replaced Hocuspocus with yhub, which speaks plain y-websocket at
+`/collaboration/ws/v1/{org}`; this layer speaks Hocuspocus and cannot join such a room.
+`ServerConfig.supportsLiveCollaboration` is therefore false for a release major ≥ 6 or a
+`…/ws/v1/{org}` collaboration URL, the manager never opens a socket there, and saves take
+the incremental collaboration-server route (see "Editing & save mechanism"). Live
+collaboration on Docs 6 waits for a y-websocket client.
 
 **C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
 collaboration"** switch (`ProfileScreen`, a `ProfileTrailingRow` + `Switch` exactly like
@@ -932,8 +955,11 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 | Pinned list | `GET /documents/favorite_list/` before Docs 5.7.0; `GET /documents/favorites/` from 5.7.0 |
 | Search | `GET /documents/search/?q=` |
 | Read rendered content | `GET /documents/{id}/formatted-content/?content_format=markdown` |
-| Read raw content *(not used in v1)* | `GET /documents/{id}/content/` |
-| Write raw content | `PATCH /documents/{id}/content/` (base64 Yjs built on-device) |
+| Read raw content *(not used in v1; removed in Docs 6)* | `GET /documents/{id}/content/` |
+| Write raw content, Docs < 6 | `PATCH /documents/{id}/content/` (full-overwrite base64 Yjs built on-device) |
+| Read raw content, Docs 6 | `GET /collaboration/ydoc/v1/{org}/{id}?gc=true&awareness=false`, `Accept: application/json` → `{"doc": base64}` |
+| Write raw content, Docs 6 | `PATCH /collaboration/ydoc/v1/{org}/{id}` `{"update": base64}` — applied incrementally |
+| Version history | `GET /documents/{id}/versions/` (Docs < 6; removed in 6 — the sheet then says history is on the web) |
 | Link sharing config | `PUT /documents/{id}/link-configuration/` |
 | Accesses (members) | `GET/POST/PATCH/DELETE /documents/{id}/accesses/` |
 | Invitations | `GET/POST/PATCH/DELETE /documents/{id}/invitations/` |
@@ -1102,6 +1128,12 @@ This is the part with no direct backend support, so it's called out explicitly:
    d. `PATCH /documents/{id}/` to persist the title.
 
    (Two requests total; no temporary document and no server-side file conversion. This supersedes an earlier design that created a temp document via `POST /documents/` with a Markdown `file` field, read back its converted Yjs, PATCHed it onto the real doc, then deleted the temp — that path depended on the backend's file-upload-to-Yjs conversion, which is gated behind `CONVERSION_UPLOAD_ENABLED` and off on the target deployment.)
+
+   **On Docs 6** step c has no route. The collaboration server applies a PATCHed update incrementally, so the from-scratch document of step b would be *appended* to the existing one. The save is therefore a diff against the server's own state instead (`saveContentBody` → `BlockNoteIncrementalSave`):
+   c′. `GET /collaboration/ydoc/v1/{org}/{id}?gc=true&awareness=false` (JSON) and integrate the bytes into a throwaway `YDoc` (fresh client id; destroyed after).
+   c″. Project it, align the markdown's blocks with it (`BlockNoteAlignment` — an LCS over identical visible content keeps those blocks untouched; edits between anchors reconcile in place only for fully modeled blocks; the rest is removed/inserted), and let `BlockNoteWrite.applyEdit` mint exactly the difference.
+   c‴. `PATCH` `{"update": base64}` — skipped when the server already reads like the markdown.
+   The title PATCH (d) is unchanged, as is `saveDocumentContent`'s half-land contract. The written content is still exactly the editor's markdown (the same overwrite semantics). **This is not a merge of co-author edits:** the save diffs the editor's whole document against the server's state at save time, so a concurrent edit survives only if it lands inside the GET→PATCH window; an edit a co-author made to a block after this user loaded the document is reverted by the save unless the draft/conflict rules (`draftSyncDecision`, keyed on `updated_at`) catch it first. Those rules depend on Docs 6 bumping the document's `updated_at` when the collaboration server stores content, which upstream's UPGRADE.md says happens only when the collaboration server is configured with `YHUB_JWT_PRIVATE_KEY` (without it `updated_at` stops following editor edits) — a **deployment requirement**. Only blocks the alignment can anchor are left untouched: unchanged non-opaque blocks, plus `unknownNode:*` and document-link blocks. An untouched opaque block (a table, which parses as `.unknown`) and an untouched nested list are still rewritten from markdown on every save, same as the classic save, and so is a changed opaque/lossy block. Which route a server gets is decided by `/config/` (release major ≥ 6, or a `…/ws/v1/{org}` collaboration URL) or, with nothing known, by the legacy PATCH answering Django's route 404 — nothing written, so the fallback is safe; it then fetches `/config/` once to learn the org (`docs` only when `config/` itself 404s; any other config failure fails the save retryably rather than guess an org) — memoized once the collaboration route answers, never over a collaboration route already set. The rooted path is app-authored: a UUID plus an `org` validated to `[A-Za-z0-9._~-]`; the host is always the user's own server.
 
 **Known limitation:** this is a full-document overwrite with no conflict detection (no ETag/version check in v1). If someone edits the same document live in the web app concurrently, the loser's changes are silently overwritten. This is an explicit, accepted trade-off of choosing non-realtime editing — not hidden from the user; the Editor screen should make clear this isn't live-collaborative.
 
@@ -1523,7 +1555,7 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 ## Testing
 
 - Unit tests for `DocsAPIClient` and Codable models against mocked `URLSession` responses (fixture JSON matching the real serializer shapes documented above).
-- Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title).
+- Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title; `CollaborationYDocSaveClientTests` for the Docs 6 route choice and request shapes, with `BlockNoteIncrementalSaveTests`/`BlockNoteAlignmentTests` checking at the document level that the incremental update makes the served state read exactly like the saved markdown).
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 

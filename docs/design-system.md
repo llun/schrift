@@ -1140,6 +1140,13 @@ opened from a **"Version history"** row in the Options sheet — the current app
   the current locale (relative or absolute per the design's `when` style).
 - Tests: `VersionEndpointsClientTests` (method/path/decode incl. `is_current`,
   empty list) via `MockURLProtocol`; VM load + error-path tests.
+- **Docs 6 removed `versions/`** (history moved into its collaboration server, which
+  the app does not read). The route's Django HTML 404 (`.routeNotFound`) is not shown
+  as an error: `VersionHistoryViewModel.isHistoryOnWebOnly` makes the sheet say
+  "This server keeps version history on the web." (secondary text, like the offline
+  explanation) above its unchanged "Restore on the web" row, and suppresses the
+  empty-list caption. A JSON 404 (the document) and every other failure keep the
+  red `versions_error`. The new string is English-only until a translation pass.
 
 ### 9.3 Restore — verify-gated, funneled through the save path
 

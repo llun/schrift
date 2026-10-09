@@ -41,4 +41,37 @@ final class VersionHistoryViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .versions_error)
         XCTAssertFalse(viewModel.isLoading)
     }
+
+    /// Docs 6 removed the versions route (Django's HTML 404): that is not a failure to show
+    /// in red, it is "history lives on the web", where the sheet's restore row already leads.
+    func testAMissingVersionsRouteSaysHistoryIsOnTheWebInsteadOfAnError() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 404, headers: ["Content-Type": "text/html; charset=utf-8"],
+                body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
+        }
+        let viewModel = makeViewModel()
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.isHistoryOnWebOnly)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertTrue(viewModel.versions.isEmpty)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    /// A JSON 404 is about the document, not the route, so it stays an ordinary error.
+    func testADocumentNotFoundIsStillAnError() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 404, headers: ["Content-Type": "application/json"],
+                body: Data(#"{"detail":"Not found."}"#.utf8), error: nil)
+        }
+        let viewModel = makeViewModel()
+
+        await viewModel.load()
+
+        XCTAssertFalse(viewModel.isHistoryOnWebOnly)
+        XCTAssertEqual(viewModel.errorKey, .versions_error)
+    }
 }

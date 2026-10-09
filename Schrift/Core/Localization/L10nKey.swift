@@ -315,6 +315,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case versions_restore_web = "versions.restore_web"  // "Restore on the web"
     case versions_error = "versions.error"  // "Couldn't load versions. Please try again."
     case versions_empty = "versions.empty"  // "No earlier versions yet."
+    case versions_web_only = "versions.web_only"  // "This server keeps version history on the web."
 
     // Editor - inline image (MarkdownImageView). The image alt text and the
     // image's host are document content and are never localized; these are the

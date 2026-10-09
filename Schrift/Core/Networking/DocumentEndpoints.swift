@@ -29,10 +29,12 @@ private func queryStringSuffix(_ items: [URLQueryItem]) -> String {
     return "?" + (components.percentEncodedQuery ?? "")
 }
 
-/// Docs 5.7.0 renamed the favorites action; compare numeric release components rather
-/// than strings (5.10 is newer than 5.7). Tagged, prerelease, and build-suffixed versions
-/// use the same API as their core release. Unknown versions require a route probe.
-func favoriteDocumentsPath(serverVersion: String?) -> String? {
+/// The numeric `[major, minor, patch]` of a docs `RELEASE_VERSION`, or nil when it is
+/// missing or malformed. Compares as numbers, never strings (5.10 is newer than 5.7).
+/// Tagged (`v5.7.0`), prerelease (`6.0.0-rc.1`) and build-suffixed versions resolve to
+/// their core release, which is the API they ship. Shared by every version-gated route
+/// choice (favorites, the content save) so they cannot disagree about what a version is.
+func releaseVersionComponents(_ serverVersion: String?) -> [Int]? {
     guard let version = serverVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
         version.range(
             of: #"^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"#,
@@ -41,6 +43,12 @@ func favoriteDocumentsPath(serverVersion: String?) -> String? {
     let core = version.drop(while: { $0 == "v" }).prefix(while: { $0 != "-" && $0 != "+" })
     let components = core.split(separator: ".").compactMap { Int($0) }
     guard components.count == 3 else { return nil }
+    return components
+}
+
+/// Docs 5.7.0 renamed the favorites action. Unknown versions require a route probe.
+func favoriteDocumentsPath(serverVersion: String?) -> String? {
+    guard let components = releaseVersionComponents(serverVersion) else { return nil }
     let usesNewRoute = components[0] > 5 || (components[0] == 5 && components[1] >= 7)
     return usesNewRoute ? "documents/favorites/" : "documents/favorite_list/"
 }
