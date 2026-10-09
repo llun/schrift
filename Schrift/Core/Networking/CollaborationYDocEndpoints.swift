@@ -102,9 +102,12 @@ extension DocsAPIClient {
     /// name a different org in `COLLABORATION_WS_URL`, and a save into the wrong org lands in
     /// a room nobody reads — silently — so the fallback asks the config once instead of
     /// assuming `docs`. A route proven while the legacy PATCH was in flight (a concurrent
-    /// `serverConfig()`) wins without a request. Best effort: `.sessionExpired` propagates
-    /// (the re-login sheet is already up and the save must not pretend otherwise); any other
-    /// config failure falls back to yhub's default org.
+    /// `serverConfig()`) wins without a request. Only a config route that does not exist
+    /// (a 404 of either kind) falls back to yhub's default org: it is an answer, and a server
+    /// without `config/` has no other org to name. Every other failure propagates — a guessed
+    /// org could be memoized and every later save sent into a room nobody reads, while a
+    /// transport or 5xx failure is retryable, so the save goes `.pendingSync` and replays once
+    /// the config answers.
     private func fallbackCollaborationOrg() async throws -> String {
         if case .collaborationYDoc(let org) = contentSaveRoute { return org }
         do {
@@ -112,9 +115,7 @@ extension DocsAPIClient {
             // Re-read after the await: another config fetch may have settled the route.
             if case .collaborationYDoc(let org) = contentSaveRoute { return org }
             return config.collaborationOrg
-        } catch DocsAPIError.sessionExpired {
-            throw DocsAPIError.sessionExpired
-        } catch {
+        } catch let error as DocsAPIError where error == .notFound || error == .routeNotFound {
             return "docs"
         }
     }

@@ -242,7 +242,7 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
     }
 
     /// A route a config proves while the fallback is in flight is never replaced by the
-    /// fallback's own memo: here the fallback's config fetch fails (so it guesses `docs`), and
+    /// fallback's own memo: here the fallback's config route is missing (so it uses `docs`), and
     /// a second config fetch naming `acme` lands while its collaboration GET is held.
     @MainActor
     func testTheFallbackNeverOverwritesARouteTheConfigProvedMeanwhile() async throws {
@@ -256,7 +256,7 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
             switch (request.httpMethod ?? "", requestPath(request)) {
             case ("GET", "/api/v1.0/config/"):
                 let configCalls = log.trail.filter { $0 == "GET /api/v1.0/config/" }.count
-                guard configCalls > 1 else { return jsonStub([:], status: 500) }
+                guard configCalls > 1 else { return html404 }
                 return jsonStub(["COLLABORATION_WS_URL": "wss://docs.example.org/collaboration/ws/v1/acme"])
             case ("GET", yDocPath):
                 return .init(
@@ -281,6 +281,39 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
 
         let route = await client.contentSaveRoute
         XCTAssertEqual(route, .collaborationYDoc(org: "acme"), "the config-proven org survives the fallback's memo")
+    }
+
+    /// A config that fails transiently is not an answer about the org: the save throws a
+    /// retryable error instead of guessing `docs`, sends nothing to any room, and remembers no
+    /// route, so a replay once the config answers lands in the right one.
+    func testAFallbackWhoseConfigFailsSendsNothingAndRemembersNothing() async {
+        let log = CapturedRequests()
+        let legacyPath = legacyPath
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch (request.httpMethod ?? "", requestPath(request)) {
+            case ("GET", "/api/v1.0/config/"):
+                return jsonStub([:], status: 503)
+            case ("PATCH", legacyPath):
+                return html404
+            default:
+                return jsonStub(["id": "x"])
+            }
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.saveDocumentContent(documentID: documentID, title: "Notes", markdown: "One")
+            XCTFail("the save must not succeed without knowing the org")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 503))
+            XCTAssertTrue(retryableSaveFailure(error), "a replay must be able to finish the save later")
+        } catch {
+            XCTFail("expected DocsAPIError, got \(error)")
+        }
+        XCTAssertEqual(log.trail, ["PATCH \(legacyPath)", "GET /api/v1.0/config/"])
+        let route = await client.contentSaveRoute
+        XCTAssertNil(route)
     }
 
     /// A JSON 404 is an answer about the document (deleted), not the route: no fallback.

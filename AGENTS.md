@@ -887,8 +887,9 @@ new code reads like the surrounding code.
   **`.routeNotFound` only** — Django's route 404 proves nothing was written — falls
   back to the collaboration route; `.notFound`, `.forbidden` and everything else are
   answers about the document and propagate. The fallback **fetches config once** first
-  to learn the org (`fallbackCollaborationOrg`; best effort — `.sessionExpired`
-  propagates, any other failure means `docs`), because a save into the wrong org lands
+  to learn the org (`fallbackCollaborationOrg`; only a 404 of `config/` itself means
+  `docs` — every other failure propagates, retryably for transport/5xx, rather than
+  guess an org that could then be memoized), because a save into the wrong org lands
   in a room nobody reads, silently. It is memoized only once the collaboration GET has
   **answered** — a server with neither route must not be pinned to one that cannot
   answer (the `prefersLegacyContentRoute` lesson) — and never over a
