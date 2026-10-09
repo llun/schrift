@@ -37,7 +37,9 @@ jobs:
     name: Build & Test
     runs-on: macos-latest
     # Unit/rendering tests and isolated checklist UI tests; the cap catches hangs.
-    timeout-minutes: 30
+    # A healthy run takes about 25 minutes (the UI tests alone are ~10), so
+    # 30 cancelled green runs that hit a slow runner or a slow cleanup step.
+    timeout-minutes: 45
 
     steps:
       # Actions are pinned to full commit SHAs (not mutable tags) so a moved or
@@ -110,20 +112,24 @@ jobs:
           echo "Using simulator: $device ($udid)"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
-      # Boot the simulator and wait until it has finished booting before any
-      # test runs. Left to xcodebuild, the first UI test can land on a
-      # simulator still settling from a cold boot: a hosted run spent 5s in
-      # XCTest's interruption check and the switch press that followed never
-      # registered (ChecklistFilterTests, run 37733961599; the cold boot is the
-      # suspected, not confirmed, cause). `bootstatus -b` boots the
-      # device if needed and blocks until boot (including data migration)
-      # completes.
-      - name: Boot simulator
+      # Start the simulator booting now and only wait for it after the build:
+      # a cold boot takes about two minutes on a hosted runner, and the build
+      # doesn't need a running device, so the two overlap instead of queueing.
+      # `simctl boot` returns once the boot has been started (and fails if the
+      # device is already booted, which is fine here).
+      - name: Start booting simulator
         env:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
-        run: xcrun simctl bootstatus "$SIM_UDID" -b
+        run: xcrun simctl boot "$SIM_UDID" || true
 
-      - name: Build & test
+      # Build once, then test the built products. Code coverage is off because
+      # nothing in CI reads it (it instruments every target and slows both the
+      # build and the run), and so is the index store, which only serves an IDE.
+      # Simulator builds ad-hoc sign (no certificates or Team ID needed).
+      # Do NOT disable code signing: the Keychain tests need the test host's
+      # ad-hoc signature/entitlements, and SecItem calls fail with
+      # errSecMissingEntitlement (-34018) in a fully unsigned test host.
+      - name: Build for testing
         # Passed via env (not inline ${{ }}) to keep dynamic text out of the
         # script body, matching the repo's no-interpolation convention.
         env:
@@ -134,14 +140,39 @@ jobs:
           # raw output if an image ever drops it (no extra installs).
           formatter=cat
           command -v xcbeautify >/dev/null && formatter=xcbeautify
-          # Simulator builds ad-hoc sign (no certificates or Team ID needed).
-          # Do NOT disable code signing: the Keychain tests need the test
-          # host's ad-hoc signature/entitlements, and SecItem calls fail with
-          # errSecMissingEntitlement (-34018) in a fully unsigned test host.
-          xcodebuild test \
+          xcodebuild build-for-testing \
             -project Schrift.xcodeproj \
             -scheme Schrift \
             -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -enableCodeCoverage NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            | "$formatter"
+
+      # Wait until the simulator has finished booting before any test runs.
+      # `bootstatus -b` boots the device if needed and blocks until boot
+      # (including data migration) completes. This was added for a flake in
+      # the first UI test of the run (ChecklistFilterTests, run 37733961599),
+      # which it did not cure: run 37806233826 failed the same way after a
+      # completed boot. See docs/ci.md for what is known about that flake.
+      - name: Wait for simulator boot
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
+        run: xcrun simctl bootstatus "$SIM_UDID" -b
+
+      - name: Test
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -o pipefail
+          formatter=cat
+          command -v xcbeautify >/dev/null && formatter=xcbeautify
+          xcodebuild test-without-building \
+            -project Schrift.xcodeproj \
+            -scheme Schrift \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -enableCodeCoverage NO \
             -resultBundlePath TestResults.xcresult \
             | "$formatter"
 

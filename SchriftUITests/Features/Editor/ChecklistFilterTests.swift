@@ -50,8 +50,9 @@ final class ChecklistFilterTests: XCTestCase {
         let toggle = app.switches["checklist.hideCompleted"]
         XCTAssertEqual(toggle.value as? String, "0")
         let nativeSwitch = toggle.switches.firstMatch
-        guard nativeSwitch.waitForExistence(timeout: 5), nativeSwitch.isHittable else {
-            XCTFail("The native Hide completed switch must be available for interaction")
+        guard nativeSwitch.waitForExistence(timeout: 5), nativeSwitch.waitForStableFrame(), nativeSwitch.isHittable
+        else {
+            XCTFail("The native Hide completed switch must be settled and available for interaction")
             return false
         }
         // CI captured a correctly targeted 50ms tap that left the switch off.
@@ -77,6 +78,7 @@ final class ChecklistFilterTests: XCTestCase {
             let appeared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: next)
             return XCTWaiter.wait(for: [disappeared, appeared], timeout: 5)
         }
+        XCTAssertTrue(current.waitForStableFrame(), "The mode action must stop moving before it is pressed")
         XCTAssertTrue(current.isEnabled && current.isHittable)
         current.press(forDuration: 0.2)
         let result = waitForChange()

@@ -12,6 +12,9 @@ final class ChecklistHitTests: XCTestCase {
         let buttons = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Mark as"))
         XCTAssertTrue(buttons.element(boundBy: 0).waitForExistence(timeout: 10))
         XCTAssertEqual(buttons.count, 6)
+        // The taps are aimed at offsets from frames read once, so the rows must
+        // have stopped moving first or a near-edge tap lands on a neighbour.
+        XCTAssertTrue(buttons.element(boundBy: 5).waitForStableFrame(), "The checklist must settle before tapping")
         let first = buttons.element(boundBy: 0).frame
         let second = buttons.element(boundBy: 1).frame
         let pitch = second.midY - first.midY
