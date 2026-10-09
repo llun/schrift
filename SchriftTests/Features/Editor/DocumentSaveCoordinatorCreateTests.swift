@@ -7,7 +7,7 @@ import XCTest
 /// are the safety net for the replay, and landed first and dormant because without them the
 /// existing pipeline actively destroys a local document the moment it runs. (The replay
 /// itself, and the gates that key off the *server* id once a record is checkpointed, are
-/// exercised by `DocumentSaveCoordinatorReplayTests`.)
+/// exercised by `DocumentSaveCoordinatorReplay*Tests`.)
 @MainActor
 final class DocumentSaveCoordinatorCreateTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!

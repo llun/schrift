@@ -44,9 +44,8 @@ final class DocsTypographySpecTests: XCTestCase {
         XCTAssertGreaterThan(atAccessibility.pointSize, atLarge.pointSize)
     }
 
-    /// The size the editor renders at is an argument, not ambient state — which
-    /// is what lets the SwiftUI row that calls it depend on the environment and
-    /// re-run when the user changes their text size mid-document.
+    /// A larger Dynamic Type size never yields a smaller font: across every `DynamicTypeSize`, in order,
+    /// the scaled point size is non-decreasing and the largest size is strictly bigger than the smallest.
     func testScaledUIFontNeverShrinksAsTheTextSizeGrows() {
         let spec = DocsTypographySpec.body
         let base = UIFont.systemFont(ofSize: spec.size)

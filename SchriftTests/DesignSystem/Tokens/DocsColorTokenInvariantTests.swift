@@ -112,4 +112,10 @@ final class DocsColorTokenInvariantTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(contrastRatio(DocsColorHex.brandLogo, DocsColorHex.surfacePage), 3)
         XCTAssertGreaterThanOrEqual(contrastRatio(DocsColorHexDark.brandLogo, DocsColorHexDark.surfacePage), 3)
     }
+
+    /// White media overlays keep their independent role, so `textOnBrand` is the same in both modes;
+    /// `textOnFill` is the contrasting solid-control ink (AGENTS.md, "Personal themes" bullet).
+    func testMediaOverlayInkIsModeIndependent() {
+        XCTAssertEqual(DocsColorHexDark.textOnBrand, DocsColorHex.textOnBrand)
+    }
 }

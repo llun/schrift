@@ -235,7 +235,7 @@ final class SearchViewModelTests: XCTestCase {
         viewModel.query = "Roadmap"
         await viewModel.search()
         XCTAssertFalse(viewModel.results.isEmpty)
-        MockURLProtocol.reset()
+        MockURLProtocol.lastRequest = nil
         MockURLProtocol.stubHandler = { _ in
             XCTFail("a blank query must not search")
             return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
@@ -268,7 +268,8 @@ final class SearchViewModelTests: XCTestCase {
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
         viewModel.query = "Gone"
 
-        // A fetch issued before the DELETE landed still names the row; it must not come back.
+        // A deletion announced before the search runs: the since-load filter must drop the row the
+        // server still returns, from both the results and quick access.
         coordinator.announceDocumentDeletedForTesting(UUID(uuidString: deletedID)!)
         await viewModel.search()
         await viewModel.loadQuickAccess()

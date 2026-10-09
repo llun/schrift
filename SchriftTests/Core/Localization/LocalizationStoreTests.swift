@@ -29,10 +29,13 @@ final class LocalizationStoreTests: XCTestCase {
     }
     /// A key a language table omits resolves to English; one absent from English too resolves to its raw
     /// key, so a missing translation never renders as an empty string.
-    func testAMissingKeyFallsBackToEnglishThenToItsRawKey() throws {
+    func testAMissingKeyFallsBackToEnglishThenToItsRawKey() {
         let store = LocalizationStore(userDefaults: defaults)
         store.language = .thai
-        try XCTSkipIf(Strings.table(for: .thai)[.theme_white] != nil, "theme copy is now translated")
+        guard Strings.table(for: .thai)[.theme_white] == nil else {
+            XCTFail("theme_white is now translated in Thai; pick another key that has no Thai translation")
+            return
+        }
         XCTAssertEqual(store[.theme_white], Strings_en.table[.theme_white])
         XCTAssertNotEqual(store[.theme_white], L10nKey.theme_white.rawValue)
 

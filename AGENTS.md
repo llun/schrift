@@ -1200,7 +1200,7 @@ new code reads like the surrounding code.
   fills both halves (light from `DocsColorHex`, dark from `DocsColorHexDark`);
   the view renders via `Color(lightHex:darkHex:)`. `Badge`, `Button`,
   `IconButton`, `TextField`, `LinkReachPill` follow this; their resolver tests
-  assert both fields.
+  cover the light and dark fields through invariants (distinct styles, contrast) rather than restating values.
 - Every component file ends with a `#Preview` **catalog** of all meaningful
   variants/states, checked in **both light and dark** (`.preferredColorScheme`)
   since adding a token doesn't guarantee its dark half looks right. Icon-only
