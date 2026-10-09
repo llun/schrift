@@ -3217,10 +3217,13 @@ final class DocumentSaveCoordinator {
                     // (adopting the server's when the user never renamed); the baseline advances
                     // with it, or a *second* remote rename would read as "both renamed" (see
                     // `adoptedBaseline`).
-                    replayedPushes.insert(draft.documentID)
                     enqueue(
                         documentID: draft.documentID, title: title, markdown: draft.markdown,
                         baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title))
+                    // Marked only if the save actually started: a hold (conflict, pending delete,
+                    // pending attachment) parks it, and a mark left on a parked save would make a
+                    // later unrelated save of this document look like a replay.
+                    if inFlight[draft.documentID] != nil { replayedPushes.insert(draft.documentID) }
                 case .conflict:
                     // Record it and keep the draft: the pill/sheet asks the user. Through
                     // `recordConflict`, NOT a direct map write — this is the primary detection
@@ -3569,6 +3572,7 @@ final class DocumentSaveCoordinator {
     /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
         queued[documentID] = nil
+        replayedPushes.remove(documentID)
         // The draft that named them is about to go, so nothing would ever collect these — and an
         // uncollected record keeps a photo's bytes alive for a document that no longer exists.
         discardPendingAttachments(documentID: documentID)

@@ -45,8 +45,9 @@ final class HomeViewModelReplayReloadTests: HomeViewModelTestCase {
         // Reconnect: the replay pushes it.
         stubServer(log: log, savesSucceed: true)
         let listGetsBefore = log.count(ofMethod: "GET", urlContaining: "documents/?")
+        let patchesBefore = log.count(ofMethod: "PATCH", urlContaining: "/content/")
         await viewModel.syncPendingDrafts()
-        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") > 0 }
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/content/") > patchesBefore }
 
         await waitUntil { log.count(ofMethod: "GET", urlContaining: "documents/?") > listGetsBefore }
     }
