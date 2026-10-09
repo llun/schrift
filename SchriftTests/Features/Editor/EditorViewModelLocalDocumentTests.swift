@@ -392,4 +392,23 @@ final class EditorViewModelLocalDocumentTests: EditorViewModelTestCase {
         XCTAssertFalse(env.viewModel.isUnavailable)
         XCTAssertEqual(env.viewModel.currentMarkdown(), "# Written offline")
     }
+
+    /// File has nothing to upload against on a local document: selecting it must not open the importer, and
+    /// must leave the typed "/file" alone rather than eat it.
+    func testSelectingTheFileSlashItemOnALocalDocumentDoesNotPresentTheImporter() async throws {
+        let env = makeLocalEnvironment()
+        let viewModel = env.viewModel
+        await viewModel.load()
+        viewModel.startEditing()
+        let block = try XCTUnwrap(viewModel.blocks.first)
+        viewModel.focusedBlockID = block.id
+        viewModel.updateText(blockID: block.id, text: "/file")
+
+        XCTAssertTrue(viewModel.isLocalDocument)
+        XCTAssertFalse(viewModel.canInsertAttachment)
+        viewModel.applySlashSelection(try XCTUnwrap(allSlashMenuItems.first { $0.action == .insertAttachment }))
+
+        XCTAssertFalse(viewModel.isAttachmentImporterPresented)
+        XCTAssertEqual(viewModel.blocks.first?.text, "/file")
+    }
 }
