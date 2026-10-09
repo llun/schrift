@@ -3223,6 +3223,8 @@ final class DocumentSaveCoordinator {
                     // Marked only if the save actually started: a hold (conflict, pending delete,
                     // pending attachment) parks it, and a mark left on a parked save would make a
                     // later unrelated save of this document look like a replay.
+                    // After `.push` this is effectively always true, given `runSyncPass`'s pre-checks
+                    // (no in-flight or queued save, no holds); the check is kept as defence.
                     if inFlight[draft.documentID] != nil { replayedPushes.insert(draft.documentID) }
                 case .conflict:
                     // Record it and keep the draft: the pill/sheet asks the user. Through
