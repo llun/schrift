@@ -244,6 +244,7 @@ enum Strings_en {
         .editor_format_outdent: "Outdent",
         .editor_format_change_list_type: "Change list type",
         .editor_format_change_quote_type: "Change quote or code",
+        .editor_format_change_text_style: "Change text style",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Add link",

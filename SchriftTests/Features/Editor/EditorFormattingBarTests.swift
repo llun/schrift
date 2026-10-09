@@ -160,4 +160,19 @@ final class EditorFormattingBarTests: XCTestCase {
         XCTAssertTrue(canOfferAttach(photo: false, file: true))
         XCTAssertTrue(canOfferAttach(photo: true, file: false))
     }
+
+    // MARK: - Text style
+
+    /// A tap applies the default: the marker for bold/italic (link: see `EditorLinkEditingTests`).
+    func testApplyingATextStyleWrapsTheSelectionInItsMarker() {
+        let viewModel = makeViewModel()
+        viewModel.selection = NSRange(location: 0, length: 4)
+        viewModel.applyTextStyle(.bold)
+        XCTAssertEqual(viewModel.blocks[0].text, "**text**")
+
+        let italic = makeViewModel()
+        italic.selection = NSRange(location: 0, length: 4)
+        italic.applyTextStyle(.italic)
+        XCTAssertEqual(italic.blocks[0].text, "_text_")
+    }
 }

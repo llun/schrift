@@ -65,4 +65,46 @@ final class FormattingBarFormatTests: XCTestCase {
         XCTAssertNil(blockKindAfterChoosing(QuoteFormat.code, current: .codeBlock(language: "swift")))
         XCTAssertEqual(blockKindAfterChoosing(QuoteFormat.quote, current: .codeBlock(language: "swift")), .quote)
     }
+
+    // MARK: - Text style
+
+    func testTextStyleDefaultsToBoldAndToleratesAnUnknownStoredValue() {
+        XCTAssertEqual(TextStyleFormat.stored(""), .bold)
+        XCTAssertEqual(TextStyleFormat.stored("underline"), .bold)
+        XCTAssertEqual(TextStyleFormat.stored("italic"), .italic)
+        XCTAssertEqual(TextStyleFormat.stored("link"), .link)
+        XCTAssertNotEqual(TextStyleFormat.preferenceKey, ListFormat.preferenceKey)
+        XCTAssertNotEqual(TextStyleFormat.preferenceKey, QuoteFormat.preferenceKey)
+    }
+
+    // MARK: - Scroll-edge fade
+
+    func testNoEdgeFadesWhenTheRowFits() {
+        XCTAssertEqual(scrollFadeEdges(contentOffsetX: 0, contentWidth: 300, containerWidth: 300), ScrollFadeEdges())
+        // Within the 1pt tolerance, rounding must not leave a fade behind.
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 0, contentWidth: 300.5, containerWidth: 300), ScrollFadeEdges())
+        XCTAssertEqual(scrollFadeEdges(contentOffsetX: 0, contentWidth: 200, containerWidth: 300), ScrollFadeEdges())
+    }
+
+    func testOnlyTheTrailingEdgeFadesAtTheStartOfAnOverflowingRow() {
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 0, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: false, trailing: true))
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 0.5, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: false, trailing: true))
+    }
+
+    func testBothEdgesFadeInTheMiddleAndOnlyTheLeadingAtTheEnd() {
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 50, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: true, trailing: true))
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 100, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: true, trailing: false))
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 99.5, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: true, trailing: false))
+    }
 }

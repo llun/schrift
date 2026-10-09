@@ -126,17 +126,19 @@ final class SwipeRevealRowTests: XCTestCase {
             DocsSpacing.rowMinHeight)
     }
 
-    /// **The three-action strip, at the narrowest width a device actually offers.** Home rows
-    /// gained Move between Pin and Delete, and AGENTS.md's rule for a row of fixed-minimum
-    /// controls is to measure it against the narrowest device before adding to it — so that
-    /// the *next* addition fails a test rather than a screen.
+    /// **The three-action strip, at the standard 343pt iPhone row.** Home rows gained Move
+    /// between Pin and Delete. 343pt is a 375pt iPhone less the 16pt gutter each side. The cap
+    /// (0.6 × 343 ÷ 3 = 68.6pt) is what binds: under the 72pt base, comfortably over the 44pt
+    /// floor, and the strip lands exactly on the 60% budget.
     ///
-    /// 343pt is an iPhone SE's 375pt less the 16pt gutter each side. The cap (0.6 × 343 ÷ 3 =
-    /// 68.6pt) is what binds: under the 72pt base, comfortably over the 44pt floor, and the
-    /// strip lands exactly on the 60% budget.
+    /// This test does not cover Display Zoom, which makes the row 288pt. There three actions
+    /// still fit exactly (0.6 × 288 ÷ 3 = 57.6pt each). A fourth action would hit the 44pt floor
+    /// and overflow, and a fourth action at 343pt still passes this test, so it does not catch
+    /// that. A fourth action must be checked at 288pt.
     func testADocumentRowsStripFitsTheNarrowestRowWithoutHittingTheTapTargetFloor() {
-        // **Derived from the real resolver, not a literal.** A hard-coded 3 would keep passing
-        // when a fourth action is added, which is the whole thing this is here to catch.
+        // **Derived from the real resolver, not a literal.** Deriving the count keeps the test honest
+        // as actions change. At 343pt it starts failing only at a fifth action, so a fourth must be
+        // checked at 288pt (see the doc comment above).
         let actionCount = documentRowSwipeActions(
             isPendingDelete: false, isLocalDocument: false, isFavorite: false, offersPin: true,
             keepLabel: "Keep", pinLabel: "Pin", unpinLabel: "Unpin", moveLabel: "Move",

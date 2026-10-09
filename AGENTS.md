@@ -1230,7 +1230,7 @@ new code reads like the surrounding code.
   It **scales with Dynamic Type by default** (relative to `.body`), so a glyph
   stays proportionate to the text beside it; pass `scales: false` for a glyph in
   a hard-bounded box that would crop it instead — `IconButton`, whose row of
-  seven in the formatting bar scrolls inside a fixed width budget, and `DocIcon`,
+  up to seven in the formatting bar scrolls inside a fixed width budget, and `DocIcon`,
   which scales its glyph and box together from one value.
   `IconButton(icon:)` takes a `MaterialIcon`; a `ToolbarItem`'s icon-only label
   uses `ToolbarIcon` (template image) and `.buttonBorderShape(.circle)`, with fixed
@@ -1269,22 +1269,33 @@ new code reads like the surrounding code.
   `DocsTextField`, custom search fields and the sheet close action share that
   floor; text controls may grow with Dynamic Type. Native system controls keep
   their platform metrics, and checklist adornments retain first-line alignment.
-  A hard minimum does not compress. The seven square formatting actions fit the
-  narrowest phone's column today, but any addition would not, so
-  `EditorFormattingBar` scrolls horizontally inside the editor's offered width as
-  a safeguard, preserving 44pt squares and screen geometry.
+  A hard minimum does not compress, and the 44pt buttons don't grow with Dynamic
+  Type. The formatting bar's five square actions (240pt) fit every supported iPhone
+  column, even under Display Zoom. The seven on a list item (adding Outdent and
+  Indent, 332pt) fit the standard 343pt-or-wider column but overflow narrower ones:
+  a screen Display Zoom narrows to 320pt (leaving a 288pt column) and narrow
+  iPad containers (Slide Over, ⅓ split). There `EditorFormattingBar` scrolls
+  horizontally inside the editor's offered width, preserving 44pt squares and screen
+  geometry, and a ~24pt gradient (`mask`) fades the edge with hidden buttons
+  (`scrollFadeEdges`, fed by `onScrollGeometryChange`; none when the row fits).
   `EditorFormattingBarTests` covers both the width containment and row height.
-  **Family buttons: one list button for all three list kinds (`ListFormat`) and
-  one for quote/code (`QuoteFormat`)**, both `FormattingBarFormat`s. A tap applies
-  the family's remembered default (`schrift.editor.defaultListFormat` /
-  `…defaultQuoteFormat`, local preferences), toggling a block already of that
+  **Family buttons: one text-style button for bold/italic/link (`TextStyleFormat`),
+  one list button for all three list kinds (`ListFormat`) and one for quote/code
+  (`QuoteFormat`)**, in the order add, text style, list, [outdent, indent], quote/code,
+  attach. All three are `FormattingBarChoice`s; the list and quote ones are also
+  `FormattingBarFormat`s (block kinds). A text-style tap applies the default (bold
+  `**`, italic `_`, or the link editor) and the whole family, button and choices, is
+  disabled exactly when `canEditLink` is false, the one case none of its members can
+  act (as `canOfferAttach` does for attach); the default is remembered in
+  `schrift.editor.defaultTextStyle`. A list or quote tap applies
+  the family's remembered default (`…defaultListFormat` / `…defaultQuoteFormat`, local preferences), toggling a block already of that
   kind — checked or not, any code language — back to a paragraph
   (`blockKindAfterTapping`), and a long press (`IconButton.longPressAction`, also
   exposed as a named VoiceOver action) swaps the row in place for Close + the
   family's members. A pick applies that kind and becomes the default, and is *not*
   a toggle (`blockKindAfterChoosing`): picking the kind a block already has leaves
   it, checked state and code language included. A new family is a new conforming
-  enum plus a `Family` case in the bar — not another choices view. The
+  enum (a `FormattingBarChoice`, or a `FormattingBarFormat` for block kinds) plus a `Family` case in the bar — not another choices view. The
   choices replace the row rather than opening a system `Menu`, so nothing but the
   bar's own plain buttons competes with the text view mid-edit.
   **Attach is the one *tap*-to-choose slot**: the bar's last button

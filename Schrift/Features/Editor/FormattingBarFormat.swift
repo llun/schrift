@@ -1,30 +1,35 @@
+import CoreGraphics
 import Foundation
 
 // MARK: - Formatting-bar families
 
-/// A family of block kinds one formatting-bar button stands for: a tap applies the
-/// family's remembered default, a long press offers every member, and a pick applies
-/// that member and becomes the new default. Defaults are local app preferences
-/// (`schrift.` prefix), never a document or server value.
-protocol FormattingBarFormat: CaseIterable, Hashable, RawRepresentable, Sendable
+/// What one formatting-bar button stands for when it has a remembered default: a tap
+/// applies the default, a long press offers every member, and a pick applies that member
+/// and becomes the new default. Defaults are local app preferences (`schrift.` prefix),
+/// never a document or server value.
+protocol FormattingBarChoice: CaseIterable, Hashable, RawRepresentable, Sendable
 where RawValue == String, AllCases == [Self] {
     /// `@AppStorage` key for the remembered default.
     static var preferenceKey: String { get }
     /// What a fresh install, or a stored value this build doesn't know, falls back to.
     static var fallback: Self { get }
-    /// The member a block already is, if any — keyed on the kind, not its state.
-    init?(blockKind: BlockKind)
-    /// The kind a block becomes.
-    var blockKind: BlockKind { get }
     var icon: MaterialIcon { get }
     var labelKey: L10nKey { get }
 }
 
-extension FormattingBarFormat {
+extension FormattingBarChoice {
     /// Resolves the stored preference, tolerating a missing or unknown raw value.
     static func stored(_ rawValue: String) -> Self {
         Self(rawValue: rawValue) ?? fallback
     }
+}
+
+/// A family of block kinds one formatting-bar button stands for (list, quote/code).
+protocol FormattingBarFormat: FormattingBarChoice {
+    /// The member a block already is, if any — keyed on the kind, not its state.
+    init?(blockKind: BlockKind)
+    /// The kind a block becomes.
+    var blockKind: BlockKind { get }
 }
 
 // MARK: - List format
@@ -146,4 +151,72 @@ enum QuoteFormat: String, FormattingBarFormat {
         case .code: .editor_format_code_block
         }
     }
+}
+
+// MARK: - Text style
+
+/// The inline styles that share the formatting bar's text-style button, on the same
+/// tap/long-press terms as the block families. Not a `FormattingBarFormat`: bold, italic
+/// and link change the selection, not the block's kind.
+enum TextStyleFormat: String, FormattingBarChoice {
+    case bold
+    case italic
+    case link
+
+    static let preferenceKey = "schrift.editor.defaultTextStyle"
+
+    /// Bold: the first of the three buttons this one replaced.
+    static let fallback: TextStyleFormat = .bold
+
+    /// The marker `applyInlineMarker` wraps the selection in; nil for a link, which
+    /// opens the link editor instead.
+    ///
+    /// Italic is `_`, and `*` would be wrong. `InlineMarkdown` honors CommonMark's
+    /// flanking rule for underscores, so `_x_` is emphasis that survives a save while
+    /// `snake_case` stays literal — and it is what BlockNote itself writes. Wrapping a
+    /// selected **bold** word in `*` would produce `***word***`, which this scanner
+    /// reads as bold(`*word`) + literal.
+    var inlineMarker: String? {
+        switch self {
+        case .bold: "**"
+        case .italic: "_"
+        case .link: nil
+        }
+    }
+
+    var icon: MaterialIcon {
+        switch self {
+        case .bold: .format_bold
+        case .italic: .format_italic
+        case .link: .link
+        }
+    }
+
+    var labelKey: L10nKey {
+        switch self {
+        case .bold: .editor_format_bold
+        case .italic: .editor_format_italic
+        case .link: .editor_format_link
+        }
+    }
+}
+
+// MARK: - Scroll-edge fade
+
+/// Which edges of the scrolling bar row have content hidden past them.
+struct ScrollFadeEdges: Equatable {
+    var leading = false
+    var trailing = false
+}
+
+/// The edges to fade given the row's scroll geometry, so the bar shows that it scrolls.
+/// Offset 0 is the leading edge in either layout direction. `tolerance` absorbs the
+/// sub-point rounding that would otherwise leave a fade on a row that exactly fits.
+func scrollFadeEdges(
+    contentOffsetX: CGFloat, contentWidth: CGFloat, containerWidth: CGFloat, tolerance: CGFloat = 1
+) -> ScrollFadeEdges {
+    guard contentWidth > containerWidth + tolerance else { return ScrollFadeEdges() }
+    return ScrollFadeEdges(
+        leading: contentOffsetX > tolerance,
+        trailing: contentOffsetX + containerWidth < contentWidth - tolerance)
 }
