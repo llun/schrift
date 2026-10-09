@@ -17,7 +17,7 @@ actor DocsAPIClient {
     /// its status) or proves it unreachable (a connectivity-class `URLError`). Feeds
     /// `ConnectivityMonitor`'s display-only "server unreachable" evidence. Production
     /// default is a no-op.
-    private let onTransportOutcome: @Sendable (TransportOutcome) -> Void
+    private let onTransportOutcome: @Sendable (TransportOutcome, ContinuousClock.Instant) -> Void
     /// Set once a server has proved it has no `formatted-content/` route *and* that
     /// `content/` answers, so every later content load skips the detection instead of paying
     /// for it per document. Both halves matter: pinning this to a route that cannot answer
@@ -35,7 +35,7 @@ actor DocsAPIClient {
         cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
         onSessionExpired: @escaping @Sendable () -> Void = {},
         onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in },
-        onTransportOutcome: @escaping @Sendable (TransportOutcome) -> Void = { _ in }
+        onTransportOutcome: @escaping @Sendable (TransportOutcome, ContinuousClock.Instant) -> Void = { _, _ in }
     ) {
         self.baseURL = baseURL
         self.session = session
@@ -136,11 +136,14 @@ actor DocsAPIClient {
 
         let data: Data
         let response: URLResponse
+        // Captured before the await: a request issued on a dead link reports only when its
+        // timeout fires, and the monitor needs to know it began long before that.
+        let startedAt = ContinuousClock.now
         do {
             (data, response) = try await session.data(for: request)
         } catch {
             if isConnectivityFailure(error) {
-                onTransportOutcome(.unreachable)
+                onTransportOutcome(.unreachable, startedAt)
             }
             throw DocsAPIError.network(error.localizedDescription)
         }
@@ -149,7 +152,7 @@ actor DocsAPIClient {
             throw DocsAPIError.network("Response was not an HTTP response")
         }
         // Any status proves the server answered; only the status handling below differs.
-        onTransportOutcome(.reachedServer)
+        onTransportOutcome(.reachedServer, startedAt)
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             onRequestFailure(

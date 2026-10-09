@@ -34,8 +34,15 @@ final class DocsAPIClientTests: XCTestCase {
     private final class OutcomeBox: @unchecked Sendable {
         private let lock = NSLock()
         private var stored: [TransportOutcome] = []
-        func record(_ outcome: TransportOutcome) { lock.withLock { stored.append(outcome) } }
+        private var instants: [ContinuousClock.Instant] = []
+        func record(_ outcome: TransportOutcome, _ startedAt: ContinuousClock.Instant) {
+            lock.withLock {
+                stored.append(outcome)
+                instants.append(startedAt)
+            }
+        }
         var outcomes: [TransportOutcome] { lock.withLock { stored } }
+        var startInstants: [ContinuousClock.Instant] { lock.withLock { instants } }
     }
 
     func testAnyHTTPResponseReportsReachedServer() async {
@@ -45,12 +52,13 @@ final class DocsAPIClientTests: XCTestCase {
             baseURL: baseURL,
             session: MockURLProtocol.makeSession(),
             cookieProvider: { [] },
-            onTransportOutcome: { box.record($0) }
+            onTransportOutcome: { box.record($0, $1) }
         )
 
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil) }
         let _: Config? = try? await client.get("config/")
         XCTAssertEqual(box.outcomes, [.reachedServer])
+        XCTAssertLessThanOrEqual(box.startInstants[0], .now, "stamped with the request's start, never the future")
 
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         let _: Config? = try? await client.get("config/")
@@ -67,7 +75,7 @@ final class DocsAPIClientTests: XCTestCase {
             baseURL: baseURL,
             session: MockURLProtocol.makeSession(),
             cookieProvider: { [] },
-            onTransportOutcome: { box.record($0) }
+            onTransportOutcome: { box.record($0, $1) }
         )
 
         do {

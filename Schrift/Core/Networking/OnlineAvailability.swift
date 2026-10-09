@@ -36,6 +36,12 @@ final class OnlineAvailability {
     /// evidence would make no request and could never recover.
     var showsOfflineStatus: Bool { isOffline || connectivity?.serverUnreachable == true }
 
+    /// Whether the connection itself looks down — path down or transport evidence — and
+    /// **not** the Work Offline preference. Work Offline withholds reads but still sends
+    /// saves, so a save in flight under it is genuinely saving; the editor's save status
+    /// reads this rather than `showsOfflineStatus`. Status display only.
+    var connectionAppearsDown: Bool { connectivity?.appearsOffline == true }
+
     var token: Token {
         Token(
             pathRevision: connectivity?.revision ?? 0, preferenceRevision: preferenceRevision,

@@ -88,6 +88,23 @@ final class OnlineAvailabilityTests: XCTestCase {
         await waitUntil { !self.availability.showsOfflineStatus }
     }
 
+    /// Work Offline withholds reads but still sends saves, so it shows offline status without
+    /// the connection looking down; a path outage or transport evidence does both.
+    func testWorkOfflineShowsOfflineStatusButTheConnectionDoesNotAppearDown() async {
+        setWorkOffline(true)
+        XCTAssertTrue(availability.showsOfflineStatus)
+        XCTAssertFalse(availability.connectionAppearsDown)
+        setWorkOffline(false)
+
+        connectivity.report(.unreachable)
+        await waitUntil { self.availability.connectionAppearsDown }
+        connectivity.report(.reachedServer)
+        await waitUntil { !self.availability.connectionAppearsDown }
+
+        path.update?(false)
+        await waitUntil { self.availability.connectionAppearsDown }
+    }
+
     func testWorkOfflineAndAPathOutageShowOfflineStatus() async {
         setWorkOffline(true)
         XCTAssertTrue(availability.showsOfflineStatus)

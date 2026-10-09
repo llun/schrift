@@ -52,7 +52,7 @@ final class SaveStatusDisplayTests: XCTestCase {
     func testAConflictWithNothingUnsavedDoesNotDowngradeASyncedSave() {
         XCTAssertEqual(
             saveStatusDisplay(
-                saveState: .saved, hasConflict: true, hasUnsavedLocalContent: false, isOffline: false),
+                saveState: .saved, hasConflict: true, hasUnsavedLocalContent: false, connectionDown: false),
             .saved)
     }
 
@@ -62,18 +62,18 @@ final class SaveStatusDisplayTests: XCTestCase {
     /// out, so claiming "Saving…" is the bug: the draft is on disk and nothing is being sent.
     /// Everything else keeps its meaning — `.dirty` is not on disk yet, `.failed` is a retry.
     func testOfflineReadsASaveInFlightAsSavedOnDevice() {
-        XCTAssertEqual(display(.saving, isOffline: true), .savedOnDevice)
-        XCTAssertEqual(display(.dirty, isOffline: true), .save)
-        XCTAssertEqual(display(.failed("nope"), isOffline: true), .retry)
-        XCTAssertEqual(display(.saved, isOffline: true), .saved)
-        XCTAssertEqual(display(.idle, isOffline: true), .none)
-        XCTAssertEqual(display(.pendingSync, isOffline: true), .savedOnDevice)
+        XCTAssertEqual(display(.saving, connectionDown: true), .savedOnDevice)
+        XCTAssertEqual(display(.dirty, connectionDown: true), .save)
+        XCTAssertEqual(display(.failed("nope"), connectionDown: true), .retry)
+        XCTAssertEqual(display(.saved, connectionDown: true), .saved)
+        XCTAssertEqual(display(.idle, connectionDown: true), .none)
+        XCTAssertEqual(display(.pendingSync, connectionDown: true), .savedOnDevice)
     }
 
     func testConflictPrecedenceIsUnchangedWhileOffline() {
-        XCTAssertEqual(display(.saved, hasConflict: true, isOffline: true), .savedOnDevice)
-        XCTAssertEqual(display(.dirty, hasConflict: true, isOffline: true), .save)
-        XCTAssertEqual(display(.failed("nope"), hasConflict: true, isOffline: true), .savedOnDevice)
+        XCTAssertEqual(display(.saved, hasConflict: true, connectionDown: true), .savedOnDevice)
+        XCTAssertEqual(display(.dirty, hasConflict: true, connectionDown: true), .save)
+        XCTAssertEqual(display(.failed("nope"), hasConflict: true, connectionDown: true), .savedOnDevice)
     }
 
     // MARK: - Helper
@@ -81,9 +81,9 @@ final class SaveStatusDisplayTests: XCTestCase {
     private func display(
         _ state: EditorViewModel.SaveState,
         hasConflict: Bool = false,
-        isOffline: Bool = false
+        connectionDown: Bool = false
     ) -> SaveStatusDisplay {
         saveStatusDisplay(
-            saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true, isOffline: isOffline)
+            saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true, connectionDown: connectionDown)
     }
 }

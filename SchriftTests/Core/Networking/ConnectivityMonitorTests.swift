@@ -88,17 +88,72 @@ final class ConnectivityMonitorTests: XCTestCase {
         XCTAssertFalse(monitor.appearsOffline)
     }
 
-    /// Reports share the path stream's ordering: back-to-back reports settle on the last.
+    /// Reports share the path stream's ordering: the last of a back-to-back burst wins, in
+    /// each direction. Each half starts from the opposite state, so neither can pass by
+    /// leaving the flag where it began.
     func testBufferedTransportReportsApplyInOrder() async {
         let monitor = ConnectivityMonitor(monitoring: makeMonitoring(FakePath()))
+        let base = ContinuousClock.now
 
-        monitor.report(.unreachable)
-        monitor.report(.reachedServer)
+        monitor.report(.unreachable, startedAt: base)
+        await waitUntil { monitor.serverUnreachable }
+
+        monitor.report(.unreachable, startedAt: base + .seconds(1))
+        monitor.report(.reachedServer, startedAt: base + .seconds(2))
+        await waitUntil { !monitor.serverUnreachable }
+
+        monitor.report(.reachedServer, startedAt: base + .seconds(3))
+        monitor.report(.unreachable, startedAt: base + .seconds(4))
+        await waitUntil { monitor.serverUnreachable }
+    }
+
+    /// A request issued while the link was dead reports `.unreachable` when its timeout
+    /// fires — possibly after a newer request got through. That late report is about an
+    /// older link, so it must not flip the flag; one from a later request still does.
+    func testAnUnreachableReportFromBeforeAServerResponseIsStale() async {
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(FakePath()))
+        let base = ContinuousClock.now
+
+        monitor.report(.reachedServer, startedAt: base + .seconds(10))
+        monitor.report(.unreachable, startedAt: base)  // started before the response
+        monitor.report(.unreachable, startedAt: base + .seconds(11))
+        await waitUntil { monitor.serverUnreachable }
+
+        // The stale report alone, in isolation from the fresh one, never lands.
+        monitor.report(.reachedServer, startedAt: base + .seconds(20))
+        await waitUntil { !monitor.serverUnreachable }
+        monitor.report(.unreachable, startedAt: base + .seconds(15))
+        await waitAndConfirmNever { monitor.serverUnreachable }
+    }
+
+    func testAnUnreachableReportFromBeforeAPathCallbackIsStale() async {
+        let fake = FakePath()
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(fake))
+        let beforePath = ContinuousClock.now
+
+        fake.onChange?(true)
+        monitor.report(.unreachable, startedAt: beforePath)
         await waitAndConfirmNever { monitor.serverUnreachable }
 
-        monitor.report(.reachedServer)
+        monitor.report(.unreachable, startedAt: .now)
+        await waitUntil { monitor.serverUnreachable }
+    }
+
+    /// NWPath also fires for interface changes where both sides are satisfied (captive Wi-Fi →
+    /// cellular). That is still a new path deserving a fresh judgment, but it is not a
+    /// disconnect/reconnect, so tokens must not be invalidated.
+    func testASameValuePathCallbackClearsEvidenceWithoutBumpingRevision() async {
+        let fake = FakePath()
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(fake))
+        let revision = monitor.revision
+
         monitor.report(.unreachable)
         await waitUntil { monitor.serverUnreachable }
+
+        fake.onChange?(true)
+        await waitUntil { !monitor.serverUnreachable }
+        XCTAssertEqual(monitor.revision, revision)
+        XCTAssertTrue(monitor.isReachable)
     }
 
     func testCancelsMonitoringOnDeinit() {

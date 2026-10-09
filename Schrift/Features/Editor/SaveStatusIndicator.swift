@@ -39,16 +39,16 @@ enum SaveStatusDisplay: Equatable, CaseIterable {
 /// disk yet (the draft is written by the flush), so "Saved on this device" would be a lie
 /// there, and tapping Save is exactly what puts them there.
 ///
-/// **Offline** (`isOffline`, the status-display signal that includes transport evidence)
-/// turns `.saving` into `.savedOnDevice`: the write-ahead draft is already on disk and
-/// nothing will reach the server, so "Saving…" would claim a sync that is not happening
+/// **Connection down** (`connectionDown`: path down or transport evidence, *not* Work
+/// Offline, which still sends saves) turns `.saving` into `.savedOnDevice`: the write-ahead
+/// draft is already on disk and nothing will reach the server, so "Saving…" would claim a sync that is not happening
 /// (each autosave flashed it for the whole 60s request timeout). `.dirty` stays `.save`
 /// (the newest keystrokes are not on disk until the flush) and `.failed` stays `.retry`.
 func saveStatusDisplay(
     saveState: EditorViewModel.SaveState,
     hasConflict: Bool,
     hasUnsavedLocalContent: Bool,
-    isOffline: Bool
+    connectionDown: Bool
 ) -> SaveStatusDisplay {
     if hasConflict, hasUnsavedLocalContent {
         if case .dirty = saveState { return .save }
@@ -57,7 +57,7 @@ func saveStatusDisplay(
     switch saveState {
     case .idle: return .none
     case .dirty: return .save
-    case .saving: return isOffline ? .savedOnDevice : .saving
+    case .saving: return connectionDown ? .savedOnDevice : .saving
     case .saved: return .saved
     case .pendingSync: return .savedOnDevice
     case .failed: return .retry
