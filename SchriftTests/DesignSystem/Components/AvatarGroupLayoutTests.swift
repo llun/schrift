@@ -15,7 +15,8 @@ final class AvatarGroupLayoutTests: XCTestCase {
 
     /// The boundary a negative `max` is clamped onto.
     func testAZeroMaxShowsNoAvatarsAndCountsEveryNameAsOverflow() {
-        XCTAssertEqual(avatarGroupLayout(names: ["A", "B"], max: 0), AvatarGroupLayout(visibleNames: [], overflowCount: 2))
+        XCTAssertEqual(
+            avatarGroupLayout(names: ["A", "B"], max: 0), AvatarGroupLayout(visibleNames: [], overflowCount: 2))
     }
 
     func testANegativeMaxWithNoNamesShowsNothing() {
