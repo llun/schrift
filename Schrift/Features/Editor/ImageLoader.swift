@@ -21,9 +21,10 @@ enum ImageLoadState: Equatable, Sendable {
     case cached(URL)
 }
 
-/// One owner for both surfaces. Tasks outlive view teardown; failures need an
-/// explicit retry. Consent is exact-URL, namespace-scoped and memory-only. Cached
-/// external bytes may display without a tap, because that issues no request.
+/// One owner for both surfaces. Tasks outlive view teardown; content failures need an
+/// explicit retry (a transport failure is retried once when loading resumes online).
+/// Consent is exact-URL, namespace-scoped and memory-only. Cached external bytes may
+/// display without a tap, because that issues no request.
 @MainActor @Observable final class ImageLoader {
     private struct Key: Hashable {
         let scope: ImageCacheScope
@@ -32,6 +33,9 @@ enum ImageLoadState: Equatable, Sendable {
 
     private var states: [Key: ImageLoadState] = [:]
     private var approved: Set<Key> = []
+    /// Keys whose `.failed` came from a transport failure (no connection). The next load made with the network
+    /// allowed retries these once; a content failure is never in here and stays retry-only.
+    private var transportFailures: Set<Key> = []
     private var inFlight: [Key: Task<UIImage?, Never>] = [:]
     private let decoded: NSCache<NSURL, UIImage>
     private let decode: @Sendable (Data) async -> UIImage?
@@ -124,6 +128,7 @@ enum ImageLoadState: Equatable, Sendable {
     func retry(_ url: URL, allowsNetwork: Bool = true) async -> UIImage? {
         if let scope, states[Key(scope: scope, url: url)] == .failed {
             states[Key(scope: scope, url: url)] = nil
+            transportFailures.remove(Key(scope: scope, url: url))
         }
         return await loadIfNeeded(url, allowsNetwork: allowsNetwork)
     }
@@ -137,6 +142,7 @@ enum ImageLoadState: Equatable, Sendable {
         if let file = cache.cachedFileURL(for: key.url, scope: key.scope) {
             if let image = decoded.object(forKey: file as NSURL) {
                 states[key] = .cached(file)
+                transportFailures.remove(key)
                 return image
             }
             let data = await Task.detached { try? Data(contentsOf: file) }.value
@@ -147,6 +153,7 @@ enum ImageLoadState: Equatable, Sendable {
                 guard scope == key.scope else { return nil }
                 remember(image, file: file)
                 states[key] = .cached(file)
+                transportFailures.remove(key)
                 return image
             }
             guard scope == key.scope else { return nil }
@@ -157,8 +164,14 @@ enum ImageLoadState: Equatable, Sendable {
             states[key] = .requiresConsent
             return nil
         }
-        // A previous failure remains retry-only, even after connectivity flips.
-        guard states[key] != .failed else { return nil }
+        // A content failure remains retry-only. A transport failure is retried once when a load is made with the
+        // network allowed (the cards re-run on the offline flip); that attempt is no longer marked transport, so a
+        // second failure is retry-only and cannot loop. Consent was already checked above.
+        var isAutomaticRetry = false
+        if states[key] == .failed {
+            guard allowsNetwork, transportFailures.remove(key) != nil else { return nil }
+            isAutomaticRetry = true
+        }
         guard allowsNetwork else {
             states[key] = .unavailableOffline
             return nil
@@ -181,10 +194,12 @@ enum ImageLoadState: Equatable, Sendable {
             }
             remember(image, file: file)
             states[key] = .cached(file)
+            transportFailures.remove(key)
             return image
         } catch {
             guard scope == key.scope else { return nil }
             states[key] = .failed
+            if !isAutomaticRetry, isTransportFailure(error) { transportFailures.insert(key) }
             return nil
         }
     }

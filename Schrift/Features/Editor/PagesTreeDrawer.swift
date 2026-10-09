@@ -295,6 +295,7 @@ struct PagesTreeDrawer: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(viewModel.isAddingPage)
         }
     }
 

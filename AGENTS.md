@@ -2237,7 +2237,7 @@ markdown write endpoint**. Understand this before touching the save path:
   bytes with *no request at all*. It evicts by **last use** with a count *and*
   byte cap, never evicting the just-written entry. Clear the store in `RootView`'s
   `onSignOut` closure alongside `DocumentContentCacheStore`.
-- **Four loader rules that each closed a real defect, none of them obvious.**
+- **Five loader rules that each closed a real defect, none of them obvious.**
   (1) **Offline withholds the network, not the disk** — `loadIfNeeded(_:
   allowsNetwork:)`. Skipping the call while offline also skips the disk read, and
   since the loader is session-scoped a cold launch in airplane mode then showed
@@ -2245,7 +2245,7 @@ markdown write endpoint**. Understand this before touching the save path:
   is chrome only *because* of this parameter, not by default. (2) **A cancelled
   download is not a failure** — tapping a block swaps the reading surface for the
   editing one and tears the card's `.task` down mid-flight; recording `.failed`
-  stranded the card, since `loadIfNeeded` deliberately never auto-retries one.
+  stranded the card, since `loadIfNeeded` never auto-retries a content failure (see (5) for transport ones).
   (3) **A `.cached` state is re-validated against the disk** on both appear and
   tap — eviction can delete the file under a live card (the reading surface is not
   lazy, so an off-screen card never re-runs its `.task`), and the same call is what
@@ -2254,6 +2254,11 @@ markdown write endpoint**. Understand this before touching the save path:
   remote subresources, reopening the very IP/User-Agent/timing disclosure the origin
   gate closes. Key that on the **extension**, never the `-unsafe` flag, which is
   routine for `.docx`.
+  (5) **A transport failure is retried once, a content failure never.** `isTransportFailure`
+  (`DocsAPIError.network` or a connectivity `URLError`) marks a `.failed` as retryable: the next
+  `loadIfNeeded`/`resolve` with the network allowed (the cards' `.task` ids include `isOffline`, so the flip re-runs
+  them) tries once; that attempt is not re-marked, so a second failure is retry-only. `ImageLoader` does this only
+  after its consent check, so retry never bypasses consent.
 - **A web `pdf` block with `showPreview: true` (the web default) exports as
   nothing** — BlockNote 0.51.4's markdown serializer has no `<iframe>` handler —
   so the app never receives it and a full-overwrite save has always silently
@@ -3345,7 +3350,12 @@ markdown write endpoint**. Understand this before touching the save path:
   not read it as an inventory.** Several POSTing affordances elsewhere are
   deliberately ungated: Home's **`+`** now creates *locally* under Work Offline or on a
   retryable failure, and errors with `home_error_create` only on a rejection the server
-  actually made (or when no account id is known). Also the Options
+  actually made (or when no account id is known). The three create buttons (Home `+`,
+  Add subpage, Pages "New page") are disabled while their create is in flight
+  (`isCreatingDocument` / `isAddingSubpage` / `isAddingPage`; a second call returns nil
+  without a request, or repeated taps on a hanging POST mint duplicates), and Home and
+  the editor mint locally with no request whenever `availability.isOffline` (path down or
+  Work Offline); the drawer has no availability and still POSTs first. Also the Options
   sheet's local actions (including queued Delete), which remain reachable offline.
   Share is hidden in the toolbar and Options while offline; Version history is
   disabled with a localized explanation. An already-presented Share/history sheet
@@ -3355,7 +3365,9 @@ markdown write endpoint**. Understand this before touching the save path:
   and the document header's `PresenceBar`, via `headerPeers`/`presentedPeerCount`
   — that was the Options button's presence *badge* until the shared header gave
   both surfaces a bar, and note the gate now reaches the reading surface too)
-  plus the one POST-only affordance above that still reads it (File).
+  plus the POST-only File affordance, and the Home `+` and editor Add-subpage
+  create paths, which read `availability.isOffline` only to skip straight to the
+  local mint they would fall back to anyway (durability is unchanged).
   Nothing about whether an edit is kept, queued, or replayed reads it.
   **Availability for editor/Home search controls uses one injected
   `OnlineAvailability`**, reading Work Offline and the live `ConnectivityMonitor`
@@ -3364,6 +3376,18 @@ markdown write endpoint**. Understand this before touching the save path:
   paths; they never disable controls by pretending the network is offline.
   Home may report a transport load failure through its own offline banner, but
   this historical fetch outcome is not the control-availability signal.
+  `OnlineAvailability.showsOfflineStatus` adds transport evidence (connectivity-class
+  `URLError`s reported by `DocsAPIClient` — a connection that black-holes requests, such as
+  plane Wi-Fi without a purchase; a captive portal's TLS failures are deliberately not
+  covered — cleared by any HTTP response or any path callback) for **status display
+  only** — the editor's offline banner and sync caption wording; controls and
+  `permitsResponse` keep `isOffline`, and the pending-sync **retry stays a control**
+  (`syncCaption`'s `isPathOffline`), since a control disabled on failure evidence would
+  make no request and never recover. Each report carries its request's start instant and an
+  `.unreachable` that started before the last clearing event is dropped as stale. The save
+  status reads `connectionAppearsDown` (path or evidence, not Work Offline, which still
+  sends saves). Draft sync fires on `appearsOffline`'s true→false edge; live sockets
+  reconnect on the real path edge only.
   Cache/draft restoration precedes the editor's read guard. Uncached offline
   content explains that it must first be opened online; never show Empty document
   or Start writing without `hasLoadedContent`. A cached empty body is valid content.

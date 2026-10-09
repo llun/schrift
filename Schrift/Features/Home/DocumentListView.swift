@@ -114,6 +114,7 @@ struct DocumentListView: View {
             if let onNewDocument {
                 ToolbarItem(placement: .topBarTrailing) {
                     NewDocumentToolbarButton(action: onNewDocument)
+                        .disabled(viewModel.isCreatingDocument)
                 }
             }
         }

@@ -46,6 +46,9 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// running download instead of returning, and the loader owns the task so
     /// a torn-down card cannot cancel it.
     private var inFlight: [String: Task<Void, Never>] = [:]
+    /// Keys whose `.failed` was a transport failure; the next `loadIfNeeded` with the network allowed retries
+    /// them once. A content failure is never recorded, and the automatic attempt is not re-recorded, so no loop.
+    private var transportFailures: Set<String> = []
 
     init(client: DocsAPIClient, serverOrigin: String, cache: AttachmentCacheStore = AttachmentCacheStore()) {
         self.client = client
@@ -64,10 +67,13 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// Never throws and never surfaces an error to the caller — a failure is a
     /// `.failed` state the card renders as a retry affordance.
     ///
-    /// A previous failure is **not** retried here. The card's `.task` re-fires
+    /// A previous *content* failure is **not** retried here. The card's `.task` re-fires
     /// whenever it reappears, so auto-retrying would hammer a failing server as
     /// the user scrolls past a document full of attachments. `retry` is the way
     /// back, and it is one tap on the card the user is already looking at.
+    /// A *transport* failure (no connection) is retried once by the next call
+    /// that allows the network — the card re-runs when the offline flag flips —
+    /// and if that attempt fails too it becomes retry-only like any other.
     ///
     /// Concurrent callers **join** the running download rather than returning:
     /// returning early let a superseded task's late `catch` clear the state
@@ -85,7 +91,13 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// meant to suppress.
     func loadIfNeeded(_ display: AttachmentDisplay, allowsNetwork: Bool = true) async {
         let key = display.urlString
-        if case .failed = states[key] { return }
+        var isAutomaticRetry = false
+        if case .failed = states[key] {
+            guard allowsNetwork, transportFailures.remove(key) != nil else { return }
+            // Disk first, as for any load: a failed state never hides cached bytes.
+            states[key] = nil
+            isAutomaticRetry = true
+        }
         if let running = inFlight[key] {
             await running.value
             return
@@ -102,6 +114,7 @@ enum AttachmentLoadState: Equatable, Sendable {
         // to rather than merely least-recently-first-loaded.
         if let url = cache.cachedFileURL(for: display) {
             states[key] = .cached(url)
+            transportFailures.remove(key)
             return
         }
         // The disk has no copy, so a `.cached` entry naming an evicted file must
@@ -111,7 +124,7 @@ enum AttachmentLoadState: Equatable, Sendable {
         // `.offlineAndUncached`.
         if case .cached = states[key] { states[key] = nil }
         guard allowsNetwork else { return }
-        await download(display)
+        await download(display, isAutomaticRetry: isAutomaticRetry)
     }
 
     /// Re-attempts a download the user asked for again. Unlike `loadIfNeeded`
@@ -122,6 +135,7 @@ enum AttachmentLoadState: Equatable, Sendable {
             await running.value
             return
         }
+        transportFailures.remove(display.urlString)
         if let url = cache.cachedFileURL(for: display) {
             states[display.urlString] = .cached(url)
             return
@@ -140,7 +154,7 @@ enum AttachmentLoadState: Equatable, Sendable {
     /// is the same reason `DocumentSaveCoordinator` owns its save tasks, and it
     /// costs nothing: the bytes were already on the wire, and finishing means
     /// the next appearance finds them cached.
-    private func download(_ display: AttachmentDisplay) async {
+    private func download(_ display: AttachmentDisplay, isAutomaticRetry: Bool = false) async {
         let key = display.urlString
         // Defense in depth. `parseAttachmentLink` already proved this url is on
         // the user's own server — an off-origin url never becomes an
@@ -153,14 +167,14 @@ enum AttachmentLoadState: Equatable, Sendable {
 
         states[key] = .downloading
         let task = Task { [weak self] () -> Void in
-            await self?.fetch(display, path: path)
+            await self?.fetch(display, path: path, isAutomaticRetry: isAutomaticRetry)
         }
         inFlight[key] = task
         await task.value
         inFlight[key] = nil
     }
 
-    private func fetch(_ display: AttachmentDisplay, path: String) async {
+    private func fetch(_ display: AttachmentDisplay, path: String, isAutomaticRetry: Bool) async {
         let key = display.urlString
         do {
             let data = try await client.mediaData(path: path)
@@ -168,8 +182,10 @@ enum AttachmentLoadState: Equatable, Sendable {
             // the download: `.failed` so the card offers a retry rather than
             // claiming a file that isn't there.
             states[key] = cache.store(data, for: display).map(AttachmentLoadState.cached) ?? .failed
+            transportFailures.remove(key)
         } catch {
             states[key] = .failed
+            if !isAutomaticRetry, isTransportFailure(error) { transportFailures.insert(key) }
         }
     }
 }

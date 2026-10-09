@@ -29,13 +29,48 @@ struct NetworkPathMonitoring: Sendable {
 /// controls. A satisfied path does not establish server health: HTTP errors and
 /// save decisions still come from their actual requests. Reachability starts
 /// optimistic until the first OS callback; changes arrive on the main actor in order.
+///
+/// Path status cannot see "connected to Wi-Fi without internet" (plane Wi-Fi without a
+/// purchase): the path stays `.satisfied` while every request times out or cannot connect.
+/// `DocsAPIClient` therefore reports transport evidence through `report(_:startedAt:)`,
+/// which drives `serverUnreachable` / `appearsOffline`. That evidence is **display-only**:
+/// `isReachable` (and so `OnlineAvailability.isOffline`, which gates controls and
+/// response tokens) is unchanged, because a control disabled on failure evidence would
+/// make no request and so could never observe the server coming back. Path updates and
+/// transport reports share one ordered stream, so they apply in the order they arrived.
+///
+/// **Stale reports are ignored.** A request issued while the link was dead reports
+/// `.unreachable` only when its timeout fires, up to 60s later — possibly after a newer
+/// request got through or the path changed. Each report carries the instant its request
+/// *started*; a clearing event (a server response, any path callback) remembers its own
+/// instant, and an `.unreachable` that started before it is evidence about an older link
+/// and is dropped.
 @MainActor
 @Observable
 final class ConnectivityMonitor {
     private(set) var isReachable = true
+    /// True after a connectivity-class transport failure, until any HTTP response
+    /// arrives or the path reports anything (even an unchanged status). Display evidence only; never a control gate.
+    private(set) var serverUnreachable = false
+    /// What status chrome (banner, save status, sync caption) should treat as offline.
+    var appearsOffline: Bool { !isReachable || serverUnreachable }
     /// Invalidates requests across a disconnect/reconnect, even when the final path
-    /// is reachable again by the time their old response arrives.
+    /// is reachable again by the time their old response arrives. Transport reports
+    /// never bump it.
     private(set) var revision = 0
+
+    private enum Event: Sendable {
+        case path(Bool, at: ContinuousClock.Instant)
+        case transport(TransportOutcome, startedAt: ContinuousClock.Instant)
+    }
+
+    /// The latest instant at which the evidence was cleared (a server response's request
+    /// start, or a path callback). Only main-actor drain code touches it.
+    private var evidenceClearedAt: ContinuousClock.Instant?
+
+    // `Continuation` is Sendable, so `report(_:)` may yield from any isolation (the
+    // API client is an actor). A `let` is not tracked by `@Observable`.
+    private nonisolated let continuation: AsyncStream<Event>.Continuation
     // The cancel closure lives in a box whose own `deinit` fires it. The box is
     // initialized at declaration (before the `[weak self]` capture below), which
     // both satisfies definite-initialization and keeps the teardown off
@@ -50,9 +85,10 @@ final class ConnectivityMonitor {
         // stale value on a link that is actually up. Funnel the ordered callbacks
         // through an AsyncStream drained by a single Task, so the main-actor updates
         // stay in order.
-        let (stream, continuation) = AsyncStream<Bool>.makeStream()
+        let (stream, continuation) = AsyncStream<Event>.makeStream()
+        self.continuation = continuation
         let stopMonitoring = monitoring.start { reachable in
-            continuation.yield(reachable)
+            continuation.yield(.path(reachable, at: .now))
         }
         // The box's deinit ends both the OS monitor and the drain loop when the
         // owner is released.
@@ -61,14 +97,42 @@ final class ConnectivityMonitor {
             continuation.finish()
         }
         Task { [weak self] in
-            for await reachable in stream {
+            for await event in stream {
                 guard let self else { return }
-                if self.isReachable != reachable {
-                    self.isReachable = reachable
-                    self.revision += 1
+                switch event {
+                case .path(let reachable, let at):
+                    // NWPath also fires for interface changes where both sides are
+                    // satisfied (captive Wi-Fi → cellular), so evidence is cleared on
+                    // every callback; only a changed Bool moves `isReachable`/`revision`.
+                    self.noteEvidenceCleared(at: at)
+                    if self.isReachable != reachable {
+                        self.isReachable = reachable
+                        self.revision += 1
+                    }
+                case .transport(let outcome, let startedAt):
+                    switch outcome {
+                    case .reachedServer:
+                        self.noteEvidenceCleared(at: startedAt)
+                    case .unreachable:
+                        // Started before the last clearing event: evidence about an older link.
+                        if let cleared = self.evidenceClearedAt, startedAt < cleared { continue }
+                        if !self.serverUnreachable { self.serverUnreachable = true }
+                    }
                 }
             }
         }
+    }
+
+    private func noteEvidenceCleared(at instant: ContinuousClock.Instant) {
+        if evidenceClearedAt.map({ instant > $0 }) ?? true { evidenceClearedAt = instant }
+        if serverUnreachable { serverUnreachable = false }
+    }
+
+    /// Records what a request learned about the server. `startedAt` is when that request
+    /// was issued, which is what lets a late `.unreachable` be recognised as stale.
+    /// Callable from any isolation; ordered with path updates through the same stream.
+    nonisolated func report(_ outcome: TransportOutcome, startedAt: ContinuousClock.Instant = .now) {
+        continuation.yield(.transport(outcome, startedAt: startedAt))
     }
 }
 

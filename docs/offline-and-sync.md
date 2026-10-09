@@ -1131,7 +1131,8 @@ all downloaded image bytes on sign-out. This store is independent of
 network is withheld. A cold offline hit displays the image; a miss keeps an image
 card with “Image available when online” and its original URL. Requests are joined
 and owned by the loader across mode changes. Failed loads remain image cards
-with an explicit Retry and secondary URL action. External images fetch only
+with an explicit Retry and secondary URL action; an image transport failure is retried once
+automatically when loading resumes with the network allowed. External images fetch only
 after exact-URL consent; cached external bytes render without networking, but a
 cold evicted external image requires consent again. Consent is never stored on
 disk. Redirects cannot leave the initial origin, and external requests carry no
@@ -1741,6 +1742,7 @@ already-recorded ghost residual below, not a new one.
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
   read-time merge is wired, a live Home loses the row when `removePendingCreate` runs and
   regains it only on the next successful fetch.
+- **[LANDED — `onReplayedPushLanded`]** Home after a reconnect replay pushes an offline edit. The reconnect `load()` races the replay's PATCHes (unstructured `start` tasks that outlive `syncPendingDrafts()`) and re-caches the pre-push list. `runSyncPass` marks the ids it enqueues (`replayedPushes`); `finish` fires the callback when such a save's content lands, and Home runs a debounced (300 ms) silent `load()`. The mark is set only when the save actually started (a held save is not marked) and dropped by `discardPendingWork`. Like the migration reload, this silent `load()` can supersede an in-flight pull-to-refresh and clears the error banner. Ordinary autosaves are not marked, so typing causes no list reloads.
 - **[LANDED — `EditorViewModel.isLocalDocument` gates all four fetch paths]** Gating the editor's fetch on a pending-create id. `EditorViewModel.revalidate`
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen
@@ -2869,6 +2871,29 @@ delete / 404 / 403 ──▶ remove cache entry        sign-out ──▶ remove
   error, and it never presents Empty document or Start writing. A genuinely empty
   cached document still has loaded content and remains editable. A transport
   failure on a still-reachable path offers Retry, since no reconnect edge need occur.
+- **A satisfied path that black-holes requests (plane Wi-Fi without a purchase) is
+  invisible to `NWPath`.** A captive portal is *not* covered: HTTPS through an intercepting
+  portal fails with TLS errors, which `isConnectivityFailure` deliberately excludes.
+  `DocsAPIClient` reports `TransportOutcome`s, with the instant the request started, to
+  `ConnectivityMonitor.report`: a connectivity-class `URLError` (timeout, cannot connect)
+  sets `serverUnreachable`; any HTTP response (even a 500) or any path callback — including
+  one where the satisfied status is unchanged, such as Wi-Fi to cellular — clears it.
+  A request issued on a dead link reports only when its timeout fires, so an `.unreachable`
+  whose request started before the last clearing event is stale and ignored.
+  `OnlineAvailability.showsOfflineStatus` adds the evidence to `isOffline` for **status
+  display only** — the offline banner and the sync caption's wording. `saveStatusDisplay`
+  reads `connectionAppearsDown` (path or evidence, excluding Work Offline, which still
+  PATCHes saves) and shows a `.saving` state as "Saved on this device" instead of "Saving…"
+  for the whole request timeout. Controls and response tokens keep `isOffline` (a control
+  disabled on failure evidence would send nothing and never recover), and the
+  pending-sync caption's **retry stays a control** (`syncCaption`'s `controlsOffline`):
+  transport evidence alone never hides it. Draft sync fires on `appearsOffline`'s true→false
+  edge (a path false→true clears it, so one edge covers both); live sockets reconnect on the
+  real path edge only. Accepted: on a link where some requests keep timing out while others
+  succeed, each unreachable→reached flip re-triggers a coalesced draft sync pass; the rate is
+  bounded by real network outcomes. Also accepted: a `.timedOut` from a slow-but-reachable
+  server shows offline status until the next response, and after a same-value path callback a
+  dead request's timeout is stale, so "Saving…" can show for one more timeout.
 - `EditorViewModel.load` restores drafts/cache before withholding unavailable
   reads. Reconnect revalidates the same model without reinstalling a disk copy
   over editing or clearing unrelated action/save errors. Physical disconnect or

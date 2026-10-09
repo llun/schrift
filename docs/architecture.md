@@ -1151,7 +1151,8 @@ view environment alongside `AttachmentLoader`. It owns requests across view
 teardown and joins duplicates by full URL and `ImageCacheScope`. Every appearance
 checks disk first, including offline and previously failed loads. Failures remain
 image cards with a status, original URL, explicit Retry when online, and a
-secondary Open image URL action. ImageIO decodes thumbnails at most 2048 pixels
+secondary Open image URL action. An image transport failure is retried once automatically
+when loading resumes with the network allowed. ImageIO decodes thumbnails at most 2048 pixels
 on the long edge; shared metadata validation rejects sources above 48 megapixels
 before decoding, on both downloaded bytes and cold disk reads. Invalid image
 bytes are never cached. Disk reads and thumbnail
@@ -1287,7 +1288,8 @@ defect first:
 - **A cancelled download is not a failure.** Tapping a block swaps the reading
   surface for the editing one, which tears the card's `.task` down mid-flight.
   Recording `.failed` there stranded the card behind a retry nothing had asked
-  for, because `loadIfNeeded` deliberately never auto-retries a failure.
+  for. `loadIfNeeded` never auto-retries a *content* failure; a transport failure (no connection) is retried once
+  when loading resumes with the network allowed.
 - **A `.cached` state is re-validated against the disk, not trusted.** Eviction
   can delete the file while its card is still on screen (the reading surface is
   not lazy, so an off-screen card never re-runs its `.task`), and the tap path

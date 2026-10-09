@@ -32,7 +32,10 @@ final class EditorViewModelChildrenTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeViewModel(title: String = "Untitled document") -> EditorViewModel {
+    private func makeViewModel(
+        title: String = "Untitled document", signedInUserID: UUID? = nil,
+        availability: OnlineAvailability = OnlineAvailability()
+    ) -> EditorViewModel {
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let suiteName = "EditorViewModelChildrenTests.\(UUID().uuidString)"
         suiteNames.append(suiteName)
@@ -51,10 +54,12 @@ final class EditorViewModelChildrenTests: XCTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
             childrenCache: childrenCache, backgroundTasks: .noop)
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        if let signedInUserID { signedIn.remember(signedInUserID) }
         return EditorViewModel(
             client: client, documentID: documentID, title: title, saveCoordinator: coordinator,
-            signedInUser: SignedInUserStore(userDefaults: defaults),
-            contentCache: contentCache, childrenCache: childrenCache)
+            signedInUser: signedIn,
+            contentCache: contentCache, childrenCache: childrenCache, availability: availability)
     }
 
     private static func childrenFixture(id: String, title: String) -> Data {
@@ -609,5 +614,60 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
         XCTAssertNil(viewModel.subpages, "the fetch predates the move, so its answer is discarded")
         XCTAssertNil(childrenCache.children(for: documentID), "and it must not reach the cache")
+    }
+
+    // MARK: - Repeated taps and a dead path
+
+    func testASecondAddSubpageWhileOneIsInFlightIsRefusedWithoutARequest() async {
+        let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        let viewModel = makeViewModel()
+        let documentBody = Data(
+            """
+            {"id": "66666666-6666-4666-8666-666666666666", "title": "Untitled subpage", "excerpt": null,
+             "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null,
+             "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 2, "link_role": "reader",
+             "link_reach": "restricted", "numchild": 0, "path": "00010002",
+             "updated_at": "2026-01-15T10:30:00Z", "user_role": "owner", "is_favorite": false}
+            """.utf8)
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 201, headers: [:], body: documentBody, error: nil, releasedBy: gate)
+        }
+
+        let first = Task { await viewModel.addSubpage() }
+        await waitUntil { log.count(ofMethod: "POST") == 1 }
+        XCTAssertTrue(viewModel.isAddingSubpage)
+
+        let second = await viewModel.addSubpage()
+        gate.open()
+        let created = await first.value
+
+        XCTAssertNil(second)
+        XCTAssertNotNil(created)
+        XCTAssertEqual(log.count(ofMethod: "POST"), 1)
+        XCTAssertFalse(viewModel.isAddingSubpage)
+    }
+
+    func testAddSubpageWhileThePathIsDownMintsLocallyWithoutARequest() async {
+        let log = RequestRecorder()
+        let suite = "EditorViewModelChildrenTests.path.\(UUID().uuidString)"
+        suiteNames.append(suite)
+        let path = FakeNetworkPath(userDefaults: UserDefaults(suiteName: suite)!)
+        let viewModel = makeViewModel(
+            signedInUserID: UUID(uuidString: "11111111-1111-4111-8111-111111111111"),
+            availability: path.availability)
+        path.setSatisfied(false)
+        await waitUntil { path.availability.isOffline }
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+
+        let child = await viewModel.addSubpage()
+
+        guard let child else { return XCTFail("the offline add should mint a child locally") }
+        XCTAssertEqual(log.methods.count, 0)
+        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: child.id))
     }
 }
