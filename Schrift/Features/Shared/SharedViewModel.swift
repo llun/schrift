@@ -22,8 +22,8 @@ final class SharedViewModel {
     var isLoading = false
     var errorKey: L10nKey?
     /// Offline whenever the path is down or Work Offline is on (live, from `availability`), or
-    /// the last fetch failed in a way that is not an expired session. The failure flag is latched
-    /// until a load succeeds or the cache is served on purpose.
+    /// the last fetch failed with a transport (`DocsAPIError.network`) failure. The failure flag is
+    /// latched until a load succeeds or the cache is served on purpose.
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
     private var loadFailedOffline = false
 
