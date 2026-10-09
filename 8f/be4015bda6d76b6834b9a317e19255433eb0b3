@@ -1,0 +1,21 @@
+SchriftTests/DesignSystem/Components/SwipeRevealRowTests.swift
+  s_45196c6adedbd6::t_cd4d16e53bfc73 129-132,134-137
+docs/design-system.md
+  s_45196c6adedbd6::t_3b2e3309986cc4 253-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fbe4015bda6d76b6834b9a317e19255433eb0b3",
+  "prompts": {},
+  "sessions": {
+    "s_45196c6adedbd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9c00491-b306-4378-b82a-da0f818a6f3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
