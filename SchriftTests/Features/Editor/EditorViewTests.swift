@@ -174,7 +174,8 @@ final class EditorViewTests: XCTestCase {
     /// question they have not answered.
     func testAConflictOutranksTheSyncedCaption() {
         let caption = syncCaption(
-            hasUnsavedLocalContent: false, hasConflict: true, isOffline: false, controlsOffline: false, saveState: .saved,
+            hasUnsavedLocalContent: false, hasConflict: true, isOffline: false, controlsOffline: false,
+            saveState: .saved,
             lastSyncedAt: now.addingTimeInterval(-300), now: now, locale: locale)
 
         XCTAssertEqual(caption, SyncCaption(text: .key(.editor_sync_saved_on_device), offersRetry: false))
