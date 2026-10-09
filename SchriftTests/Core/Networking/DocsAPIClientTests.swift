@@ -55,10 +55,20 @@ final class DocsAPIClientTests: XCTestCase {
             onTransportOutcome: { box.record($0, $1) }
         )
 
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil) }
-        let _: Config? = try? await client.get("config/")
+        // Hold the response so an instant taken while the request is provably in flight
+        // separates "stamped at the start" from "stamped on completion".
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil, releasedBy: gate)
+        }
+        let task = Task { () -> Config? in try? await client.get("config/") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        let mid = ContinuousClock.now
+        gate.open()
+        _ = await task.value
         XCTAssertEqual(box.outcomes, [.reachedServer])
-        XCTAssertLessThanOrEqual(box.startInstants[0], .now, "stamped with the request's start, never the future")
+        guard let start = box.startInstants.first else { return XCTFail("no start instant was reported") }
+        XCTAssertLessThan(start, mid, "stamped with the request's start, not when the response arrived")
 
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         let _: Config? = try? await client.get("config/")

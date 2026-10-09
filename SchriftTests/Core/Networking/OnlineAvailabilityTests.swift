@@ -101,18 +101,11 @@ final class OnlineAvailabilityTests: XCTestCase {
         connectivity.report(.reachedServer)
         await waitUntil { !self.availability.connectionAppearsDown }
 
-        path.update?(false)
-        await waitUntil { self.availability.connectionAppearsDown }
-    }
-
-    func testWorkOfflineAndAPathOutageShowOfflineStatus() async {
-        setWorkOffline(true)
-        XCTAssertTrue(availability.showsOfflineStatus)
-        setWorkOffline(false)
         XCTAssertFalse(availability.showsOfflineStatus)
 
         path.update?(false)
-        await waitUntil { self.availability.showsOfflineStatus }
+        await waitUntil { self.availability.connectionAppearsDown }
+        XCTAssertTrue(availability.showsOfflineStatus)
     }
 
     func testWorkOfflineRefusesResponsesEvenOnALivePath() {

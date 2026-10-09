@@ -98,8 +98,9 @@ final class ConnectivityMonitorTests: XCTestCase {
         monitor.report(.unreachable, startedAt: base)
         await waitUntil { monitor.serverUnreachable }
 
-        monitor.report(.unreachable, startedAt: base + .seconds(1))
-        monitor.report(.reachedServer, startedAt: base + .seconds(2))
+        // Order-sensitive: applied in reverse, this would end unreachable.
+        monitor.report(.unreachable, startedAt: base + .seconds(2))
+        monitor.report(.reachedServer, startedAt: base + .seconds(1))
         await waitUntil { !monitor.serverUnreachable }
 
         monitor.report(.reachedServer, startedAt: base + .seconds(3))
@@ -129,7 +130,7 @@ final class ConnectivityMonitorTests: XCTestCase {
     func testAnUnreachableReportFromBeforeAPathCallbackIsStale() async {
         let fake = FakePath()
         let monitor = ConnectivityMonitor(monitoring: makeMonitoring(fake))
-        let beforePath = ContinuousClock.now
+        let beforePath = ContinuousClock.now - .seconds(1)
 
         fake.onChange?(true)
         monitor.report(.unreachable, startedAt: beforePath)

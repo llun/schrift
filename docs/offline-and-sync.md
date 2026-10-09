@@ -2860,10 +2860,14 @@ delete / 404 / 403 ──▶ remove cache entry        sign-out ──▶ remove
   PATCHes saves) and shows a `.saving` state as "Saved on this device" instead of "Saving…"
   for the whole request timeout. Controls and response tokens keep `isOffline` (a control
   disabled on failure evidence would send nothing and never recover), and the
-  pending-sync caption's **retry stays a control** (`syncCaption`'s `isPathOffline`):
+  pending-sync caption's **retry stays a control** (`syncCaption`'s `controlsOffline`):
   transport evidence alone never hides it. Draft sync fires on `appearsOffline`'s true→false
   edge (a path false→true clears it, so one edge covers both); live sockets reconnect on the
-  real path edge only.
+  real path edge only. Accepted: on a link where some requests keep timing out while others
+  succeed, each unreachable→reached flip re-triggers a coalesced draft sync pass; the rate is
+  bounded by real network outcomes. Also accepted: a `.timedOut` from a slow-but-reachable
+  server shows offline status until the next response, and after a same-value path callback a
+  dead request's timeout is stale, so "Saving…" can show for one more timeout.
 - `EditorViewModel.load` restores drafts/cache before withholding unavailable
   reads. Reconnect revalidates the same model without reinstalling a disk copy
   over editing or clearing unrelated action/save errors. Physical disconnect or
