@@ -6,7 +6,7 @@ struct AvatarGroupLayout: Equatable {
 }
 
 func avatarGroupLayout(names: [String], max: Int) -> AvatarGroupLayout {
-    // `max` is a public parameter on `AvatarGroup`, and `prefix(_:)` traps on a
+    // `max` is a caller-supplied parameter on `AvatarGroup`, and `prefix(_:)` traps on a
     // negative length — so a negative limit means "show no avatars", the same as
     // zero, rather than a crash.
     let limit = Swift.max(0, max)
