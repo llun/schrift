@@ -5,16 +5,6 @@ import XCTest
 
 @MainActor
 final class DocumentPinStaleFetchTests: DocumentPinTestCase {
-    private nonisolated static func page(_ rows: [Document]) -> Data {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try! encoder.encode(rows)
-        return Data(
-            "{\"count\":\(rows.count),\"next\":null,\"previous\":null,\"results\":\(String(decoding: data, as: UTF8.self))}"
-                .utf8)
-    }
-
     func testAnAgreeingStaleFetchDoesNotConsumeUnsentIntent() {
         let pins = pins()
         XCTAssertTrue(queue(pins, pinned: true))

@@ -33,6 +33,16 @@ class DocumentPinTestCase: XCTestCase {
             userRole: nil, creator: nil)
     }
 
+    nonisolated static func page(_ rows: [Document]) -> Data {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try! encoder.encode(rows)
+        return Data(
+            "{\"count\":\(rows.count),\"next\":null,\"previous\":null,\"results\":\(String(decoding: data, as: UTF8.self))}"
+                .utf8)
+    }
+
     func client(origin: String? = nil) -> DocsAPIClient {
         DocsAPIClient(
             baseURL: URL(string: (origin ?? self.origin) + "/api/v1.0/")!,
