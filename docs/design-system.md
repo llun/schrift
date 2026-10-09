@@ -785,8 +785,9 @@ lighten while their soft backgrounds darken; the neutral badge foreground
 - Resolver tests (`BadgeStyleResolverTests`, `ButtonStyleResolverTests`,
   `IconButtonStyleResolverTests`, `TextFieldStyleResolverTests`,
   `LinkReachPillTests`) — assert invariants (readable ink on its fill in both
-  modes, distinct variants, no background/border where none is promised), not
-  per-variant hex mirrors.
+  modes, distinct variants, dark differing from light for each fill), not
+  per-variant hex mirrors. Only the `Button` and `IconButton` resolver tests
+  also pin "no background/border where none is promised".
 - `AppearanceStoreTests` — default `.system`; persistence round-trip;
   `colorScheme` mapping (isolated `UserDefaults(suiteName:)`).
 
@@ -897,7 +898,7 @@ Pinned/Shared, sign out) so it stays consistent across screens.
 - `StringsCompletenessTests` — **every** `L10n.Key` present in **every** language
   table; and placeholder/format-specifier parity across languages (same `%@`/`%d`
   count per key).
-- `PluralTests` — rule selection per language.
+- `PluralRuleTests` — rule selection per language.
 
 ---
 
@@ -1135,7 +1136,7 @@ opened from a **"Version history"** row in the Options sheet — the current app
 - A `VersionHistoryViewModel` (`@MainActor @Observable`) loads best-effort,
   friendly `errorMessage` on failure, `isLoading` gate. Timestamps render with
   the current locale (relative or absolute per the design's `when` style).
-- Tests: `DocumentVersionsClientTests` (method/path/decode incl. `is_current`,
+- Tests: `VersionEndpointsClientTests` (method/path/decode incl. `is_current`,
   empty list) via `MockURLProtocol`; VM load + error-path tests.
 
 ### 9.3 Restore — verify-gated, funneled through the save path

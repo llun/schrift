@@ -42,7 +42,7 @@ final class RecentSearchesStoreTests: XCTestCase {
 
 final class RecentSearchesStorePersistenceTests: XCTestCase {
     private var userDefaults: UserDefaults!
-    private let suiteName = "dev.llun.Schrift.tests.RecentSearchesStoreTests"
+    private let suiteName = "dev.llun.Schrift.tests.RecentSearchesStoreTests.\(UUID().uuidString)"
 
     override func setUp() {
         super.setUp()
@@ -69,7 +69,7 @@ final class RecentSearchesStorePersistenceTests: XCTestCase {
         XCTAssertEqual(second.searches, ["beta", "alpha"])
     }
 
-    func testBlankAddIsNotPersisted() {
+    func testBlankAddLeavesSearchesUnchanged() {
         let store = RecentSearchesStore(userDefaults: userDefaults)
         store.add("   ")
         XCTAssertTrue(store.searches.isEmpty)

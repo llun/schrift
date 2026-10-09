@@ -177,12 +177,12 @@ final class SearchViewModelTests: XCTestCase {
         let body = Self.paginatedFixture(
             id: "11111111-1111-4111-8111-111111111111", title: "Roadmap", isFavorite: false)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
-        viewModel.query = "  Roadmap \n"
+        viewModel.query = "  Road map \n"
 
         await viewModel.search()
 
         let url = MockURLProtocol.lastRequest?.url?.absoluteString ?? ""
-        XCTAssertTrue(url.hasSuffix("documents/search/?q=Roadmap"), url)
+        XCTAssertTrue(url.hasSuffix("documents/search/?q=Road%20map"), url)
         XCTAssertEqual(viewModel.results.map(\.title), ["Roadmap"])
         XCTAssertNil(viewModel.errorKey)
         XCTAssertFalse(viewModel.isSearching)
