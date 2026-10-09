@@ -7,11 +7,12 @@
 > Italic and Link, the default in the brand colour. The whole family is disabled where
 > inline markdown isn't rendered (code blocks, images, attachments). The bar is now add,
 > text style, list, quote/code, attach — five buttons, seven on a list item (Outdent
-> and Indent) — which fit the standard iPhone column (about 332pt against 343pt on a
-> 375pt device). Display Zoom on the smallest iPhones is the exception: a zoomed
-> 320pt-wide iPhone SE leaves a 288pt column, so the seven-button list-item row
-> overflows. In a narrower container (iPad Slide Over, a ⅓ split) or that zoomed case,
-> a ~24pt gradient fades whichever edge has hidden content (none when the row fits).
+> and Indent). The buttons are 44pt and don't grow with Dynamic Type. The five-button
+> row (240pt) fits every supported iPhone column, even under Display Zoom. The
+> seven-button list-item row (332pt) fits the standard 343pt-or-wider column but
+> overflows narrower ones: Display Zoom on non-Max iPhones (a 320pt screen leaves a
+> 288pt column) and narrow iPad containers (Slide Over, a ⅓ split). There the row
+> scrolls horizontally and a ~24pt fade marks the edge with hidden buttons.
 >
 > **Revised: 2026-10-08 — One Attach button in the formatting bar.** The bar's last
 > slot is now **Attach** (`attach_file`, U+E226, bringing the bundled subset to 80
@@ -110,9 +111,10 @@
 > family's default kind on tap; a long press swaps the row for Close plus the
 > family's members (bold/italic/link, bulleted/numbered/checklist, or quote/code), the remembered
 > default drawn in the brand colour, and a pick becomes the new default.
-> The formatting accessory's five actions (seven on a list item) fit the narrowest
-> phone column; it still scrolls horizontally in narrower containers rather than
-> compressing the buttons or widening the editor. The Sketch component library
+> The formatting accessory's five actions fit every supported iPhone column; the seven
+> on a list item fit the standard 343pt-or-wider column but scroll horizontally in
+> narrower ones (Display Zoom, Slide Over, a ⅓ split) rather than compressing the
+> buttons or widening the editor. The Sketch component library
 > (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
 > dimensions and shapes.
 
@@ -240,15 +242,15 @@
 >
 > Two notes for whoever touches it next. The strip is now **at its width
 > budget**, in the sense that matters: `swipeActionButtonWidth` is
-> `max(44, min(72, rowWidth × 0.6 / count))`, so three actions on the narrowest
-> supported row (343pt — an iPhone SE less the 16pt gutter each side) come to
+> `max(44, min(72, rowWidth × 0.6 / count))`, so three actions on a
+> 343pt row (a 375pt iPhone less the 16pt gutter each side) come to
 > 68.6pt each, still under the 72pt base and comfortably over the 44pt floor, and
 > the strip lands on exactly the 60% cap. An *open* strip therefore went from
 > ~42% of the row to the full 60%. A fourth action does **not** overflow — the
 > cap simply shrinks each button (51.4pt at that width) — so what a further
 > addition costs is target size, not layout: the 44pt floor only starts winning
-> below ~293pt of row width, which is not a device. `SwipeRevealRowTests` pins
-> the three-action case at that narrowest width so the next addition has to look
+> below ~293pt of row width (a Display Zoom row is 288pt, so there the floor does
+> win). `SwipeRevealRowTests` pins the three-action case at 343pt so the next addition has to look
 > at this deliberately. And the glyph is
 > **`account_tree`, not Material's own `drive_file_move`** — the bundled font is
 > a subset of the glyphs the app uses, so a new icon means re-subsetting and
