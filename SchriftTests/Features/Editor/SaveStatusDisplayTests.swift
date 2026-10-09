@@ -51,16 +51,39 @@ final class SaveStatusDisplayTests: XCTestCase {
     /// that genuinely reached the server.
     func testAConflictWithNothingUnsavedDoesNotDowngradeASyncedSave() {
         XCTAssertEqual(
-            saveStatusDisplay(saveState: .saved, hasConflict: true, hasUnsavedLocalContent: false),
+            saveStatusDisplay(
+                saveState: .saved, hasConflict: true, hasUnsavedLocalContent: false, connectionDown: false),
             .saved)
+    }
+
+    // MARK: - Offline
+
+    /// A save "in flight" on a dead connection (plane Wi-Fi) hangs until the request times
+    /// out, so claiming "Saving…" is the bug: the draft is on disk and nothing is being sent.
+    /// Everything else keeps its meaning — `.dirty` is not on disk yet, `.failed` is a retry.
+    func testOfflineReadsASaveInFlightAsSavedOnDevice() {
+        XCTAssertEqual(display(.saving, connectionDown: true), .savedOnDevice)
+        XCTAssertEqual(display(.dirty, connectionDown: true), .save)
+        XCTAssertEqual(display(.failed("nope"), connectionDown: true), .retry)
+        XCTAssertEqual(display(.saved, connectionDown: true), .saved)
+        XCTAssertEqual(display(.idle, connectionDown: true), .none)
+        XCTAssertEqual(display(.pendingSync, connectionDown: true), .savedOnDevice)
+    }
+
+    func testConflictPrecedenceIsUnchangedWhileOffline() {
+        XCTAssertEqual(display(.saved, hasConflict: true, connectionDown: true), .savedOnDevice)
+        XCTAssertEqual(display(.dirty, hasConflict: true, connectionDown: true), .save)
+        XCTAssertEqual(display(.failed("nope"), hasConflict: true, connectionDown: true), .savedOnDevice)
     }
 
     // MARK: - Helper
 
     private func display(
         _ state: EditorViewModel.SaveState,
-        hasConflict: Bool = false
+        hasConflict: Bool = false,
+        connectionDown: Bool = false
     ) -> SaveStatusDisplay {
-        saveStatusDisplay(saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true)
+        saveStatusDisplay(
+            saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true, connectionDown: connectionDown)
     }
 }

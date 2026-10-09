@@ -29,6 +29,76 @@ final class DocsAPIClientTests: XCTestCase {
         XCTAssertEqual(config, Config(theme: "indigo"))
     }
 
+    /// Collects `onTransportOutcome` calls. The hook is `@Sendable` and runs on the client
+    /// actor, so the box is lock-guarded.
+    private final class OutcomeBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [TransportOutcome] = []
+        private var instants: [ContinuousClock.Instant] = []
+        func record(_ outcome: TransportOutcome, _ startedAt: ContinuousClock.Instant) {
+            lock.withLock {
+                stored.append(outcome)
+                instants.append(startedAt)
+            }
+        }
+        var outcomes: [TransportOutcome] { lock.withLock { stored } }
+        var startInstants: [ContinuousClock.Instant] { lock.withLock { instants } }
+    }
+
+    func testAnyHTTPResponseReportsReachedServer() async {
+        struct Config: Decodable {}
+        let box = OutcomeBox()
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onTransportOutcome: { box.record($0, $1) }
+        )
+
+        // Hold the response so an instant taken while the request is provably in flight
+        // separates "stamped at the start" from "stamped on completion".
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil, releasedBy: gate)
+        }
+        let task = Task { () -> Config? in try? await client.get("config/") }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        let mid = ContinuousClock.now
+        gate.open()
+        _ = await task.value
+        XCTAssertEqual(box.outcomes, [.reachedServer])
+        guard let start = box.startInstants.first else { return XCTFail("no start instant was reported") }
+        XCTAssertLessThan(start, mid, "stamped with the request's start, not when the response arrived")
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let _: Config? = try? await client.get("config/")
+        XCTAssertEqual(box.outcomes, [.reachedServer, .reachedServer], "a 500 still proves the server answered")
+    }
+
+    func testConnectivityFailureReportsUnreachableAndStillThrowsNetwork() async {
+        struct Config: Decodable {}
+        let box = OutcomeBox()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onTransportOutcome: { box.record($0, $1) }
+        )
+
+        do {
+            let _: Config = try await client.get("config/")
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            guard case .network = error else { return XCTFail("Expected .network, got \(error)") }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+        XCTAssertEqual(box.outcomes, [.unreachable])
+    }
+
     func testUnauthorizedResponseThrowsSessionExpired() async {
         struct Config: Decodable {}
         MockURLProtocol.stubHandler = { _ in

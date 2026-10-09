@@ -60,10 +60,13 @@ struct SyncCaption: Equatable {
 /// produces is the truthful one.
 /// (2) other unsaved local content → save wording (a previously-synced doc with a stranded
 /// draft must not read "Not synced yet"); (3) synced → "Synced X ago"; (4) neither.
+/// `isOffline` is the display signal (path, Work Offline or transport evidence); `controlsOffline` is
+/// the controls signal (path down or Work Offline), which alone decides whether the retry is offered.
 func syncCaption(
     hasUnsavedLocalContent: Bool,
     hasConflict: Bool,
     isOffline: Bool,
+    controlsOffline: Bool,
     saveState: EditorViewModel.SaveState,
     lastSyncedAt: Date?,
     now: Date,
@@ -85,9 +88,12 @@ func syncCaption(
         // the device is actually online (a 5xx / rate limit / HTTP-3 stall parked the
         // save), the reconnect/foreground auto-sync triggers can't fire, so the
         // caption doubles as a manual retry; offline it stays passive (reconnect
-        // handles it).
+        // handles it). "Offline" for the retry is the path/Work Offline signal
+        // (`controlsOffline`), not the display one: transport evidence alone must not hide a
+        // control, because tapping it is the only request that can observe the server
+        // coming back.
         if case .pendingSync = saveState {
-            return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: !isOffline)
+            return SyncCaption(text: .key(.editor_sync_pending_sync), offersRetry: !controlsOffline)
         }
         // Above the offline wording: content is not on disk until the flush writes
         // the draft, so "Saved on this device" would be a lie here.
@@ -210,6 +216,9 @@ struct EditorView: View {
     var initialIsFavorite: Bool = false
     private var offlineOverride: Bool = false
     private var isOffline: Bool { offlineOverride || viewModel.availability.isOffline }
+    /// Offline for *status display* only (banner, save status, sync caption): adds the
+    /// transport evidence a satisfied-but-dead path produces. Controls keep `isOffline`.
+    private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
@@ -624,7 +633,7 @@ struct EditorView: View {
     private var mainContent: some View {
         VStack(spacing: 0) {
 
-            if isOffline, viewModel.hasLocalCopy {
+            if showsOfflineStatus, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
             }
 
@@ -840,7 +849,8 @@ struct EditorView: View {
         let display = saveStatusDisplay(
             saveState: viewModel.saveState,
             hasConflict: viewModel.syncConflict != nil,
-            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent)
+            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+            connectionDown: offlineOverride || viewModel.availability.connectionAppearsDown)
         if display == .none {
             syncCaptionLabel
         } else {
@@ -1312,7 +1322,8 @@ struct EditorView: View {
         syncCaption(
             hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
             hasConflict: viewModel.syncConflict != nil,
-            isOffline: isOffline,
+            isOffline: showsOfflineStatus,
+            controlsOffline: isOffline,
             saveState: viewModel.saveState,
             lastSyncedAt: viewModel.lastSyncedAt,
             now: now,

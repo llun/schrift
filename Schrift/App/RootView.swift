@@ -56,7 +56,8 @@ private struct AuthenticatedHomeContainer: View {
         let client = DocsAPIClient(
             baseURL: serverURL.appendingPathComponent("api/v1.0/"),
             onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } },
-            onRequestFailure: { failure in diagnostics.record(failure) }
+            onRequestFailure: { failure in diagnostics.record(failure) },
+            onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) }
         )
         let origin = siteOrigin(for: serverURL) ?? ""
         _viewModel = State(
@@ -149,9 +150,19 @@ private struct AuthenticatedHomeContainer: View {
         // triggers both see, so they can both ask — two from here, three if a pull-to-refresh
         // joins them, and latest-wins on the loads that follow. See
         // `refreshSignedInUserIfUnknown`.
+        //
+        // Two edges, deliberately split. The draft sync follows `appearsOffline`'s true→false: a
+        // server answering again after transport failures (Wi-Fi gained internet, the plane
+        // landed) is a reconnect too, though the path never went down — and a path false→true
+        // also clears `appearsOffline`, so that one edge covers both and nothing syncs twice.
+        // The live sockets follow the real path edge only: transport evidence says nothing
+        // about whether a socket should be rebuilt.
         .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
             guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
             collaboration.reconnect()
+        }
+        .onChange(of: connectivity.appearsOffline) { wasOffline, isOffline in
+            guard shouldSyncOnReachabilityChange(wasReachable: !wasOffline, isReachable: !isOffline) else { return }
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
         }
