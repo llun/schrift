@@ -1073,13 +1073,13 @@ new code reads like the surrounding code.
 
 - <a id="sketch-source-of-truth"></a>**Sketch source of truth.** The design
   lives in the separate [`llun/sketch`](https://github.com/llun/sketch) repo
-  (checked out beside this one as `sketch/`), under `Schrijft/`:
-  - `Schrijft/Schrijft.sketch` is the **component library only** — colors,
+  (checked out beside this one as `sketch/`), under `Schrift/`:
+  - `Schrift/Schrift.sketch` is the **component library only** — colors,
     type, symbols and components. When a change alters the design (a token, a
     component's shape, size or states, a new component), update the matching
     symbol or component there in the same piece of work.
   - **App screens are never placed in the Sketch file.** They are generated as
-    HTML into `Schrijft/Screens/` (an `index.html` viewer plus its assets).
+    HTML into `Schrift/Screens/` (an `index.html` viewer plus its assets).
     When a change alters a screen, regenerate the affected screens there.
   - Commit and push the sketch repo **directly to its default branch** — no
     PR. Only the code change in this repo goes through the normal PR flow.

@@ -99,7 +99,7 @@
 > The formatting accessory's seven actions fit the narrowest phone column; it still
 > scrolls horizontally, as a safeguard, rather than compressing an eighth action or
 > widening the editor. The Sketch component library
-> (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
+> (`Schrift/Schrift.sketch` in the `llun/sketch` repo) uses the same control
 > dimensions and shapes.
 
 > **Revised: 2026-10-05 (Hide completed checklist items).** Reading mode offers
