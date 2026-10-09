@@ -166,7 +166,12 @@ final class SharedViewModel {
             // A real 401 is not "offline": the client's onSessionExpired hook has
             // already raised the app-level re-login sheet, so keep cache silently.
             let failed = (error as? DocsAPIError) != .sessionExpired
-            loadFailedOffline = failed
+            // Only a transport failure can explain Offline; HTTP errors (403/429/5xx) must not.
+            if case .network = error as? DocsAPIError {
+                loadFailedOffline = true
+            } else {
+                loadFailedOffline = false
+            }
             // Loud when a failing load has no cache to fall back on, or on an
             // explicit pull-to-refresh.
             if failed, userInitiated || !hadCache {

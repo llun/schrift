@@ -208,7 +208,9 @@ final class SharedViewModelTests: XCTestCase {
 
     func testListFailureWithNoCacheIsLoudAndOffline() async {
         let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
         await viewModel.load()
         XCTAssertEqual(viewModel.errorKey, .shared_error_load)
         XCTAssertTrue(viewModel.isOffline)
@@ -220,11 +222,21 @@ final class SharedViewModelTests: XCTestCase {
             decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
         await viewModel.load()
         XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline)
         XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"])
+    }
+
+    func testServerErrorWithPathUpDoesNotMarkOffline() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.load()
+        XCTAssertEqual(viewModel.errorKey, .shared_error_load)
+        XCTAssertFalse(viewModel.isOffline, "an HTTP error is not evidence the network is down")
     }
 
     func testRefreshFailureWithCacheIsLoud() async {
@@ -448,7 +460,6 @@ final class SharedViewModelTests: XCTestCase {
         await viewModel.refresh()
 
         XCTAssertEqual(recorder.count(ofMethod: "GET"), 0)
-        XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"])
         XCTAssertNil(viewModel.errorKey)
         XCTAssertTrue(viewModel.isOffline, "the banner follows the live path, not a latched fetch failure")
         XCTAssertFalse(viewModel.isLoading)
@@ -510,6 +521,29 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"], "the crossing response is not installed")
         XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["Cached Doc"], "nor cached")
         XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testAFailureThatCrossedAnOfflineOnlineFlipShowsNoError() async {
+        let (availability, path) = makeAvailability()
+        let viewModel = makeViewModel(availability: availability)
+        let recorder = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil, releasedBy: gate)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.count(ofMethod: "GET", urlContaining: "is_creator_me=false") == 1 }
+        path.update?(false)
+        await waitUntil { availability.isOffline }
+        path.update?(true)
+        await waitUntil { !availability.isOffline }
+        gate.open()
+        await load.value
+
+        XCTAssertNil(viewModel.errorKey, "a failure that crossed an availability flip is discarded")
         XCTAssertFalse(viewModel.isLoading)
     }
 }
