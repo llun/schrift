@@ -23,6 +23,29 @@ final class ChecklistFilterTests: XCTestCase {
         add(attachment)
     }
 
+    /// Failure-only evidence, so the next CI failure shows whether the press reached the switch.
+    private func attachSwitchDiagnostics(app: XCUIApplication, toggle: XCUIElement, nativeSwitch: XCUIElement) {
+        var lines = [
+            "nativeSwitch.frame: \(nativeSwitch.frame)",
+            "nativeSwitch.isHittable: \(nativeSwitch.isHittable)",
+            "nativeSwitch.value: \(String(describing: nativeSwitch.value))",
+        ]
+        if toggle.exists {
+            lines.append("toggle.frame: \(toggle.frame)")
+            lines.append("toggle.value: \(String(describing: toggle.value))")
+        }
+        let attachments = [
+            ("Hide completed switch state", XCTAttachment(string: lines.joined(separator: "\n"))),
+            ("Hide completed screenshot", XCTAttachment(screenshot: XCUIScreen.main.screenshot())),
+            ("Hide completed hierarchy", XCTAttachment(string: app.debugDescription)),
+        ]
+        for (name, attachment) in attachments {
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
     private func enableCompletedFilter(in app: XCUIApplication) -> Bool {
         let toggle = app.switches["checklist.hideCompleted"]
         XCTAssertEqual(toggle.value as? String, "0")
@@ -34,11 +57,10 @@ final class ChecklistFilterTests: XCTestCase {
         // CI captured a correctly targeted 50ms tap that left the switch off.
         // Exercise one 200ms stationary press, without retrying or supplying
         // configured state, and verify it before testing projection/mode changes.
-        // Press the switch's own centre coordinate: at accessibility sizes the row reflows and a press resolved
-        // against the element frame can land outside the UISwitch's real hit region.
-        nativeSwitch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
+        nativeSwitch.press(forDuration: 0.2)
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: toggle)
         guard XCTWaiter.wait(for: [enabled], timeout: 5) == .completed else {
+            attachSwitchDiagnostics(app: app, toggle: toggle, nativeSwitch: nativeSwitch)
             XCTFail("The Hide completed gesture must enable filtering before the flow continues")
             return false
         }
