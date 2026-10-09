@@ -156,6 +156,17 @@ final class DocumentDecodingTests: XCTestCase {
         XCTAssertTrue(document.abilities.childrenCreate)
     }
 
+    /// Every role the server can grant a link must decode, not only `reader`.
+    func testDecodesCommenterAndEditorLinkRoles() throws {
+        let original = String(decoding: fixture, as: UTF8.self)
+        for (raw, expected) in [("commenter", LinkRole.commenter), ("editor", .editor)] {
+            let json = original.replacingOccurrences(of: "\"link_role\": \"reader\"", with: "\"link_role\": \"\(raw)\"")
+            XCTAssertNotEqual(json, original)
+            let document = try JSONDecoder.docsAPI.decode(Document.self, from: Data(json.utf8))
+            XCTAssertEqual(document.linkRole, expected)
+        }
+    }
+
     /// An explicit value must still win over the default.
     func testAnExplicitIsFavoriteStillDecodes() throws {
         let document = try JSONDecoder.docsAPI.decode(Document.self, from: fixture)

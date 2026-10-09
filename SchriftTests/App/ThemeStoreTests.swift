@@ -87,6 +87,14 @@ final class DocsThemePaletteTests: XCTestCase {
         }
     }
 
+    /// A palette that ignores its theme would collapse every theme onto one page colour.
+    func testEveryThemeResolvesToItsOwnPageSurfaceInEachMode() {
+        for isDark in [false, true] {
+            let pages = Set(AppTheme.allCases.map { DocsPalette(theme: $0, isDark: isDark).surfacePage })
+            XCTAssertEqual(pages.count, AppTheme.allCases.count, "isDark=\(isDark)")
+        }
+    }
+
     func testPrimaryControlTextContrastsAgainstItsResolvedFillInEveryThemeAndMode() {
         for theme in AppTheme.allCases {
             for color in [ButtonColor.brand, .neutral, .danger] {
