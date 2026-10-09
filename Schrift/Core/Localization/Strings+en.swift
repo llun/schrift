@@ -264,6 +264,7 @@ enum Strings_en {
         .versions_restore_web: "Restore on the web",
         .versions_error: "Couldn't load versions. Please try again.",
         .versions_empty: "No earlier versions yet.",
+        .versions_web_only: "This server keeps version history on the web.",
 
         // Editor - inline image (MarkdownImageView): accessibility labels plus the
         // visible off-origin tap-to-load caption

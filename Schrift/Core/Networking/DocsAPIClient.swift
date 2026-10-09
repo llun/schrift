@@ -24,6 +24,14 @@ actor DocsAPIClient {
     /// discarded on a later 404 so a server upgrade can be detected without signing out.
     var favoriteListPath: String?
 
+    /// Where `saveDocumentContent` writes a document's body on this server: the legacy
+    /// `documents/{id}/content/` PATCH, or Docs 6's collaboration server
+    /// (`/collaboration/ydoc/v1/{org}/{id}`). nil until something proved which one —
+    /// `serverConfig()` (release version / collaboration URL shape), or a legacy PATCH
+    /// answering Django's HTML 404 followed by a collaboration GET that answered. See
+    /// `ContentSaveRoute` (`CollaborationYDocEndpoints.swift`).
+    var contentSaveRoute: ContentSaveRoute?
+
     init(
         baseURL: URL,
         session: URLSession = .shared,
@@ -74,18 +82,22 @@ actor DocsAPIClient {
         return url
     }
 
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        try await send(path: path, method: "GET", body: nil)
+    /// `accept` sets the `Accept` header; nil (the default) sends none, exactly as every
+    /// Django route has always been called. Only the collaboration server's document route
+    /// needs it, to choose its JSON representation over raw bytes.
+    func get<T: Decodable>(_ path: String, accept: String? = nil) async throws -> T {
+        try await send(path: path, method: "GET", body: nil, accept: accept)
     }
 
     func getRawData(_ path: String) async throws -> Data {
         try await performRequest(path: path, method: "GET", body: nil, contentType: nil)
     }
 
-    func send<T: Decodable>(path: String, method: String, body: Data?, contentType: String? = "application/json")
-        async throws -> T
-    {
-        let data = try await performRequest(path: path, method: method, body: body, contentType: contentType)
+    func send<T: Decodable>(
+        path: String, method: String, body: Data?, contentType: String? = "application/json", accept: String? = nil
+    ) async throws -> T {
+        let data = try await performRequest(
+            path: path, method: method, body: body, contentType: contentType, accept: accept)
         do {
             return try JSONDecoder.docsAPI.decode(T.self, from: data)
         } catch {
@@ -97,12 +109,17 @@ actor DocsAPIClient {
         _ = try await performRequest(path: path, method: method, body: body, contentType: contentType)
     }
 
-    private func performRequest(path: String, method: String, body: Data?, contentType: String?) async throws -> Data {
+    private func performRequest(
+        path: String, method: String, body: Data?, contentType: String?, accept: String? = nil
+    ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw DocsAPIError.network("Invalid path: \(path)")
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let accept {
+            request.setValue(accept, forHTTPHeaderField: "Accept")
+        }
 
         if let body {
             request.httpBody = body

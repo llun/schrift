@@ -8,7 +8,10 @@ Browse, search, and edit documents; share and manage permissions; and read a
 document's version history (browsing is native, restoring a version currently
 hands off to the web app). Real-time **live collaboration** (Yjs/Hocuspocus over
 a WebSocket) is built in behind a default-off Profile toggle, pending on-device
-verification against a collaboration-capable server. The app supports
+verification against a collaboration-capable server. **Docs 6** servers are
+supported: saves go to Docs 6's collaboration server as incremental updates and
+version history is browsed on the web; live collaboration is unavailable there
+until the app speaks Docs 6's y-websocket protocol. The app supports
 **White/Mist/Paper personal themes**, independent **Light/Dark/System appearance** and an **in-app language picker covering 11
 languages** (English, French, Spanish, German, Italian, Dutch, Portuguese,
 Slovene, Thai, and Simplified/Traditional Chinese) that switches the UI live,

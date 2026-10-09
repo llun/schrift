@@ -159,6 +159,19 @@ amendment above; when this was written, editing offline was still blocked.)
   through the same conflict-checked funnel every other queued draft uses. The
   original rationale — "never a path that produces edits which cannot save" —
   is preserved, not abandoned: the edits *can* save, just later.
+- **Docs 6 servers save incrementally, below the coordinator.** Docs 6 removed
+  `PATCH documents/{id}/content/`; `saveDocumentContent` then GETs the collaboration
+  server's state, diffs the editor's markdown against it and PATCHes only the
+  difference (or nothing) — see `docs/architecture.md`, "Editing & save mechanism".
+  Nothing in this document changes: the coordinator still hands `saveDocumentContent`
+  the full markdown, the half-land contract (throws ⇒ body unconfirmed, non-nil ⇒ body
+  landed and only the title failed) is identical, and every draft/baseline/conflict
+  rule applies as written. The written content is still exactly the markdown
+  (last-write-wins for the blocks the user changed); what differs is that untouched
+  blocks are not rewritten, so a co-author's concurrent edit to *another* block now
+  survives a save instead of being overwritten. A server state the app cannot safely
+  diff (undecodable, incomplete, non-canonical) fails the save as `.decoding` — not
+  retryable, so it lands on `.failed` with the draft kept, never on a guess.
 - No live cursors. Saves remain full-overwrite / last-write-wins **when the classic
   path is what's active** — see "Cache stays consistent on save" (§3) below for the
   live-snapshot save path that now runs alongside it. **Live *reading* and, as of

@@ -12,6 +12,7 @@ final class StringsCompletenessTests: XCTestCase {
     private static let englishOnlyKeys: Set<L10nKey> = [
         .profile_theme, .theme_white, .theme_mist, .theme_paper,
         .theme_white_description, .theme_mist_description, .theme_paper_description, .theme_footer,
+        .versions_web_only,
     ]
 
     private static let extendedPluralKeys: Set<L10nKey> = [

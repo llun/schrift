@@ -197,4 +197,28 @@ final class BlockNoteWriteTests: XCTestCase {
         let blocks = MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: "https://docs.example.org")
         try assertFromEmptyMatchesGolden(blocks)
     }
+
+    /// A nested list: each block's children go in a nested `blockGroup` minted after its
+    /// props and before its `id`, with the content element as the group's left origin — the
+    /// shape `YjsEncoderTests.testNestedListChildrenGoInANestedBlockGroup` pins against yjs.
+    func testFromEmptyNestedListMatchesGolden() throws {
+        let checklist = BlockNoteBlock(
+            node: "checkListItem", props: P + [("checked", .bool(false))], runs: [InlineRun("C")], id: U(3))
+        var b = BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("B")], id: U(2))
+        b.children = [checklist]
+        let n = BlockNoteBlock(
+            node: "numberedListItem", props: P + [("start", .null)], runs: [InlineRun("N")], id: U(4))
+        var a = BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("A")], id: U(1))
+        a.children = [b, n]
+        let d = BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("D")], id: U(5))
+        try assertFromEmptyMatchesGolden([a, d])
+    }
+
+    /// The same, threaded through the markdown pipeline the Docs 6 save uses.
+    func testFromEmptyNestedMarkdownMatchesGolden() throws {
+        let blocks = MarkdownYjs.blockNoteBlocks(
+            from: "- one\n  - nested\n- two\n\n1. first\n   - under", serverOrigin: "https://docs.example.org")
+        XCTAssertTrue(blocks.contains { !$0.children.isEmpty }, "the fixture must actually nest")
+        try assertFromEmptyMatchesGolden(blocks)
+    }
 }

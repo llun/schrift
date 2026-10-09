@@ -96,6 +96,52 @@ final class BlockNoteWriteOracleTests: XCTestCase {
 
     // MARK: - Step 1: incremental diff cases (document-level)
 
+    /// A survivor whose new block gained children is rebuilt, never reconciled: reconciling
+    /// only edits the content element and would silently drop the subtree.
+    func testASurvivorThatGainsChildrenIsRebuiltWithThem() throws {
+        let id = "11111111-1111-1111-1111-111111111111"
+        let item = BlockNoteBlock(node: "bulletListItem", props: baseProps, runs: [InlineRun("parent")], id: id)
+        var parent = item
+        parent.children = [
+            BlockNoteBlock(
+                node: "bulletListItem", props: baseProps, runs: [InlineRun("child")],
+                id: "22222222-2222-2222-2222-222222222222")
+        ]
+        let doc = YDoc(clientID: 42)
+        defer { doc.destroy() }
+        _ = try BlockNoteWrite.applyEdit(old: [], new: [item], to: doc)
+
+        _ = try BlockNoteWrite.applyEdit(old: [item], new: [parent], to: doc)
+
+        // The projection models one flat level, so a block holding a nested group reads as
+        // opaque "nested children" — the evidence the subtree was written.
+        let projected = YBlockProjection.project(doc).blocks
+        XCTAssertEqual(projected.map(\.id), [id])
+        XCTAssertEqual(projected.first?.fidelity, .opaque(reason: "nested children"))
+    }
+
+    /// An element with no `xmlText` (y-prosemirror writes none for an empty paragraph) has
+    /// nowhere to splice text, so a text change rebuilds the element instead of dropping it.
+    func testTypingIntoAParagraphWithNoTextChildRebuildsItsElement() throws {
+        let id = "11111111-1111-1111-1111-111111111111"
+        let doc = YDoc(clientID: 42)
+        defer { doc.destroy() }
+        try doc.transact(local: true) { tx in
+            let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            try YWrite.insertAfter(tx, into: doc.get(BlockNoteWrite.fragmentField), after: nil, [.type(group)])
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            try YWrite.insertAfter(tx, into: group, after: nil, [.type(container)])
+            try YWrite.insertAfter(
+                tx, into: container, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "paragraph")))])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+        }
+        let empty = BlockNoteBlock(node: "paragraph", props: [], runs: [], id: id)
+
+        _ = try BlockNoteWrite.applyEdit(old: [empty], new: [para("typed", id: id)], to: doc)
+
+        assertProjects(doc, to: [para("typed", id: id)])
+    }
+
     func testTypingACharIntoAParagraph() throws {
         let a = para("hello", id: "11111111-1111-1111-1111-111111111111")
         let b = para("heXllo", id: "11111111-1111-1111-1111-111111111111")

@@ -72,12 +72,14 @@ extension DocsAPIClient {
     /// `DocsAPIError` the one error type crossing this layer (see AGENTS.md, Networking). The
     /// result is **not** discardable: a caller that ignores it silently loses the fact that
     /// the server holds its content, which is the whole point.
+    ///
+    /// **Two body routes** (`ContentSaveRoute`, `saveContentBody`): before Docs 6 the body is a
+    /// full-overwrite document PATCHed to `documents/{id}/content/`; on Docs 6, which removed
+    /// that route, it is an incremental update diffed against the collaboration server's own
+    /// state (a GET, then a PATCH that is skipped when nothing changed). Either way the body
+    /// is confirmed before the title is attempted, so the contract below holds unchanged.
     func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> DocsAPIError? {
-        // The one production encode site, and it runs on the client actor, so the
-        // origin is read straight off `baseURL` rather than threaded down through
-        // the save coordinator.
-        let update = MarkdownYjs.encode(markdown: markdown, serverOrigin: serverOrigin)
-        try await setContent(documentID: documentID, yjsUpdate: update)
+        try await saveContentBody(documentID: documentID, markdown: markdown)
         do {
             try await updateTitle(documentID: documentID, title: title)
             return nil
