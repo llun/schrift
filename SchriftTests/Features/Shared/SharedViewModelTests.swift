@@ -245,7 +245,9 @@ final class SharedViewModelTests: XCTestCase {
             decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
         ])
         let viewModel = makeViewModel()
-        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
         await viewModel.refresh()
         XCTAssertEqual(viewModel.errorKey, .shared_error_load)
         XCTAssertTrue(viewModel.isOffline)
