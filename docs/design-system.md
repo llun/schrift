@@ -250,8 +250,8 @@
 > cap simply shrinks each button (51.4pt at that width) — so what a further
 > addition costs is target size, not layout: the 44pt floor only starts winning
 > below ~293pt of row width (a Display Zoom row is 288pt, so there the floor does
-> win). `SwipeRevealRowTests` pins the three-action case at 343pt so the next addition has to look
-> at this deliberately. And the glyph is
+> win). `SwipeRevealRowTests` pins the three-action case at 343pt and does not catch a fourth
+> action, which must be checked at 288pt by hand. And the glyph is
 > **`account_tree`, not Material's own `drive_file_move`** — the bundled font is
 > a subset of the glyphs the app uses, so a new icon means re-subsetting and
 > committing the binary; that is a follow-up rather than a blocker, and the tree
