@@ -19,6 +19,26 @@ final class SharedViewModelTests: XCTestCase {
         preferences = UserDefaults(suiteName: preferencesSuiteName)!
     }
 
+    private final class FakePath: @unchecked Sendable {
+        var update: (@Sendable (Bool) -> Void)?
+    }
+
+    /// An availability whose network path the test drives through `path.update`.
+    private func makeAvailability() -> (OnlineAvailability, FakePath) {
+        let path = FakePath()
+        let connectivity = ConnectivityMonitor(
+            monitoring: NetworkPathMonitoring { update in
+                path.update = update
+                return {}
+            })
+        return (OnlineAvailability(connectivity: connectivity, userDefaults: preferences), path)
+    }
+
+    private func makeViewModel(availability: OnlineAvailability) -> SharedViewModel {
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        return SharedViewModel(client: client, cache: cache, userDefaults: preferences, availability: availability)
+    }
+
     override func tearDown() {
         MockURLProtocol.reset()
         UserDefaults(suiteName: cacheSuiteName)?.removePersistentDomain(forName: cacheSuiteName)
@@ -407,5 +427,89 @@ final class SharedViewModelTests: XCTestCase {
             path: "0001", createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
 
         XCTAssertFalse(makeViewModel().isDeletePending(document))
+    }
+
+    // MARK: - Connectivity
+
+    func testPathDownServesCacheWithNoRequestAndNoError() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+        ])
+        let (availability, path) = makeAvailability()
+        let viewModel = makeViewModel(availability: availability)
+        let recorder = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            return .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+        }
+        path.update?(false)
+        await waitUntil { availability.isOffline }
+
+        await viewModel.refresh()
+
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 0)
+        XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"])
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertTrue(viewModel.isOffline, "the banner follows the live path, not a latched fetch failure")
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
+    func testReconnectLoadFetchesAndClearsTheOfflineState() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+        ])
+        let (availability, path) = makeAvailability()
+        let viewModel = makeViewModel(availability: availability)
+        let list = Self.paginatedFixture(id: "22222222-2222-4222-8222-222222222222", title: "Fresh Doc")
+        let recorder = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            if (request.url?.absoluteString ?? "").contains("/accesses/") {
+                return .init(statusCode: 200, headers: [:], body: Data("[]".utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: list, error: nil)
+        }
+        path.update?(false)
+        await waitUntil { availability.isOffline }
+        await viewModel.load()
+        XCTAssertEqual(recorder.count(ofMethod: "GET", urlContaining: "is_creator_me=false"), 0)
+
+        path.update?(true)
+        await waitUntil { !availability.isOffline }
+        await viewModel.load()
+
+        XCTAssertEqual(recorder.count(ofMethod: "GET", urlContaining: "is_creator_me=false"), 1)
+        XCTAssertEqual(viewModel.documents.map(\.title), ["Fresh Doc"])
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    func testAResponseThatCrossedAnOfflineOnlineFlipIsDiscarded() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+        ])
+        let (availability, path) = makeAvailability()
+        let viewModel = makeViewModel(availability: availability)
+        let list = Self.paginatedFixture(id: "22222222-2222-4222-8222-222222222222", title: "Stale Doc")
+        let recorder = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            return .init(statusCode: 200, headers: [:], body: list, error: nil, releasedBy: gate)
+        }
+
+        let load = Task { await viewModel.load() }
+        await waitUntil { recorder.count(ofMethod: "GET", urlContaining: "is_creator_me=false") == 1 }
+        path.update?(false)
+        await waitUntil { availability.isOffline }
+        path.update?(true)
+        await waitUntil { !availability.isOffline }
+        gate.open()
+        await load.value
+
+        XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"], "the crossing response is not installed")
+        XCTAssertEqual(cache.loadSharedWithMeDocuments()?.map(\.title), ["Cached Doc"], "nor cached")
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.isLoading)
     }
 }

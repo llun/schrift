@@ -108,7 +108,7 @@ struct SharedScreen: View {
         }
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)
-        .task {
+        .task(id: viewModel.availability.token) {
             await viewModel.load()
         }
     }
