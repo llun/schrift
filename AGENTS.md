@@ -2141,7 +2141,7 @@ markdown write endpoint**. Understand this before touching the save path:
   bytes with *no request at all*. It evicts by **last use** with a count *and*
   byte cap, never evicting the just-written entry. Clear the store in `RootView`'s
   `onSignOut` closure alongside `DocumentContentCacheStore`.
-- **Four loader rules that each closed a real defect, none of them obvious.**
+- **Five loader rules that each closed a real defect, none of them obvious.**
   (1) **Offline withholds the network, not the disk** — `loadIfNeeded(_:
   allowsNetwork:)`. Skipping the call while offline also skips the disk read, and
   since the loader is session-scoped a cold launch in airplane mode then showed
@@ -2149,7 +2149,7 @@ markdown write endpoint**. Understand this before touching the save path:
   is chrome only *because* of this parameter, not by default. (2) **A cancelled
   download is not a failure** — tapping a block swaps the reading surface for the
   editing one and tears the card's `.task` down mid-flight; recording `.failed`
-  stranded the card, since `loadIfNeeded` deliberately never auto-retries one.
+  stranded the card, since `loadIfNeeded` never auto-retries a content failure (see (5) for transport ones).
   (3) **A `.cached` state is re-validated against the disk** on both appear and
   tap — eviction can delete the file under a live card (the reading surface is not
   lazy, so an off-screen card never re-runs its `.task`), and the same call is what
@@ -2158,6 +2158,11 @@ markdown write endpoint**. Understand this before touching the save path:
   remote subresources, reopening the very IP/User-Agent/timing disclosure the origin
   gate closes. Key that on the **extension**, never the `-unsafe` flag, which is
   routine for `.docx`.
+  (5) **A transport failure is retried once, a content failure never.** `isTransportFailure`
+  (`DocsAPIError.network` or a connectivity `URLError`) marks a `.failed` as retryable: the next
+  `loadIfNeeded`/`resolve` with the network allowed (the cards' `.task` ids include `isOffline`, so the flip re-runs
+  them) tries once; that attempt is not re-marked, so a second failure is retry-only. `ImageLoader` does this only
+  after its consent check, so retry never bypasses consent.
 - **A web `pdf` block with `showPreview: true` (the web default) exports as
   nothing** — BlockNote 0.51.4's markdown serializer has no `<iframe>` handler —
   so the app never receives it and a full-overwrite save has always silently

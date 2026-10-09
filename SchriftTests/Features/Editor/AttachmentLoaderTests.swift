@@ -339,6 +339,64 @@ final class AttachmentLoaderTests: XCTestCase {
         XCTAssertEqual(loader.state(for: display), .failed)
     }
 
+    func testATransportFailureIsRetriedOnceWhenLoadingResumesOnline() async throws {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let loader = makeLoader()
+        let display = try makeDisplay()
+
+        await loader.loadIfNeeded(display)
+        XCTAssertEqual(loader.state(for: display), .failed)
+        await loader.loadIfNeeded(display, allowsNetwork: false)
+        XCTAssertEqual(loader.state(for: display), .failed, "still offline: no request, state kept")
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 1)
+
+        stub(Data([7, 7]), log: log)
+        await loader.loadIfNeeded(display)
+
+        guard case .cached = loader.state(for: display) else {
+            return XCTFail("Expected .cached, got \(String(describing: loader.state(for: display)))")
+        }
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 2)
+    }
+
+    func testAnAutomaticRetryThatFailsAgainIsRetryOnly() async throws {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.timedOut))
+        }
+        let loader = makeLoader()
+        let display = try makeDisplay()
+
+        await loader.loadIfNeeded(display)
+        await loader.loadIfNeeded(display)
+        await loader.loadIfNeeded(display)
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 2)
+        XCTAssertEqual(loader.state(for: display), .failed)
+    }
+
+    func testAContentFailureIsNotRetriedAutomaticallyWhenOnline() async throws {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+        }
+        let loader = makeLoader()
+        let display = try makeDisplay()
+
+        await loader.loadIfNeeded(display)
+        stub(Data([1]), log: log)
+        await loader.loadIfNeeded(display)
+
+        XCTAssertEqual(loader.state(for: display), .failed)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "/media/"), 1)
+    }
+
     func testRetryAfterAFailureCanSucceed() async throws {
         let attempts = Counter()
         MockURLProtocol.stubHandler = { _ in

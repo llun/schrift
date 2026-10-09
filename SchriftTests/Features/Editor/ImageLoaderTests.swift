@@ -338,4 +338,104 @@ import XCTest
         XCTAssertEqual(subject.state(for: url), .failed)
         XCTAssertNil(ImageCacheStore(directory: directory).cachedFileURL(for: url, scope: scope!))
     }
+
+    func testATransportFailureIsRetriedOnceWhenLoadingResumesOnline() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        await subject.loadIfNeeded(url, allowsNetwork: false)
+        XCTAssertEqual(subject.state(for: url), .failed, "still offline: no request, state kept")
+        XCTAssertEqual(log.methods.count, 1)
+
+        stub(log: log)
+        await subject.loadIfNeeded(url)
+        XCTAssertNotNil(subject.image(for: url))
+        XCTAssertEqual(log.methods.count, 2)
+    }
+
+    func testAnAutomaticRetryThatFailsAgainIsRetryOnly() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.timedOut))
+        }
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        await subject.loadIfNeeded(url)
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(log.methods.count, 2)
+        XCTAssertEqual(subject.state(for: url), .failed)
+    }
+
+    func testAContentFailureIsNotRetriedAutomatically() async {
+        let log = RequestRecorder()
+        stub(log: log, status: 404)
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        stub(log: log)
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        XCTAssertEqual(log.methods.count, 1)
+    }
+
+    // The cross-scope half is a structural guard; the original-scope half is what tests the retry.
+    func testATransportFailureRetriesOnceInItsOwnScopeOnly() async {
+        let external = URL(string: "https://cdn.example.net/photo.png")!
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let original = scope
+        let subject = loader()
+        subject.approve(external)
+        await subject.loadIfNeeded(external)
+        XCTAssertEqual(subject.state(for: external), .failed)
+        XCTAssertEqual(log.methods.count, 1)
+
+        // Same URL, new session namespace: consent (and the failure marker) belong to the old one.
+        scope = ImageCacheScope(serverOrigin: origin, sessionID: UUID())
+        await subject.loadIfNeeded(external)
+        XCTAssertEqual(subject.state(for: external), .requiresConsent)
+        XCTAssertEqual(log.methods.count, 1, "no request without consent in the new namespace")
+
+        // Back in the original namespace the approved URL still gets its single automatic retry.
+        scope = original
+        stub(log: log)
+        await subject.loadIfNeeded(external)
+        XCTAssertEqual(log.methods.count, 2)
+    }
+
+    func testACachedResultClearsAStaleTransportFailureMarker() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        // Another loader (a different surface, a prior launch) leaves the bytes on disk.
+        stub(log: log)
+        await loader().loadIfNeeded(url)
+        await subject.loadIfNeeded(url)
+        XCTAssertNotNil(subject.image(for: url))
+        let count = log.methods.count
+
+        // A later content failure must be retry-only: the stale marker is gone.
+        ImageCacheStore(directory: directory).remove(url, scope: scope!)
+        stub(log: log, status: 404)
+        await subject.retry(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        stub(log: log)
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        XCTAssertEqual(log.methods.count, count + 1)
+    }
 }
