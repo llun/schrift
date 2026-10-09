@@ -36,7 +36,7 @@ extension View {
     /// SDKs before iOS 27.1 (CI's Xcode) and on devices that do not fold.
     func foldAware(_ action: @escaping (FoldLayout.Fold?) -> Void) -> some View {
         #if canImport(SwiftUI, _version: 8.0.85)
-            // shortcut: reads the first active division only; a device with two creases would need more.
+            // shortcut: reads the first division (active or not) only; a device with two creases would need more.
             return onGeometryChange(for: FoldLayout.Fold?.self) { proxy in
                 guard #available(iOS 27.1, *) else { return nil }
                 let width = proxy.size.width

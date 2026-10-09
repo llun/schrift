@@ -256,8 +256,8 @@ Guidelines:
   [`docs/architecture.md`](docs/architecture.md) for the layout rules. Query the
   crease with `.includeInactive`: flat unfolded, the Duo reports it inactive and
   the default query returns nothing. Don't size the split view's sidebar to the
-  crease — `NavigationSplitView` won't tile beside the ~411pt detail that leaves
-  and hides or overlays the sidebar; keep the system width and use
+  crease — of the ~867pt left beside the side rail, that leaves ~411pt of detail,
+  too little for `NavigationSplitView` to tile, so it hides or overlays the sidebar; keep the system width and use
   `foldClearance()` to keep detail content on one side.
 - All build configuration (bundle ids, deployment target, `SWIFT_VERSION`,
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
