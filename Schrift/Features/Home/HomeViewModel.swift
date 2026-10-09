@@ -208,6 +208,18 @@ final class HomeViewModel {
         // A migration re-keys a document onto its server id, after which the local row is
         // correctly withheld and the real one exists only in a server response this view model
         // has not made yet. Refetch on the event itself — see `onDocumentMigrated`.
+        // A replayed offline edit landing means the list `load()` fetched on reconnect (which
+        // races the replay) is stale. Debounced so several drafts landing together cost one
+        // silent refetch; ordinary autosaves never fire this.
+        self.saveCoordinator.onReplayedPushLanded = { [weak self] in
+            guard let self else { return }
+            self.replayReloadTask?.cancel()
+            self.replayReloadTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled, let self else { return }
+                await self.load()
+            }
+        }
         self.saveCoordinator.onDocumentMigrated = { [weak self] migrated in
             // nil when the resume could not fetch the document — the refetch below is then
             // the whole remedy.

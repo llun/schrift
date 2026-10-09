@@ -208,6 +208,24 @@ final class DocumentSaveCoordinator {
     @ObservationIgnored
     var onDocumentMigrated: (@MainActor (Document?) -> Void)?
 
+    /// Fired when a save that **`runSyncPass` replayed** has landed its content on the server.
+    ///
+    /// Why this and not a counter bumped by every `finish`: the replay's pushes are
+    /// unstructured `start` tasks that usually outlive `syncPendingDrafts()`, so a list that
+    /// reloads when the pass returns still reads the pre-push server state and re-caches it
+    /// (old titles and order for documents edited offline). Firing on the landing is the
+    /// first moment a refetch can see the edit. Scoped to replayed pushes (`replayedPushes`)
+    /// so ordinary editor autosaves, which fire on every pause in typing, cause no list churn.
+    ///
+    /// `@ObservationIgnored` and fired last in `finish`, on the same terms as
+    /// `onDocumentMigrated`.
+    @ObservationIgnored
+    var onReplayedPushLanded: (@MainActor () -> Void)?
+
+    /// Documents whose newest enqueue came from `runSyncPass`'s `.push`. Consumed by `finish`
+    /// (success or not, so a stale entry cannot make a later autosave look like a replay).
+    private var replayedPushes: Set<UUID> = []
+
     /// Fired when a queued deletion has actually landed on the server, so a list holding the
     /// row in memory can drop it.
     ///
@@ -3199,6 +3217,7 @@ final class DocumentSaveCoordinator {
                     // (adopting the server's when the user never renamed); the baseline advances
                     // with it, or a *second* remote rename would read as "both renamed" (see
                     // `adoptedBaseline`).
+                    replayedPushes.insert(draft.documentID)
                     enqueue(
                         documentID: draft.documentID, title: title, markdown: draft.markdown,
                         baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title))
@@ -3715,6 +3734,12 @@ final class DocumentSaveCoordinator {
     private func finish(documentID: UUID, save: PendingSave, error: Error?, contentLanded: Bool) {
         inFlight[documentID] = nil
         inFlightContent[documentID] = nil
+        let wasReplayedPush = replayedPushes.remove(documentID) != nil
+        // Fired from every exit below (the early returns included) once the content is known to
+        // be on the server; `defer` keeps it last, after state has settled.
+        defer {
+            if wasReplayedPush, contentLanded { onReplayedPushLanded?() }
+        }
         // Scoped to the save that has just settled — so it must be dropped here, on EVERY branch,
         // not only the one that consumes it. Leaving it behind the `discardedDuringSave` early
         // return let an observation outlive its save and be replayed against an unrelated later
