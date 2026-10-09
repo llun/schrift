@@ -338,4 +338,66 @@ import XCTest
         XCTAssertEqual(subject.state(for: url), .failed)
         XCTAssertNil(ImageCacheStore(directory: directory).cachedFileURL(for: url, scope: scope!))
     }
+
+    func testATransportFailureIsRetriedOnceWhenLoadingResumesOnline() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        await subject.loadIfNeeded(url, allowsNetwork: false)
+        XCTAssertEqual(subject.state(for: url), .failed, "still offline: no request, state kept")
+        XCTAssertEqual(log.methods.count, 1)
+
+        stub(log: log)
+        await subject.loadIfNeeded(url)
+        XCTAssertNotNil(subject.image(for: url))
+        XCTAssertEqual(log.methods.count, 2)
+    }
+
+    func testAnAutomaticRetryThatFailsAgainIsRetryOnly() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.timedOut))
+        }
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        await subject.loadIfNeeded(url)
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(log.methods.count, 2)
+        XCTAssertEqual(subject.state(for: url), .failed)
+    }
+
+    func testAContentFailureIsNotRetriedAutomatically() async {
+        let log = RequestRecorder()
+        stub(log: log, status: 404)
+        let subject = loader()
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        stub(log: log)
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.state(for: url), .failed)
+        XCTAssertEqual(log.methods.count, 1)
+    }
+
+    func testATransportFailureDoesNotBypassConsentOnRetry() async {
+        let external = URL(string: "https://cdn.example.net/photo.png")!
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let subject = loader()
+        subject.approve(external)
+        await subject.loadIfNeeded(external)
+        XCTAssertEqual(subject.state(for: external), .failed)
+        let other = URL(string: "https://cdn.example.net/other.png")!
+        await subject.loadIfNeeded(other)
+        XCTAssertEqual(subject.state(for: other), .requiresConsent)
+        XCTAssertEqual(log.methods.count, 1)
+    }
 }

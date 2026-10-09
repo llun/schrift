@@ -2153,7 +2153,11 @@ markdown write endpoint**. Understand this before touching the save path:
   (3) **A `.cached` state is re-validated against the disk** on both appear and
   tap — eviction can delete the file under a live card (the reading surface is not
   lazy, so an off-screen card never re-runs its `.task`), and the same call is what
-  makes recency last-*use*. (4) **Markup types are cached but never previewed**
+  makes recency last-*use*. (5) **A transport failure is retried once, a content failure never.** `isTransportFailure`
+  (`DocsAPIError.network` or a connectivity `URLError`) marks a `.failed` as retryable: the next
+  `loadIfNeeded`/`resolve` with the network allowed (the cards' `.task` ids include `isOffline`, so the flip re-runs
+  them) tries once; that attempt is not re-marked, so a second failure is retry-only. `ImageLoader` does this only
+  after its consent check, so retry never bypasses consent. (4) **Markup types are cached but never previewed**
   (`attachmentIsPreviewable`): QuickLook renders HTML through WebKit, which fetches
   remote subresources, reopening the very IP/User-Agent/timing disclosure the origin
   gate closes. Key that on the **extension**, never the `-unsafe` flag, which is
