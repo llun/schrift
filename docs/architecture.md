@@ -1255,7 +1255,8 @@ defect first:
 - **A cancelled download is not a failure.** Tapping a block swaps the reading
   surface for the editing one, which tears the card's `.task` down mid-flight.
   Recording `.failed` there stranded the card behind a retry nothing had asked
-  for, because `loadIfNeeded` deliberately never auto-retries a failure.
+  for. `loadIfNeeded` never auto-retries a *content* failure; a transport failure (no connection) is retried once
+  when loading resumes with the network allowed.
 - **A `.cached` state is re-validated against the disk, not trusted.** Eviction
   can delete the file while its card is still on screen (the reading surface is
   not lazy, so an off-screen card never re-runs its `.task`), and the tap path

@@ -114,6 +114,7 @@ enum AttachmentLoadState: Equatable, Sendable {
         // to rather than merely least-recently-first-loaded.
         if let url = cache.cachedFileURL(for: display) {
             states[key] = .cached(url)
+            transportFailures.remove(key)
             return
         }
         // The disk has no copy, so a `.cached` entry naming an evicted file must
@@ -134,11 +135,11 @@ enum AttachmentLoadState: Equatable, Sendable {
             await running.value
             return
         }
+        transportFailures.remove(display.urlString)
         if let url = cache.cachedFileURL(for: display) {
             states[display.urlString] = .cached(url)
             return
         }
-        transportFailures.remove(display.urlString)
         await download(display)
     }
 
@@ -181,6 +182,7 @@ enum AttachmentLoadState: Equatable, Sendable {
             // the download: `.failed` so the card offers a retry rather than
             // claiming a file that isn't there.
             states[key] = cache.store(data, for: display).map(AttachmentLoadState.cached) ?? .failed
+            transportFailures.remove(key)
         } catch {
             states[key] = .failed
             if !isAutomaticRetry, isTransportFailure(error) { transportFailures.insert(key) }

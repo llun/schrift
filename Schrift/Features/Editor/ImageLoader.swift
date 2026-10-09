@@ -22,8 +22,9 @@ enum ImageLoadState: Equatable, Sendable {
 }
 
 /// One owner for both surfaces. Tasks outlive view teardown; content failures need an
-/// explicit retry (a transport failure is retried once when loading resumes online). Consent is exact-URL, namespace-scoped and memory-only. Cached
-/// external bytes may display without a tap, because that issues no request.
+/// explicit retry (a transport failure is retried once when loading resumes online).
+/// Consent is exact-URL, namespace-scoped and memory-only. Cached external bytes may
+/// display without a tap, because that issues no request.
 @MainActor @Observable final class ImageLoader {
     private struct Key: Hashable {
         let scope: ImageCacheScope
@@ -141,6 +142,7 @@ enum ImageLoadState: Equatable, Sendable {
         if let file = cache.cachedFileURL(for: key.url, scope: key.scope) {
             if let image = decoded.object(forKey: file as NSURL) {
                 states[key] = .cached(file)
+                transportFailures.remove(key)
                 return image
             }
             let data = await Task.detached { try? Data(contentsOf: file) }.value
@@ -151,6 +153,7 @@ enum ImageLoadState: Equatable, Sendable {
                 guard scope == key.scope else { return nil }
                 remember(image, file: file)
                 states[key] = .cached(file)
+                transportFailures.remove(key)
                 return image
             }
             guard scope == key.scope else { return nil }
@@ -191,6 +194,7 @@ enum ImageLoadState: Equatable, Sendable {
             }
             remember(image, file: file)
             states[key] = .cached(file)
+            transportFailures.remove(key)
             return image
         } catch {
             guard scope == key.scope else { return nil }
