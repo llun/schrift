@@ -55,12 +55,12 @@ the push run is the post-merge verification of the real `main` history
    synthesized switch tap to a later projection or scroll-restoration failure.
    Mixed/all-completed flows still exercise real toggle/reveal interactions;
    configured prerequisites do not replace that coverage. They use one 200ms stationary press
-   at the native switch's centre coordinate (at accessibility sizes the row reflows and an
-   element-frame press can miss the UISwitch's hit region) and require its off-to-on
-   value transition before testing
+   on the native switch and require its off-to-on value transition before testing
    projection or mode changes. A hosted result captured a correctly targeted 50ms
    tap that left the native switch off; why UIKit ignored it remains unconfirmed.
    The tests neither retry the gesture nor bypass the interaction with preset state.
+   When the switch does not turn on, the filter-enable step attaches the switch frame,
+   hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
    Checklist mode swaps likewise use one 200ms stationary press and require
    the old toolbar action to disappear and the new action to appear before
    checking content or restored scroll position. Offline editor toolbar tests
