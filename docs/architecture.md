@@ -298,8 +298,9 @@ the collaboration session, transport, and save coordinator.
   `xmlText` and its run pieces, the element's props, a nested `blockGroup` holding the
   block's children (if any, with the element as its left origin), then the container's
   `id` — and each `YWrite` primitive mints sequentially, so clocks/origins/parents (and
-  therefore the encoded bytes) coincide. Children are only ever *inserted* (the Docs 6
-  save writes nested lists that way): `old` must be flat, and a survivor whose new block
+  therefore the encoded bytes) coincide. Children are only ever *inserted*, and only when the
+  caller opts in with `allowsNestedInserts: true` (the Docs 6 save, which writes nested
+  lists that way; the live path keeps the default `false` and throws): `old` must be flat, and a survivor whose new block
   has children is rebuilt rather than reconciled. A text change is spliced in place only
   when the element's sole child is one `xmlText`; an element with none (y-prosemirror's
   empty paragraph) or several (text split by an inline node) is rebuilt instead.
@@ -396,6 +397,16 @@ one and adds the outbound write path on top of it.
   permanently (so this document's replica is never rebuilt or trusted again this
   session), and the error is rethrown, never trapped — clocks are peer/edit-influenced
   and this store must not crash on them.
+- **A survivor whose content element is not exactly one `xmlText` is rebuilt, not
+  spliced.** `BlockNoteWrite`'s `reconcileBlock` text-splices a changed block in place
+  only when its content element holds exactly one `xmlText`; otherwise — a block holding
+  a web document-link node (its text split around the inline node), or a web-created
+  empty paragraph (y-prosemirror writes no `xmlText` for it) — it rebuilds the block's
+  content element from the new runs. The live path inherits this, so editing such a block
+  here **flattens a document-link node to a plain markdown link** for every peer. `applyEdit`
+  also refuses a nested `new` block on this path (`allowsNestedInserts` defaults to
+  `false`; only the Docs 6 save opts in), so a nested list downgrades to classic rather
+  than broadcasting a subtree.
 - **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
   path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
   when `canWriteReplica` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
@@ -1122,7 +1133,7 @@ This is the part with no direct backend support, so it's called out explicitly:
    c′. `GET /collaboration/ydoc/v1/{org}/{id}?gc=true&awareness=false` (JSON) and integrate the bytes into a throwaway `YDoc` (fresh client id; destroyed after).
    c″. Project it, align the markdown's blocks with it (`BlockNoteAlignment` — an LCS over identical visible content keeps those blocks untouched; edits between anchors reconcile in place only for fully modeled blocks; the rest is removed/inserted), and let `BlockNoteWrite.applyEdit` mint exactly the difference.
    c‴. `PATCH` `{"update": base64}` — skipped when the server already reads like the markdown.
-   The title PATCH (d) is unchanged, as is `saveDocumentContent`'s half-land contract. The written content is still exactly the editor's markdown (the same overwrite semantics), but untouched blocks are no longer rewritten and a concurrent web edit elsewhere in the document merges. A changed opaque/lossy block is rewritten from markdown, as before. Which route a server gets is decided by `/config/` (release major ≥ 6, or a `…/ws/v1/{org}` collaboration URL) or, with nothing known, by the legacy PATCH answering Django's route 404 — nothing written, so the fallback is safe — memoized once the collaboration route answers. The rooted path is app-authored: a UUID plus an `org` validated to `[A-Za-z0-9._~-]`; the host is always the user's own server.
+   The title PATCH (d) is unchanged, as is `saveDocumentContent`'s half-land contract. The written content is still exactly the editor's markdown (the same overwrite semantics). **This is not a merge of co-author edits:** the save diffs the editor's whole document against the server's state at save time, so a concurrent edit survives only if it lands inside the GET→PATCH window; an edit a co-author made to a block after this user loaded the document is reverted by the save unless the draft/conflict rules (`draftSyncDecision`, keyed on `updated_at`) catch it first. Those rules depend on Docs 6 bumping the document's `updated_at` when the collaboration server stores content, which upstream's UPGRADE.md says happens only when the collaboration server is configured with `YHUB_JWT_PRIVATE_KEY` (without it `updated_at` stops following editor edits) — a **deployment requirement**. Only blocks the alignment can anchor are left untouched: unchanged non-opaque blocks, plus `unknownNode:*` and document-link blocks. An untouched opaque block (a table, which parses as `.unknown`) and an untouched nested list are still rewritten from markdown on every save, same as the classic save, and so is a changed opaque/lossy block. Which route a server gets is decided by `/config/` (release major ≥ 6, or a `…/ws/v1/{org}` collaboration URL) or, with nothing known, by the legacy PATCH answering Django's route 404 — nothing written, so the fallback is safe; it then fetches `/config/` once to learn the org (best effort, default `docs`) — memoized once the collaboration route answers, never over a collaboration route already set. The rooted path is app-authored: a UUID plus an `org` validated to `[A-Za-z0-9._~-]`; the host is always the user's own server.
 
 **Known limitation:** this is a full-document overwrite with no conflict detection (no ETag/version check in v1). If someone edits the same document live in the web app concurrently, the loser's changes are silently overwritten. This is an explicit, accepted trade-off of choosing non-realtime editing — not hidden from the user; the Editor screen should make clear this isn't live-collaborative.
 

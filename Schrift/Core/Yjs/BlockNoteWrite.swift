@@ -37,13 +37,24 @@ enum BlockNoteWrite {
     ///
     /// Throws `YIntegrationError` if integration or encoding hits a malformed state;
     /// the caller (the collaboration session, C2) turns that into `failSafe`.
-    static func applyEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], to doc: YDoc) throws -> Data {
+    ///
+    /// `allowsNestedInserts` is the Docs 6 incremental save's opt-in
+    /// (`BlockNoteIncrementalSave`) to write nested lists as freshly inserted subtrees.
+    /// It defaults to `false`, which keeps the live (C2c) path's backstop: a nested `new`
+    /// block throws there, so the live caller downgrades to classic instead of
+    /// broadcasting a nested `blockGroup` the projection reads back as opaque.
+    static func applyEdit(
+        old: [BlockNoteBlock], new: [BlockNoteBlock], to doc: YDoc, allowsNestedInserts: Bool = false
+    ) throws -> Data {
         // `old` is the replica's projection, which is one flat level: a nested `old`
         // block has no live counterpart to map, so refusing is a backstop (the live
-        // caller downgrades to classic). A `new` block may carry children — the Docs 6
-        // save writes nested lists — but only as a freshly *inserted* subtree, never a
-        // reconciled one (see `applyBlocks`).
+        // caller downgrades to classic). A `new` block may carry children only when the
+        // caller opts in (the Docs 6 save writes nested lists) — and then only as a
+        // freshly *inserted* subtree, never a reconciled one (see `applyBlocks`).
         guard !old.contains(where: { !$0.children.isEmpty }) else { throw YIntegrationError.unexpectedCase }
+        guard allowsNestedInserts || !new.contains(where: { !$0.children.isEmpty }) else {
+            throw YIntegrationError.unexpectedCase
+        }
         // Snapshot the state vector *before* the transaction so the returned update
         // is a diff of exactly what this edit minted. From-empty ⇒ empty vector ⇒
         // full snapshot, which is what makes the bytes equal the golden encoder.

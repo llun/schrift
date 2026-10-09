@@ -11,9 +11,10 @@ import Foundation
 /// PATCHed update **incrementally** (see `BlockNoteIncrementalSave`).
 ///
 /// The route is decided by `serverConfig()` (`init(config:)`) when the config is definitive.
-/// The save path itself never fetches config — that would add a request to the first save
+/// The save path does not fetch config up front — that would add a request to the first save
 /// of every client — so with nothing known it tries the legacy route first and, on
-/// `.routeNotFound` only, falls back to the collaboration route. That fallback is safe
+/// `.routeNotFound` only, falls back to the collaboration route, fetching config once at that
+/// point to learn the org (`fallbackCollaborationOrg`). That fallback is safe
 /// because Django's route 404 means the legacy PATCH wrote nothing. It is memoized only once
 /// the collaboration route has *answered*: pinning a route that cannot answer would break
 /// every save for the rest of the client's life (the `prefersLegacyContentRoute` lesson).
@@ -92,16 +93,44 @@ extension DocsAPIClient {
             // Django's own route 404: the legacy PATCH wrote nothing, so trying the Docs 6
             // route is safe. Only this error qualifies — `.notFound` (a deleted document),
             // `.forbidden` and everything else are answers about the document, not the route.
-            try await saveContentToCollaborationYDoc(documentID: documentID, org: "docs", markdown: markdown)
+            let org = try await fallbackCollaborationOrg()
+            try await saveContentToCollaborationYDoc(documentID: documentID, org: org, markdown: markdown)
+        }
+    }
+
+    /// The yhub org for a save that fell back off the legacy route's 404. A deployment may
+    /// name a different org in `COLLABORATION_WS_URL`, and a save into the wrong org lands in
+    /// a room nobody reads — silently — so the fallback asks the config once instead of
+    /// assuming `docs`. A route proven while the legacy PATCH was in flight (a concurrent
+    /// `serverConfig()`) wins without a request. Best effort: `.sessionExpired` propagates
+    /// (the re-login sheet is already up and the save must not pretend otherwise); any other
+    /// config failure falls back to yhub's default org.
+    private func fallbackCollaborationOrg() async throws -> String {
+        if case .collaborationYDoc(let org) = contentSaveRoute { return org }
+        do {
+            let config = try await serverConfig()
+            // Re-read after the await: another config fetch may have settled the route.
+            if case .collaborationYDoc(let org) = contentSaveRoute { return org }
+            return config.collaborationOrg
+        } catch DocsAPIError.sessionExpired {
+            throw DocsAPIError.sessionExpired
+        } catch {
+            return "docs"
         }
     }
 
     /// The Docs 6 body save: GET the server's state, diff the editor's blocks against it
     /// (`BlockNoteIncrementalSave`), PATCH the incremental update — or nothing, when the
-    /// server already reads that way. Memoizes the route once the GET has answered.
+    /// server already reads that way. Memoizes the route once the GET has answered — but
+    /// never over a collaboration route already set (re-read after the await), so a
+    /// config-derived org that landed concurrently is not replaced by this save's guess.
     private func saveContentToCollaborationYDoc(documentID: UUID, org: String, markdown: String) async throws {
         let state = try await collaborationYDocState(documentID: documentID, org: org)
-        contentSaveRoute = .collaborationYDoc(org: org)
+        if case .collaborationYDoc = contentSaveRoute {
+            // Already proven (by config, or by an earlier save): keep it.
+        } else {
+            contentSaveRoute = .collaborationYDoc(org: org)
+        }
         let origin = serverOrigin
         let update: Data?
         do {

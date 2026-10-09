@@ -9,8 +9,15 @@ import Foundation
 ///
 /// This is what the Docs 6 save needs: the collaboration server applies a PATCHed update
 /// incrementally, so a from-scratch document would be *appended* to the existing one. Diffing
-/// against the server's own replica means untouched blocks are not rewritten at all, and a
-/// co-author's concurrent edit to some other block merges instead of being overwritten.
+/// against the server's own replica means blocks this alignment anchors are not rewritten at
+/// all. It is **not** a merge of co-author edits: the editor's whole document is diffed
+/// against the server's state *at save time*, so a co-author's edit to a block after this
+/// user loaded the document is reverted unless the draft/conflict rules (`draftSyncDecision`,
+/// keyed on `updated_at`) catch it first — and those need the Docs 6 collaboration server to
+/// be configured with `YHUB_JWT_PRIVATE_KEY`, without which `updated_at` stops following
+/// editor edits. Only anchored blocks survive untouched (unchanged non-opaque blocks, plus
+/// `unknownNode:*` and document-link blocks); an untouched opaque block (a table, parsed as
+/// `.unknown`) or nested list is still rewritten from markdown, as in the classic save.
 ///
 /// The result's *content* is exactly `new` — the same overwrite semantics as the classic
 /// full-overwrite save. Only the ids change, and only in two ways:

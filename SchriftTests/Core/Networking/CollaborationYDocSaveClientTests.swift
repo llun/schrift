@@ -182,7 +182,8 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
     }
 
     /// With nothing known, the save tries the legacy route; Django's HTML 404 for it means
-    /// nothing was written, so it falls back once — and the next save goes straight there.
+    /// nothing was written, so it falls back once (asking the config for the org) — and the
+    /// next save goes straight there.
     func testAnUnknownServerFallsBackOnTheLegacyRoutes404AndRemembersIt() async throws {
         let log = CapturedRequests()
         stubDocs6(log: log, state: servedState)
@@ -194,9 +195,92 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
         XCTAssertEqual(
             log.trail,
             [
-                "PATCH \(legacyPath)", "GET \(yDocPath)", "PATCH \(yDocPath)", "PATCH \(titlePath)",
-                "GET \(yDocPath)", "PATCH \(yDocPath)", "PATCH \(titlePath)",
+                "PATCH \(legacyPath)", "GET /api/v1.0/config/", "GET \(yDocPath)", "PATCH \(yDocPath)",
+                "PATCH \(titlePath)", "GET \(yDocPath)", "PATCH \(yDocPath)", "PATCH \(titlePath)",
             ])
+    }
+
+    /// A deployment whose `COLLABORATION_WS_URL` names another yhub org: the fallback learns
+    /// it from the config before touching the collaboration server, so the body never lands
+    /// in the default `docs` room nobody reads.
+    func testTheFallbackSavesIntoTheOrgTheConfigNames() async throws {
+        let log = CapturedRequests()
+        let acmePath = "/collaboration/ydoc/v1/acme/abcdef12-1111-4111-8111-111111111111"
+        let legacyPath = legacyPath
+        let docBody = servedState.base64EncodedString()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch (request.httpMethod ?? "", requestPath(request)) {
+            case ("GET", "/api/v1.0/config/"):
+                return jsonStub(["COLLABORATION_WS_URL": "wss://docs.example.org/collaboration/ws/v1/acme"])
+            case ("GET", acmePath):
+                return jsonStub(["doc": docBody])
+            case ("PATCH", acmePath):
+                return jsonStub(["success": true])
+            case ("PATCH", legacyPath):
+                return html404
+            case ("PATCH", _):
+                return jsonStub(["id": "x"])
+            default:
+                return html404
+            }
+        }
+        let client = makeClient()
+
+        let titleFailure = try await client.saveDocumentContent(
+            documentID: documentID, title: "Notes", markdown: "One\n\nTwo, edited")
+
+        XCTAssertNil(titleFailure)
+        XCTAssertEqual(
+            log.trail,
+            [
+                "PATCH \(legacyPath)", "GET /api/v1.0/config/", "GET \(acmePath)", "PATCH \(acmePath)",
+                "PATCH \(titlePath)",
+            ])
+        let route = await client.contentSaveRoute
+        XCTAssertEqual(route, .collaborationYDoc(org: "acme"))
+    }
+
+    /// A route a config proves while the fallback is in flight is never replaced by the
+    /// fallback's own memo: here the fallback's config fetch fails (so it guesses `docs`), and
+    /// a second config fetch naming `acme` lands while its collaboration GET is held.
+    @MainActor
+    func testTheFallbackNeverOverwritesARouteTheConfigProvedMeanwhile() async throws {
+        let log = CapturedRequests()
+        let gate = MockURLProtocol.ResponseGate()
+        let yDocPath = yDocPath
+        let legacyPath = legacyPath
+        let docBody = servedState.base64EncodedString()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch (request.httpMethod ?? "", requestPath(request)) {
+            case ("GET", "/api/v1.0/config/"):
+                let configCalls = log.trail.filter { $0 == "GET /api/v1.0/config/" }.count
+                guard configCalls > 1 else { return jsonStub([:], status: 500) }
+                return jsonStub(["COLLABORATION_WS_URL": "wss://docs.example.org/collaboration/ws/v1/acme"])
+            case ("GET", yDocPath):
+                return .init(
+                    statusCode: 200, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"doc":"\#(docBody)"}"#.utf8), error: nil, releasedBy: gate)
+            case ("PATCH", legacyPath):
+                return html404
+            default:
+                return jsonStub(["id": "x"])
+            }
+        }
+        let client = makeClient()
+        let documentID = documentID
+
+        let save = Task {
+            try await client.saveDocumentContent(documentID: documentID, title: "Notes", markdown: "One\n\nTwo, edited")
+        }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        _ = try await client.serverConfig()
+        gate.open()
+        _ = try await save.value
+
+        let route = await client.contentSaveRoute
+        XCTAssertEqual(route, .collaborationYDoc(org: "acme"), "the config-proven org survives the fallback's memo")
     }
 
     /// A JSON 404 is an answer about the document (deleted), not the route: no fallback.
@@ -240,7 +324,11 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
             }
         }
         XCTAssertEqual(
-            log.trail, ["PATCH \(legacyPath)", "GET \(yDocPath)", "PATCH \(legacyPath)", "GET \(yDocPath)"])
+            log.trail,
+            [
+                "PATCH \(legacyPath)", "GET /api/v1.0/config/", "GET \(yDocPath)",
+                "PATCH \(legacyPath)", "GET /api/v1.0/config/", "GET \(yDocPath)",
+            ])
     }
 
     // MARK: - What the collaboration route sends

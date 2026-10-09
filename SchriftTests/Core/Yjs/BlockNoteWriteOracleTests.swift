@@ -111,7 +111,7 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         defer { doc.destroy() }
         _ = try BlockNoteWrite.applyEdit(old: [], new: [item], to: doc)
 
-        _ = try BlockNoteWrite.applyEdit(old: [item], new: [parent], to: doc)
+        _ = try BlockNoteWrite.applyEdit(old: [item], new: [parent], to: doc, allowsNestedInserts: true)
 
         // The projection models one flat level, so a block holding a nested group reads as
         // opaque "nested children" — the evidence the subtree was written.

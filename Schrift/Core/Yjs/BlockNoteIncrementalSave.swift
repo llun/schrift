@@ -83,7 +83,8 @@ enum BlockNoteIncrementalSave {
         let deletesBefore = YStateEncoder.deleteBlocks(YDeleteSet.from(store: doc.store))
         let update: Data
         do {
-            update = try BlockNoteWrite.applyEdit(old: oldForWrite, new: aligned, to: doc)
+            update = try BlockNoteWrite.applyEdit(
+                old: oldForWrite, new: aligned, to: doc, allowsNestedInserts: true)
         } catch {
             throw BlockNoteIncrementalSaveError.nonCanonicalDocument
         }

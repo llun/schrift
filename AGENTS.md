@@ -882,13 +882,18 @@ new code reads like the surrounding code.
   definitive (release major ≥ 6, or a yhub-shaped `…/ws/v1/{org}` collaboration
   URL ⇒ collaboration; a parsable pre-6 version ⇒ legacy) — `RootView`'s launch
   task fetches config, so a Docs 6 server is normally known before the first save.
-  **The save path never fetches config itself** (that would add a request to every
+  **The save path does not fetch config up front** (that would add a request to every
   client's first save). With nothing known it tries the legacy PATCH, and on
   **`.routeNotFound` only** — Django's route 404 proves nothing was written — falls
   back to the collaboration route; `.notFound`, `.forbidden` and everything else are
-  answers about the document and propagate. The fallback is memoized only once the
-  collaboration GET has **answered**: a server with neither route must not be pinned
-  to one that cannot answer (the `prefersLegacyContentRoute` lesson). The release
+  answers about the document and propagate. The fallback **fetches config once** first
+  to learn the org (`fallbackCollaborationOrg`; best effort — `.sessionExpired`
+  propagates, any other failure means `docs`), because a save into the wrong org lands
+  in a room nobody reads, silently. It is memoized only once the collaboration GET has
+  **answered** — a server with neither route must not be pinned to one that cannot
+  answer (the `prefersLegacyContentRoute` lesson) — and never over a
+  `.collaborationYDoc` route already set (re-read after the await), so a
+  config-derived org that landed concurrently is not replaced. The release
   version parse is the shared `releaseVersionComponents` (favorites uses it too).
 - **Attachments** (`AttachmentEndpoints.swift`): `POST documents/{id}/attachment-upload/`
   is multipart with **exactly one field, `file`** — `file_name`/`content_type`/
@@ -1782,7 +1787,8 @@ that are easy to violate and expensive to discover:
   so indenting never changes the row's structure or recreates its `UITextView`.
   `numberedIndex` counts per level, skipping deeper items. Nesting has **no
   live-write spelling** (`BlockNoteWrite` can *insert* a nested subtree — the Docs 6
-  save uses that — but diffs only a flat list; the projection reads a
+  save opts in with `allowsNestedInserts: true`; the live path's default refuses one —
+  but diffs only a flat list; the projection reads a
   nested `blockGroup` as opaque), so `markDirty` sets `hasUnmodelableLocalEdit` and
   takes the classic path while any item is nested — keep that if you touch it.
 - **Only leaf blocks are draggable in edit mode.** A long press on a divider,
@@ -2000,8 +2006,20 @@ markdown write endpoint**. Understand this before touching the save path:
   {"update": base64}` — **skipped** when nothing was minted or deleted (the update
   always carries the whole delete set, so emptiness is read off the store, never
   the bytes) — then the title PATCH. The **content written is exactly the markdown**,
-  the same overwrite semantics as the classic save; only untouched blocks are no
-  longer rewritten, and a co-author's concurrent edit elsewhere merges. Refused as
+  the same overwrite semantics as the classic save. **This is not a merge of
+  co-author edits:** the save diffs the editor's *whole* document against the
+  server's state *at save time*, so a concurrent edit survives only if it lands inside
+  the GET→PATCH window; an edit a co-author made to a block after this user loaded the
+  document is **reverted** by the save unless the draft/conflict rules
+  (`draftSyncDecision`, keyed on `updated_at`) catch it first. Those rules depend on
+  Docs 6 bumping the document's `updated_at` when the collaboration server stores
+  content, which upstream's UPGRADE.md says happens only when the collaboration server
+  is configured with **`YHUB_JWT_PRIVATE_KEY`** — without it `updated_at` stops
+  following editor edits, so that is a deployment requirement. Only blocks the
+  alignment can anchor are left untouched — unchanged non-opaque blocks, plus
+  `unknownNode:*` and document-link blocks; an untouched opaque block (a table, which
+  parses as `.unknown`) and an untouched nested list are still **rewritten from
+  markdown on every save**, same as the classic save. Refused as
   `.decoding` (nothing PATCHed): undecodable state, pending structs, a non-canonical
   root, a non-countable `blockGroup` child, or empty/duplicate block ids — the differ
   maps old blocks to live containers by position and id. The web's document-link

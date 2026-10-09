@@ -166,10 +166,21 @@ amendment above; when this was written, editing offline was still blocked.)
   Nothing in this document changes: the coordinator still hands `saveDocumentContent`
   the full markdown, the half-land contract (throws ⇒ body unconfirmed, non-nil ⇒ body
   landed and only the title failed) is identical, and every draft/baseline/conflict
-  rule applies as written. The written content is still exactly the markdown
-  (last-write-wins for the blocks the user changed); what differs is that untouched
-  blocks are not rewritten, so a co-author's concurrent edit to *another* block now
-  survives a save instead of being overwritten. A server state the app cannot safely
+  rule applies as written. The written content is still exactly the markdown. **It is
+  not a merge of co-author edits:** the save diffs the editor's whole document against
+  the server's state at save time, so a concurrent edit survives only if it lands
+  inside the GET→PATCH window; an edit a co-author made to a block after this user
+  loaded the document is reverted by the save unless the draft/conflict rules
+  (`draftSyncDecision`, keyed on `updated_at`) catch it first. Those rules need Docs 6
+  to bump the document's `updated_at` when the collaboration server stores content,
+  which upstream's UPGRADE.md says happens only when the collaboration server is
+  configured with `YHUB_JWT_PRIVATE_KEY` — without it `updated_at` stops following
+  editor edits and the conflict check goes blind, so it is a **deployment
+  requirement**. Only blocks the alignment can anchor are left untouched (unchanged
+  non-opaque blocks, plus `unknownNode:*` and document-link blocks); an untouched
+  opaque block — a table, which parses as `.unknown` — and an untouched nested list
+  are still rewritten from markdown on every save, same as the classic save. A server
+  state the app cannot safely
   diff (undecodable, incomplete, non-canonical) fails the save as `.decoding` — not
   retryable, so it lands on `.failed` with the draft kept, never on a guess.
 - No live cursors. Saves remain full-overwrite / last-write-wins **when the classic

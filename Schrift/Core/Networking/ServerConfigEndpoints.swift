@@ -73,7 +73,8 @@ extension DocsAPIClient {
     /// Also records where this server's document content is saved (`contentSaveRoute`)
     /// whenever the config says so definitively, so the first save on a Docs 6 server goes
     /// straight to the collaboration server instead of discovering the legacy route's 404.
-    /// The save path deliberately does not fetch config itself; see `ContentSaveRoute`.
+    /// The save path fetches config itself only after the legacy route 404s, to learn the
+    /// collaboration org; see `ContentSaveRoute`.
     func serverConfig() async throws -> ServerConfig {
         let config: ServerConfig = try await get("config/")
         if let route = ContentSaveRoute(config: config) {

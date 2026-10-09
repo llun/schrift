@@ -32,10 +32,12 @@ final class BlockNoteWriteTests: XCTestCase {
 
     /// The anchor assertion: from-empty apply == golden encode, byte for byte.
     private func assertFromEmptyMatchesGolden(
-        _ blocks: [BlockNoteBlock], file: StaticString = #filePath, line: UInt = #line
+        _ blocks: [BlockNoteBlock], allowsNestedInserts: Bool = false, file: StaticString = #filePath,
+        line: UInt = #line
     ) throws {
         let doc = YDoc(clientID: clientID)
-        let update = try BlockNoteWrite.applyEdit(old: [], new: blocks, to: doc)
+        let update = try BlockNoteWrite.applyEdit(
+            old: [], new: blocks, to: doc, allowsNestedInserts: allowsNestedInserts)
         XCTAssertEqual(
             update, BlockNoteYjs.encode(blocks, clientID: UInt32(clientID)),
             "from-empty apply diverged from the golden encoder", file: file, line: line)
@@ -211,7 +213,22 @@ final class BlockNoteWriteTests: XCTestCase {
         var a = BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("A")], id: U(1))
         a.children = [b, n]
         let d = BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("D")], id: U(5))
-        try assertFromEmptyMatchesGolden([a, d])
+        try assertFromEmptyMatchesGolden([a, d], allowsNestedInserts: true)
+    }
+
+    /// Without the Docs 6 save's opt-in, a nested `new` block is refused — the live (C2c)
+    /// path's backstop, so it downgrades to classic rather than broadcasting a subtree.
+    func testNestedNewBlocksAreRefusedUnlessTheCallerOptsIn() throws {
+        var a = BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("A")], id: U(1))
+        a.children = [BlockNoteBlock(node: "bulletListItem", props: P, runs: [InlineRun("B")], id: U(2))]
+        let doc = YDoc(clientID: clientID)
+        defer { doc.destroy() }
+        do {
+            _ = try BlockNoteWrite.applyEdit(old: [], new: [a], to: doc)
+            XCTFail("a nested new block must be refused by default")
+        } catch YIntegrationError.unexpectedCase {
+            // expected
+        }
     }
 
     /// The same, threaded through the markdown pipeline the Docs 6 save uses.
@@ -219,6 +236,6 @@ final class BlockNoteWriteTests: XCTestCase {
         let blocks = MarkdownYjs.blockNoteBlocks(
             from: "- one\n  - nested\n- two\n\n1. first\n   - under", serverOrigin: "https://docs.example.org")
         XCTAssertTrue(blocks.contains { !$0.children.isEmpty }, "the fixture must actually nest")
-        try assertFromEmptyMatchesGolden(blocks)
+        try assertFromEmptyMatchesGolden(blocks, allowsNestedInserts: true)
     }
 }
