@@ -294,6 +294,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_format_outdent = "editor.format.outdent"  // "Outdent"
     case editor_format_change_list_type = "editor.format.change_list_type"  // "Change list type"
     case editor_format_change_quote_type = "editor.format.change_quote_type"  // "Change quote or code"
+    case editor_format_change_text_style = "editor.format.change_text_style"  // "Change text style"
 
     // Editor - link editor sheet
     case editor_link_add_title = "editor.link.add_title"  // "Add link"

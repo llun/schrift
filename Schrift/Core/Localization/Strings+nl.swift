@@ -249,6 +249,7 @@ enum Strings_nl {
         .editor_format_outdent: "Uitspringen",
         .editor_format_change_list_type: "Lijsttype wijzigen",
         .editor_format_change_quote_type: "Citaat of code wijzigen",
+        .editor_format_change_text_style: "Tekststijl wijzigen",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Link toevoegen",

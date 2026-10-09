@@ -47,12 +47,14 @@ struct EditorFormattingBar: View {
     @Environment(LocalizationStore.self) private var loc
 
     /// Each family button's default kind — local preferences, see `FormattingBarFormat`.
+    @AppStorage(TextStyleFormat.preferenceKey) private var defaultTextStyleRaw = TextStyleFormat.fallback.rawValue
     @AppStorage(ListFormat.preferenceKey) private var defaultListFormatRaw = ListFormat.fallback.rawValue
     @AppStorage(QuoteFormat.preferenceKey) private var defaultQuoteFormatRaw = QuoteFormat.fallback.rawValue
 
-    /// The buttons that swap the row for a set of choices: the list and quote families on
-    /// a long press, and Attach (Photo or File) on a tap.
+    /// The buttons that swap the row for a set of choices: the text-style, list and quote
+    /// families on a long press, and Attach (Photo or File) on a tap.
     private enum Family {
+        case textStyle
         case list
         case quote
         case attach
@@ -64,8 +66,13 @@ struct EditorFormattingBar: View {
     /// the text view for first responder mid-edit.
     @State private var choosingFamily: Family?
 
+    /// Which edges have hidden content, from the row's scroll geometry — drives the fade.
+    @State private var fadeEdges = ScrollFadeEdges()
+    private let fadeWidth: CGFloat = 24
+
     private var hasTarget: Bool { viewModel.focusedBlockID != nil }
 
+    private var defaultTextStyle: TextStyleFormat { TextStyleFormat.stored(defaultTextStyleRaw) }
     private var defaultListFormat: ListFormat { ListFormat.stored(defaultListFormatRaw) }
     private var defaultQuoteFormat: QuoteFormat { QuoteFormat.stored(defaultQuoteFormatRaw) }
 
@@ -74,10 +81,24 @@ struct EditorFormattingBar: View {
         // contains the row on narrow screens without widening the editor.
         ScrollView(.horizontal) {
             switch choosingFamily {
+            case .textStyle:
+                choices(
+                    current: defaultTextStyle,
+                    isDisabled: { isTextStyleDisabled($0, hasTarget: hasTarget, canEditLink: viewModel.canEditLink) }
+                ) {
+                    viewModel.applyTextStyle($0)
+                    defaultTextStyleRaw = $0.rawValue
+                }
             case .list:
-                formatChoices(current: defaultListFormat) { defaultListFormatRaw = $0.rawValue }
+                choices(current: defaultListFormat) {
+                    viewModel.chooseFormat($0)
+                    defaultListFormatRaw = $0.rawValue
+                }
             case .quote:
-                formatChoices(current: defaultQuoteFormat) { defaultQuoteFormatRaw = $0.rawValue }
+                choices(current: defaultQuoteFormat) {
+                    viewModel.chooseFormat($0)
+                    defaultQuoteFormatRaw = $0.rawValue
+                }
             case .attach:
                 attachChoices
             case nil:
@@ -85,6 +106,14 @@ struct EditorFormattingBar: View {
             }
         }
         .scrollIndicators(.hidden)
+        .onScrollGeometryChange(for: ScrollFadeEdges.self) { geometry in
+            scrollFadeEdges(
+                contentOffsetX: geometry.contentOffset.x, contentWidth: geometry.contentSize.width,
+                containerWidth: geometry.containerSize.width)
+        } action: { _, edges in
+            fadeEdges = edges
+        }
+        .mask(fadeMask)
         .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, DocsSpacing.space2xs)
         .padding(.vertical, DocsSpacing.space3xs)
@@ -98,24 +127,43 @@ struct EditorFormattingBar: View {
         .onChange(of: viewModel.focusedBlockID) { choosingFamily = nil }
     }
 
-    /// Close, then one button per member of the family. Picking one applies it to the
-    /// focused block and makes it the default (`remember`); the current default is drawn
-    /// in the brand colour.
-    private func formatChoices<Format: FormattingBarFormat>(
-        current: Format, remember: @escaping (Format) -> Void
+    /// Short gradient at each edge that has hidden content, so the row reads as scrollable.
+    /// The gradients are flipped for right-to-left, where leading is the right edge.
+    private var fadeMask: some View {
+        HStack(spacing: 0) {
+            LinearGradient(
+                colors: [fadeEdges.leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing
+            )
+            .frame(width: fadeWidth)
+            .flipsForRightToLeftLayoutDirection(true)
+            Rectangle()
+            LinearGradient(
+                colors: [.black, fadeEdges.trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing
+            )
+            .frame(width: fadeWidth)
+            .flipsForRightToLeftLayoutDirection(true)
+        }
+    }
+
+    /// Close, then one button per member of the family. `pick` applies the member and
+    /// remembers it as the default; the current default is drawn in the brand colour.
+    private func choices<Choice: FormattingBarChoice>(
+        current: Choice, isDisabled: ((Choice) -> Bool)? = nil, pick: @escaping (Choice) -> Void
     ) -> some View {
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: .close, label: loc[.common_close], disabled: false) {
                 choosingFamily = nil
             }
-            ForEach(Format.allCases, id: \.self) { format in
-                barButton(icon: format.icon, label: loc[format.labelKey], brand: format == current) {
-                    viewModel.chooseFormat(format)
-                    remember(format)
+            ForEach(Choice.allCases, id: \.self) { choice in
+                barButton(
+                    icon: choice.icon, label: loc[choice.labelKey], brand: choice == current,
+                    disabled: isDisabled?(choice)
+                ) {
+                    pick(choice)
                     choosingFamily = nil
                 }
                 // The brand colour marks the default for sighted users; VoiceOver gets the trait.
-                .accessibilityAddTraits(format == current ? .isSelected : [])
+                .accessibilityAddTraits(choice == current ? .isSelected : [])
             }
         }
     }
@@ -152,22 +200,18 @@ struct EditorFormattingBar: View {
             barButton(icon: .add, label: loc[.editor_format_add_block], brand: true, disabled: false) {
                 viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
             }
-            barButton(icon: .format_bold, label: loc[.editor_format_bold]) {
-                viewModel.applyInlineMarker("**")
-            }
-            // `_`, and `*` would be wrong. `InlineMarkdown` honors CommonMark's
-            // flanking rule for underscores, so `_x_` is emphasis that survives a
-            // save while `snake_case` stays literal — and it is what BlockNote
-            // itself writes. Wrapping a selected **bold** word in `*` would produce
-            // `***word***`, which this scanner reads as bold(`*word`) + literal.
-            barButton(icon: .format_italic, label: loc[.editor_format_italic]) {
-                viewModel.applyInlineMarker("_")
-            }
+            // One text-style button: a tap applies the default style (bold, italic or
+            // link), a long press offers all three. A default of link is disabled where
+            // a link can't be written (see `isTextStyleDisabled`).
             barButton(
-                icon: .link, label: loc[.editor_format_link],
-                disabled: !viewModel.canEditLink
+                icon: defaultTextStyle.icon, label: loc[defaultTextStyle.labelKey],
+                disabled: isTextStyleDisabled(
+                    defaultTextStyle, hasTarget: hasTarget, canEditLink: viewModel.canEditLink),
+                longPressLabel: loc[.editor_format_change_text_style],
+                longPressAction: { choosingFamily = .textStyle }
             ) {
-                viewModel.beginLinkEditing()
+                guard choosingFamily == nil else { return }
+                viewModel.applyTextStyle(defaultTextStyle)
             }
             // One list button: a tap applies the default kind (toggling a block already
             // in that list kind back to a paragraph), a long press offers all three.

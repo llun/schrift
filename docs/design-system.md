@@ -1,5 +1,14 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-10-09 — One text-style button, and a fade where the bar scrolls.**
+> Bold, italic and link share one formatting-bar button on the list/quote terms: a tap
+> applies the remembered default (bold at first; local preference
+> `schrift.editor.defaultTextStyle`), a long press swaps the row for Close, Bold,
+> Italic and Link, the default in the brand colour. Link is disabled where a link can't
+> be written. The bar is now add, text style, list, quote/code, attach — five buttons,
+> seven on a list item (Outdent and Indent) — and, since that still overflows a phone,
+> a ~24pt gradient fades whichever edge has hidden content (none when the row fits).
+>
 > **Revised: 2026-10-08 — One Attach button in the formatting bar.** The bar's last
 > slot is now **Attach** (`attach_file`, U+E226, bringing the bundled subset to 80
 > icons). A tap swaps the row in place for Close, **Photo** (`image`) and **File**
@@ -92,9 +101,10 @@
 > hidden at accessibility text sizes. Native toggles,
 > segmented controls and navigation retain system metrics. Document checklist
 > adornments retain their first-line alignment and row-pitch hit targets.
-> The formatting accessory's list button and quote/code button each apply their
+> The formatting accessory's text-style button (bold/italic/link), list button and
+> quote/code button each apply their
 > family's default kind on tap; a long press swaps the row for Close plus the
-> family's members (bulleted/numbered/checklist, or quote/code), the remembered
+> family's members (bold/italic/link, bulleted/numbered/checklist, or quote/code), the remembered
 > default drawn in the brand colour, and a pick becomes the new default.
 > The formatting accessory's seven actions fit the narrowest phone column; it still
 > scrolls horizontally, as a safeguard, rather than compressing an eighth action or
@@ -338,7 +348,7 @@
 >    mid-document (a baked-in `UIFont` otherwise goes stale);
 >    `docsScaledFont` covers the few component sizes off the HIG ramp (the 14pt
 >    button label); `MaterialSymbol` scales by default (`scales: false` for
->    glyphs in hard-bounded boxes — `IconButton`, whose row of seven shares a
+>    glyphs in hard-bounded boxes — `IconButton`, whose row shares a
 >    fixed width budget); `DocIcon` scales glyph and box together from one
 >    value; fixed `height:` around text became `minHeight:` (`DocsTextField`,
 >    `SearchField`, `DocsButton`, `NavBar` — whose standard-mode title, drawn in

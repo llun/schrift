@@ -249,6 +249,7 @@ enum Strings_fr {
         .editor_format_outdent: "Diminuer le retrait",
         .editor_format_change_list_type: "Changer le type de liste",
         .editor_format_change_quote_type: "Changer citation ou code",
+        .editor_format_change_text_style: "Changer le style du texte",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Ajouter un lien",

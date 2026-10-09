@@ -242,6 +242,7 @@ enum Strings_zhHant {
         .editor_format_outdent: "減少縮排",
         .editor_format_change_list_type: "變更清單類型",
         .editor_format_change_quote_type: "切換引用或程式碼",
+        .editor_format_change_text_style: "變更文字樣式",
 
         // Editor - link editor sheet
         .editor_link_add_title: "新增連結",

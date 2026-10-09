@@ -65,4 +65,67 @@ final class FormattingBarFormatTests: XCTestCase {
         XCTAssertNil(blockKindAfterChoosing(QuoteFormat.code, current: .codeBlock(language: "swift")))
         XCTAssertEqual(blockKindAfterChoosing(QuoteFormat.quote, current: .codeBlock(language: "swift")), .quote)
     }
+
+    // MARK: - Text style
+
+    func testTextStyleDefaultsToBoldAndToleratesAnUnknownStoredValue() {
+        XCTAssertEqual(TextStyleFormat.fallback, .bold)
+        XCTAssertEqual(TextStyleFormat.stored(""), .bold)
+        XCTAssertEqual(TextStyleFormat.stored("underline"), .bold)
+        XCTAssertEqual(TextStyleFormat.stored("italic"), .italic)
+        XCTAssertEqual(TextStyleFormat.stored("link"), .link)
+        XCTAssertEqual(TextStyleFormat.preferenceKey, "schrift.editor.defaultTextStyle")
+        XCTAssertNotEqual(TextStyleFormat.preferenceKey, ListFormat.preferenceKey)
+        XCTAssertNotEqual(TextStyleFormat.preferenceKey, QuoteFormat.preferenceKey)
+    }
+
+    func testEachTextStyleKeepsTheIconAndLabelOfTheButtonItReplaced() {
+        XCTAssertEqual(TextStyleFormat.allCases, [.bold, .italic, .link])
+        XCTAssertEqual(TextStyleFormat.bold.icon, .format_bold)
+        XCTAssertEqual(TextStyleFormat.italic.icon, .format_italic)
+        XCTAssertEqual(TextStyleFormat.link.icon, .link)
+        XCTAssertEqual(TextStyleFormat.bold.labelKey, .editor_format_bold)
+        XCTAssertEqual(TextStyleFormat.italic.labelKey, .editor_format_italic)
+        XCTAssertEqual(TextStyleFormat.link.labelKey, .editor_format_link)
+    }
+
+    func testLinkIsDisabledWithoutAnInlineBlockWhileMarkersOnlyNeedATarget() {
+        XCTAssertTrue(isTextStyleDisabled(.link, hasTarget: true, canEditLink: false))
+        XCTAssertFalse(isTextStyleDisabled(.link, hasTarget: true, canEditLink: true))
+        XCTAssertFalse(isTextStyleDisabled(.bold, hasTarget: true, canEditLink: false))
+        XCTAssertFalse(isTextStyleDisabled(.italic, hasTarget: true, canEditLink: false))
+        XCTAssertTrue(isTextStyleDisabled(.bold, hasTarget: false, canEditLink: false))
+        XCTAssertTrue(isTextStyleDisabled(.italic, hasTarget: false, canEditLink: false))
+    }
+
+    // MARK: - Scroll-edge fade
+
+    func testNoEdgeFadesWhenTheRowFits() {
+        XCTAssertEqual(scrollFadeEdges(contentOffsetX: 0, contentWidth: 300, containerWidth: 300), ScrollFadeEdges())
+        // Within the 1pt tolerance, rounding must not leave a fade behind.
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 0, contentWidth: 300.5, containerWidth: 300), ScrollFadeEdges())
+        XCTAssertEqual(scrollFadeEdges(contentOffsetX: 0, contentWidth: 200, containerWidth: 300), ScrollFadeEdges())
+    }
+
+    func testOnlyTheTrailingEdgeFadesAtTheStartOfAnOverflowingRow() {
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 0, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: false, trailing: true))
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 0.5, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: false, trailing: true))
+    }
+
+    func testBothEdgesFadeInTheMiddleAndOnlyTheLeadingAtTheEnd() {
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 50, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: true, trailing: true))
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 100, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: true, trailing: false))
+        XCTAssertEqual(
+            scrollFadeEdges(contentOffsetX: 99.5, contentWidth: 400, containerWidth: 300),
+            ScrollFadeEdges(leading: true, trailing: false))
+    }
 }

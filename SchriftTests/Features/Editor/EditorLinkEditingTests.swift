@@ -60,6 +60,14 @@ final class EditorLinkEditingTests: XCTestCase {
         try XCTUnwrap(InlineMarkdown.layout(of: viewModel.blocks[0].text).links.first)
     }
 
+    func testTheLinkTextStyleOpensTheLinkEditor() async {
+        let viewModel = await makeEditingViewModel(content: "hello")
+        focusFirstBlock(viewModel, selection: NSRange(location: 0, length: 5))
+        XCTAssertNil(viewModel.linkEditor)
+        viewModel.applyTextStyle(.link)
+        XCTAssertNotNil(viewModel.linkEditor)
+    }
+
     // MARK: - canEditLink
 
     func testLinkEditingNeedsAFocusedBlock() async {

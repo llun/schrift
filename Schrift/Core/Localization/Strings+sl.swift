@@ -258,6 +258,7 @@ enum Strings_sl {
         .editor_format_outdent: "Zmanjšaj zamik",
         .editor_format_change_list_type: "Spremeni vrsto seznama",
         .editor_format_change_quote_type: "Spremeni citat ali kodo",
+        .editor_format_change_text_style: "Spremeni slog besedila",
 
         // Editor - link editor sheet
         .editor_link_add_title: "Dodaj povezavo",

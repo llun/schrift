@@ -2272,6 +2272,16 @@ final class EditorViewModel {
         convertBlock(blockID: focusedBlockID, to: kind)
     }
 
+    /// The text-style button: wraps the selection in the style's marker, or opens the
+    /// link editor for a link.
+    func applyTextStyle(_ style: TextStyleFormat) {
+        if let marker = style.inlineMarker {
+            applyInlineMarker(marker)
+        } else {
+            beginLinkEditing()
+        }
+    }
+
     // MARK: - Links
 
     /// Whether the link button can act: a focused block whose text is read as
