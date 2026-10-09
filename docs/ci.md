@@ -33,13 +33,17 @@ the push run is the post-merge verification of the real `main` history
 3. Pick an iPhone simulator — prefers the documented **iPhone 17**, falls back
    to the first available iPhone on the runner image (image lineups change),
    and resolves that name to the device on the newest iOS runtime.
-4. Boot that simulator with `xcrun simctl bootstatus <udid> -b`, which blocks
-   until boot finishes. This guards against a suspected cold-boot flake: in
-   one hosted run the first UI test on a fresh simulator spent 5s in XCTest's
-   interruption check and the switch press that followed never registered.
-   That the cold boot caused the ignored press is inferred, not confirmed.
-5. `xcodebuild test -project Schrift.xcodeproj -scheme Schrift` on that
-   simulator (by UDID, so it is the device step 4 booted) — the same suite as
+4. Start booting that simulator (`xcrun simctl boot`), without waiting.
+5. `xcodebuild build-for-testing` into `$RUNNER_TEMP/DerivedData`, with
+   `-enableCodeCoverage NO` and `COMPILER_INDEX_STORE_ENABLE=NO`. Nothing in
+   CI reads coverage or the index, and both slow the build; coverage also
+   slows the run. The scheme keeps `gatherCoverageData` for local runs. The
+   simulator boot (about two minutes on a hosted runner) overlaps this build
+   instead of preceding it.
+6. `xcrun simctl bootstatus <udid> -b`, which blocks until the boot finishes,
+   so no test lands on a half-booted device.
+7. `xcodebuild test-without-building -project Schrift.xcodeproj -scheme Schrift` on that
+   simulator (by UDID, so it is the device step 4 booted, and with the step 5 products) — the same suite as
    the documented local test command, including
    unit/rendering tests and `SchriftChecklistUITests`. The UI bundle launches
    `SchriftChecklistTestHost`, a test-only app compiling the actual production
@@ -61,6 +65,15 @@ the push run is the post-merge verification of the real `main` history
    The tests neither retry the gesture nor bypass the interaction with preset state.
    When the switch does not turn on, the filter-enable step attaches the switch frame,
    hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
+   **Known pattern:** every hosted failure of that press so far (runs 37349646189,
+   37733961599, 37806233826) was in `testAllCompletedHasAccessibleRevealAtAccessibilitySize`,
+   which is alphabetically the first test of the UI bundle and so the first app launch
+   after the unit tests. Waiting for the simulator boot did not cure it. The press now
+   waits for the switch's frame to hold still across two reads first (`waitForStableFrame`,
+   in `SchriftUITests/Features/ElementSettling.swift`), on the hypothesis that a cold first
+   launch at an accessibility text size is still laying out when the switch first reads as
+   hittable; that is a plausible cause, not a confirmed one. `ChecklistHitTests`, which aims
+   taps at offsets from frames read once, waits the same way before reading them.
    Checklist mode swaps likewise use one 200ms stationary press and require
    the old toolbar action to disappear and the new action to appear before
    checking content or restored scroll position. Offline editor toolbar tests
@@ -83,8 +96,23 @@ the newest `main` state gets verified — the post-merge check is cumulative,
 not per-commit. It is also observe-only: a red push run does **not** gate
 `testflight.yml`, which ships the same commit independently (coupling the two
 would tie the secret-free workflow to the secret-bearing one). The job also
-has a 30-minute timeout to convert hangs into failures; normal runs finish
-well under it.
+has a 45-minute timeout to convert hangs into failures. A healthy run takes
+about 25 minutes, so the earlier 30-minute cap cancelled green runs whenever a
+runner was slow or post-job cleanup dragged (a PR #182 run was cancelled this
+way in cleanup).
+
+### Where the time goes
+
+Measured on hosted `macos-latest` runners (2026-10-09): checkout to a booted,
+built state is about 7 minutes (the build, about 5, compiles the production
+sources twice, for the app and for the UI test host); the ~2,900 unit tests
+take about 3.5 minutes; the 21 UI tests take about 10.5, most of it in
+`ThemeFlowTests` and `ChecklistFilterTests` (each relaunches the host app per
+appearance or text size). Runner speed varies by a factor of two between runs.
+Xcode's compilation cache (`COMPILATION_CACHE_ENABLE_CACHING`, persisted with
+`actions/cache`) was tried and dropped: a warm restore made the build slower,
+not faster. Unit tests are not worth trimming for speed; the UI suite is where
+time would come from.
 
 ### Toolchain drift
 

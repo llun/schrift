@@ -4064,6 +4064,11 @@ markdown write endpoint**. Understand this before touching the save path:
   retry gestures until green or treat an unactivated filter as a mode-swap defect.
   When the switch does not turn on, the filter-enable step attaches the switch frame,
   hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
+  Every hosted failure of that press so far was the UI bundle's first test (the first app
+  launch after the unit tests); the press and `ChecklistHitTests`' offset taps first wait
+  for the target's frame to hold still (`waitForStableFrame`). That is a precondition,
+  not a retry, and the cause it targets is unconfirmed — read `docs/ci.md` before
+  changing it.
 
 ## Docs convention
 

@@ -37,7 +37,9 @@ jobs:
     name: Build & Test
     runs-on: macos-latest
     # Unit/rendering tests and isolated checklist UI tests; the cap catches hangs.
-    timeout-minutes: 30
+    # A healthy run takes about 25 minutes (the UI tests alone are ~10), so
+    # 30 cancelled green runs that hit a slow runner or a slow cleanup step.
+    timeout-minutes: 45
 
     steps:
       # Actions are pinned to full commit SHAs (not mutable tags) so a moved or
@@ -120,23 +122,6 @@ jobs:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: xcrun simctl boot "$SIM_UDID" || true
 
-      # Xcode's compilation cache (content-addressed, so it survives a fresh
-      # checkout, unlike DerivedData's mtime-based incremental state) persisted
-      # with actions/cache. A PR's later pushes restore that PR's newest cache;
-      # its first push falls back to the newest one `main` saved. The key
-      # carries the Xcode version because cached outputs are toolchain-specific.
-      - name: Read Xcode version
-        id: xcode
-        run: echo "version=$(xcodebuild -version | tr '\n' ' ' | tr -cs 'A-Za-z0-9.' '-')" >> "$GITHUB_OUTPUT"
-
-      - name: Restore compilation cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: ${{ runner.temp }}/CompilationCache
-          key: compilation-cache-${{ steps.xcode.outputs.version }}-${{ github.sha }}
-          restore-keys: |
-            compilation-cache-${{ steps.xcode.outputs.version }}-
-
       # Build once, then test the built products. Code coverage is off because
       # nothing in CI reads it (it instruments every target and slows both the
       # build and the run), and so is the index store, which only serves an IDE.
@@ -162,18 +147,14 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -enableCodeCoverage NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            COMPILATION_CACHE_ENABLE_CACHING=YES \
-            COMPILATION_CACHE_CAS_PATH="$RUNNER_TEMP/CompilationCache" \
             | "$formatter"
-          du -sh "$RUNNER_TEMP/CompilationCache" || true
 
       # Wait until the simulator has finished booting before any test runs.
-      # Left to xcodebuild, the first UI test can land on a simulator still
-      # settling from a cold boot: a hosted run spent 5s in XCTest's
-      # interruption check and the switch press that followed never registered
-      # (ChecklistFilterTests, run 37733961599; the cold boot is the suspected,
-      # not confirmed, cause). `bootstatus -b` boots the device if needed and
-      # blocks until boot (including data migration) completes.
+      # `bootstatus -b` boots the device if needed and blocks until boot
+      # (including data migration) completes. This was added for a flake in
+      # the first UI test of the run (ChecklistFilterTests, run 37733961599),
+      # which it did not cure: run 37806233826 failed the same way after a
+      # completed boot. See docs/ci.md for what is known about that flake.
       - name: Wait for simulator boot
         env:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
