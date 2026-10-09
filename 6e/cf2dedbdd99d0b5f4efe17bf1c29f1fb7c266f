@@ -1,0 +1,61 @@
+Schrift/Core/Localization/Strings+fr.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 252
+Schrift/Features/Editor/FormattingBarFormat.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 1,6-10,20,27-34,155-228
+Schrift/Core/Localization/Strings+sl.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 261
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 245
+Schrift/Features/Editor/EditorFormattingBar.swift
+  s_45196c6adedbd6::t_b21fd0360ebba8 50,54-55,57,69-72,75,84-91,93-96,98-101,109-116,130-151,157-162,166,203-205,207-211,213-214
+Schrift/Features/Editor/EditorViewModel.swift
+  s_45196c6adedbd6::t_b21fd0360ebba8 2275-2284
+SchriftTests/Features/Editor/EditorLinkEditingTests.swift
+  s_45196c6adedbd6::t_8ca73142f3620e 63-70
+Schrift/Core/Localization/Strings+nl.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 252
+Schrift/Core/Localization/Strings+es.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 256
+SchriftTests/Features/Editor/EditorFormattingBarTests.swift
+  s_45196c6adedbd6::t_8ca73142f3620e 166-167
+  s_45196c6adedbd6::t_80e22b70f89e82 163-165,168-177
+SchriftTests/Features/Editor/FormattingBarFormatTests.swift
+  s_45196c6adedbd6::t_80e22b70f89e82 68-130
+docs/design-system.md
+  s_45196c6adedbd6::t_c21c8b264d71ca 105
+  s_45196c6adedbd6::t_93c2aaae247428 3-11,104,107,351
+Schrift/Core/Localization/Strings+it.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 251
+AGENTS.md
+  s_45196c6adedbd6::t_93c2aaae247428 1233,1272-1277,1279-1287,1294
+docs/architecture.md
+  s_45196c6adedbd6::t_c21c8b264d71ca 1492
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 245
+Schrift/Core/Localization/L10nKey.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 297
+Schrift/Core/Localization/Strings+pt.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 251
+Schrift/Core/Localization/Strings+en.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 247
+Schrift/Core/Localization/Strings+de.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 255
+Schrift/Core/Localization/Strings+th.swift
+  s_45196c6adedbd6::t_df85c0d75d478e 247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ecf2dedbdd99d0b5f4efe17bf1c29f1fb7c266f",
+  "prompts": {},
+  "sessions": {
+    "s_45196c6adedbd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9c00491-b306-4378-b82a-da0f818a6f3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
