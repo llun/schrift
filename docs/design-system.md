@@ -777,11 +777,16 @@ lighten while their soft backgrounds darken; the neutral badge foreground
 
 ### 4.5 Tests (Part 1)
 
-- `DocsColorHexTests` — assert the dark raw value for every token (extends the
-  existing light assertions).
+- `DocsColorTokenInvariantTests` — token values are visual and are not
+  unit-tested (they are checked in the `#Preview` catalogs and Sketch); this file
+  pins the relationships that can regress: ink-on-fill contrast in light and dark,
+  dark differing from light for neutral surfaces and text, the dark elevation
+  ladder, and the mode-independent accent palette.
 - Resolver tests (`BadgeStyleResolverTests`, `ButtonStyleResolverTests`,
   `IconButtonStyleResolverTests`, `TextFieldStyleResolverTests`,
-  `LinkReachPillStyleResolverTests`) — assert both light and dark fields.
+  `LinkReachPillTests`) — assert invariants (readable ink on its fill in both
+  modes, distinct variants, no background/border where none is promised), not
+  per-variant hex mirrors.
 - `AppearanceStoreTests` — default `.system`; persistence round-trip;
   `colorScheme` mapping (isolated `UserDefaults(suiteName:)`).
 

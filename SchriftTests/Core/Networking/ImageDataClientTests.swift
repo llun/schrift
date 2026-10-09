@@ -165,4 +165,67 @@ final class ImageDataClientTests: XCTestCase {
             XCTFail("Oversized response must be refused")
         } catch {}
     }
+
+    // MARK: - imageCookieApplies
+
+    private func cookie(
+        domain: String, path: String = "/", secure: Bool = false, expires: Date? = nil
+    ) -> HTTPCookie {
+        var properties: [HTTPCookiePropertyKey: Any] = [
+            .domain: domain, .path: path, .name: "sessionid", .value: "fake",
+        ]
+        if secure { properties[.secure] = "TRUE" }
+        if let expires { properties[.expires] = expires }
+        return HTTPCookie(properties: properties)!
+    }
+
+    func testHostOnlyCookieMatchesOnlyItsExactHost() {
+        let cookie = cookie(domain: "docs.example.org")
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/a.png")!))
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://DOCS.example.org/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://sub.docs.example.org/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://example.org/a.png")!))
+    }
+
+    func testDotDomainCookieMatchesTheDomainAndItsSubdomainsButNotLookalikes() {
+        let cookie = cookie(domain: ".example.org")
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://example.org/a.png")!))
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://evilexample.org/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://example.org.evil.com/a.png")!))
+    }
+
+    func testPathMatchRespectsSegmentBoundaries() {
+        let cookie = cookie(domain: "docs.example.org", path: "/media")
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/media")!))
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/media/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/mediaplayer/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/other/a.png")!))
+    }
+
+    func testTrailingSlashCookiePathMatchesAnythingBeneathIt() {
+        let cookie = cookie(domain: "docs.example.org", path: "/media/")
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/media/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/media")!))
+    }
+
+    func testRootPathCookieMatchesEveryPathIncludingAnEmptyOne() {
+        let cookie = cookie(domain: "docs.example.org", path: "/")
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org")!))
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/deep/er/a.png")!))
+    }
+
+    func testSecureCookieIsWithheldFromPlainHTTP() {
+        let cookie = cookie(domain: "docs.example.org", secure: true)
+        XCTAssertTrue(imageCookieApplies(cookie, to: URL(string: "https://docs.example.org/a.png")!))
+        XCTAssertFalse(imageCookieApplies(cookie, to: URL(string: "http://docs.example.org/a.png")!))
+    }
+
+    func testExpiredCookieNeverApplies() {
+        let past = cookie(domain: "docs.example.org", expires: Date(timeIntervalSinceNow: -60))
+        let future = cookie(domain: "docs.example.org", expires: Date(timeIntervalSinceNow: 3600))
+        let url = URL(string: "https://docs.example.org/a.png")!
+        XCTAssertFalse(imageCookieApplies(past, to: url))
+        XCTAssertTrue(imageCookieApplies(future, to: url))
+    }
 }

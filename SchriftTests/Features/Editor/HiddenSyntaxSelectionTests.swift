@@ -9,7 +9,9 @@ final class HiddenSyntaxSelectionTests: XCTestCase {
     private let source = "see [docs](https://x.dev/) now"
     private var hidden: [NSRange] { InlineMarkdown.layout(of: source).syntax }
 
-    func testFixtureHasTheHiddenRunsTheOtherTestsAssume() {
+    /// Every test below hard-codes offsets into this fixture, so fail loudly if the scanner's layout of it moves.
+    override func setUp() {
+        super.setUp()
         XCTAssertEqual(hidden, [NSRange(location: 4, length: 1), NSRange(location: 9, length: 17)])
     }
 

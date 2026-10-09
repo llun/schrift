@@ -10,7 +10,7 @@ import XCTest
 /// elsewhere (every other Yjs test constructs `YDoc(gc: false)` explicitly).
 ///
 /// These come from the session-local node oracle / differential-fuzz harness
-/// described in `YIntegrationTests` — the same one, run with `gc: true`.
+/// described in `YIntegration*Tests` — the same one, run with `gc: true`.
 final class YGarbageCollectionTests: XCTestCase {
 
     private func makeDoc(clientID: UInt = 9, gc: Bool = true) -> YDoc {

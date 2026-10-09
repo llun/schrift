@@ -13,36 +13,42 @@ final class WebLoginTests: XCTestCase {
         XCTAssertEqual(authenticationURL(server: server).absoluteString, "https://docs.llun.dev/api/v1.0/authenticate/")
     }
 
-    func testInitialAuthenticateNavigationIsNotComplete() {
-        let url = URL(string: "https://docs.llun.dev/api/v1.0/authenticate/")!
-        XCTAssertFalse(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
+    /// The authenticate hop, the IdP, and the API callback are all mid-flow, as is a different host or a
+    /// look-alike suffix (case-insensitivity must not become substring- or suffix-matching).
+    func testNavigationBeforeTheLoginLandsIsNotComplete() {
+        let cases: [(url: String, serverHost: String)] = [
+            ("https://docs.llun.dev/api/v1.0/authenticate/", "docs.llun.dev"),
+            ("https://idp.example.com/login?client_id=docs", "docs.llun.dev"),
+            ("https://docs.llun.dev/api/v1.0/callback/?code=abc&state=xyz", "docs.llun.dev"),
+            // The API-path exclusion must survive a case difference in the host.
+            ("https://notes.liiib.re/api/v1.0/callback/?code=abc", "Notes.liiib.re"),
+            ("https://evil.example.org/", "notes.liiib.re"),
+            ("https://notes.liiib.re.evil.org/", "notes.liiib.re"),
+        ]
+        for testCase in cases {
+            XCTAssertFalse(
+                isLoginNavigationComplete(url: URL(string: testCase.url)!, serverHost: testCase.serverHost),
+                testCase.url)
+        }
     }
 
-    func testExternalIdentityProviderNavigationIsNotComplete() {
-        let url = URL(string: "https://idp.example.com/login?client_id=docs")!
-        XCTAssertFalse(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
-    }
-
-    func testCallbackNavigationIsNotComplete() {
-        let url = URL(string: "https://docs.llun.dev/api/v1.0/callback/?code=abc&state=xyz")!
-        XCTAssertFalse(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
-    }
-
-    func testLandingOnSiteRootAfterLoginIsComplete() {
-        let url = URL(string: "https://docs.llun.dev/")!
-        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
-    }
-
-    func testLandingOnAnySPARouteOnServerHostIsComplete() {
-        let url = URL(string: "https://docs.llun.dev/some/spa/route")!
-        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
-    }
-
-    func testLandingOnBareServerRootWithoutTrailingSlashIsComplete() {
-        // The docs backend's default LOGIN_REDIRECT_URL is the bare host
-        // (`https://${DOCS_HOST}`) with no trailing slash, whose `path` is "".
-        let url = URL(string: "https://docs.llun.dev")!
-        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "docs.llun.dev"))
+    /// Landing anywhere non-API on the server host completes the login, including the bare host with no
+    /// trailing slash (the docs backend's default `LOGIN_REDIRECT_URL`, whose `path` is ""). WebKit reports
+    /// `url.host` lowercased, so a `serverHost` carrying the capital iOS autocapitalization put there
+    /// (`Notes.liiib.re`) must still match — it once left the login sheet open on the signed-in web app.
+    func testLandingOnTheServerHostCompletesTheLoginRegardlessOfCase() {
+        let cases: [(url: String, serverHost: String)] = [
+            ("https://docs.llun.dev/", "docs.llun.dev"),
+            ("https://docs.llun.dev/some/spa/route", "docs.llun.dev"),
+            ("https://docs.llun.dev", "docs.llun.dev"),
+            ("https://notes.liiib.re/", "Notes.liiib.re"),
+            ("https://notes.liiib.re/", "NOTES.LIIIB.RE"),
+        ]
+        for testCase in cases {
+            XCTAssertTrue(
+                isLoginNavigationComplete(url: URL(string: testCase.url)!, serverHost: testCase.serverHost),
+                testCase.url)
+        }
     }
 
     func testSyncCookiesForwardsEachCookieToStorage() {
@@ -64,37 +70,5 @@ final class WebLoginTests: XCTestCase {
         let fake = FakeCookieStorage()
         syncCookies([], into: fake)
         XCTAssertTrue(fake.storedCookies.isEmpty)
-    }
-
-    // MARK: - Host comparison is case-insensitive
-
-    /// WebKit reports `url.host` lowercased. A `serverHost` carrying the capital that iOS
-    /// autocapitalization put there (`Notes.liiib.re`) never matched, so the login sheet
-    /// stayed open on the signed-in web app forever. Hostnames are case-insensitive;
-    /// `normalizedServerURL` now lowercases them, and this keeps the comparison correct
-    /// even for a `serverHost` that came from somewhere else.
-    func testLoginCompletesWhenServerHostDiffersOnlyByCase() {
-        let url = URL(string: "https://notes.liiib.re/")!
-
-        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "Notes.liiib.re"))
-        XCTAssertTrue(isLoginNavigationComplete(url: url, serverHost: "NOTES.LIIIB.RE"))
-    }
-
-    /// Case-insensitivity must not become substring- or suffix-matching.
-    func testLoginStillRejectsADifferentHost() {
-        let url = URL(string: "https://evil.example.org/")!
-
-        XCTAssertFalse(isLoginNavigationComplete(url: url, serverHost: "notes.liiib.re"))
-        XCTAssertFalse(
-            isLoginNavigationComplete(
-                url: URL(string: "https://notes.liiib.re.evil.org/")!,
-                serverHost: "notes.liiib.re"))
-    }
-
-    /// The API-path exclusion must survive the case change: the callback hop is not "done".
-    func testAPIPathIsStillNotComplete() {
-        let callback = URL(string: "https://notes.liiib.re/api/v1.0/callback/?code=abc")!
-
-        XCTAssertFalse(isLoginNavigationComplete(url: callback, serverHost: "Notes.liiib.re"))
     }
 }

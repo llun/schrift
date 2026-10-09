@@ -1331,7 +1331,7 @@ costs nothing. `refresh()` needs no such gate: it calls `load()` next anyway.
 
 It is deliberately **not** hung off `load()`, and the reason is worth keeping. Passively,
 a `/users/me/` on every Home appearance is more traffic than a rare recovery warrants. But
-the decisive reason is mechanical: several `HomeViewModelTests` gate on *the first GET a
+the decisive reason is mechanical: several `HomeViewModel*Tests` classes gate on *the first GET a
 load makes* while holding `MockURLProtocol`'s single delivery thread on a semaphore, so a
 request inserted ahead of the list fetches becomes that first GET, blocks the thread, and
 cascades — 36 of 64 tests failing in 2833s, most of them tests that never call `load()`.
@@ -2875,7 +2875,7 @@ XCTest, mirroring the source tree. New/updated:
   directory. Plus **pure, filesystem-free** `contentCacheEvictions` tests: keeps
   newest N by `syncedAt`, returns oldest beyond the limit, empty result at/under
   the limit.
-- `EditorViewModelTests`:
+- `EditorViewModel*Tests` (split by concern over a shared `EditorViewModelTestCase`):
   - cache present → `isLoading` never becomes true; content on screen before any
     network call resolves (delayed/failing `MockURLProtocol` stub);
   - no cache → `isLoading` toggles true then false; content cached afterward;

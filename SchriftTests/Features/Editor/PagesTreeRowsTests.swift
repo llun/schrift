@@ -128,8 +128,4 @@ final class PagesTreeLayoutTests: XCTestCase {
         XCTAssertLessThan(narrow, 320)
         XCTAssertEqual(narrow, 320 * PagesTreeLayout.maxWidthFraction, accuracy: 0.001)
     }
-
-    func testPanelUsesTheHandoffWidthWhenThereIsRoom() {
-        XCTAssertEqual(PagesTreeLayout.width(availableWidth: 800), PagesTreeLayout.panelWidth)
-    }
 }

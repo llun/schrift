@@ -90,6 +90,49 @@ final class ListNestingTests: XCTestCase {
         XCTAssertNil(shiftingListItem(at: 1, by: 1, in: blocks))
     }
 
+    // MARK: - Subtree extent and indent inset
+
+    func testSubtreeEndCoversEveryDeeperItemUntilTheNextSibling() {
+        let blocks = [bullet("a"), bullet("b"), bullet("b.1", 1), bullet("b.1.1", 2), bullet("c")]
+        XCTAssertEqual(listSubtreeEnd(of: 1, in: blocks), 4)
+        XCTAssertEqual(listSubtreeEnd(of: 2, in: blocks), 4)
+        XCTAssertEqual(listSubtreeEnd(of: 3, in: blocks), 4)
+        XCTAssertEqual(listSubtreeEnd(of: 0, in: blocks), 1)
+    }
+
+    func testSubtreeOfALeafItemIsJustItself() {
+        let blocks = [bullet("a"), bullet("b")]
+        XCTAssertEqual(listSubtreeEnd(of: 0, in: blocks), 1)
+        XCTAssertEqual(listSubtreeEnd(of: 1, in: blocks), 2, "the last item ends at the array's end")
+    }
+
+    func testSubtreeStopsAtANonListBlockEvenIfItCarriesAnIndent() {
+        let blocks = [bullet("a"), EditorBlock(kind: .paragraph, text: "p", indent: 1), bullet("b", 1)]
+        XCTAssertEqual(listSubtreeEnd(of: 0, in: blocks), 1)
+    }
+
+    func testSubtreeExtendsToTheEndOfTheDocumentWhenNothingShallowerFollows() {
+        let blocks = [bullet("a"), bullet("a.1", 1), bullet("a.2", 1)]
+        XCTAssertEqual(listSubtreeEnd(of: 0, in: blocks), 3)
+    }
+
+    func testSubtreeMixesListKindsAtDeeperLevels() {
+        let blocks = [
+            bullet("a"), EditorBlock(kind: .checklistItem(checked: false), text: "t", indent: 1),
+            EditorBlock(kind: .numberedItem, text: "n", indent: 1),
+        ]
+        XCTAssertEqual(listSubtreeEnd(of: 0, in: blocks), 3)
+    }
+
+    func testIndentInsetGrowsLinearlyPerLevelAndNeverGoesNegative() {
+        XCTAssertEqual(EditorBlockMetrics.listIndentInset(0), 0)
+        XCTAssertEqual(EditorBlockMetrics.listIndentInset(-3), 0)
+        let one = EditorBlockMetrics.listIndentInset(1)
+        XCTAssertGreaterThan(one, 0)
+        XCTAssertEqual(EditorBlockMetrics.listIndentInset(2), one * 2)
+        XCTAssertEqual(EditorBlockMetrics.listIndentInset(maxListIndent), one * CGFloat(maxListIndent))
+    }
+
     // MARK: - Editor intents
 
     func testIndentAndOutdentMoveTheItemAndDirtyTheDocument() {

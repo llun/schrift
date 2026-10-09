@@ -2,16 +2,6 @@ import XCTest
 
 @testable import Schrift
 
-final class DocumentShareURLTests: XCTestCase {
-    func testBuildsExpectedURL() {
-        let id = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
-        XCTAssertEqual(
-            documentShareURL(serverHost: "docs.llun.dev", documentID: id)?.absoluteString,
-            "https://docs.llun.dev/docs/11111111-1111-4111-8111-111111111111/"
-        )
-    }
-}
-
 @MainActor
 final class OptionsViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!

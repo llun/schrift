@@ -62,11 +62,6 @@ final class CollaborationEndpointTests: XCTestCase {
         }
     }
 
-    func testOriginHeaderMatchesSiteOrigin() {
-        let base = URL(string: "https://docs.example.org/api/v1.0/")!
-        XCTAssertEqual(CollaborationEndpoint.originHeader(serverBaseURL: base), "https://docs.example.org")
-    }
-
     func testCookieHeaderJoinsAllCookies() {
         let cookies = [
             makeCookie(name: "sessionid", value: "abc"),

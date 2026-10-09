@@ -68,8 +68,9 @@ final class SwipeRevealRowTests: XCTestCase {
         XCTAssertEqual(swipeRevealOffset(translation: 300, startingOffset: -144, stripWidth: 144), 0)
     }
 
-    func testAnEmptyStripNeverMoves() {
+    func testAStriplessRowNeitherMovesNorSettlesOpen() {
         XCTAssertEqual(swipeRevealOffset(translation: -80, startingOffset: 0, stripWidth: 0), 0)
+        XCTAssertEqual(swipeRevealSettle(predictedEndOffset: -50, stripWidth: 0), .closed)
     }
 
     // MARK: - Settle decision
@@ -92,10 +93,6 @@ final class SwipeRevealRowTests: XCTestCase {
 
     func testExactlyAtTheThresholdOpens() {
         XCTAssertEqual(swipeRevealSettle(predictedEndOffset: -72, stripWidth: 144), .open)
-    }
-
-    func testAStriplessRowAlwaysSettlesClosed() {
-        XCTAssertEqual(swipeRevealSettle(predictedEndOffset: -50, stripWidth: 0), .closed)
     }
 
     // MARK: - Widths

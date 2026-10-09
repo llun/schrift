@@ -15,7 +15,6 @@ final class ChecklistHitTests: XCTestCase {
         let first = buttons.element(boundBy: 0).frame
         let second = buttons.element(boundBy: 1).frame
         let pitch = second.midY - first.midY
-        print("DENSE accessibility=\(accessibility) first=\(first) pitch=\(pitch)")
         // Inside the grown horizontal target but outside the visible checkbox;
         // also exercise both sides of the gap between adjacent row centers.
         let taps: [(Int, CGFloat, CGFloat)] = [

@@ -215,7 +215,7 @@ final class InlineMarkdownWriterTests: XCTestCase {
             let line: UInt
         }
         let cases: [Case] = [
-            // "a _it_ b" -> italic "it" (InlineMarkdownTests.testLoneUnderscoresAreEmphasis).
+            // "a _it_ b" -> italic "it" (InlineMarkdownUnderscoreTests.testLoneUnderscoresAreEmphasis).
             Case(text: "a _it_ b", openIndex: 2, closeIndex: 5, italicizes: true, line: #line),
             // "_ word _" -> opener followed by whitespace never flanks left.
             Case(text: "_ word _", openIndex: 0, closeIndex: 7, italicizes: false, line: #line),

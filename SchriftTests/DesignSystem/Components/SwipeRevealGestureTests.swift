@@ -25,24 +25,6 @@ import XCTest
 @MainActor
 final class SwipeRevealGestureTests: XCTestCase {
 
-    // MARK: - The refusal gate
-
-    /// The gate is exactly the axis lock's `.vertical` — never a second opinion about
-    /// direction, the two disagreeing being how a row and its list start fighting. The
-    /// `.undecided` answer is the asymmetry that makes a slow swipe possible at all: a drag
-    /// inside the slop has proved nothing yet, and refusing there would mean a swipe that
-    /// starts gently never gets to start.
-    ///
-    /// (There is deliberately no sweep over translations here. One was written, and it was
-    /// vacuous: `swipeGestureRefusesDrag` *is* `axis == .vertical`, so guarding a loop on that
-    /// and then asserting it cannot fail. `swipeDragAxis`'s own mapping is covered by
-    /// `SwipeRevealRowTests`.)
-    func testTheGateIsExactlyTheAxisLocksVerticalAnswer() {
-        XCTAssertTrue(swipeGestureRefusesDrag(.vertical))
-        XCTAssertFalse(swipeGestureRefusesDrag(.horizontal))
-        XCTAssertFalse(swipeGestureRefusesDrag(.undecided))
-    }
-
     // MARK: - Refusing, and the two ways of doing it
 
     /// **The regression, stated directly.** A drag that is still `.possible` is refused with

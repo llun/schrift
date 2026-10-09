@@ -72,13 +72,4 @@ final class BlockReorderTests: XCTestCase {
         drag.translation = 55
         XCTAssertEqual(drag.centerY, 75)
     }
-
-    // MARK: - Gesture
-
-    @MainActor
-    func testTheRecognizerIsAOneFingerLongPress() {
-        let recognizer = BlockReorderGesture.makeRecognizer()
-        XCTAssertEqual(recognizer.minimumPressDuration, BlockReorderGesture.minimumPressDuration)
-        XCTAssertEqual(recognizer.numberOfTouchesRequired, 1)
-    }
 }

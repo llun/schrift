@@ -46,31 +46,19 @@ final class SessionCookiesTests: XCTestCase {
         XCTAssertTrue(stored.isSecure)
     }
 
-    func testStoredCookieFromSessionOnlyCookieHasNilExpiry() {
-        let stored = StoredCookie(makeCookie(expiresDate: nil))
-        XCTAssertNil(stored.expiresDate)
-    }
-
     // MARK: - Codable round-trip
 
-    func testCodableRoundTripPreservesSessionOnlyCookie() throws {
-        let stored = StoredCookie(makeCookie(expiresDate: nil))
+    func testCodableRoundTripPreservesSessionOnlyAndExpiringCookies() throws {
+        let expiry = Date(timeIntervalSince1970: 2_000_000_000)
+        let sessionOnly = StoredCookie(makeCookie(expiresDate: nil))
+        let expiring = StoredCookie(makeCookie(name: "csrftoken", expiresDate: expiry, isSecure: true))
 
-        let data = try JSONEncoder().encode([stored])
+        let data = try JSONEncoder().encode([sessionOnly, expiring])
         let decoded = try JSONDecoder().decode([StoredCookie].self, from: data)
 
-        XCTAssertEqual(decoded, [stored])
+        XCTAssertEqual(decoded, [sessionOnly, expiring])
         XCTAssertNil(decoded[0].expiresDate)
-    }
-
-    func testCodableRoundTripPreservesExpiringCookie() throws {
-        let expiry = Date(timeIntervalSince1970: 2_000_000_000)
-        let stored = StoredCookie(makeCookie(expiresDate: expiry, isSecure: true))
-
-        let data = try JSONEncoder().encode(stored)
-        let decoded = try JSONDecoder().decode(StoredCookie.self, from: data)
-
-        XCTAssertEqual(decoded, stored)
+        XCTAssertNotNil(decoded[1].expiresDate)
     }
 
     // MARK: - HTTPCookie reconstruction

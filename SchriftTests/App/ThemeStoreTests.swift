@@ -44,45 +44,29 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(defaults.writes, 0)
     }
 
-    func testThemeAndAppearancePersistIndependentlyAndUnchangedSelectionDoesNotWrite() {
+    func testThemeAndAppearancePersistIndependently() {
         let appearance = AppearanceStore(userDefaults: defaults)
         let theme = ThemeStore(userDefaults: defaults)
         appearance.selected = .dark
         theme.selected = .paper
         XCTAssertEqual(ThemeStore(userDefaults: defaults).selected, .paper)
         XCTAssertEqual(AppearanceStore(userDefaults: defaults).selected, .dark)
-        defaults.writes = 0
-        theme.selected = .paper
-        XCTAssertEqual(defaults.writes, 0)
         appearance.selected = .system
         XCTAssertEqual(theme.selected, .paper)
         theme.selected = .mist
         XCTAssertEqual(appearance.selected, .system)
     }
+
+    func testReselectingTheSameThemeDoesNotWrite() {
+        let theme = ThemeStore(userDefaults: defaults)
+        theme.selected = .paper
+        defaults.writes = 0
+        theme.selected = .paper
+        XCTAssertEqual(defaults.writes, 0)
+    }
 }
 
 final class DocsThemePaletteTests: XCTestCase {
-    private func luminance(_ hex: UInt32) -> Double {
-        let c = hexColorComponents(hex)
-        func channel(_ value: Double) -> Double {
-            value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-        }
-        return 0.2126 * channel(c.red) + 0.7152 * channel(c.green) + 0.0722 * channel(c.blue)
-    }
-
-    private func contrast(_ a: UInt32, _ b: UInt32) -> Double {
-        let x = luminance(a)
-        let y = luminance(b)
-        return (max(x, y) + 0.05) / (min(x, y) + 0.05)
-    }
-
-    func testMistAndPaperCanvasesMatchPairedProposal() {
-        XCTAssertEqual(DocsPalette(theme: .mist, isDark: false).surfacePage, 0xF2F3F6)
-        XCTAssertEqual(DocsPalette(theme: .mist, isDark: true).surfacePage, 0x1C2028)
-        XCTAssertEqual(DocsPalette(theme: .paper, isDark: false).surfacePage, 0xF6F1E7)
-        XCTAssertEqual(DocsPalette(theme: .paper, isDark: true).surfacePage, 0x25231F)
-    }
-
     func testBodySecondaryLinksAndFeedbackRemainReadableAcrossThemeSurfaces() {
         for theme in AppTheme.allCases {
             for isDark in [false, true] {
@@ -90,14 +74,14 @@ final class DocsThemePaletteTests: XCTestCase {
                 for surface in [p.surfacePage, p.surfaceSunken, p.surfaceMuted] {
                     for ink in [p.textPrimary, p.textSecondary, p.textTertiary, p.textBrand] {
                         XCTAssertGreaterThanOrEqual(
-                            contrast(ink, surface), 4.5, "\(theme)-\(isDark): \(ink) / \(surface)")
+                            contrastRatio(ink, surface), 4.5, "\(theme)-\(isDark): \(ink) / \(surface)")
                     }
                 }
                 for (ink, fill) in [
                     (p.info650, p.infoSoft), (p.success650, p.successSoft),
                     (p.warning650, p.warningSoft), (p.dangerStrong, p.dangerSoft),
                 ] {
-                    XCTAssertGreaterThanOrEqual(contrast(ink, fill), 4.5)
+                    XCTAssertGreaterThanOrEqual(contrastRatio(ink, fill), 4.5)
                 }
             }
         }
@@ -107,8 +91,8 @@ final class DocsThemePaletteTests: XCTestCase {
         for theme in AppTheme.allCases {
             for color in [ButtonColor.brand, .neutral, .danger] {
                 let style = ButtonStyleResolver.style(variant: .primary, color: color, theme: theme)
-                XCTAssertGreaterThanOrEqual(contrast(style.foregroundLightHex, style.backgroundLightHex!), 4.5)
-                XCTAssertGreaterThanOrEqual(contrast(style.foregroundDarkHex, style.backgroundDarkHex!), 4.5)
+                XCTAssertGreaterThanOrEqual(contrastRatio(style.foregroundLightHex, style.backgroundLightHex!), 4.5)
+                XCTAssertGreaterThanOrEqual(contrastRatio(style.foregroundDarkHex, style.backgroundDarkHex!), 4.5)
             }
         }
     }

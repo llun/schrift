@@ -10,7 +10,7 @@ import XCTest
 /// tore down, while a **later** test's `stubHandler` is installed — recording a
 /// phantom `PATCH …/content/` into the later test's `RequestRecorder` and flaking
 /// its `waitAndConfirmNever` / `savesInFlight` assertions (observed on
-/// `EditorViewModelTests`).
+/// `EditorViewModel*Tests`).
 ///
 /// The fix is central and test-only: `makeSession()` tags every request with a
 /// token that `reset()` retires at teardown, and `startLoading` rejects a

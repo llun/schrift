@@ -607,7 +607,7 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   unit tests pin the two halves (the manager fires the observer in the same turn it bumps
   the version and stays silent on a fail-safe; the bridge registers it in `init` and a
   remote change delivered *only* through the observer re-syncs `old` before the next
-  forward). Every pre-existing `EditorViewModelTests` test passes unchanged, which is the
+  forward). Every pre-existing `EditorViewModel*Tests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
 
 **C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
@@ -617,7 +617,7 @@ the sibling Notifications/Work-offline rows) backed by
 `RootView` builds the collaboration manager with `featureEnabled:
 { LiveCollaborationPreference.isEnabled() }`, a live closure re-evaluated on every
 `availability` read — pinned by
-`DocumentCollaborationManagerTests.testAvailabilityTracksTheLivePreferenceFlagMidSession`,
+`DocumentCollaborationManagerLifecycleTests.testAvailabilityTracksTheLivePreferenceFlagMidSession`,
 which fails if anyone "optimizes" it into a captured Bool. **The default is OFF /
 opt-in** (decision 2026-07-21): the write path is CI-verified but the on-device
 end-to-end WebSocket check against a real collaboration-capable server is still owed, so
@@ -812,7 +812,7 @@ a target that provably outlives its source.
 ### Verification
 
 Golden fixtures captured from real yjs pin each YATA branch
-(`YIntegrationTests`, and — for the B3 encode side — `YStateEncoderTests`), and a
+(`YIntegration*Tests`, and — for the B3 encode side — `YStateEncoderTests`), and a
 **differential fuzz harness** compares this store against a node yjs oracle across
 randomized op scripts and delivery orders — seeded, minimizing. It compares the
 full store structure (not just the wire projection, so left/right/origin wiring is
@@ -1521,7 +1521,7 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 ## Testing
 
 - Unit tests for `DocsAPIClient` and Codable models against mocked `URLSession` responses (fixture JSON matching the real serializer shapes documented above).
-- Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinatorTests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title).
+- Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title).
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 

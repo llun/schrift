@@ -18,11 +18,9 @@ final class LiveCollaborationPreferenceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testDefaultsOff() {
+    /// Live collaboration is opt-in: it stays off until the Profile toggle writes the key.
+    func testDefaultsOffAndReadsTheStoredChoice() {
         XCTAssertFalse(LiveCollaborationPreference.isEnabled(defaults))
-    }
-
-    func testReadsEnabled() {
         defaults.set(true, forKey: LiveCollaborationPreference.key)
         XCTAssertTrue(LiveCollaborationPreference.isEnabled(defaults))
     }

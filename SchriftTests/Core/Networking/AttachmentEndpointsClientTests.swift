@@ -334,4 +334,75 @@ final class AttachmentEndpointsClientTests: XCTestCase {
         XCTAssertNil(attachmentKey(fromMediaCheckPath: "/api/v1.0/documents/1/media-check/"))
         XCTAssertNil(attachmentKey(fromMediaCheckPath: "not a url ?? key"))
     }
+
+    // MARK: - Ready media URL
+
+    private let checkPath = "/api/v1.0/documents/1111/media-check/?key=1111%2Fattachments%2F2222.jpg"
+
+    func testReadyMediaURLRetriesWhileProcessingThenReturnsTheServersFile() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let ready = log.count(ofMethod: "GET") >= 3
+            let body =
+                ready
+                ? #"{"status": "ready", "file": "/media/1111/attachments/2222-final.jpg"}"#
+                : #"{"status": "processing"}"#
+            return .init(statusCode: 200, headers: [:], body: Data(body.utf8), error: nil)
+        }
+
+        let url = await makeClient().readyMediaURLString(
+            fromMediaCheckPath: checkPath, maxAttempts: 5, retryInterval: .milliseconds(1))
+
+        XCTAssertEqual(url, "https://docs.example.org/media/1111/attachments/2222-final.jpg")
+        XCTAssertEqual(log.count(ofMethod: "GET"), 3, "stops polling as soon as the file is ready")
+    }
+
+    func testReadyMediaURLFallsBackToTheKeyDerivedURLAfterTheBudget() async {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: Data(#"{"status": "processing"}"#.utf8), error: nil)
+        }
+
+        let url = await makeClient().readyMediaURLString(
+            fromMediaCheckPath: checkPath, maxAttempts: 3, retryInterval: .milliseconds(1))
+
+        XCTAssertEqual(url, "https://docs.example.org/media/1111/attachments/2222.jpg")
+        XCTAssertEqual(log.count(ofMethod: "GET"), 3)
+    }
+
+    func testReadyMediaURLTreatsFailedChecksAsNotReadyAndStillFallsBack() async {
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+
+        let url = await makeClient().readyMediaURLString(
+            fromMediaCheckPath: checkPath, maxAttempts: 2, retryInterval: .milliseconds(1))
+
+        XCTAssertEqual(url, "https://docs.example.org/media/1111/attachments/2222.jpg")
+    }
+
+    func testReadyMediaURLIsNilWhenThePathCarriesNoKey() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: Data(#"{"status": "processing"}"#.utf8), error: nil)
+        }
+
+        let url = await makeClient().readyMediaURLString(
+            fromMediaCheckPath: "/api/v1.0/documents/1111/media-check/", maxAttempts: 2,
+            retryInterval: .milliseconds(1))
+
+        XCTAssertNil(url)
+    }
+
+    func testReadyMediaURLIgnoresAnOffOriginReadyFileAndFallsBack() async {
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"status": "ready", "file": "//evil.example/x.jpg"}"#.utf8), error: nil)
+        }
+
+        let url = await makeClient().readyMediaURLString(
+            fromMediaCheckPath: checkPath, maxAttempts: 1, retryInterval: .milliseconds(1))
+
+        XCTAssertEqual(url, "https://docs.example.org/media/1111/attachments/2222.jpg")
+    }
 }
