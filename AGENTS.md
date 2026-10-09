@@ -3291,6 +3291,10 @@ markdown write endpoint**. Understand this before touching the save path:
   Cache/draft restoration precedes the editor's read guard. Uncached offline
   content explains that it must first be opened online; never show Empty document
   or Start writing without `hasLoadedContent`. A cached empty body is valid content.
+  The Shared tab follows the same signal: `SharedViewModel` takes Home's
+  `OnlineAvailability`, serves its cache with no request or error while
+  offline, discards a response whose token no longer permits it, and
+  `SharedScreen` keys its load on `availability.token` so a reconnect reloads.
   Search is server-backed, so disable both Home's compact shortcut and iPad inline
   field with visible/accessibility explanations. Keep PR #148's pushed Home Search
   route and retain its model/query. Search and Quick Access reads are withheld at

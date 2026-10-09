@@ -21,11 +21,18 @@ final class SharedViewModel {
     /// by `showsLoadingPlaceholder`.
     var isLoading = false
     var errorKey: L10nKey?
-    var isOffline = false
+    /// Offline whenever the path is down or Work Offline is on (live, from `availability`), or
+    /// the last fetch failed with a transport (`DocsAPIError.network`) failure. The failure flag is
+    /// latched until a load succeeds or the cache is served on purpose.
+    var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    private var loadFailedOffline = false
 
     let client: DocsAPIClient
+    /// The one shared connectivity + Work Offline signal (the Home view model's instance in the
+    /// app). Offline means cache only, no request, no error; its token discards a response that
+    /// crossed an offline/reconnect flip.
+    let availability: OnlineAvailability
     private let cache: DocumentCacheStore
-    private let userDefaults: UserDefaults
     /// Optional: nil simply means "no queued deletions to annotate here", which is what every
     /// existing call site and `#Preview` gets.
     private let saveCoordinator: DocumentSaveCoordinator?
@@ -55,11 +62,12 @@ final class SharedViewModel {
         cache: DocumentCacheStore = DocumentCacheStore(),
         userDefaults: UserDefaults = .standard,
         saveCoordinator: DocumentSaveCoordinator? = nil,
-        signedInUser: SignedInUserStore = SignedInUserStore()
+        signedInUser: SignedInUserStore = SignedInUserStore(),
+        availability: OnlineAvailability? = nil
     ) {
         self.client = client
         self.cache = cache
-        self.userDefaults = userDefaults
+        self.availability = availability ?? OnlineAvailability(userDefaults: userDefaults)
         self.saveCoordinator = saveCoordinator
         self.signedInUser = signedInUser
         // A landed deletion: drop the row from the array this view model holds. The caches are
@@ -130,18 +138,20 @@ final class SharedViewModel {
         let fetchedPinRevision = saveCoordinator?.pins.revision ?? -1
         let pinOwner = signedInUser.userID
 
-        // "Work offline" (Profile > Preferences): serve cache, never hit the network.
-        if userDefaults.bool(forKey: "schrift.workOffline") {
+        // Offline (path down, or "Work offline" in Profile > Preferences): serve cache, never
+        // hit the network, and say nothing — the banner reads `availability` live.
+        if availability.isOffline {
             if let withMe = cache.loadSharedWithMeDocuments() {
                 pinRevision = -1
                 rawDocuments = withMe
                 hasLoaded = true
             }
-            isOffline = true
+            loadFailedOffline = false
             isLoading = false
             return
         }
 
+        let availabilityToken = availability.token
         let hadCache = hasLoaded
         isLoading = true
         let withMe: [Document]
@@ -149,10 +159,19 @@ final class SharedViewModel {
             withMe = try await client.listDocuments(isCreatorMe: false, ordering: "-updated_at").results
         } catch {
             guard generation == loadGeneration else { return }
+            guard availability.permitsResponse(for: availabilityToken) else {
+                isLoading = false
+                return
+            }
             // A real 401 is not "offline": the client's onSessionExpired hook has
             // already raised the app-level re-login sheet, so keep cache silently.
             let failed = (error as? DocsAPIError) != .sessionExpired
-            isOffline = failed
+            // Only a transport failure can explain Offline; HTTP errors (403/429/5xx) must not.
+            if case .network = error as? DocsAPIError {
+                loadFailedOffline = true
+            } else {
+                loadFailedOffline = false
+            }
             // Loud when a failing load has no cache to fall back on, or on an
             // explicit pull-to-refresh.
             if failed, userInitiated || !hadCache {
@@ -162,6 +181,10 @@ final class SharedViewModel {
             return
         }
         guard generation == loadGeneration else { return }
+        guard availability.permitsResponse(for: availabilityToken) else {
+            isLoading = false
+            return
+        }
         // Anything deleted while this was in flight is dropped before it can be applied or
         // cached — the fetch predates the DELETE and cannot know.
         let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
@@ -173,7 +196,7 @@ final class SharedViewModel {
                 surviving, ownerUserID: signedInUser.userID, fetchedAt: fetchedPinRevision, includePending: false)
                 ?? surviving)
         hasLoaded = true
-        isOffline = false
+        loadFailedOffline = false
         isLoading = false
         // Prune enrichment to the current list: a document that is no longer
         // shared can't keep showing stale avatars, and the dictionary can't grow
@@ -185,14 +208,15 @@ final class SharedViewModel {
         // Enrichment runs *outside* the list-load do/catch above and never
         // throws — so a decorative accesses failure can never be caught there
         // and misreported as a failed document list (offline / errorKey).
-        await enrich(documents: surviving, generation: generation)
+        await enrich(documents: surviving, generation: generation, availabilityToken: availabilityToken)
     }
 
     /// Fetch each document's accesses concurrently and resolve avatars +
     /// creator name. Best-effort: a per-document failure leaves that row
     /// un-enriched and never surfaces an error or "offline". Generation-guarded
     /// so a superseded load's late results are dropped.
-    private func enrich(documents: [Document], generation: Int) async {
+    private func enrich(documents: [Document], generation: Int, availabilityToken: OnlineAvailability.Token) async {
+        guard availability.permitsResponse(for: availabilityToken) else { return }
         await withTaskGroup(of: (UUID, SharedRowEnrichment?).self) { group in
             for document in documents {
                 let id = document.id
@@ -213,7 +237,9 @@ final class SharedViewModel {
                 }
             }
             for await (id, result) in group {
-                guard generation == loadGeneration else { continue }
+                guard generation == loadGeneration, availability.permitsResponse(for: availabilityToken) else {
+                    continue
+                }
                 // Not for a document deleted while this was in flight — the observer nil'd
                 // its entry, and writing the result back would re-populate it one await later.
                 if let result, !deletedSinceLoad.contains(id) { enrichment[id] = result }

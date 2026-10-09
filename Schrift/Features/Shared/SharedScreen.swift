@@ -9,7 +9,6 @@ struct SharedScreen: View {
     @Environment(LocalizationStore.self) private var loc
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
-    @AppStorage("schrift.workOffline") private var workOffline = false
 
     private func subtitle(for document: Document) -> String {
         let date = documentRowDate(document, locale: loc.locale)
@@ -21,7 +20,7 @@ struct SharedScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if workOffline || viewModel.isOffline { OfflineBanner(note: loc[.offline_note]) }
+            if viewModel.isOffline { OfflineBanner(note: loc[.offline_note]) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
@@ -108,7 +107,7 @@ struct SharedScreen: View {
         }
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)
-        .task {
+        .task(id: viewModel.availability.token) {
             await viewModel.load()
         }
     }

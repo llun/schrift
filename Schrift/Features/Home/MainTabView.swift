@@ -66,7 +66,9 @@ struct MainTabView: View {
                 client: viewModel.client, saveCoordinator: viewModel.saveCoordinator,
                 availability: viewModel.availability))
         _sharedViewModel = State(
-            initialValue: SharedViewModel(client: viewModel.client, saveCoordinator: viewModel.saveCoordinator))
+            initialValue: SharedViewModel(
+                client: viewModel.client, saveCoordinator: viewModel.saveCoordinator,
+                availability: viewModel.availability))
         _profileViewModel = State(initialValue: ProfileViewModel(client: viewModel.client))
         _attachmentsViewModel = State(
             initialValue: AttachmentsViewModel(
