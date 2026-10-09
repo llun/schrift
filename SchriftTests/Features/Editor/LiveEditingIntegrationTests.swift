@@ -3,7 +3,7 @@ import XCTest
 @testable import Schrift
 
 /// Records every socket the manager builds. Copied from
-/// `DocumentCollaborationManagerTests`' private `SocketFactorySpy` (top-level
+/// the `DocumentCollaborationManager*Tests`' shared `ManagerSocketFactorySpy` (top-level
 /// `private` is file-scoped in Swift, so it isn't reachable from this file) —
 /// kept minimal since this suite only ever opens one document's socket.
 private final class SocketFactorySpy: @unchecked Sendable {

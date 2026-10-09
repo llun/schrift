@@ -58,7 +58,7 @@ final class StringsCompletenessTests: XCTestCase {
     }
 
     @MainActor
-    func testEnglishOnlyThemeCopyFallsBackForEveryLanguage() {
+    func testEnglishOnlyThemeCopyFallsBackForEveryLanguage() throws {
         let suite = "StringsCompletenessTests.ThemeFallback"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -66,7 +66,12 @@ final class StringsCompletenessTests: XCTestCase {
         for language in AppLanguage.allCases {
             store.language = language
             for key in Self.englishOnlyKeys {
-                XCTAssertEqual(store[key], Strings.table(for: language)[key] ?? Strings_en.table[key])
+                let english = try XCTUnwrap(Strings_en.table[key])
+                if let translated = Strings.table(for: language)[key] {
+                    XCTAssertEqual(store[key], translated)
+                } else {
+                    XCTAssertEqual(store[key], english, "\(language.code) \(key.rawValue)")
+                }
                 XCTAssertNotEqual(store[key], key.rawValue)
             }
         }

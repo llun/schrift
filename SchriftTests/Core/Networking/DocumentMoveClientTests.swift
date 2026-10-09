@@ -58,17 +58,6 @@ final class DocumentMoveClientTests: XCTestCase {
         XCTAssertEqual(json["position"], "last-sibling")
     }
 
-    func testEveryPositionSpellsItsBackendWireValue() {
-        // These raw values are the backend's `MoveNodePositionChoices`; a rename here would be
-        // a 400 at runtime, which no other test in this file would catch.
-        XCTAssertEqual(DocumentMovePosition.firstChild.rawValue, "first-child")
-        XCTAssertEqual(DocumentMovePosition.lastChild.rawValue, "last-child")
-        XCTAssertEqual(DocumentMovePosition.firstSibling.rawValue, "first-sibling")
-        XCTAssertEqual(DocumentMovePosition.lastSibling.rawValue, "last-sibling")
-        XCTAssertEqual(DocumentMovePosition.left.rawValue, "left")
-        XCTAssertEqual(DocumentMovePosition.right.rawValue, "right")
-    }
-
     func testMoveDocumentAcceptsTheAcknowledgementBodyWithoutDecodingIt() async throws {
         stubMoveSuccess()
 

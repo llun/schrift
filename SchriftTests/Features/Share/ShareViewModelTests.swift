@@ -2,10 +2,6 @@ import XCTest
 
 @testable import Schrift
 
-private final class RequestLog: @unchecked Sendable {
-    var requests: [URLRequest] = []
-}
-
 @MainActor
 final class ShareViewModelTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
@@ -66,11 +62,11 @@ final class ShareViewModelTests: XCTestCase {
 
     func testInviteCallsCreateAccessThenReloads() async {
         let viewModel = makeViewModel()
-        let log = RequestLog()
+        let log = RequestRecorder()
         let accesses = Self.accessesFixture
         let invitations = Self.invitationsFixture
         MockURLProtocol.stubHandler = { request in
-            log.requests.append(request)
+            log.record(request)
             if request.httpMethod == "POST" {
                 let body = """
                     {"id": "55555555-5555-4555-8555-555555555555", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": {"id": "66666666-6666-4666-8666-666666666666", "email": "new@example.com", "full_name": "New", "short_name": "New", "language": "en-us", "is_first_connection": false}, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
@@ -88,18 +84,18 @@ final class ShareViewModelTests: XCTestCase {
 
         await viewModel.invite(user: user, role: .reader)
 
-        XCTAssertTrue(log.requests.contains { $0.httpMethod == "POST" })
-        XCTAssertTrue(log.requests.contains { $0.httpMethod == "GET" })
+        XCTAssertTrue(log.methods.contains("POST"))
+        XCTAssertTrue(log.methods.contains("GET"))
         XCTAssertNil(viewModel.errorKey)
     }
 
     func testRemoveMemberDeletesAccessThenReloads() async {
         let viewModel = makeViewModel()
-        let log = RequestLog()
+        let log = RequestRecorder()
         let accesses = Self.accessesFixture
         let invitations = Self.invitationsFixture
         MockURLProtocol.stubHandler = { request in
-            log.requests.append(request)
+            log.record(request)
             if request.httpMethod == "DELETE" {
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -113,7 +109,7 @@ final class ShareViewModelTests: XCTestCase {
 
         await viewModel.removeMember(.access(access))
 
-        XCTAssertTrue(log.requests.contains { $0.httpMethod == "DELETE" })
+        XCTAssertTrue(log.methods.contains("DELETE"))
     }
 
     func testUpdateLinkConfigurationUpdatesLocalState() async {
@@ -136,5 +132,147 @@ final class ShareViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.errorKey, .share_error_load)
         XCTAssertFalse(viewModel.isLoading)
+    }
+
+    // MARK: - Mutations: success reloads, failure surfaces a friendly key
+
+    private func routing(
+        mutation: @escaping @Sendable (URLRequest) -> MockURLProtocol.Stub, log: RequestRecorder
+    ) -> @Sendable (URLRequest) -> MockURLProtocol.Stub {
+        let accesses = Self.accessesFixture
+        let invitations = Self.invitationsFixture
+        return { request in
+            log.record(request)
+            if request.httpMethod != "GET" { return mutation(request) }
+            if request.url?.path.contains("invitations") == true {
+                return .init(statusCode: 200, headers: [:], body: invitations, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: accesses, error: nil)
+        }
+    }
+
+    func testUpdateRolePatchesTheAccessThenReloadsMembers() async {
+        let viewModel = makeViewModel()
+        let log = RequestRecorder()
+        let accessID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let updated = """
+            {"id": "22222222-2222-4222-8222-222222222222", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": null, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
+            """.data(using: .utf8)!
+        MockURLProtocol.stubHandler = routing(
+            mutation: { _ in .init(statusCode: 200, headers: [:], body: updated, error: nil) }, log: log)
+
+        await viewModel.updateRole(accessID: accessID, role: .reader)
+
+        XCTAssertEqual(log.methods.first, "PATCH")
+        XCTAssertEqual(viewModel.members.count, 2, "the member list is reloaded after the change")
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    func testUpdateRoleFailureSetsTheUpdateRoleError() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.updateRole(accessID: UUID(), role: .reader)
+
+        XCTAssertEqual(viewModel.errorKey, .share_error_update_role)
+    }
+
+    func testRemovingAnInvitationDeletesItViaTheInvitationsPathThenReloads() async {
+        let viewModel = makeViewModel()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = routing(
+            mutation: { _ in .init(statusCode: 204, headers: [:], body: Data(), error: nil) }, log: log)
+        let invitation = Invitation(
+            id: UUID(uuidString: "44444444-4444-4444-8444-444444444444")!, email: "pending@example.com",
+            role: .reader, isExpired: false)
+
+        await viewModel.removeMember(.invitation(invitation))
+
+        let invitationPath = "/invitations/44444444-4444-4444-8444-444444444444/"
+        XCTAssertEqual(log.count(ofMethod: "DELETE", urlContaining: invitationPath), 1)
+        XCTAssertEqual(log.count(ofMethod: "DELETE", urlContaining: "/accesses/"), 0)
+        XCTAssertEqual(viewModel.members.count, 2)
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    func testRemoveMemberFailureSetsTheRemoveError() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let access = DocumentAccess(id: UUID(), user: nil, team: nil, role: .editor)
+
+        await viewModel.removeMember(.access(access))
+
+        XCTAssertEqual(viewModel.errorKey, .share_error_remove_member)
+    }
+
+    func testInviteFailureSetsTheInviteErrorAndKeepsTheSearchState() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let user = UserSearchResult(id: UUID(), email: "new@example.com", fullName: "New", shortName: "New")
+        viewModel.searchQuery = "new"
+        viewModel.searchResults = [user]
+
+        await viewModel.invite(user: user, role: .reader)
+
+        XCTAssertEqual(viewModel.errorKey, .share_error_invite)
+        XCTAssertEqual(viewModel.searchQuery, "new")
+        XCTAssertEqual(viewModel.searchResults, [user])
+    }
+
+    func testSuccessfulInviteClearsTheSearchField() async {
+        let viewModel = makeViewModel()
+        let log = RequestRecorder()
+        let created = """
+            {"id": "55555555-5555-4555-8555-555555555555", "document": {"id": "11111111-1111-4111-8111-111111111111", "path": "0001", "depth": 1}, "user": null, "team": "", "role": "reader", "abilities": {}, "max_ancestors_role": null, "max_role": "reader"}
+            """.data(using: .utf8)!
+        MockURLProtocol.stubHandler = routing(
+            mutation: { _ in .init(statusCode: 201, headers: [:], body: created, error: nil) }, log: log)
+        let user = UserSearchResult(id: UUID(), email: "new@example.com", fullName: "New", shortName: "New")
+        viewModel.searchQuery = "new"
+        viewModel.searchResults = [user]
+
+        await viewModel.invite(user: user, role: .reader)
+
+        XCTAssertEqual(viewModel.searchQuery, "")
+        XCTAssertTrue(viewModel.searchResults.isEmpty)
+    }
+
+    func testUpdateLinkConfigurationFailureKeepsLocalStateAndSetsTheLinkError() async {
+        let viewModel = makeViewModel(linkReach: .restricted, linkRole: nil)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+
+        await viewModel.updateLinkConfiguration(reach: .authenticated, role: .reader)
+
+        XCTAssertEqual(viewModel.errorKey, .share_error_update_link)
+        XCTAssertEqual(viewModel.linkReach, .restricted)
+        XCTAssertNil(viewModel.linkRole)
+    }
+
+    // MARK: - User search
+
+    func testSearchInstallsResultsForTheTrimmedQuery() async {
+        let viewModel = makeViewModel()
+        let body = """
+            [{"id": "66666666-6666-4666-8666-666666666666", "email": "cam@example.com", "full_name": "Cam", "short_name": "Cam"}]
+            """.data(using: .utf8)!
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+        viewModel.searchQuery = "  cam "
+
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.searchResults.map(\.email), ["cam@example.com"])
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.query, "q=cam&document_id=11111111-1111-4111-8111-111111111111")
+    }
+
+    func testSearchFailureSetsTheSearchError() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        viewModel.searchQuery = "cam"
+
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.errorKey, .share_error_search)
+        XCTAssertTrue(viewModel.searchResults.isEmpty)
     }
 }

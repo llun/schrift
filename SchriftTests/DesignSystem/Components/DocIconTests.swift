@@ -7,11 +7,8 @@ final class DocIconTests: XCTestCase {
         XCTAssertEqual(docIconDisplayText(emoji: "📄"), "📄")
     }
 
-    func testNilEmojiFallsBackToDefaultGlyph() {
+    func testMissingOrEmptyEmojiFallsBackToDefaultGlyph() {
         XCTAssertNil(docIconDisplayText(emoji: nil))
-    }
-
-    func testEmptyEmojiFallsBackToDefaultGlyph() {
         XCTAssertNil(docIconDisplayText(emoji: ""))
     }
 }

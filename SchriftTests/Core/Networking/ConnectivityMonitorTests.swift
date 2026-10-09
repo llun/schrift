@@ -20,14 +20,10 @@ final class ConnectivityMonitorTests: XCTestCase {
         }
     }
 
-    func testStartsOptimisticallyReachable() {
-        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(FakePath()))
-        XCTAssertTrue(monitor.isReachable)
-    }
-
     func testDeliversReachabilityChangesOnTheMainActor() async {
         let fake = FakePath()
         let monitor = ConnectivityMonitor(monitoring: makeMonitoring(fake))
+        XCTAssertTrue(monitor.isReachable, "optimistic until the path monitor says otherwise")
 
         fake.onChange?(false)
         await waitUntil { monitor.isReachable == false }

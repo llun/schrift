@@ -3,36 +3,29 @@ import XCTest
 @testable import Schrift
 
 final class LinkReachPillTests: XCTestCase {
-    func testRestrictedUsesNeutralStyle() {
-        let style = LinkReachPillStyleResolver.style(reach: .restricted)
-        XCTAssertEqual(
-            style,
-            LinkReachPillStyleHex(
-                backgroundLightHex: DocsColorHex.surfaceMuted, backgroundDarkHex: DocsColorHexDark.surfaceMuted,
-                foregroundLightHex: DocsColorHex.textSecondary, foregroundDarkHex: DocsColorHexDark.textSecondary,
-                icon: .lock, labelKey: .reach_restricted, hintKey: .linkreach_hint_restricted))
+    private let reaches: [LinkReach] = [.restricted, .authenticated, .public]
+
+    func testEveryReachHasItsOwnStyleCopyAndIcon() {
+        let styles = reaches.map { LinkReachPillStyleResolver.style(reach: $0) }
+        for (index, style) in styles.enumerated() {
+            for other in styles[(index + 1)...] {
+                XCTAssertNotEqual(style.icon, other.icon)
+                XCTAssertNotEqual(style.labelKey, other.labelKey)
+                XCTAssertNotEqual(style.hintKey, other.hintKey)
+                XCTAssertNotEqual(style.backgroundLightHex, other.backgroundLightHex)
+            }
+            XCTAssertNotEqual(style.backgroundLightHex, style.backgroundDarkHex, "\(reaches[index])")
+        }
     }
 
-    func testAuthenticatedUsesInfoStyle() {
-        let style = LinkReachPillStyleResolver.style(reach: .authenticated)
-        XCTAssertEqual(
-            style,
-            LinkReachPillStyleHex(
-                backgroundLightHex: DocsColorHex.infoSoft, backgroundDarkHex: DocsColorHexDark.infoSoft,
-                foregroundLightHex: DocsColorHex.info650, foregroundDarkHex: DocsColorHexDark.info650,
-                icon: .vpn_lock, labelKey: .reach_connected,
-                hintKey: .linkreach_hint_authenticated))
-    }
-
-    func testPublicUsesBrandStyle() {
-        let style = LinkReachPillStyleResolver.style(reach: .public)
-        XCTAssertEqual(
-            style,
-            LinkReachPillStyleHex(
-                backgroundLightHex: DocsColorHex.brandFillSoft, backgroundDarkHex: DocsColorHexDark.brandFillSoft,
-                foregroundLightHex: DocsColorHex.textBrandSecondary,
-                foregroundDarkHex: DocsColorHexDark.textBrandSecondary,
-                icon: .public, labelKey: .reach_public, hintKey: .linkreach_hint_public))
+    func testInkIsReadableOnThePillInBothModes() {
+        for reach in reaches {
+            let style = LinkReachPillStyleResolver.style(reach: reach)
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(style.foregroundLightHex, style.backgroundLightHex), 4.5, "\(reach) light")
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(style.foregroundDarkHex, style.backgroundDarkHex), 4.5, "\(reach) dark")
+        }
     }
 
     func testRawValuesMatchBackendAPIStrings() {

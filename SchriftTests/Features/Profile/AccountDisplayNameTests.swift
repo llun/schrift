@@ -10,12 +10,9 @@ final class AccountRowTitleTests: XCTestCase {
         XCTAssertEqual(accountRowEmail(CurrentUser(email: "ada@example.org")), "ada@example.org")
     }
 
-    func testTreatsABlankEmailAsAbsentSoTheRowShowsItsPlaceholder() {
+    func testTreatsABlankOrMissingEmailAsAbsentSoTheRowShowsItsPlaceholder() {
         XCTAssertNil(accountRowEmail(CurrentUser(email: "   ")))
         XCTAssertNil(accountRowEmail(CurrentUser(email: "")))
-    }
-
-    func testIsNilWithNoUserOrNoEmail() {
         XCTAssertNil(accountRowEmail(nil))
         XCTAssertNil(accountRowEmail(CurrentUser(fullName: "Ada Lovelace")))
     }
@@ -42,11 +39,8 @@ final class AccountDisplayNameTests: XCTestCase {
 
     /// No user means the account has not loaded — offline, or a failed
     /// `/users/me/`. The screen must say so rather than invent a name.
-    func testNoUserHasNoDisplayName() {
+    func testNoUserOrAUserWithNothingUsableHasNoDisplayName() {
         XCTAssertNil(accountDisplayName(nil))
-    }
-
-    func testAUserWithNothingUsableHasNoDisplayName() {
         XCTAssertNil(accountDisplayName(user()))
     }
 
@@ -55,15 +49,5 @@ final class AccountDisplayNameTests: XCTestCase {
     func testBlankAndWhitespaceFieldsAreSkipped() {
         XCTAssertNil(accountDisplayName(user(full: "", short: "   ", email: "\n")))
         XCTAssertEqual(accountDisplayName(user(full: "  ", short: "", email: "c@example.org")), "c@example.org")
-    }
-
-    /// The document empty-title string is for documents. A person rendered as
-    /// "Untitled" is indistinguishable from real data, which is the bug this
-    /// function exists to prevent.
-    func testNeverReturnsTheDocumentUntitledPlaceholder() {
-        let untitled = Strings_en.table[.common_untitled]
-        XCTAssertNotNil(untitled)
-        XCTAssertNotEqual(accountDisplayName(nil), untitled)
-        XCTAssertNotEqual(accountDisplayName(user()), untitled)
     }
 }

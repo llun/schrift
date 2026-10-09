@@ -16,17 +16,26 @@ final class AvatarTests: XCTestCase {
         XCTAssertEqual(avatarInitials(for: "Jean Pierre Dupont"), "JD")
     }
 
-    func testInitialsHandlesEmptyName() {
+    func testInitialsFallBackToAQuestionMarkWhenThereIsNoLetterToShow() {
         XCTAssertEqual(avatarInitials(for: ""), "?")
+        XCTAssertEqual(avatarInitials(for: "   "), "?")
     }
 
-    func testColorHexIsDeterministicForSameName() {
-        XCTAssertEqual(avatarColorHex(for: "Camille Moreau"), avatarColorHex(for: "Camille Moreau"))
+    func testInitialsIgnoreExtraSpacesAndUppercaseLowercaseNames() {
+        XCTAssertEqual(avatarInitials(for: "  ada    byron   lovelace "), "AL")
+    }
+
+    func testInitialsTakeTheFirstUserPerceivedCharacterOfNonLatinNames() {
+        XCTAssertEqual(avatarInitials(for: "😀 Smile"), "😀S")
+        XCTAssertEqual(avatarInitials(for: "สมชาย ใจดี"), "สใ")
+        XCTAssertEqual(avatarInitials(for: "王小明"), "王")
+        XCTAssertEqual(avatarInitials(for: "李 雷"), "李雷")
     }
 
     // Indices mirror the prototype's ACCENTS hash (h = h*31 + charCode, mod 8).
     // `avatarColorHex` returns the LIGHT hex, so the mapping is unchanged in light mode.
-    func testColorHexMatchesExpectedPaletteIndex() {
+    func testColorHexMatchesExpectedPaletteIndexAndIsDeterministic() {
+        XCTAssertEqual(avatarColorHex(for: "Camille Moreau"), avatarColorHex(for: "Camille Moreau"))
         XCTAssertEqual(avatarColorHex(for: "Camille Moreau"), avatarColorPalette[6].light)
         XCTAssertEqual(avatarColorHex(for: "Amandine Salambo"), avatarColorPalette[4].light)
         XCTAssertEqual(avatarColorHex(for: "Desirae Dokidis"), avatarColorPalette[4].light)
@@ -60,21 +69,13 @@ final class AvatarTests: XCTestCase {
         XCTAssertEqual(avatarColorHexPair(for: "Camille Moreau").dark, avatarColorPalette[6].dark)
     }
 
-    /// The brandFill slot (index 6) is the one palette entry whose dark hex
-    /// differs from its light hex, so a name hashing there must now adapt.
-    func testBrandFillSlotAdaptsToDarkMode() {
-        let pair = avatarColorHexPair(for: "Camille Moreau")  // hashes to index 6
-        XCTAssertEqual(pair.light, DocsColorHex.brandFill)
-        XCTAssertEqual(pair.dark, DocsColorHexDark.brandFill)
-        XCTAssertNotEqual(pair.light, pair.dark, "brandFill must differ between light and dark")
-    }
-
-    /// An accent slot pairs to itself: the accent hues are identical in dark, so
-    /// this slot is visually unchanged — the fix is a no-op for accents.
-    func testAnAccentSlotPairsToItself() {
-        let pair = avatarColorHexPair(for: "Charlie Saris")  // hashes to index 0, accentBlue1
-        XCTAssertEqual(pair.light, DocsColorHex.accentBlue1)
-        XCTAssertEqual(pair.dark, DocsColorHexDark.accentBlue1)
-        XCTAssertEqual(pair.light, pair.dark)
+    /// Regression: the brand-fill slot is the palette entry whose dark hex differs from its light hex, so
+    /// it must carry the brand fill's own dark counterpart rather than reusing the light hex in dark mode.
+    func testTheBrandFillSlotUsesTheBrandFillDarkCounterpart() {
+        let slots = avatarColorPalette.filter { $0.light == DocsColorHex.brandFill }
+        XCTAssertFalse(slots.isEmpty, "the palette must keep a brand-fill slot")
+        for slot in slots {
+            XCTAssertEqual(slot.dark, DocsColorHexDark.brandFill)
+        }
     }
 }

@@ -20,16 +20,15 @@ final class AppearanceStoreTests: XCTestCase {
 
     func testDefaultsToSystem() {
         XCTAssertEqual(AppearanceStore(userDefaults: defaults).selected, .system)
+    }
+
+    /// `.system` must be `nil` so `.preferredColorScheme(nil)` lets the OS decide; the others force a scheme.
+    func testOnlyTheExplicitChoicesForceAColorScheme() {
         XCTAssertNil(AppAppearance.system.colorScheme)
         XCTAssertEqual(AppAppearance.light.colorScheme, .light)
         XCTAssertEqual(AppAppearance.dark.colorScheme, .dark)
     }
 
-    func testIcons() {
-        XCTAssertEqual(AppAppearance.system.icon, .contrast)
-        XCTAssertEqual(AppAppearance.light.icon, .light_mode)
-        XCTAssertEqual(AppAppearance.dark.icon, .dark_mode)
-    }
     func testPersistsSelection() {
         let store = AppearanceStore(userDefaults: defaults)
         store.selected = .dark

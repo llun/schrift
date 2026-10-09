@@ -50,4 +50,31 @@ final class VersionEndpointsClientTests: XCTestCase {
 
         XCTAssertTrue(versions.isEmpty)
     }
+
+    func testVersionDatesDecodeWithAndWithoutFractionalSeconds() async throws {
+        let responseBody = #"""
+            {"versions":[{"version_id":"a","last_modified":"2026-07-11T15:04:00.250Z"},{"version_id":"b","last_modified":"2026-07-11T15:04:00Z"}]}
+            """#.data(using: .utf8)!
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
+
+        let versions = try await makeClient().documentVersions(documentID: documentID)
+
+        XCTAssertEqual(versions.count, 2)
+        XCTAssertEqual(
+            versions[0].lastModified.timeIntervalSince(versions[1].lastModified), 0.25, accuracy: 0.001)
+    }
+
+    func testAVersionWithoutAnIdFailsAsADecodingError() async {
+        let responseBody = #"{"versions":[{"last_modified":"2026-07-11T15:04:00Z"}]}"#.data(using: .utf8)!
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: responseBody, error: nil) }
+
+        do {
+            _ = try await makeClient().documentVersions(documentID: documentID)
+            XCTFail("expected a decoding error")
+        } catch let error as DocsAPIError {
+            guard case .decoding = error else { return XCTFail("unexpected error \(error)") }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
 }

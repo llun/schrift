@@ -14,7 +14,7 @@ import XCTest
 /// stores formatting — would be a bare `AbstractType` and is not exercised here.
 ///
 /// These come from the session-local node oracle / differential-fuzz harness (see
-/// `YIntegrationTests`), which the `--formatting` lane drives with nested texts.
+/// `YIntegration*Tests`), which the `--formatting` lane drives with nested texts.
 final class YTextCleanupTests: XCTestCase {
 
     private func makeDoc(clientID: UInt = 9, gc: Bool = false) -> YDoc {

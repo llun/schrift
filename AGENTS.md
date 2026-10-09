@@ -56,8 +56,10 @@ and delegates each step to sub-agents, choosing model and effort explicitly
 5. **Verify by change type**, beyond the tests themselves:
    - `Core/Yjs`: the golden hex tests must pass **unchanged** — if you think
      the bytes must change, stop and get human sign-off first.
-   - Design system: update the component's `#Preview` catalog; new color
-     tokens get `DocsColorHexTests` assertions.
+   - Design system: update the component's `#Preview` catalog. Token values are
+     visual and are not unit-tested; a new color token must be added to the
+     relevant hand-listed invariant in `DocsColorTokenInvariantTests` (contrast
+     pair, light-vs-dark relationship); the suite does not discover tokens itself.
    - Any change that alters the design: update the Sketch component library
      too ([Sketch source of truth](#sketch-source-of-truth)).
    - Networking: assert method, path (trailing slash, lowercase UUID), and
@@ -615,7 +617,8 @@ gate's parser, itself tested by `FormatSpecifiersTests`; `AsyncTestHelpers.swift
 — `bodyData(from:)`, which drains `httpBodyStream` because `URLSession` moves
 bodies there; `TestImages.swift` — `testPNGData`/`testPixelSize`/`testImageProperties`/
 `testJPEGDataWithGPSMetadata`, CoreGraphics fixtures so image tests need no bundle
-asset). Follow the directory mirror when adding files.
+asset); `ColorContrast.swift` — `relativeLuminance`/`contrastRatio`, the WCAG
+helpers behind the contrast invariants). Follow the directory mirror when adding files.
 
 ## Coding standards
 
@@ -1047,9 +1050,11 @@ new code reads like the surrounding code.
   color bullet below); add a matching `DocsColor` entry only when views use it
   directly as a SwiftUI `Color` — hues consumed only by style resolvers (the
   accent palette, the `-650` feedback foregrounds, parts of the gray ramp) stay
-  hex-only. Add a value assertion in `DocsColorHexTests` (tokens added after
-  the original spec currently lack assertions — extend the tests when you
-  touch them).
+  hex-only. Token values are visual, so no test restates them (they are checked
+  in the `#Preview` catalogs and the Sketch library); a new token must be added to
+  the relevant hand-listed invariant in `DocsColorTokenInvariantTests` — an
+  ink-on-fill contrast pair (light and dark) or a documented light/dark
+  relationship; the suite does not discover tokens itself.
 - **Personal themes preserve semantic token identity.** `ThemeStore` persists only
   `schrift.theme`, independently of Appearance, with White as the fallback for both
   new and existing installs. Initialization is read-only; unchanged selection does
@@ -1198,7 +1203,7 @@ new code reads like the surrounding code.
   fills both halves (light from `DocsColorHex`, dark from `DocsColorHexDark`);
   the view renders via `Color(lightHex:darkHex:)`. `Badge`, `Button`,
   `IconButton`, `TextField`, `LinkReachPill` follow this; their resolver tests
-  assert both fields.
+  cover the light and dark fields through invariants (distinct styles, contrast) rather than restating values.
 - Every component file ends with a `#Preview` **catalog** of all meaningful
   variants/states, checked in **both light and dark** (`.preferredColorScheme`)
   since adding a token doesn't guarantee its dark half looks right. Icon-only
@@ -1537,7 +1542,7 @@ that are easy to violate and expensive to discover:
   thing that exists so malformed wire data can never take the app down — cannot
   intercept. `Lib0Decoder.maxAnyNestingDepth` (64) bounds it, throwing
   `anyNestingTooDeep` instead. A regression test in
-  `DocumentCollaborationManagerTests` delivers such a frame end-to-end — before
+  `DocumentCollaborationManagerReplicaTests` delivers such a frame end-to-end — before
   the cap it crashed the whole test process, and a regression will read as
   `Restarting after unexpected exit` rather than a normal failure, so don't
   misfile it as the concurrent-worktree flake. The cap is a **deliberate,
@@ -1675,7 +1680,7 @@ that are easy to violate and expensive to discover:
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **Verify against the oracle, not against reasoning.** Golden fixtures
-  (`YIntegrationTests`) pin each YATA branch from real yjs; the differential fuzz
+  (`YIntegration*Tests`) pin each YATA branch from real yjs; the differential fuzz
   harness (session-local scratch, never committed — zero-dep rule) compares the
   whole store against a node yjs oracle across randomized op scripts and delivery
   orders. **A green run only proves there is no bug in the shapes the generator can
@@ -2871,7 +2876,7 @@ markdown write endpoint**. Understand this before touching the save path:
     `canEngageLiveEditing` true across a run of keystrokes. `nil?.forwardLocalEdit() == true`
     is `false`, so with `liveWrite` unset (every pre-C2c test, any screen without a bridge)
     this is a provable no-op and the classic path is byte-for-byte unchanged — the standing
-    proof is that every existing `EditorViewModelTests` test passes with no changes.
+    proof is that every existing `EditorViewModel*Tests` test passes with no changes.
   - **The write gate (`canEngageLiveWrite`) is the C1 read gate plus one thing:**
     `canEngageLiveEditing` (loaded, clean, no dirty/pending-save/draft/conflict,
     idle/saved) **and** the fresh projection is `isFullyModeled`. A document with any
@@ -3812,9 +3817,19 @@ markdown write endpoint**. Understand this before touching the save path:
 
 ## Testing conventions
 
+- **A test asserts behavior or an invariant that can regress.** Never restate a
+  constant, default, enum raw value or lookup-table line for line, and never check
+  visual-only values (colors, glyphs, the app icon/logo); fold per-case mirrors
+  into one invariant or table-driven test, and split a test file when it mixes
+  unrelated concerns.
 - **XCTest only** — never Swift Testing (no `import Testing` / `@Test` / `#expect`).
   `final class <Type>Tests: XCTestCase`, `@testable import Schrift`, mirroring the
   source tree. Add `@MainActor` to test classes whose subject is `@MainActor`.
+- **Splitting a test class across files** uses a shared base: a non-final
+  `@MainActor class <Name>TestCase: XCTestCase` in its own file holds the shared
+  `setUp`/`tearDown` and helpers (`internal`, not `private`, and no `test…`
+  methods), and each file is a `final class <Concern>Tests: <Name>TestCase`. Never
+  inherit test methods from another test class (XCTest would run them twice).
 - Fake HTTP with **`MockURLProtocol`** (`makeSession()` + `stubHandler`; inspect
   `lastRequest` for single-request tests). Call **`MockURLProtocol.reset()`** in
   `tearDown` — not just `stubHandler = nil`. It also drains deferred deliveries:

@@ -3,27 +3,14 @@ import XCTest
 @testable import Schrift
 
 final class SwipeActionStyleResolverTests: XCTestCase {
-    func testNeutralUsesTheMutedSurfaceAndSecondaryInk() {
-        let style = SwipeActionStyleResolver.style(role: .neutral)
-        XCTAssertEqual(style.backgroundLightHex, DocsColorHex.surfaceMuted)
-        XCTAssertEqual(style.backgroundDarkHex, DocsColorHexDark.surfaceMuted)
-        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textSecondary)
-        XCTAssertEqual(style.foregroundDarkHex, DocsColorHexDark.textSecondary)
-    }
-
-    func testBrandUsesTheBrandFill() {
-        let style = SwipeActionStyleResolver.style(role: .brand)
-        XCTAssertEqual(style.backgroundLightHex, DocsColorHex.brandFill)
-        XCTAssertEqual(style.backgroundDarkHex, DocsColorHexDark.brandFill)
-        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textOnFill)
-        XCTAssertEqual(style.foregroundDarkHex, DocsColorHexDark.textOnFill)
-    }
-
-    func testDestructiveUsesTheDangerFill() {
-        let style = SwipeActionStyleResolver.style(role: .destructive)
-        XCTAssertEqual(style.backgroundLightHex, DocsColorHex.danger)
-        XCTAssertEqual(style.backgroundDarkHex, DocsColorHexDark.danger)
-        XCTAssertEqual(style.foregroundLightHex, DocsColorHex.textOnFill)
+    func testInkIsReadableOnEachRolesFillInBothModes() {
+        for role in [SwipeActionRole.neutral, .brand, .destructive] {
+            let style = SwipeActionStyleResolver.style(role: role)
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(style.foregroundLightHex, style.backgroundLightHex), 4.5, "\(role) light")
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(style.foregroundDarkHex, style.backgroundDarkHex), 4.5, "\(role) dark")
+        }
     }
 
     /// **Destructive is the reason a resolver carries both halves per color.**

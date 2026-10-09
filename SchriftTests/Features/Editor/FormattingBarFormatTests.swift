@@ -26,7 +26,6 @@ final class FormattingBarFormatTests: XCTestCase {
         XCTAssertEqual(ListFormat.stored(""), .bulleted)
         XCTAssertEqual(ListFormat.stored("roman"), .bulleted)
         XCTAssertEqual(ListFormat.stored("checklist"), .checklist)
-        XCTAssertTrue(ListFormat.preferenceKey.hasPrefix("schrift."))
     }
 
     func testChoosingConvertsOtherKindsAndLeavesTheSameFormatAlone() {

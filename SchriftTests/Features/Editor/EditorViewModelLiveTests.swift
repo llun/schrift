@@ -4,7 +4,7 @@ import XCTest
 
 /// `applyLiveRemoteChange` and `canEngageLiveEditing` — the C1 bridge's
 /// caret-preserving content-swap funnel and its engagement gate. Kept in its
-/// own file (see `EditorViewModelTests` for the general save-invariant suite)
+/// own file (see the `EditorViewModel*Tests` classes for the general save-invariant suite)
 /// per the mirrored-test-tree convention for a large existing test file.
 @MainActor
 final class EditorViewModelLiveTests: XCTestCase {

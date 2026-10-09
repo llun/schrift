@@ -67,4 +67,96 @@ final class PendingDocumentPinStoreTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: "dev.llun.Schrift.pendingPins.unreadable"), bytes)
         XCTAssertEqual(store.allPins(), [newIntent])
     }
+
+    // MARK: - Key composition
+
+    func testKeyComposesServerAccountAndDocument() {
+        let documentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let owner = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let base = intent(documentID: documentID, owner: owner)
+
+        XCTAssertEqual(
+            base.key,
+            "https://docs.example.org|22222222-2222-4222-8222-222222222222|11111111-1111-4111-8111-111111111111")
+        XCTAssertNotEqual(base.key, intent(documentID: documentID, owner: owner, origin: "https://other.example").key)
+        XCTAssertNotEqual(base.key, intent(documentID: documentID, owner: UUID()).key)
+        XCTAssertNotEqual(base.key, intent(documentID: UUID(), owner: owner).key)
+        XCTAssertEqual(base.key, intent(documentID: documentID, owner: owner, pinned: false).key, "bit is not identity")
+    }
+
+    // MARK: - Settled projection
+
+    func testSettledStartsEmptyAndPersistsAcrossInstances() {
+        XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).allSettled().isEmpty)
+        let settled = intent()
+
+        XCTAssertTrue(PendingDocumentPinStore(userDefaults: defaults).saveSettled(settled))
+
+        XCTAssertEqual(PendingDocumentPinStore(userDefaults: defaults).allSettled(), [settled])
+    }
+
+    func testSavingASettledBitForTheSameKeyReplacesIt() {
+        let store = PendingDocumentPinStore(userDefaults: defaults)
+        let first = intent()
+        let later = intent(documentID: first.documentID, owner: first.ownerUserID, pinned: false)
+        store.saveSettled(first)
+        store.saveSettled(later)
+
+        XCTAssertEqual(store.allSettled(), [later])
+    }
+
+    func testSettledEntriesStaySeparatePerServerAccountAndDocument() {
+        let store = PendingDocumentPinStore(userDefaults: defaults)
+        let document = UUID()
+        let owner = UUID()
+        let entries = [
+            intent(documentID: document, owner: owner),
+            intent(documentID: document, owner: owner, origin: "https://other.example"),
+            intent(documentID: document, owner: UUID()),
+            intent(documentID: UUID(), owner: owner),
+        ]
+        entries.forEach { store.saveSettled($0) }
+
+        XCTAssertEqual(Set(store.allSettled().map(\.key)), Set(entries.map(\.key)))
+        XCTAssertEqual(store.allSettled().count, 4)
+    }
+
+    func testRemoveSettledOnlyRemovesTheMatchingIntent() {
+        let store = PendingDocumentPinStore(userDefaults: defaults)
+        let original = intent()
+        let superseding = intent(documentID: original.documentID, owner: original.ownerUserID, pinned: false)
+        store.saveSettled(superseding)
+
+        store.removeSettled(original)
+        XCTAssertEqual(store.allSettled(), [superseding], "a stale intent id cannot remove the newer entry")
+
+        store.removeSettled(superseding)
+        XCTAssertTrue(store.allSettled().isEmpty)
+    }
+
+    func testSettledAndPendingStoresDoNotShareState() {
+        let store = PendingDocumentPinStore(userDefaults: defaults)
+        let pending = intent()
+        let settled = intent()
+        store.save(pending)
+        store.saveSettled(settled)
+
+        XCTAssertEqual(store.allPins(), [pending])
+        XCTAssertEqual(store.allSettled(), [settled])
+
+        store.remove(pending)
+        XCTAssertEqual(store.allSettled(), [settled])
+        XCTAssertTrue(store.allPins().isEmpty)
+    }
+
+    func testAnUnreadableSettledBlobReadsAsEmptyAndIsReplacedByTheNextSave() {
+        defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.settledPins")
+        let store = PendingDocumentPinStore(userDefaults: defaults)
+        XCTAssertTrue(store.allSettled().isEmpty)
+
+        let settled = intent()
+        XCTAssertTrue(store.saveSettled(settled))
+
+        XCTAssertEqual(store.allSettled(), [settled])
+    }
 }

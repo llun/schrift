@@ -15,21 +15,12 @@ final class AttachmentCardViewTests: XCTestCase {
 
     // MARK: - Online
 
-    func testNoStateYetReadsAsDownloading() {
-        // The card's own `.task` is about to start it; showing a failure here
-        // would flash an error the app never encountered.
+    /// A missing state reads as downloading because the card's own `.task` is about to start it; showing a
+    /// failure there would flash an error the app never encountered. Every other loader state passes through.
+    func testOnlineStatesPassThroughAndNoStateYetReadsAsDownloading() {
         XCTAssertEqual(attachmentCardState(loaderState: nil, isOffline: false), .downloading)
-    }
-
-    func testDownloadingStaysDownloading() {
         XCTAssertEqual(attachmentCardState(loaderState: .downloading, isOffline: false), .downloading)
-    }
-
-    func testCachedShowsTheFile() {
         XCTAssertEqual(attachmentCardState(loaderState: .cached(file), isOffline: false), .cached(file))
-    }
-
-    func testFailedOfferesRetry() {
         XCTAssertEqual(attachmentCardState(loaderState: .failed, isOffline: false), .failed)
     }
 

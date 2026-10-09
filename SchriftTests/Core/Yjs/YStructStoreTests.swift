@@ -3,7 +3,7 @@ import XCTest
 @testable import Schrift
 
 /// Unit tests for the struct store's primitives (`YStructStore.swift`) and its
-/// delete set (`YDeleteSet.swift`) — the pieces `YIntegrationTests` exercises only
+/// delete set (`YDeleteSet.swift`) — the pieces `YIntegration*Tests` exercises only
 /// indirectly, through whole updates.
 final class YStructStoreTests: XCTestCase {
 
@@ -28,14 +28,6 @@ final class YStructStoreTests: XCTestCase {
             content: .string(Array(text.utf16)))
     }
 
-    // MARK: - getState
-
-    func testGetStateIsTheNextUnusedClock() {
-        let store = makeStore(lengths: [3, 2, 5])
-        XCTAssertEqual(store.getState(1), 10)
-        XCTAssertEqual(store.getState(99), 0, "an unknown client starts at clock 0")
-    }
-
     // MARK: - addStruct
 
     func testAddStructRejectsANonContiguousStruct() {
@@ -51,8 +43,10 @@ final class YStructStoreTests: XCTestCase {
         }
     }
 
-    func testAddStructAppendsAContiguousStruct() throws {
+    func testAddStructAppendsAContiguousStructAndGetStateIsTheNextUnusedClock() throws {
         let store = makeStore(lengths: [3])
+        XCTAssertEqual(store.getState(1), 3)
+        XCTAssertEqual(store.getState(99), 0, "an unknown client starts at clock 0")
         try store.addStruct(YGC(id: YID(client: 1, clock: 3), length: 2))
         XCTAssertEqual(store.getState(1), 5)
     }
@@ -68,16 +62,6 @@ final class YStructStoreTests: XCTestCase {
 
     // MARK: - findIndexSS
 
-    func testFindIndexSSFindsTheStructContainingAClock() throws {
-        let store = makeStore(lengths: [3, 2, 5])  // clocks 0..2, 3..4, 5..9
-        let structs = store.clients[1]!.structs
-        for (clock, expected) in [(UInt(0), 0), (2, 0), (3, 1), (4, 1), (5, 2), (9, 2)] {
-            XCTAssertEqual(
-                try YStructStore.findIndexSS(structs, clock), expected,
-                "clock \(clock) should be in struct \(expected)")
-        }
-    }
-
     func testFindIndexSSThrowsForAClockPastTheEnd() {
         // yjs: "Always check state before looking for a struct in StructStore.
         // Therefore the case of not finding a struct is unexpected."
@@ -89,6 +73,16 @@ final class YStructStoreTests: XCTestCase {
 
     func testFindIndexSSThrowsOnAnEmptyList() {
         assertThrows(YIntegrationError.unexpectedCase) { _ = try YStructStore.findIndexSS([], 0) }
+    }
+
+    func testFindIndexSSFindsTheStructContainingAClock() throws {
+        let store = makeStore(lengths: [3, 2, 5])  // clocks 0..2, 3..4, 5..9
+        let structs = store.clients[1]!.structs
+        for (clock, expected) in [(UInt(0), 0), (2, 0), (3, 1), (4, 1), (5, 2), (9, 2)] {
+            XCTAssertEqual(
+                try YStructStore.findIndexSS(structs, clock), expected,
+                "clock \(clock) should be in struct \(expected)")
+        }
     }
 
     func testFindIndexSSHandlesManyStructs() throws {

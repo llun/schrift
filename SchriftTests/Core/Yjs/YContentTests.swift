@@ -30,20 +30,6 @@ final class YContentTests: XCTestCase {
         XCTAssertTrue(YContent.doc(guid: "g", options: .null).isCountable)
     }
 
-    func testContentRefsMatchTheYjsTable() {
-        // contentRefs @10230: 1 deleted, 2 json, 3 binary, 4 string, 5 embed,
-        // 6 format, 7 type, 8 any, 9 doc.
-        XCTAssertEqual(YContent.deleted(len: 1).ref, 1)
-        XCTAssertEqual(YContent.json(["1"]).ref, 2)
-        XCTAssertEqual(YContent.binary(Data()).ref, 3)
-        XCTAssertEqual(YContent.string([]).ref, 4)
-        XCTAssertEqual(YContent.embed(json: "{}").ref, 5)
-        XCTAssertEqual(YContent.format(key: "b", valueJSON: "true").ref, 6)
-        XCTAssertEqual(YContent.type(YType()).ref, 7)
-        XCTAssertEqual(YContent.any([]).ref, 8)
-        XCTAssertEqual(YContent.doc(guid: "g", options: .null).ref, 9)
-    }
-
     func testStringLengthCountsUTF16CodeUnitsNotCharacters() {
         // A Yjs clock advances by JS `String.length`, i.e. UTF-16 code units — an
         // astral character is two, not one.

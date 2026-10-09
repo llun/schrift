@@ -4,15 +4,18 @@ import XCTest
 @testable import Schrift
 
 final class AppLanguageTests: XCTestCase {
-    func testCodesAndAutonyms() {
-        XCTAssertEqual(AppLanguage.thai.code, "th")
-        XCTAssertEqual(AppLanguage.thai.autonym, "ไทย")
-        XCTAssertEqual(AppLanguage.slovene.code, "sl")
-        XCTAssertEqual(AppLanguage.slovene.autonym, "Slovenščina")
-        XCTAssertEqual(AppLanguage.chineseSimplified.code, "zh-Hans")
-        XCTAssertEqual(AppLanguage.chineseTraditional.code, "zh-Hant")
-        XCTAssertEqual(AppLanguage.allCases.count, 11)
+    func testCodesAndAutonymsAreUniqueAndEveryCodeRoundTripsThroughBestMatch() {
+        let codes = AppLanguage.allCases.map(\.code)
+        let autonyms = AppLanguage.allCases.map(\.autonym)
+        XCTAssertEqual(Set(codes).count, codes.count)
+        XCTAssertEqual(Set(autonyms).count, autonyms.count)
+        XCTAssertFalse(codes.contains(""))
+        XCTAssertFalse(autonyms.contains(""))
+        for language in AppLanguage.allCases {
+            XCTAssertEqual(AppLanguage.bestMatch(preferred: [language.code]), language, language.code)
+        }
     }
+
     func testBestMatchPrefersExactThenScriptThenEnglish() {
         XCTAssertEqual(AppLanguage.bestMatch(preferred: ["fr-FR", "en"]), .french)
         XCTAssertEqual(AppLanguage.bestMatch(preferred: ["sl-SI", "en"]), .slovene)

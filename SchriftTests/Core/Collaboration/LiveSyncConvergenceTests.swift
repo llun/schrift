@@ -4,7 +4,7 @@ import XCTest
 
 /// Records every socket a manager builds, so a peer's handshake/broadcast frames
 /// can be captured and relayed. A minimal, file-scoped copy of
-/// `DocumentCollaborationManagerTests`' own spy (top-level `private` is
+/// the `DocumentCollaborationManager*Tests`' shared spy (top-level `private` is
 /// file-scoped in Swift, so it isn't reachable across files) — each peer opens
 /// exactly one document's socket here.
 private final class SocketFactorySpy: @unchecked Sendable {
@@ -115,7 +115,7 @@ final class LiveSyncConvergenceTests: XCTestCase {
     private let aReplicaClientID: UInt32 = 100
     private let bReplicaClientID: UInt32 = 200
 
-    // MARK: - Block builders (mirror DocumentCollaborationManagerTests)
+    // MARK: - Block builders (mirror DocumentCollaborationManagerTestCase)
 
     /// The three base props every text block carries, in BlockNote order.
     private var baseProps: [(key: String, value: YAnyValue)] {

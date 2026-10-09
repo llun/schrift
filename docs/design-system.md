@@ -707,8 +707,8 @@ struct BadgeStyleHex: Equatable {
 The resolver fills both from `DocsPalette(theme:isDark:)` using the explicit theme;
 the view renders `Color(lightHex:darkHex:)`. This keeps the convention — resolver
 returns `Equatable` raw values, view converts to `Color` at render — and stays
-unit-testable without SwiftUI. Existing resolver tests extend to assert the dark
-fields too.
+unit-testable without SwiftUI. Resolver tests assert invariants over both the
+light and dark fields (see §4.5), not per-variant hex mirrors.
 
 `InlineTextStyle` (editor link color) and `listRowTitleColorHex` (ListRow
 destructive/primary) also resolve raw hex → route them through adaptive tokens /
@@ -777,11 +777,17 @@ lighten while their soft backgrounds darken; the neutral badge foreground
 
 ### 4.5 Tests (Part 1)
 
-- `DocsColorHexTests` — assert the dark raw value for every token (extends the
-  existing light assertions).
+- `DocsColorTokenInvariantTests` — token values are visual and are not
+  unit-tested (they are checked in the `#Preview` catalogs and Sketch); this file
+  pins the relationships that can regress: ink-on-fill contrast in light and dark,
+  dark differing from light for neutral surfaces and text, the dark elevation
+  ladder, and the mode-independent accent palette.
 - Resolver tests (`BadgeStyleResolverTests`, `ButtonStyleResolverTests`,
   `IconButtonStyleResolverTests`, `TextFieldStyleResolverTests`,
-  `LinkReachPillStyleResolverTests`) — assert both light and dark fields.
+  `LinkReachPillTests`) — assert invariants (readable ink on its fill in both
+  modes, distinct variants, dark differing from light for each fill), not
+  per-variant hex mirrors. Only the `Button` and `IconButton` resolver tests
+  also pin "no background/border where none is promised".
 - `AppearanceStoreTests` — default `.system`; persistence round-trip;
   `colorScheme` mapping (isolated `UserDefaults(suiteName:)`).
 
@@ -892,7 +898,7 @@ Pinned/Shared, sign out) so it stays consistent across screens.
 - `StringsCompletenessTests` — **every** `L10n.Key` present in **every** language
   table; and placeholder/format-specifier parity across languages (same `%@`/`%d`
   count per key).
-- `PluralTests` — rule selection per language.
+- `PluralRuleTests` — rule selection per language.
 
 ---
 
@@ -949,8 +955,10 @@ no split-view route cleanup is needed beyond the shared injection.
 
 ### 6.1 Tests (Part 3)
 
-- `ProfileScreen` option-model tests (pure): appearance options + icons; language
-  options; checkmark selection logic.
+- `ProfileScreen` option-model tests (pure): language options and checkmark
+  selection logic. Appearance option labels/icons are visual lookup tables and are
+  not unit-tested; the persisted selection and `colorScheme` mapping are covered
+  by `AppearanceStoreTests`.
 - Snapshot-free assertions on the picker view models / pure helpers (no UI
   snapshotting — consistent with the repo).
 
@@ -1130,7 +1138,7 @@ opened from a **"Version history"** row in the Options sheet — the current app
 - A `VersionHistoryViewModel` (`@MainActor @Observable`) loads best-effort,
   friendly `errorMessage` on failure, `isLoading` gate. Timestamps render with
   the current locale (relative or absolute per the design's `when` style).
-- Tests: `DocumentVersionsClientTests` (method/path/decode incl. `is_current`,
+- Tests: `VersionEndpointsClientTests` (method/path/decode incl. `is_current`,
   empty list) via `MockURLProtocol`; VM load + error-path tests.
 
 ### 9.3 Restore — verify-gated, funneled through the save path

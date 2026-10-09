@@ -23,6 +23,20 @@ final class ShareModelsDecodingTests: XCTestCase {
         XCTAssertEqual(access.role, .administrator)
     }
 
+    func testDecodesCommenterDocumentAccessRole() throws {
+        let json = """
+            {
+                "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+                "user": {"id": "9c2c2c2c-2c2c-4c2c-9c2c-2c2c2c2c2c2c", "email": "camille@example.com"},
+                "team": "",
+                "role": "commenter"
+            }
+            """.data(using: .utf8)!
+
+        let access = try JSONDecoder.docsAPI.decode(DocumentAccess.self, from: json)
+        XCTAssertEqual(access.role, .commenter)
+    }
+
     func testDecodesLightDocumentAccessWithoutUserIdOrEmail() throws {
         let json = """
             {

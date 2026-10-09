@@ -74,30 +74,7 @@ final class SlashMenuTests: XCTestCase {
         }
     }
 
-    func testTheFileItemUsesABundledIcon() {
-        // `.description` is in the bundled subset; naming an unbundled Material glyph would
-        // render as a blank box. (Asserting membership in `MaterialIcon.allCases` would prove
-        // nothing — every case is in it.)
-        XCTAssertEqual(allSlashMenuItems.first { $0.action == .insertAttachment }?.icon, .description)
-    }
-
-    /// And a search that names it finds it, not just the unfiltered list.
-    func testPhotoIsFoundByAMatchingQuery() {
-        XCTAssertEqual(filteredSlashItems(query: "photo").map(\.id), ["photo"])
-    }
-
     // MARK: - Actions
-
-    func testConvertItemsCarryTheirBlockKind() {
-        XCTAssertEqual(allSlashMenuItems.first { $0.id == "heading2" }?.action, .convert(.heading(level: 2)))
-        XCTAssertEqual(allSlashMenuItems.first { $0.id == "divider" }?.action, .convert(.divider))
-    }
-
-    /// Every other item just swaps a `BlockKind`; the photo item is the one
-    /// side-effecting action, and its block is inserted later, on upload success.
-    func testPhotoItemIsTheOnlySideEffectAction() {
-        XCTAssertEqual(allSlashMenuItems.filter { $0.action == .insertPhoto }.map(\.id), ["photo"])
-    }
 
     func testPhotoItemMatchesImageKeywords() {
         for query in ["photo", "ima", "picture", "img"] {

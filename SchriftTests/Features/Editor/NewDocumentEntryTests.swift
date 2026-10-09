@@ -455,4 +455,32 @@ final class NewDocumentEntryTests: XCTestCase {
             XCTAssertFalse(reopened.isEditing)
         }
     }
+
+    func testAnIntentIsConsumedExactlyOnce() {
+        let intent = NewDocumentEntryIntent()
+        XCTAssertTrue(intent.consume())
+        XCTAssertFalse(intent.consume())
+        XCTAssertFalse(intent.consume())
+    }
+
+    func testIntentsAreIndependentOfEachOther() {
+        let first = NewDocumentEntryIntent()
+        let second = NewDocumentEntryIntent()
+        XCTAssertTrue(first.consume())
+        XCTAssertTrue(second.consume(), "consuming one intent leaves another untouched")
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testARouteMintedForACreationSharesItsIntentWithCopies() {
+        let document = Document(
+            id: UUID(), title: "New", excerpt: nil, abilities: DocumentAbilities(), linkReach: .restricted,
+            linkRole: .reader, isFavorite: false, depth: 1, numchild: 0, path: "0001", createdAt: Date(),
+            updatedAt: Date(), userRole: nil, creator: nil)
+        let route = DocumentEditorRoute(createdDocument: document)
+        let copy = route
+
+        XCTAssertNil(DocumentEditorRoute(document: document).entryIntent)
+        XCTAssertTrue(route.entryIntent?.consume() == true)
+        XCTAssertTrue(copy.entryIntent?.consume() == false, "a recreated screen cannot re-arm the intent")
+    }
 }
