@@ -1718,6 +1718,7 @@ already-recorded ghost residual below, not a new one.
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
   read-time merge is wired, a live Home loses the row when `removePendingCreate` runs and
   regains it only on the next successful fetch.
+- **[LANDED — `onReplayedPushLanded`]** Home after a reconnect replay pushes an offline edit. The reconnect `load()` races the replay's PATCHes (unstructured `start` tasks that outlive `syncPendingDrafts()`) and re-caches the pre-push list. `runSyncPass` marks the ids it enqueues (`replayedPushes`); `finish` fires the callback when such a save's content lands, and Home runs a debounced (300 ms) silent `load()`. The mark is set only when the save actually started (a held save is not marked) and dropped by `discardPendingWork`. Like the migration reload, this silent `load()` can supersede an in-flight pull-to-refresh and clears the error banner. Ordinary autosaves are not marked, so typing causes no list reloads.
 - **[LANDED — `EditorViewModel.isLocalDocument` gates all four fetch paths]** Gating the editor's fetch on a pending-create id. `EditorViewModel.revalidate`
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen

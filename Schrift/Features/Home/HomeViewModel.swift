@@ -142,6 +142,9 @@ final class HomeViewModel {
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable).
     private var loadGeneration = 0
+    /// The debounced silent reload after a replayed offline push lands (see
+    /// `onReplayedPushLanded`); a newer landing cancels the pending one.
+    @ObservationIgnored private var replayReloadTask: Task<Void, Never>?
     private var searchGeneration = 0
     /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
     /// before the DELETE and still names them, so its results are filtered through this before
@@ -205,6 +208,18 @@ final class HomeViewModel {
         // coordinator, not the optional parameter.
         self.actions = DocumentActions(
             client: client, saveCoordinator: self.saveCoordinator, signedInUser: signedInUser)
+        // A replayed offline edit landing means the list `load()` fetched on reconnect (which
+        // races the replay) is stale. Debounced so several drafts landing together cost one
+        // silent refetch; ordinary autosaves never fire this.
+        self.saveCoordinator.onReplayedPushLanded = { [weak self] in
+            guard let self else { return }
+            self.replayReloadTask?.cancel()
+            self.replayReloadTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled, let self else { return }
+                await self.load()
+            }
+        }
         // A migration re-keys a document onto its server id, after which the local row is
         // correctly withheld and the real one exists only in a server response this view model
         // has not made yet. Refetch on the event itself — see `onDocumentMigrated`.
