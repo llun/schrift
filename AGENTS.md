@@ -873,8 +873,8 @@ new code reads like the surrounding code.
   documents/{id}/` still work. Content now lives at
   `/collaboration/ydoc/v1/{org}/{id}` on the same origin, authenticated by the same
   session cookie: `GET …?gc=true&awareness=false` with **`Accept:
-  application/json`** (`get(_:accept:)`, the one caller of `performRequest`'s
-  `accept:` parameter) answers `{"doc": "<base64 Yjs v1 update>"}`, and `PATCH`
+  application/json`** (`get(_:accept:)`, the only caller that passes a non-nil
+  `accept:`) answers `{"doc": "<base64 Yjs v1 update>"}`, and `PATCH`
   with `{"update": "<base64>"}` applies an **incremental** update — so a
   from-scratch document would be *appended* and duplicate everything; see
   [Editor & the on-device save](#editor--the-on-device-save-coreyjs) for the diff.
