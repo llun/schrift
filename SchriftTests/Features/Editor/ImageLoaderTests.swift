@@ -384,7 +384,8 @@ import XCTest
         XCTAssertEqual(log.methods.count, 1)
     }
 
-    func testATransportFailureMarkerNeverCrossesIntoAScopeWhereTheURLIsNotApproved() async {
+    // The cross-scope half is a structural guard; the original-scope half is what tests the retry.
+    func testATransportFailureRetriesOnceInItsOwnScopeOnly() async {
         let external = URL(string: "https://cdn.example.net/photo.png")!
         let log = RequestRecorder()
         MockURLProtocol.stubHandler = { request in

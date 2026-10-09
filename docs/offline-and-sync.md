@@ -1107,7 +1107,8 @@ all downloaded image bytes on sign-out. This store is independent of
 network is withheld. A cold offline hit displays the image; a miss keeps an image
 card with “Image available when online” and its original URL. Requests are joined
 and owned by the loader across mode changes. Failed loads remain image cards
-with an explicit Retry and secondary URL action. External images fetch only
+with an explicit Retry and secondary URL action; an image transport failure is retried once
+automatically when loading resumes with the network allowed. External images fetch only
 after exact-URL consent; cached external bytes render without networking, but a
 cold evicted external image requires consent again. Consent is never stored on
 disk. Redirects cannot leave the initial origin, and external requests carry no
