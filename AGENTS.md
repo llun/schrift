@@ -1270,10 +1270,12 @@ new code reads like the surrounding code.
   floor; text controls may grow with Dynamic Type. Native system controls keep
   their platform metrics, and checklist adornments retain first-line alignment.
   A hard minimum does not compress. The formatting bar's square actions (five, or
-  seven on a list item, which adds Outdent and Indent) fit every iPhone column
-  (seven is about 332pt against 343pt on a 375pt device); `EditorFormattingBar`
-  still scrolls horizontally inside the editor's offered width for narrow iPad Slide
-  Over / ⅓ splits and larger text, preserving 44pt squares and screen geometry. It fades a ~24pt gradient
+  seven on a list item, which adds Outdent and Indent) fit the standard iPhone column
+  (seven is about 332pt against 343pt on a 375pt device). Display Zoom is the
+  exception: on the smallest iPhones a zoomed 320pt-wide iPhone SE leaves a 288pt
+  column, so the seven-button row overflows. `EditorFormattingBar` still scrolls
+  horizontally inside the editor's offered width for that case and for narrow iPad
+  containers (Slide Over, ⅓ split), preserving 44pt squares and screen geometry. It fades a ~24pt gradient
   (`mask`) at whichever edge has hidden content so the scrolling is visible
   (`scrollFadeEdges`, fed by `onScrollGeometryChange`; none when the row fits).
   `EditorFormattingBarTests` covers both the width containment and row height.

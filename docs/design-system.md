@@ -7,9 +7,11 @@
 > Italic and Link, the default in the brand colour. The whole family is disabled where
 > inline markdown isn't rendered (code blocks, images, attachments). The bar is now add,
 > text style, list, quote/code, attach — five buttons, seven on a list item (Outdent
-> and Indent) — which fit every iPhone column (about 332pt against 343pt on a 375pt
-> device); in a narrower container (iPad Slide Over, a ⅓ split, larger text) a ~24pt
-> gradient fades whichever edge has hidden content (none when the row fits).
+> and Indent) — which fit the standard iPhone column (about 332pt against 343pt on a
+> 375pt device). Display Zoom on the smallest iPhones is the exception: a zoomed
+> 320pt-wide iPhone SE leaves a 288pt column, so the seven-button list-item row
+> overflows. In a narrower container (iPad Slide Over, a ⅓ split) or that zoomed case,
+> a ~24pt gradient fades whichever edge has hidden content (none when the row fits).
 >
 > **Revised: 2026-10-08 — One Attach button in the formatting bar.** The bar's last
 > slot is now **Attach** (`attach_file`, U+E226, bringing the bundled subset to 80
